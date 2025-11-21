@@ -34,3 +34,24 @@ pub struct Chunk {
     pub embedding: Option<Vec<f32>>,
     pub metadata: serde_json::Value,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum JobStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexingJob {
+    pub id: String,
+    pub source_id: String,
+    pub source_name: String,
+    pub source_type: SourceType,
+    pub status: JobStatus,
+    pub started_at: String, // ISO 8601 timestamp
+    pub finished_at: Option<String>,
+    pub files_indexed: Option<usize>,
+    pub chunks_created: Option<usize>,
+    pub error: Option<String>,
+}

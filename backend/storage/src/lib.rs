@@ -47,6 +47,7 @@ impl VectorStore {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
+            Field::new("document_id", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
             Field::new(
                 "vector",
@@ -59,9 +60,11 @@ impl VectorStore {
         ]));
 
         let ids: Vec<String> = chunks.iter().map(|c| c.id.to_string()).collect();
+        let document_ids: Vec<String> = chunks.iter().map(|c| c.document_id.clone()).collect();
         let contents: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
 
         let id_array = StringArray::from(ids);
+        let document_id_array = StringArray::from(document_ids);
         let content_array = StringArray::from(contents);
 
         // Create vector array
@@ -81,6 +84,7 @@ impl VectorStore {
             schema.clone(),
             vec![
                 Arc::new(id_array),
+                Arc::new(document_id_array),
                 Arc::new(content_array),
                 Arc::new(vector_array),
             ],
@@ -143,6 +147,12 @@ impl VectorStore {
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .unwrap();
+            let document_id_col = batch
+                .column_by_name("document_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
             let content_col = batch
                 .column_by_name("content")
                 .unwrap()
@@ -153,7 +163,7 @@ impl VectorStore {
             for i in 0..batch.num_rows() {
                 chunks.push(Chunk {
                     id: uuid::Uuid::parse_str(id_col.value(i)).unwrap_or_default(),
-                    document_id: "".to_string(), // TODO
+                    document_id: document_id_col.value(i).to_string(),
                     content: content_col.value(i).to_string(),
                     embedding: None,
                     metadata: serde_json::Value::Null,
@@ -173,6 +183,43 @@ impl VectorStore {
         }
 
         Ok(chunks)
+    }
+
+    /// Delete all chunks belonging to a specific source (by document_id prefix or exact match)
+    /// This is a hard delete that rewrites the table without the matching chunks
+    pub async fn delete_by_source(&self, source_id: &str) -> Result<()> {
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        // LanceDB delete using SQL-like filter
+        // Delete where document_id starts with source_id
+        let filter = format!("document_id LIKE '{}%'", source_id);
+        table.delete(&filter).await?;
+
+        Ok(())
+    }
+
+    /// Delete all chunks for a specific document (file)
+    /// This allows incremental updates - delete old chunks for one file, then add new ones
+    pub async fn delete_by_document(&self, document_id: &str) -> Result<()> {
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        // Delete exact document_id match
+        let filter = format!("document_id = '{}'", document_id);
+        table.delete(&filter).await?;
+
+        Ok(())
+    }
+
+    /// Update a single document: delete old chunks and add new ones
+    /// This is more efficient than re-indexing the entire source
+    pub async fn update_document(&self, document_id: &str, new_chunks: Vec<Chunk>) -> Result<()> {
+        // 1. Delete old chunks for this document
+        self.delete_by_document(document_id).await?;
+
+        // 2. Add new chunks
+        self.add(new_chunks).await?;
+
+        Ok(())
     }
 }
 

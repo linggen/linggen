@@ -3,10 +3,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use embeddings::EmbeddingModel;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use storage::VectorStore;
 
 use super::index::AppState;
 

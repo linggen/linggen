@@ -3,7 +3,7 @@ use embeddings::{EmbeddingModel, TextChunker};
 use rememberme_core::Chunk;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use storage::VectorStore;
+use storage::{MetadataStore, VectorStore};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -22,6 +22,7 @@ pub struct AppState {
     pub embedding_model: Arc<EmbeddingModel>,
     pub chunker: Arc<TextChunker>,
     pub vector_store: Arc<VectorStore>,
+    pub metadata_store: Arc<MetadataStore>,
 }
 
 pub async fn index_document(

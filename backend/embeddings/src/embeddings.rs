@@ -56,34 +56,65 @@ impl EmbeddingModel {
             .map(|mut batch| batch.pop().unwrap_or_default())
     }
 
-    /// Embed multiple texts in a batch
+    /// Embed multiple texts in a batch (TRUE batching - single forward pass)
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
 
-        // Tokenize
+        // Tokenize all texts
         let encodings = self
             .tokenizer
             .encode_batch(texts.to_vec(), true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 
-        let mut embeddings = Vec::new();
+        // Find max sequence length for padding
+        let max_len = encodings.iter().map(|e| e.len()).max().unwrap_or(0);
 
-        for encoding in encodings {
-            let tokens = encoding.get_ids();
-            let token_ids = Tensor::new(tokens, &self.device)?.unsqueeze(0)?;
+        // Prepare batch tensors with padding
+        let batch_size = texts.len();
+        let mut batch_token_ids = Vec::with_capacity(batch_size * max_len);
+        let mut batch_attention_mask = Vec::with_capacity(batch_size * max_len);
 
-            // Forward pass (no attention mask needed for our use case)
-            let outputs = self.model.forward(&token_ids, &token_ids, None)?;
+        for encoding in &encodings {
+            let ids = encoding.get_ids();
+            let attention_mask = encoding.get_attention_mask();
 
-            // Mean pooling
-            let embedding = self.mean_pooling(&outputs)?;
+            // Add tokens
+            batch_token_ids.extend_from_slice(ids);
+            // Pad with zeros
+            batch_token_ids.extend(vec![0u32; max_len - ids.len()]);
 
-            // Normalize
-            let embedding = self.normalize(&embedding)?;
+            // Add attention mask
+            batch_attention_mask.extend_from_slice(attention_mask);
+            // Pad mask with zeros (ignore padding tokens)
+            batch_attention_mask.extend(vec![0u32; max_len - attention_mask.len()]);
+        }
 
-            // Convert to Vec<f32>
+        // Create batch tensors [batch_size, max_len]
+        let token_ids = Tensor::from_vec(batch_token_ids, (batch_size, max_len), &self.device)?;
+        let token_type_ids =
+            Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)?;
+        let attention_mask =
+            Tensor::from_vec(batch_attention_mask, (batch_size, max_len), &self.device)?;
+
+        // Single forward pass for entire batch! 🚀
+        let outputs = self
+            .model
+            .forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
+
+        // outputs shape: [batch_size, seq_len, hidden_size]
+        // Apply mean pooling with attention mask
+        let embeddings_tensor = self.mean_pooling_with_mask(&outputs, &attention_mask)?;
+
+        // embeddings_tensor shape: [batch_size, hidden_size]
+        // Normalize each embedding
+        let normalized = self.normalize_batch(&embeddings_tensor)?;
+
+        // Convert to Vec<Vec<f32>>
+        let mut embeddings = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            let embedding = normalized.get(i)?;
             let embedding_vec = embedding.to_vec1::<f32>()?;
             embeddings.push(embedding_vec);
         }
@@ -91,7 +122,7 @@ impl EmbeddingModel {
         Ok(embeddings)
     }
 
-    /// Mean pooling over token embeddings
+    /// Mean pooling over token embeddings (legacy, for single items)
     fn mean_pooling(&self, tensor: &Tensor) -> Result<Tensor> {
         // tensor shape: [batch_size, seq_len, hidden_size]
         // Mean over seq_len dimension
@@ -99,10 +130,77 @@ impl EmbeddingModel {
         Ok(pooled)
     }
 
-    /// L2 normalize embeddings
+    /// Mean pooling with attention mask (for batches)
+    fn mean_pooling_with_mask(&self, tensor: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
+        // tensor shape: [batch_size, seq_len, hidden_size]
+        // attention_mask shape: [batch_size, seq_len]
+
+        let (batch_size, seq_len, hidden_size) = tensor.dims3()?;
+
+        // Expand attention mask to match hidden size: [batch_size, seq_len, hidden_size]
+        let mask_expanded = attention_mask
+            .unsqueeze(2)? // [batch_size, seq_len, 1]
+            .broadcast_as((batch_size, seq_len, hidden_size))?;
+
+        // Convert mask to float for multiplication
+        let mask_float = mask_expanded.to_dtype(candle_core::DType::F32)?;
+        let tensor_float = tensor.to_dtype(candle_core::DType::F32)?;
+
+        // Apply mask: zero out padding tokens
+        let masked = tensor_float.mul(&mask_float)?;
+
+        // Sum over sequence length
+        let summed = masked.sum(1)?; // [batch_size, hidden_size]
+
+        // Count non-padding tokens per sequence
+        let mask_sum = mask_float.sum(1)?; // [batch_size, hidden_size]
+
+        // Avoid division by zero
+        let mask_sum_safe = mask_sum
+            .maximum(&Tensor::new(&[1e-9f32], &self.device)?.broadcast_as(mask_sum.shape())?)?;
+
+        // Average: divide by number of non-padding tokens
+        let pooled = summed.div(&mask_sum_safe)?;
+
+        Ok(pooled)
+    }
+
+    /// L2 normalize embeddings (legacy, for single embedding)
     fn normalize(&self, tensor: &Tensor) -> Result<Tensor> {
-        let norm = tensor.sqr()?.sum_keepdim(1)?.sqrt()?;
-        Ok(tensor.broadcast_div(&norm)?)
+        // tensor shape after squeeze: [384]
+        // Calculate L2 norm as a scalar
+        let norm_squared: f32 = tensor.sqr()?.sum_all()?.to_scalar()?;
+        let norm = norm_squared.sqrt();
+
+        // Divide each element by the norm (multiply by 1/norm)
+        let scale = 1.0f64 / norm as f64;
+        Ok(tensor.affine(scale, 0.0)?)
+    }
+
+    /// L2 normalize batch of embeddings
+    fn normalize_batch(&self, tensor: &Tensor) -> Result<Tensor> {
+        // tensor shape: [batch_size, hidden_size]
+        let (batch_size, hidden_size) = tensor.dims2()?;
+
+        // Calculate L2 norm for each embedding: sqrt(sum(x^2))
+        let squared = tensor.sqr()?; // [batch_size, hidden_size]
+        let sum_squared = squared.sum(1)?; // [batch_size]
+        let norms = sum_squared.sqrt()?; // [batch_size]
+
+        // Expand norms to [batch_size, hidden_size] for division
+        let norms_expanded = norms
+            .unsqueeze(1)? // [batch_size, 1]
+            .broadcast_as((batch_size, hidden_size))?;
+
+        // Avoid division by zero
+        let norms_safe = norms_expanded.maximum(
+            &Tensor::new(&[1e-12f32], &self.device)?.broadcast_as(norms_expanded.shape())?,
+        )?;
+
+        // Normalize: divide each embedding by its norm
+        let normalized = tensor.div(&norms_safe)?;
+
+        Ok(normalized)
     }
 }
 

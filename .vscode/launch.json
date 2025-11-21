@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Backend (API)",
+            "name": "Backend",
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/backend/target/debug/api",
@@ -18,7 +18,7 @@
             ]
         },
         {
-            "name": "Launch Frontend (Chrome)",
+            "name": "Frontend",
             "type": "chrome",
             "request": "launch",
             "url": "http://localhost:5173",
