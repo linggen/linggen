@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cargo build",
+            "type": "shell",
+            "command": "cargo build",
+            "options": {
+                "cwd": "${workspaceFolder}/backend",
+                "env": {
+                    "PATH": "${workspaceFolder}/tools/protoc/bin:${env:PATH}"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$rustc"
+            ]
+        },
+        {
+            "type": "npm",
+            "script": "dev",
+            "path": "frontend",
+            "label": "npm: dev",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "custom",
+                "pattern": {
+                    "regexp": "^$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "VITE",
+                    "endsPattern": "Local:"
+                }
+            }
+        }
+    ]
+}

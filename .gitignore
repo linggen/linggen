@@ -1,0 +1,58 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Backend build artifacts
+backend/target/
+backend/**/target/
+
+# Frontend (Node.js / React)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# IDE
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Runtime / Data
+*.log
+*.db
+*.sqlite
+data/
+.cache/
+
+# HuggingFace model cache (optional - uncomment if you want to exclude)
+# .cache/huggingface/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/settings.json
+.vscode/*.code-workspace
+
+# Rust analyzer
+rust-project.json
+
+# Test coverage
+*.profraw
+*.profdata
+coverage/
+
+# Debug / Release builds
+**/debug/
+**/release/

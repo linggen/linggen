@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Backend (API)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/backend/target/debug/api",
+            "preLaunchTask": "cargo build",
+            "args": [],
+            "cwd": "${workspaceFolder}/backend",
+            "env": {
+                "RUST_LOG": "debug",
+                "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
+            },
+            "sourceLanguages": [
+                "rust"
+            ]
+        },
+        {
+            "name": "Launch Frontend (Chrome)",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/frontend",
+            "preLaunchTask": "npm: dev"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack",
+            "configurations": [
+                "Debug Backend (API)",
+                "Launch Frontend (Chrome)"
+            ]
+        }
+    ]
+}
