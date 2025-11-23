@@ -18,10 +18,57 @@ impl EmbeddingModel {
     pub fn new() -> Result<Self> {
         info!("Loading embedding model: sentence-transformers/all-MiniLM-L6-v2");
 
-        // Determine device (CPU for now, could add Metal/CUDA support)
-        let device = Device::Cpu;
-        info!("Using device: {:?}", device);
+        // Determine device
+        #[cfg(target_os = "macos")]
+        let device = Device::new_metal(0).unwrap_or(Device::Cpu);
 
+        #[cfg(not(target_os = "macos"))]
+        let device = {
+            #[cfg(feature = "cuda")]
+            {
+                Device::new_cuda(0).unwrap_or(Device::Cpu)
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                Device::Cpu
+            }
+        };
+
+        info!("Attempting to use device: {:?}", device);
+
+        // Try to load and test on the preferred device
+        match Self::load_model(device.clone()) {
+            Ok(model) => {
+                // Test the model with a dummy embedding to ensure device works (e.g. shaders compile)
+                match model.embed("test") {
+                    Ok(_) => {
+                        info!("Successfully initialized embedding model on {:?}", device);
+                        Ok(model)
+                    }
+                    Err(e) => {
+                        // Fallback to CPU if test fails
+                        tracing::warn!(
+                            "Failed to run model on {:?}: {}. Falling back to CPU.",
+                            device,
+                            e
+                        );
+                        Self::load_model(Device::Cpu)
+                    }
+                }
+            }
+            Err(e) => {
+                // Fallback to CPU if load fails
+                tracing::warn!(
+                    "Failed to load model on {:?}: {}. Falling back to CPU.",
+                    device,
+                    e
+                );
+                Self::load_model(Device::Cpu)
+            }
+        }
+    }
+
+    fn load_model(device: Device) -> Result<Self> {
         // Download model from HuggingFace Hub
         let api = Api::new()?;
         let repo = api.repo(Repo::new(
