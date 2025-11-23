@@ -9,7 +9,10 @@ use rememberme_core::Chunk;
 use std::sync::Arc;
 
 pub mod metadata;
+pub mod preferences;
+
 pub use metadata::MetadataStore;
+pub use preferences::UserPreferences;
 
 pub struct VectorStore {
     conn: Connection,

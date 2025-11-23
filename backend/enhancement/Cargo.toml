@@ -1,0 +1,21 @@
+[package]
+name = "rememberme-enhancement"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Our crates
+rememberme-core = { path = "../core" }
+rememberme-llm = { path = "../llm" }
+rememberme-intent = { path = "../intent" }
+rememberme-context = { path = "../context" }
+storage = { path = "../storage" }
+embeddings = { path = "../embeddings" }
+
+# Utilities
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async
+tokio = { version = "1.42", features = ["full"] }

@@ -56,6 +56,7 @@ export interface Resource {
     resource_type: ResourceType;
     path: string;
     enabled: boolean;
+    latest_job?: Job;
 }
 
 export interface AddResourceRequest {

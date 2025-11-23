@@ -9,8 +9,9 @@ use tracing::info;
 
 mod handlers;
 use handlers::{
-    add_resource, cancel_job, index_document, index_folder, index_source, list_jobs,
-    list_resources, remove_resource, search, AppState,
+    add_resource, cancel_job, classify_intent, enhance_prompt, get_preferences, index_document,
+    index_folder, index_source, list_jobs, list_resources, remove_resource, search,
+    update_preferences, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -100,6 +101,10 @@ async fn main() {
         .route("/api/index", post(index_document))
         .route("/api/index_folder", post(index_folder))
         .route("/api/index_source", post(index_source))
+        .route("/api/classify", post(classify_intent))
+        .route("/api/enhance", post(enhance_prompt))
+        .route("/api/preferences", get(get_preferences))
+        .route("/api/preferences", axum::routing::put(update_preferences))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/cancel", post(cancel_job))
         .route("/api/search", get(search))

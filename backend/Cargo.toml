@@ -1,8 +1,13 @@
 [workspace]
 members = [
     "api",
-    "core", "embeddings",
+    "context",
+    "core",
+    "embeddings",
+    "enhancement",
     "ingestion",
+    "intent",
+    "llm",
     "storage",
 ]
 resolver = "2"

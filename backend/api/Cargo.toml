@@ -8,6 +8,9 @@ rememberme-core = { path = "../core" }
 ingestion = { path = "../ingestion" }
 embeddings = { path = "../embeddings" }
 storage = { path = "../storage" }
+rememberme-intent = { path = "../intent" }
+rememberme-llm = { path = "../llm" }
+rememberme-enhancement = { path = "../enhancement" }
 
 tokio = { version = "1.40", features = ["full"] }
 axum = "0.7"

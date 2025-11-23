@@ -4,9 +4,12 @@ use rememberme_core::{IndexingJob, SourceConfig};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::preferences::UserPreferences;
+
 const SETTINGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("settings");
 const SOURCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sources");
 const JOBS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("jobs");
+const PREFERENCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("preferences");
 
 pub struct MetadataStore {
     db: Arc<Database>,
@@ -22,6 +25,7 @@ impl MetadataStore {
             let _ = write_txn.open_table(SETTINGS_TABLE)?;
             let _ = write_txn.open_table(SOURCES_TABLE)?;
             let _ = write_txn.open_table(JOBS_TABLE)?;
+            let _ = write_txn.open_table(PREFERENCES_TABLE)?;
         }
         write_txn.commit()?;
 
@@ -152,6 +156,59 @@ impl MetadataStore {
 
         Ok(jobs)
     }
+
+    pub fn get_latest_job_for_source(&self, source_id: &str) -> Result<Option<IndexingJob>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(JOBS_TABLE)?;
+
+        let mut latest_job: Option<IndexingJob> = None;
+
+        for item in table.iter()? {
+            let (_, value) = item?;
+            let json = value.value();
+            let job: IndexingJob = serde_json::from_str(json)?;
+
+            if job.source_id == source_id {
+                match &latest_job {
+                    None => latest_job = Some(job),
+                    Some(current_latest) => {
+                        if job.started_at > current_latest.started_at {
+                            latest_job = Some(job);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(latest_job)
+    }
+
+    // User Preferences
+    /// Get user preferences (returns defaults if not set)
+    pub fn get_preferences(&self) -> Result<UserPreferences> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(PREFERENCES_TABLE)?;
+
+        if let Some(prefs_json) = table.get("user_prefs")? {
+            let prefs: UserPreferences = serde_json::from_str(prefs_json.value())?;
+            Ok(prefs)
+        } else {
+            // Return defaults if not set
+            Ok(UserPreferences::default())
+        }
+    }
+
+    /// Update user preferences
+    pub fn update_preferences(&self, prefs: &UserPreferences) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(PREFERENCES_TABLE)?;
+            let json = serde_json::to_string(prefs)?;
+            table.insert("user_prefs", json.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -175,7 +232,7 @@ mod tests {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use rememberme_core::SourceType;
+        use rememberme_core::{IndexingJob, JobStatus};
         use tempfile::NamedTempFile;
 
         #[test]
@@ -199,6 +256,74 @@ mod tests {
             store.remove_source("1")?;
             let sources = store.get_sources()?;
             assert_eq!(sources.len(), 0);
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_latest_job() -> Result<()> {
+            let tmp_file = NamedTempFile::new()?;
+            let store = MetadataStore::new(tmp_file.path())?;
+
+            let job1 = IndexingJob {
+                id: "j1".to_string(),
+                source_id: "s1".to_string(),
+                source_name: "Source 1".to_string(),
+                source_type: SourceType::Local,
+                status: JobStatus::Completed,
+                started_at: "2023-01-01T10:00:00Z".to_string(),
+                finished_at: None,
+                files_indexed: None,
+                chunks_created: None,
+                total_files: None,
+                total_size_bytes: None,
+                error: None,
+            };
+
+            let job2 = IndexingJob {
+                id: "j2".to_string(),
+                source_id: "s1".to_string(),
+                source_name: "Source 1".to_string(),
+                source_type: SourceType::Local,
+                status: JobStatus::Completed,
+                started_at: "2023-01-02T10:00:00Z".to_string(), // Later
+                finished_at: None,
+                files_indexed: None,
+                chunks_created: None,
+                total_files: None,
+                total_size_bytes: None,
+                error: None,
+            };
+
+            let job3 = IndexingJob {
+                id: "j3".to_string(),
+                source_id: "s2".to_string(), // Different source
+                source_name: "Source 2".to_string(),
+                source_type: SourceType::Local,
+                status: JobStatus::Completed,
+                started_at: "2023-01-03T10:00:00Z".to_string(),
+                finished_at: None,
+                files_indexed: None,
+                chunks_created: None,
+                total_files: None,
+                total_size_bytes: None,
+                error: None,
+            };
+
+            store.create_job(&job1)?;
+            store.create_job(&job2)?;
+            store.create_job(&job3)?;
+
+            let latest_s1 = store.get_latest_job_for_source("s1")?;
+            assert!(latest_s1.is_some());
+            assert_eq!(latest_s1.unwrap().id, "j2");
+
+            let latest_s2 = store.get_latest_job_for_source("s2")?;
+            assert!(latest_s2.is_some());
+            assert_eq!(latest_s2.unwrap().id, "j3");
+
+            let latest_s3 = store.get_latest_job_for_source("s3")?;
+            assert!(latest_s3.is_none());
 
             Ok(())
         }

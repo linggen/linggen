@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use rememberme_core::{SourceConfig, SourceType};
+use rememberme_core::{IndexingJob, SourceConfig, SourceType};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -62,6 +62,7 @@ pub struct ResourceInfo {
     pub resource_type: ResourceType,
     pub path: String,
     pub enabled: bool,
+    pub latest_job: Option<IndexingJob>,
 }
 
 #[derive(Deserialize)]
@@ -109,16 +110,23 @@ pub async fn list_resources(
         .get_sources()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let resources = sources
-        .into_iter()
-        .map(|s| ResourceInfo {
+    let mut resources = Vec::new();
+
+    for s in sources {
+        let latest_job = state
+            .metadata_store
+            .get_latest_job_for_source(&s.id)
+            .unwrap_or(None); // Log error in real app
+
+        resources.push(ResourceInfo {
             id: s.id,
             name: s.name,
             resource_type: s.source_type.into(),
             path: s.path,
             enabled: s.enabled,
-        })
-        .collect();
+            latest_job,
+        });
+    }
 
     Ok(Json(ListResourcesResponse { resources }))
 }
