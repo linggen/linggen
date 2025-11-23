@@ -383,6 +383,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  width: 100%;
 }
 
 .resource-card {
@@ -391,6 +392,7 @@ select:focus {
   border-radius: 8px;
   padding: 1rem;
   transition: border-color 0.2s;
+  width: 100%;
 }
 
 .resource-card:hover {
@@ -627,6 +629,7 @@ select:focus {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -636,5 +639,21 @@ select:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+  max-width: 300px;
+}
+
+.cancel-button {
+  width: auto;
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+  font-size: 0.75rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.cancel-button:hover:not(:disabled) {
+  background: var(--error);
+  color: white;
 }

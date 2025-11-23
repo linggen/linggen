@@ -30,8 +30,8 @@
         {
             "name": "Full Stack",
             "configurations": [
-                "Debug Backend (API)",
-                "Launch Frontend (Chrome)"
+                "Backend",
+                "Frontend"
             ]
         }
     ]

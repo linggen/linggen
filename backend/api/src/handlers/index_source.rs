@@ -37,16 +37,18 @@ pub async fn index_source(
 
     // 2. Create job
     let job_id = Uuid::new_v4().to_string();
-    let mut job = IndexingJob {
+    let job = IndexingJob {
         id: job_id.clone(),
         source_id: source.id.clone(),
         source_name: source.name.clone(),
         source_type: source.source_type.clone(),
-        status: JobStatus::Running,
+        status: JobStatus::Pending,
         started_at: Utc::now().to_rfc3339(),
         finished_at: None,
         files_indexed: None,
         chunks_created: None,
+        total_files: None,
+        total_size_bytes: None,
         error: None,
     };
 
@@ -76,9 +78,44 @@ pub async fn index_source(
         return Err((StatusCode::BAD_REQUEST, error_msg));
     }
 
-    // 4. Ingest documents
-    let ingestor = LocalIngestor::new(path);
-    tracing::info!("Starting ingestion for folder: {}", source.path);
+    // 4. Spawn background task for ingestion and indexing
+    let state_clone = state.clone();
+    let job_id_clone = job_id.clone();
+    let source_path = source.path.clone();
+    let initial_job = job.clone();
+
+    tokio::spawn(async move {
+        run_indexing_job(state_clone, job_id_clone, source_path, initial_job).await;
+    });
+
+    Ok(Json(IndexSourceResponse {
+        job_id,
+        files_indexed: 0,
+        chunks_created: 0,
+    }))
+}
+
+async fn run_indexing_job(
+    state: Arc<AppState>,
+    job_id: String,
+    source_path: String,
+    initial_job: IndexingJob,
+) {
+    let mut running_job = initial_job;
+
+    // 0. Acquire permit from JobManager (this blocks if queue is full)
+    tracing::info!("Job {} waiting for execution permit...", job_id);
+    let _permit = state.job_manager.acquire().await;
+    tracing::info!("Job {} acquired permit, starting execution", job_id);
+
+    // Update status to Running
+    running_job.status = JobStatus::Running;
+    running_job.started_at = Utc::now().to_rfc3339();
+    let _ = state.metadata_store.update_job(&running_job);
+
+    // 1. Ingest documents
+    let ingestor = LocalIngestor::new(PathBuf::from(&source_path));
+    tracing::info!("Starting ingestion for folder: {}", source_path);
 
     let documents = match ingestor.ingest().await {
         Ok(docs) => docs,
@@ -89,10 +126,10 @@ pub async fn index_source(
                 status: JobStatus::Failed,
                 finished_at: Some(Utc::now().to_rfc3339()),
                 error: Some(error_msg.clone()),
-                ..job
+                ..running_job
             };
             let _ = state.metadata_store.update_job(&failed_job);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg));
+            return;
         }
     };
 
@@ -106,17 +143,41 @@ pub async fn index_source(
         total_size_mb
     );
 
+    // Update job with totals
+    running_job.total_files = Some(files_count);
+    running_job.total_size_bytes = Some(total_size_bytes);
+    let _ = state.metadata_store.update_job(&running_job);
+
     let mut total_chunks = 0;
     let mut successful_files = 0;
     let mut failed_files = 0;
 
-    // Batch configuration for LanceDB writes
-    const BATCH_SIZE: usize = 50; // Write every 50 files
+    // Batch configuration
+    const BATCH_SIZE: usize = 50;
     let mut chunk_buffer: Vec<Chunk> = Vec::new();
     let mut last_write_time = std::time::Instant::now();
 
-    // 5. Process each document with batched writes
+    tracing::info!(
+        "🔄 Starting to process {} files for job {}",
+        files_count,
+        job_id
+    );
+
+    // 2. Process documents
     for (idx, doc) in documents.iter().enumerate() {
+        // Check cancellation
+        if check_cancellation(
+            &state,
+            &job_id,
+            &running_job,
+            successful_files,
+            total_chunks,
+        )
+        .is_some()
+        {
+            return;
+        }
+
         let file_size_kb = doc.content.len() as f64 / 1024.0;
         let progress_pct = (idx + 1) as f64 / files_count as f64 * 100.0;
 
@@ -138,6 +199,19 @@ pub async fn index_source(
             chunks_text.len(),
             chunk_time.as_secs_f64() * 1000.0
         );
+
+        // Check cancellation before embedding
+        if check_cancellation(
+            &state,
+            &job_id,
+            &running_job,
+            successful_files,
+            total_chunks,
+        )
+        .is_some()
+        {
+            return;
+        }
 
         // Embed
         let embed_start = std::time::Instant::now();
@@ -164,9 +238,8 @@ pub async fn index_source(
         );
 
         // Create chunks
-        let mut chunks = Vec::new();
         for (text, embedding) in chunks_text.iter().zip(embeddings.iter()) {
-            chunks.push(Chunk {
+            chunk_buffer.push(Chunk {
                 id: Uuid::new_v4(),
                 document_id: doc.id.clone(),
                 content: text.clone(),
@@ -175,18 +248,28 @@ pub async fn index_source(
             });
         }
 
-        total_chunks += chunks.len();
+        total_chunks += chunks_text.len();
         successful_files += 1;
 
-        // Add to buffer
-        chunk_buffer.extend(chunks);
-
-        // Batch write: write every BATCH_SIZE files or at the end
-        let should_write = chunk_buffer.len() >= BATCH_SIZE * 10  // ~10 chunks per file avg
-            || idx == documents.len() - 1  // Last file
-            || last_write_time.elapsed().as_secs() >= 5; // Every 5 seconds
+        // Batch write
+        let should_write = chunk_buffer.len() >= BATCH_SIZE * 10
+            || idx == documents.len() - 1
+            || last_write_time.elapsed().as_secs() >= 5;
 
         if should_write && !chunk_buffer.is_empty() {
+            // Check cancellation before DB write
+            if check_cancellation(
+                &state,
+                &job_id,
+                &running_job,
+                successful_files,
+                total_chunks,
+            )
+            .is_some()
+            {
+                return;
+            }
+
             let write_start = std::time::Instant::now();
             let chunks_to_write = chunk_buffer.len();
 
@@ -203,42 +286,39 @@ pub async fn index_source(
                 Ok(_) => {
                     let write_time = write_start.elapsed();
                     tracing::info!(
-                        "  ✓ Batch written in {:.2}ms ({:.2}ms per chunk)",
-                        write_time.as_secs_f64() * 1000.0,
-                        write_time.as_secs_f64() * 1000.0 / chunks_to_write as f64
+                        "  ✓ Batch written in {:.2}ms",
+                        write_time.as_secs_f64() * 1000.0
                     );
                     last_write_time = std::time::Instant::now();
                 }
                 Err(e) => {
                     tracing::error!("LanceDB batch write error: {} - Continuing...", e);
-                    // Don't fail the entire job, just log the error
                 }
             }
         }
 
-        // Update job progress in redb periodically (every 10 files)
+        // Update progress
         if (idx + 1) % 10 == 0 || idx == documents.len() - 1 {
-            job.files_indexed = Some(successful_files);
-            job.chunks_created = Some(total_chunks);
-            if let Err(e) = state.metadata_store.update_job(&job) {
+            running_job.files_indexed = Some(successful_files);
+            running_job.chunks_created = Some(total_chunks);
+            if let Err(e) = state.metadata_store.update_job(&running_job) {
                 tracing::warn!("Failed to update job progress: {}", e);
             }
         }
     }
 
-    // 6. Update job as completed
+    // 3. Complete job
     let completed_job = IndexingJob {
         status: JobStatus::Completed,
         finished_at: Some(Utc::now().to_rfc3339()),
         files_indexed: Some(successful_files),
         chunks_created: Some(total_chunks),
-        ..job
+        ..running_job
     };
 
-    state
-        .metadata_store
-        .update_job(&completed_job)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if let Err(e) = state.metadata_store.update_job(&completed_job) {
+        tracing::error!("Failed to update job completion status: {}", e);
+    }
 
     let embedding_size_mb = (total_chunks * 1536) as f64 / 1_048_576.0;
     let processed_size_mb = (successful_files as f64 / files_count as f64) * total_size_mb;
@@ -262,10 +342,31 @@ pub async fn index_source(
         embedding_size_mb,
         processed_size_mb
     );
+}
 
-    Ok(Json(IndexSourceResponse {
-        job_id,
-        files_indexed: successful_files,
-        chunks_created: total_chunks,
-    }))
+fn check_cancellation(
+    state: &Arc<AppState>,
+    job_id: &str,
+    job: &IndexingJob,
+    files_indexed: usize,
+    chunks_created: usize,
+) -> Option<()> {
+    if state.cancellation_flags.get(job_id).map_or(false, |v| *v) {
+        tracing::warn!("🛑 Job {} cancelled by user", job_id);
+
+        let cancelled_job = IndexingJob {
+            status: JobStatus::Failed,
+            finished_at: Some(Utc::now().to_rfc3339()),
+            files_indexed: Some(files_indexed),
+            chunks_created: Some(chunks_created),
+            error: Some("Job cancelled by user".to_string()),
+            ..job.clone()
+        };
+
+        let _ = state.metadata_store.update_job(&cancelled_job);
+        state.cancellation_flags.remove(job_id);
+        Some(())
+    } else {
+        None
+    }
 }

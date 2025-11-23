@@ -175,7 +175,7 @@ export async function indexSource(sourceId: string): Promise<IndexSourceResponse
 }
 
 // Jobs
-export type JobStatus = 'Running' | 'Completed' | 'Failed';
+export type JobStatus = 'Pending' | 'Running' | 'Completed' | 'Failed';
 
 export interface Job {
     id: string;
@@ -187,6 +187,8 @@ export interface Job {
     finished_at?: string;
     files_indexed?: number;
     chunks_created?: number;
+    total_files?: number;
+    total_size_bytes?: number;
     error?: string;
 }
 
@@ -199,6 +201,31 @@ export async function listJobs(): Promise<ListJobsResponse> {
 
     if (!response.ok) {
         throw new Error(`Failed to list jobs: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export interface CancelJobRequest {
+    job_id: string;
+}
+
+export interface CancelJobResponse {
+    success: boolean;
+    job_id: string;
+}
+
+export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
+    const response = await fetch(`${API_BASE}/api/jobs/cancel`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ job_id: jobId }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to cancel job: ${response.statusText}`);
     }
 
     return response.json();

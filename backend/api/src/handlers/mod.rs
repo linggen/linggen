@@ -8,6 +8,6 @@ pub mod search;
 pub use index::{index_document, AppState};
 pub use index_folder::index_folder;
 pub use index_source::index_source;
-pub use jobs::list_jobs;
+pub use jobs::{cancel_job, list_jobs};
 pub use resources::{add_resource, list_resources, remove_resource};
 pub use search::search;

@@ -37,6 +37,7 @@ pub struct Chunk {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum JobStatus {
+    Pending,
     Running,
     Completed,
     Failed,
@@ -53,5 +54,7 @@ pub struct IndexingJob {
     pub finished_at: Option<String>,
     pub files_indexed: Option<usize>,
     pub chunks_created: Option<usize>,
+    pub total_files: Option<usize>, // Total number of files to index
+    pub total_size_bytes: Option<usize>, // Total size in bytes
     pub error: Option<String>,
 }

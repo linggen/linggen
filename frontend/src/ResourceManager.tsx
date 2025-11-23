@@ -5,9 +5,10 @@ interface ResourceManagerProps {
   onIndexResource?: (resource: Resource) => void
   indexingResourceId?: string | null
   indexingProgress?: string | null
+  onCancelJob?: () => void
 }
 
-export function ResourceManager({ onIndexResource, indexingResourceId, indexingProgress }: ResourceManagerProps) {
+export function ResourceManager({ onIndexResource, indexingResourceId, indexingProgress, onCancelJob }: ResourceManagerProps) {
   const [resources, setResources] = useState<Resource[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -105,7 +106,7 @@ export function ResourceManager({ onIndexResource, indexingResourceId, indexingP
   return (
     <div className="resource-manager">
       <h2>📚 Resource Management</h2>
-      
+
       {/* Add Resource Form */}
       <form onSubmit={handleAdd} className="resource-form">
         <div className="form-row">
@@ -158,7 +159,7 @@ export function ResourceManager({ onIndexResource, indexingResourceId, indexingP
       {/* Resources List */}
       <div className="resources-list">
         <h3>Configured Resources ({resources.length})</h3>
-        
+
         {loading ? (
           <div className="loading">Loading resources...</div>
         ) : resources.length === 0 ? (
@@ -184,6 +185,16 @@ export function ResourceManager({ onIndexResource, indexingResourceId, indexingP
                             <span className="indexing-text">
                               {indexingProgress || 'Indexing...'}
                             </span>
+                            {onCancelJob && (
+                              <button
+                                type="button"
+                                className="cancel-button"
+                                onClick={onCancelJob}
+                                title="Cancel indexing"
+                              >
+                                Cancel
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <button

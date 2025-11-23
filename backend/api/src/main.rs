@@ -1,4 +1,5 @@
 use axum::{routing::get, routing::post, Router};
+use dashmap::DashMap;
 use embeddings::{EmbeddingModel, TextChunker};
 use std::net::SocketAddr;
 use std::{path::PathBuf, sync::Arc};
@@ -8,9 +9,11 @@ use tracing::info;
 
 mod handlers;
 use handlers::{
-    add_resource, index_document, index_folder, index_source, list_jobs, list_resources,
-    remove_resource, search, AppState,
+    add_resource, cancel_job, index_document, index_folder, index_source, list_jobs,
+    list_resources, remove_resource, search, AppState,
 };
+mod job_manager;
+use job_manager::JobManager;
 
 #[tokio::main]
 async fn main() {
@@ -45,11 +48,41 @@ async fn main() {
         MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
     );
 
+    // Clean up stale jobs that were running when server stopped
+    info!("Checking for interrupted jobs...");
+    if let Ok(jobs) = metadata_store.get_jobs(None) {
+        let running_jobs: Vec<_> = jobs
+            .iter()
+            .filter(|j| matches!(j.status, rememberme_core::JobStatus::Running))
+            .collect();
+        if !running_jobs.is_empty() {
+            info!(
+                "Found {} running jobs that were interrupted by server restart",
+                running_jobs.len()
+            );
+            for job in running_jobs {
+                let mut failed_job = job.clone();
+                failed_job.status = rememberme_core::JobStatus::Failed;
+                failed_job.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                failed_job.error = Some("Server was restarted".to_string());
+                if let Err(e) = metadata_store.update_job(&failed_job) {
+                    info!("Failed to update interrupted job {}: {}", job.id, e);
+                } else {
+                    info!("Marked job {} as failed (was interrupted)", job.id);
+                }
+            }
+        }
+    }
+
+    let job_manager = Arc::new(JobManager::new(1)); // Limit to 1 concurrent job
+
     let app_state = Arc::new(AppState {
         embedding_model,
         chunker,
         vector_store,
         metadata_store,
+        cancellation_flags: DashMap::new(),
+        job_manager,
     });
 
     // Configure CORS
@@ -68,6 +101,7 @@ async fn main() {
         .route("/api/index_folder", post(index_folder))
         .route("/api/index_source", post(index_source))
         .route("/api/jobs", get(list_jobs))
+        .route("/api/jobs/cancel", post(cancel_job))
         .route("/api/search", get(search))
         .route("/api/resources", post(add_resource))
         .route("/api/resources", get(list_resources))
