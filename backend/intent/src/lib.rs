@@ -1,7 +1,10 @@
 use anyhow::Result;
 use rememberme_llm::MiniLLM;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{error, info};
 
 /// Developer intent types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +30,22 @@ pub enum Intent {
     Other(String),
 }
 
+impl fmt::Display for Intent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Intent::FixBug => write!(f, "Fix a bug or error"),
+            Intent::ExplainCode => write!(f, "Explain code or concepts"),
+            Intent::RefactorCode => write!(f, "Refactor existing code"),
+            Intent::WriteTest => write!(f, "Write tests"),
+            Intent::DebugError => write!(f, "Debug an error"),
+            Intent::GenerateDoc => write!(f, "Generate documentation"),
+            Intent::AnalyzePerformance => write!(f, "Analyze performance"),
+            Intent::AskQuestion => write!(f, "Ask a general question"),
+            Intent::Other(s) => write!(f, "Other: {}", s),
+        }
+    }
+}
+
 impl Intent {
     /// Parse intent from string
     pub fn from_str(s: &str) -> Self {
@@ -37,7 +56,9 @@ impl Intent {
             "write_test" | "writetest" | "test" => Intent::WriteTest,
             "debug_error" | "debugerror" | "debug" => Intent::DebugError,
             "generate_doc" | "generatedoc" | "doc" | "documentation" => Intent::GenerateDoc,
-            "analyze_performance" | "analyzeperformance" | "perf" | "performance" => Intent::AnalyzePerformance,
+            "analyze_performance" | "analyzeperformance" | "perf" | "performance" => {
+                Intent::AnalyzePerformance
+            }
             "ask_question" | "askquestion" | "question" => Intent::AskQuestion,
             other => Intent::Other(other.to_string()),
         }
@@ -57,106 +78,135 @@ pub struct IntentResult {
     pub needs_context: bool,
 }
 
-/// Intent classifier using Mini LLM
+/// Intent classifier with LLM support and heuristic fallback
 pub struct IntentClassifier {
-    llm: Arc<MiniLLM>,
+    llm: Option<Arc<Mutex<MiniLLM>>>,
 }
 
 impl IntentClassifier {
-    /// Create a new intent classifier
-    pub fn new(llm: Arc<MiniLLM>) -> Self {
+    pub fn new(llm: Option<Arc<Mutex<MiniLLM>>>) -> Self {
         Self { llm }
     }
-    
+
     /// Classify developer query intent
     pub async fn classify(&mut self, query: &str) -> Result<IntentResult> {
-        let system_prompt = "You are an intent classification assistant for developer queries. \
-                            Analyze the query and respond ONLY with valid JSON.";
-        
-        let user_prompt = format!(
-            r#"Classify this developer query:
-Query: "{}"
+        // Try LLM first if available
+        if let Some(llm) = &self.llm {
+            match self.classify_with_llm(llm, query).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    error!(
+                        "LLM intent classification failed: {}. Falling back to heuristics.",
+                        e
+                    );
+                }
+            }
+        }
 
-Respond with JSON in this exact format:
-{{
-  "intent": "fix_bug|explain_code|refactor_code|write_test|debug_error|generate_doc|analyze_performance|ask_question|other",
-  "confidence": 0.95,
+        // Fallback to heuristics
+        self.classify_heuristic(query)
+    }
+
+    async fn classify_with_llm(
+        &self,
+        llm: &Arc<Mutex<MiniLLM>>,
+        query: &str,
+    ) -> Result<IntentResult> {
+        let system_prompt = r#"You are an intent classifier for a coding assistant.
+Analyze the user's query and classify it into one of these intents:
+- fix_bug: Fix a bug or error
+- explain_code: Explain code or concepts
+- refactor_code: Refactor existing code
+- write_test: Write tests
+- debug_error: Debug an error
+- generate_doc: Generate documentation
+- analyze_performance: Analyze performance
+- ask_question: Ask a general question
+- other: Any other intent (specify briefly)
+
+Also extract key entities (file names, function names, concepts) and determine if context is needed.
+
+Output JSON only:
+{
+  "intent": "intent_name",
+  "other_description": "optional description if intent is other",
+  "confidence": 0.9,
   "entities": ["entity1", "entity2"],
   "needs_context": true
-}}
+}"#;
 
-Intent options:
-- fix_bug: fixing bugs or errors
-- explain_code: explaining code or concepts
-- refactor_code: refactoring or improving code structure
-- write_test: writing unit/integration tests
-- debug_error: debugging runtime errors
-- generate_doc: generating documentation
-- analyze_performance: analyzing or optimizing performance
-- ask_question: general questions
-- other: unclear intent
+        let mut llm = llm.lock().await;
+        let response = llm.generate_with_system(system_prompt, query, 200).await?;
 
-Entities: key technical terms (e.g., "auth", "timeout", "redis")
-Needs context: true if code/docs would help answer the query
-
-Respond ONLY with valid JSON, no explanation:"#,
-            query
-        );
-        
-        // Get LLM response
-        let llm = Arc::get_mut(&mut self.llm)
-            .ok_or_else(|| anyhow::anyhow!("Failed to get mutable LLM reference"))?;
-        
-        let response = llm
-            .generate_with_system(&system_prompt, &user_prompt, 200)
-            .await?;
-        
         // Parse JSON response
-        let result = self.parse_response(&response)?;
-        
-        Ok(result)
-    }
-    
-    /// Parse LLM response to IntentResult
-    fn parse_response(&self, response: &str) -> Result<IntentResult> {
-        // Find JSON in response (LLM might add extra text)
-        let json_start = response.find('{').unwrap_or(0);
-        let json_end = response.rfind('}').map(|i| i + 1).unwrap_or(response.len());
-        let json_str = &response[json_start..json_end];
-        
-        // Parse JSON
-        let parsed: serde_json::Value = serde_json::from_str(json_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}. Response: {}", e, response))?;
-        
-        // Extract fields
-        let intent_str = parsed["intent"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'intent' field"))?;
-        
-        let intent = Intent::from_str(intent_str);
-        
-        let confidence = parsed["confidence"]
-            .as_f64()
-            .unwrap_or(0.5) as f32;
-        
-        let entities: Vec<String> = parsed["entities"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        
-        let needs_context = parsed["needs_context"]
-            .as_bool()
-            .unwrap_or(true);
-        
+        // Clean up markdown code blocks if present
+        let json_str = response
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
+        #[derive(Deserialize)]
+        struct LLMResponse {
+            intent: String,
+            other_description: Option<String>,
+            confidence: f32,
+            entities: Vec<String>,
+            needs_context: bool,
+        }
+
+        let parsed: LLMResponse = serde_json::from_str(json_str)?;
+
+        let intent = if parsed.intent == "other" {
+            Intent::Other(
+                parsed
+                    .other_description
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            )
+        } else {
+            Intent::from_str(&parsed.intent)
+        };
+
         Ok(IntentResult {
             intent,
-            confidence,
+            confidence: parsed.confidence,
+            entities: parsed.entities,
+            needs_context: parsed.needs_context,
+        })
+    }
+
+    fn classify_heuristic(&self, query: &str) -> Result<IntentResult> {
+        let q = query.to_lowercase();
+
+        let intent = if q.contains("bug") || q.contains("fix") || q.contains("error") {
+            Intent::FixBug
+        } else if q.contains("explain") || q.contains("what is") || q.contains("how does") {
+            Intent::ExplainCode
+        } else if q.contains("refactor") || q.contains("clean up") {
+            Intent::RefactorCode
+        } else if q.contains("test") || q.contains("unit test") {
+            Intent::WriteTest
+        } else if q.contains("doc") || q.contains("documentation") {
+            Intent::GenerateDoc
+        } else if q.contains("perf") || q.contains("optimize") || q.contains("slow") {
+            Intent::AnalyzePerformance
+        } else {
+            Intent::AskQuestion
+        };
+
+        // Very rough entity extraction: split on whitespace and keep alphanumeric words.
+        let entities: Vec<String> = q
+            .split_whitespace()
+            .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        Ok(IntentResult {
+            intent,
+            confidence: 0.8,
             entities,
-            needs_context,
+            needs_context: true,
         })
     }
 }
@@ -164,26 +214,19 @@ Respond ONLY with valid JSON, no explanation:"#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_intent_parsing() {
         assert_eq!(Intent::from_str("fix_bug"), Intent::FixBug);
         assert_eq!(Intent::from_str("explain"), Intent::ExplainCode);
         assert_eq!(Intent::from_str("test"), Intent::WriteTest);
     }
-    
-    #[test]
-    fn test_json_parsing() {
-        let classifier = IntentClassifier {
-            llm: Arc::new(MiniLLM::new(Default::default()).unwrap()),
-        };
-        
-        let json = r#"{"intent": "fix_bug", "confidence": 0.95, "entities": ["auth", "timeout"], "needs_context": true}"#;
-        let result = classifier.parse_response(json).unwrap();
-        
+
+    #[tokio::test]
+    async fn test_classifier_heuristic() {
+        let mut classifier = IntentClassifier::new(None);
+        let result = classifier.classify("fix auth timeout bug").await.unwrap();
+
         assert_eq!(result.intent, Intent::FixBug);
-        assert_eq!(result.confidence, 0.95);
-        assert_eq!(result.entities, vec!["auth", "timeout"]);
-        assert!(result.needs_context);
     }
 }

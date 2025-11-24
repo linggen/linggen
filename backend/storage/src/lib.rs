@@ -10,9 +10,11 @@ use std::sync::Arc;
 
 pub mod metadata;
 pub mod preferences;
+pub mod profile;
 
 pub use metadata::MetadataStore;
 pub use preferences::UserPreferences;
+pub use profile::SourceProfile;
 
 pub struct VectorStore {
     conn: Connection,
@@ -31,6 +33,8 @@ impl VectorStore {
     pub async fn init(&self) -> Result<()> {
         // Define schema
         // id: Utf8
+        // source_id: Utf8
+        // document_id: Utf8
         // content: Utf8
         // vector: FixedSizeList(Float32, 384) - assuming 384 dim for now (e.g. all-MiniLM-L6-v2)
         // We might need to make dimension configurable
@@ -50,6 +54,7 @@ impl VectorStore {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
+            Field::new("source_id", DataType::Utf8, false),
             Field::new("document_id", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
             Field::new(
@@ -63,10 +68,12 @@ impl VectorStore {
         ]));
 
         let ids: Vec<String> = chunks.iter().map(|c| c.id.to_string()).collect();
+        let source_ids: Vec<String> = chunks.iter().map(|c| c.source_id.clone()).collect();
         let document_ids: Vec<String> = chunks.iter().map(|c| c.document_id.clone()).collect();
         let contents: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
 
         let id_array = StringArray::from(ids);
+        let source_id_array = StringArray::from(source_ids);
         let document_id_array = StringArray::from(document_ids);
         let content_array = StringArray::from(contents);
 
@@ -87,6 +94,7 @@ impl VectorStore {
             schema.clone(),
             vec![
                 Arc::new(id_array),
+                Arc::new(source_id_array),
                 Arc::new(document_id_array),
                 Arc::new(content_array),
                 Arc::new(vector_array),
@@ -150,6 +158,9 @@ impl VectorStore {
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .unwrap();
+            let source_id_col = batch
+                .column_by_name("source_id")
+                .map(|col| col.as_any().downcast_ref::<StringArray>().unwrap());
             let document_id_col = batch
                 .column_by_name("document_id")
                 .unwrap()
@@ -166,6 +177,9 @@ impl VectorStore {
             for i in 0..batch.num_rows() {
                 chunks.push(Chunk {
                     id: uuid::Uuid::parse_str(id_col.value(i)).unwrap_or_default(),
+                    source_id: source_id_col
+                        .map(|c| c.value(i).to_string())
+                        .unwrap_or_default(),
                     document_id: document_id_col.value(i).to_string(),
                     content: content_col.value(i).to_string(),
                     embedding: None,
@@ -188,14 +202,15 @@ impl VectorStore {
         Ok(chunks)
     }
 
-    /// Delete all chunks belonging to a specific source (by document_id prefix or exact match)
+    /// Delete all chunks belonging to a specific source
     /// This is a hard delete that rewrites the table without the matching chunks
     pub async fn delete_by_source(&self, source_id: &str) -> Result<()> {
         let table = self.conn.open_table(&self.table_name).execute().await?;
 
-        // LanceDB delete using SQL-like filter
-        // Delete where document_id starts with source_id
-        let filter = format!("document_id LIKE '{}%'", source_id);
+        // Delete where source_id matches
+        // Note: If the column doesn't exist (old data), this might fail or delete nothing.
+        // Ideally we should migrate, but for now we rely on re-creation.
+        let filter = format!("source_id = '{}'", source_id);
         table.delete(&filter).await?;
 
         Ok(())
@@ -241,6 +256,7 @@ mod tests {
         // Create dummy chunk
         let chunk = Chunk {
             id: uuid::Uuid::new_v4(),
+            source_id: "source1".to_string(),
             document_id: "doc1".to_string(),
             content: "Hello LanceDB".to_string(),
             embedding: Some(vec![0.1; 384]),
@@ -266,6 +282,7 @@ mod tests {
 
         let chunk1 = Chunk {
             id: uuid::Uuid::new_v4(),
+            source_id: "source1".to_string(),
             document_id: "doc1".to_string(),
             content: "Apple banana cherry".to_string(),
             embedding: Some(vec![0.1; 384]),
@@ -273,6 +290,7 @@ mod tests {
         };
         let chunk2 = Chunk {
             id: uuid::Uuid::new_v4(),
+            source_id: "source1".to_string(),
             document_id: "doc2".to_string(),
             content: "Banana date elderberry".to_string(),
             embedding: Some(vec![0.1; 384]),

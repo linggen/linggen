@@ -6,11 +6,11 @@ edition = "2021"
 [dependencies]
 # Our crates
 rememberme-core = { path = "../core" }
-rememberme-llm = { path = "../llm" }
 rememberme-intent = { path = "../intent" }
-rememberme-context = { path = "../context" }
 storage = { path = "../storage" }
 embeddings = { path = "../embeddings" }
+rememberme-llm = { path = "../llm" }
+
 
 # Utilities
 anyhow = "1.0"
@@ -19,3 +19,4 @@ serde_json = "1.0"
 
 # Async
 tokio = { version = "1.42", features = ["full"] }
+tracing = "0.1"

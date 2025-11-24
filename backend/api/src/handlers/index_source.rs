@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
-use ingestion::{Ingestor, LocalIngestor};
-use rememberme_core::{Chunk, IndexingJob, JobStatus};
+use ingestion::{GitIngestor, Ingestor, LocalIngestor, WebIngestor};
+use rememberme_core::{Chunk, IndexingJob, JobStatus, SourceType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -101,7 +101,7 @@ async fn run_indexing_job(
     source_path: String,
     initial_job: IndexingJob,
 ) {
-    let mut running_job = initial_job;
+    let mut running_job = initial_job.clone();
 
     // 0. Acquire permit from JobManager (this blocks if queue is full)
     tracing::info!("Job {} waiting for execution permit...", job_id);
@@ -114,8 +114,33 @@ async fn run_indexing_job(
     let _ = state.metadata_store.update_job(&running_job);
 
     // 1. Ingest documents
-    let ingestor = LocalIngestor::new(PathBuf::from(&source_path));
-    tracing::info!("Starting ingestion for folder: {}", source_path);
+    tracing::info!(
+        "Starting ingestion for {} source: {}",
+        match initial_job.source_type {
+            SourceType::Local => "Local",
+            SourceType::Git => "Git",
+            SourceType::Web => "Web",
+        },
+        source_path
+    );
+
+    let ingestor: Box<dyn Ingestor> = match initial_job.source_type {
+        SourceType::Local => Box::new(LocalIngestor::new(PathBuf::from(&source_path))),
+        SourceType::Git => {
+            // Store repos in ./backend/data/repos/<source_id>
+            let mut repo_path = std::env::current_dir().unwrap_or_default();
+            repo_path.push("backend");
+            repo_path.push("data");
+            repo_path.push("repos");
+            repo_path.push(&initial_job.source_id);
+
+            Box::new(GitIngestor::new(source_path.clone(), repo_path))
+        }
+        SourceType::Web => {
+            // Default max depth of 2 for now
+            Box::new(WebIngestor::new(source_path.clone(), 2))
+        }
+    };
 
     let documents = match ingestor.ingest().await {
         Ok(docs) => docs,
@@ -241,6 +266,7 @@ async fn run_indexing_job(
         for (text, embedding) in chunks_text.iter().zip(embeddings.iter()) {
             chunk_buffer.push(Chunk {
                 id: Uuid::new_v4(),
+                source_id: running_job.source_id.clone(),
                 document_id: doc.id.clone(),
                 content: text.clone(),
                 embedding: Some(embedding.clone()),

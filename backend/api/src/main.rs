@@ -9,9 +9,9 @@ use tracing::info;
 
 mod handlers;
 use handlers::{
-    add_resource, cancel_job, classify_intent, enhance_prompt, get_preferences, index_document,
-    index_folder, index_source, list_jobs, list_resources, remove_resource, search,
-    update_preferences, AppState,
+    add_resource, cancel_job, classify_intent, enhance_prompt, get_app_status, get_preferences,
+    index_source, list_jobs, list_resources, remove_resource, retry_init, update_preferences,
+    AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -48,6 +48,164 @@ async fn main() {
     let metadata_store = Arc::new(
         MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
     );
+
+    // Initialize LLM model using ModelManager
+    info!("Checking LLM model initialization...");
+
+    // Check model status using ModelManager
+    let model_manager = rememberme_llm::ModelManager::new().expect("Failed to create ModelManager");
+    let model_status = model_manager
+        .get_model_status("qwen2.5-1.5b")
+        .unwrap_or(rememberme_llm::ModelStatus::NotFound);
+
+    match model_status {
+        rememberme_llm::ModelStatus::Ready => {
+            info!("LLM model already initialized and ready, loading into singleton...");
+            // Mark as initialized in redb
+            let _ = metadata_store.set_setting("model_initialized", "true");
+
+            // Initialize the singleton with the existing model
+            let config = if let Some(home_dir) = dirs::home_dir() {
+                let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
+                rememberme_llm::LLMConfig {
+                    model_path: Some(model_dir.join("model.safetensors")),
+                    tokenizer_path: Some(model_dir.join("tokenizer.json")),
+                    ..Default::default()
+                }
+            } else {
+                rememberme_llm::LLMConfig::default()
+            };
+
+            // Initialize singleton in background
+            tokio::spawn(async move {
+                match rememberme_llm::LLMSingleton::initialize(config).await {
+                    Ok(_) => info!("LLM singleton loaded successfully"),
+                    Err(e) => info!("Failed to load LLM singleton: {}", e),
+                }
+            });
+        }
+        rememberme_llm::ModelStatus::NotFound | rememberme_llm::ModelStatus::Corrupted => {
+            if model_status == rememberme_llm::ModelStatus::Corrupted {
+                info!("LLM model corrupted, will attempt to use anyway...");
+            } else {
+                info!("LLM model not found, will attempt initialization...");
+            }
+
+            let metadata_store_clone = metadata_store.clone();
+            tokio::spawn(async move {
+                // Clone for the closure
+                let metadata_store_for_progress = metadata_store_clone.clone();
+
+                // Progress callback that saves to redb
+                let progress_callback = move |msg: &str| {
+                    info!("Model init progress: {}", msg);
+                    if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg) {
+                        info!("Failed to save progress: {}", e);
+                    }
+                };
+
+                // Use local model path
+                let config = if let Some(home_dir) = dirs::home_dir() {
+                    let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
+                    rememberme_llm::LLMConfig {
+                        model_path: Some(model_dir.join("model.safetensors")),
+                        tokenizer_path: Some(model_dir.join("tokenizer.json")),
+                        ..Default::default()
+                    }
+                } else {
+                    rememberme_llm::LLMConfig::default()
+                };
+
+                // Initialize LLM singleton
+                let config_clone = config.clone();
+                match rememberme_llm::LLMSingleton::initialize_with_progress(
+                    config_clone,
+                    progress_callback,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        info!("LLM singleton initialized successfully");
+
+                        // Register model in ModelManager
+                        if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
+                            let mut files = std::collections::HashMap::new();
+                            if let Some(home_dir) = dirs::home_dir() {
+                                let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
+
+                                // Get file sizes
+                                if let Ok(metadata) =
+                                    std::fs::metadata(model_dir.join("model.safetensors"))
+                                {
+                                    files.insert(
+                                        "model.safetensors".to_string(),
+                                        rememberme_llm::FileInfo {
+                                            sha256: None,
+                                            size: metadata.len(),
+                                        },
+                                    );
+                                }
+                                if let Ok(metadata) =
+                                    std::fs::metadata(model_dir.join("tokenizer.json"))
+                                {
+                                    files.insert(
+                                        "tokenizer.json".to_string(),
+                                        rememberme_llm::FileInfo {
+                                            sha256: None,
+                                            size: metadata.len(),
+                                        },
+                                    );
+                                }
+                                if let Ok(metadata) =
+                                    std::fs::metadata(model_dir.join("config.json"))
+                                {
+                                    files.insert(
+                                        "config.json".to_string(),
+                                        rememberme_llm::FileInfo {
+                                            sha256: None,
+                                            size: metadata.len(),
+                                        },
+                                    );
+                                }
+
+                                let _ = model_manager.register_model(
+                                    "qwen2.5-1.5b",
+                                    "Qwen2.5-1.5B-Instruct",
+                                    "main",
+                                    files,
+                                );
+                            }
+                        }
+
+                        // Mark as initialized in redb
+                        if let Err(e) =
+                            metadata_store_clone.set_setting("model_initialized", "true")
+                        {
+                            info!("Failed to save model initialization state: {}", e);
+                        }
+                        if let Err(e) = metadata_store_clone.set_setting("init_progress", "") {
+                            info!("Failed to clear progress: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Failed to initialize LLM model: {}", e);
+                        info!("{}", error_msg);
+                        if let Err(e) = metadata_store_clone.set_setting("init_error", &error_msg) {
+                            info!("Failed to save error: {}", e);
+                        }
+                        if let Err(e) =
+                            metadata_store_clone.set_setting("model_initialized", "error")
+                        {
+                            info!("Failed to save model error state: {}", e);
+                        }
+                    }
+                }
+            });
+        }
+        rememberme_llm::ModelStatus::Downloading => {
+            info!("LLM model is currently downloading...");
+        }
+    }
 
     // Clean up stale jobs that were running when server stopped
     info!("Checking for interrupted jobs...");
@@ -98,19 +256,29 @@ async fn main() {
 
     // Build our application with routes
     let api_routes = Router::new()
-        .route("/api/index", post(index_document))
-        .route("/api/index_folder", post(index_folder))
+        .route("/api/status", get(get_app_status))
+        .route("/api/retry_init", post(retry_init))
         .route("/api/index_source", post(index_source))
         .route("/api/classify", post(classify_intent))
         .route("/api/enhance", post(enhance_prompt))
-        .route("/api/preferences", get(get_preferences))
-        .route("/api/preferences", axum::routing::put(update_preferences))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/cancel", post(cancel_job))
-        .route("/api/search", get(search))
         .route("/api/resources", post(add_resource))
         .route("/api/resources", get(list_resources))
         .route("/api/resources/remove", post(remove_resource))
+        .route(
+            "/api/preferences",
+            get(handlers::preferences::get_preferences)
+                .put(handlers::preferences::update_preferences),
+        )
+        .route(
+            "/api/sources/:source_id/profile",
+            get(handlers::profile::get_profile).put(handlers::profile::update_profile),
+        )
+        .route(
+            "/api/sources/:source_id/profile/generate",
+            post(handlers::profile::generate_profile),
+        )
         .with_state(app_state)
         .layer(cors);
 

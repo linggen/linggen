@@ -6,9 +6,10 @@ interface ResourceManagerProps {
   indexingResourceId?: string | null
   indexingProgress?: string | null
   onCancelJob?: () => void
+  onViewProfile?: (sourceId: string) => void
 }
 
-export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJob }: ResourceManagerProps) {
+export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJob, onViewProfile }: ResourceManagerProps) {
   const [resources, setResources] = useState<Resource[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -162,10 +163,6 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
 
         {loading ? (
           <div className="loading">Loading resources...</div>
-        ) : resources.length === 0 ? (
-          <div className="empty-state">
-            No resources configured yet. Add one above to get started!
-          </div>
         ) : (
           <div className="resource-table">
             <div className="resource-table-header">
@@ -174,91 +171,106 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
               <div className="col-status">Last Indexed</div>
               <div className="col-actions">Actions</div>
             </div>
-            {resources.map((resource) => (
-              <div key={resource.id} className="resource-row">
-                <div className="col-name">
-                  <div className="resource-name-cell">
-                    <span className="resource-icon">{getResourceIcon(resource.resource_type)}</span>
-                    <div className="resource-details">
-                      <div className="resource-title">{resource.name}</div>
-                      <div className="resource-type-badge">{resource.resource_type.toUpperCase()}</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="col-location">
-                  <span className="resource-path-text">{resource.path}</span>
-                </div>
-                <div className="col-status">
-                  {indexingResourceId === resource.id ? (
-                    <div className="indexing-indicator">
-                      <span className="spinner">⏳</span>
-                      <span className="indexing-label">Indexing...</span>
-                    </div>
-                  ) : resource.latest_job ? (
-                    <div className="status-cell">
-                      {resource.latest_job.status === 'Completed' && (
-                        <div className="status-completed">
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                            <path d="M4 7L6 9L10 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                          <span title={new Date(resource.latest_job.finished_at || '').toLocaleString()}>
-                            {new Date(resource.latest_job.finished_at || '').toLocaleDateString()}
-                          </span>
-                        </div>
-                      )}
-                      {resource.latest_job.status === 'Failed' && (
-                        <div className="status-failed" title={resource.latest_job.error}>
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
-                            <path d="M5 5L9 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                          </svg>
-                          <span>Failed</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="status-never">Never</span>
-                  )}
-                </div>
-                <div className="col-actions">
-                  <div className="action-buttons">
-                    {resource.resource_type === 'local' && (
-                      <>
-                        {indexingResourceId === resource.id ? (
-                          <button
-                            type="button"
-                            className="btn-action btn-cancel"
-                            onClick={onCancelJob}
-                            title="Cancel indexing"
-                          >
-                            Cancel
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn-action btn-index"
-                            onClick={() => onIndexResource?.(resource)}
-                            disabled={!onIndexResource || indexingResourceId !== null}
-                          >
-                            {resource.latest_job?.status === 'Completed' ? 'Update' : 'Index'}
-                          </button>
-                        )}
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      className="btn-action btn-remove"
-                      onClick={() => handleRemove(resource.id, resource.name)}
-                      title="Remove resource"
-                      disabled={indexingResourceId === resource.id}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
+
+            {resources.length === 0 ? (
+              <div className="empty-state">
+                No resources configured yet. Add one above to get started!
               </div>
-            ))}
+            ) : (
+              resources.map((resource) => (
+                <div key={resource.id} className="resource-row">
+                  <div className="col-name">
+                    <div className="resource-name-cell">
+                      <span className="resource-icon">{getResourceIcon(resource.resource_type)}</span>
+                      <div className="resource-details">
+                        <div className="resource-title">{resource.name}</div>
+                        <div className="resource-type-badge">{resource.resource_type.toUpperCase()}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-location">
+                    <span className="resource-path-text">{resource.path}</span>
+                  </div>
+                  <div className="col-status">
+                    {indexingResourceId === resource.id ? (
+                      <div className="indexing-indicator">
+                        <span className="spinner">⏳</span>
+                        <span className="indexing-label">Indexing...</span>
+                      </div>
+                    ) : resource.latest_job ? (
+                      <div className="status-cell">
+                        {resource.latest_job.status === 'Completed' && (
+                          <div className="status-completed">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                              <path d="M4 7L6 9L10 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            <span title={new Date(resource.latest_job.finished_at || '').toLocaleString()}>
+                              {new Date(resource.latest_job.finished_at || '').toLocaleDateString()}
+                            </span>
+                          </div>
+                        )}
+                        {resource.latest_job.status === 'Failed' && (
+                          <div className="status-failed" title={resource.latest_job.error}>
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" />
+                              <path d="M5 5L9 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            </svg>
+                            <span>Failed</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="status-never">Never</span>
+                    )}
+                  </div>
+                  <div className="col-actions">
+                    <div className="action-buttons">
+                      {resource.resource_type === 'local' && (
+                        <>
+                          {indexingResourceId === resource.id ? (
+                            <button
+                              type="button"
+                              className="btn-action btn-cancel"
+                              onClick={onCancelJob}
+                              title="Cancel indexing"
+                            >
+                              Cancel
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-action btn-index"
+                              onClick={() => onIndexResource?.(resource)}
+                              disabled={!onIndexResource || indexingResourceId !== null}
+                            >
+                              {resource.latest_job?.status === 'Completed' ? 'Update' : 'Index'}
+                            </button>
+                          )}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-action btn-profile"
+                        onClick={() => onViewProfile?.(resource.id)}
+                        title="View/Edit Profile"
+                      >
+                        Profile
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-action btn-remove"
+                        onClick={() => handleRemove(resource.id, resource.name)}
+                        title="Remove resource"
+                        disabled={indexingResourceId === resource.id}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>

@@ -15,7 +15,7 @@ pub fn load_model(
     // Load config
     let config_str = std::fs::read_to_string(config_path).context("Failed to read config file")?;
     let config: Qwen2Config =
-        serde_json::from_str(&config_str).context("Failed to parse config")?;
+        serde_json::from_str(&config_str).context("Failed to parse Qwen2 config")?;
 
     println!("Loading model weights from: {:?}", model_path);
 
@@ -66,8 +66,8 @@ pub fn sample_token(logits: &Tensor, temperature: f64, top_p: f64) -> Result<u32
         let mut indexed_probs: Vec<(usize, f32)> =
             probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
 
-        // Sort by probability (descending)
-        indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // Sort by probability (descending), handle NaN
+        indexed_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Find nucleus
         let mut cumsum = 0.0;

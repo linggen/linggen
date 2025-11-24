@@ -1,36 +1,22 @@
 use axum::{extract::State, http::StatusCode, Json};
-use embeddings::EmbeddingModel;
-use rememberme_enhancement::{EnhancedPrompt, PromptEnhancer};
-use rememberme_llm::{LLMConfig, MiniLLM};
+use rememberme_enhancement::{EnhancedPrompt, PromptEnhancer, PromptStrategy};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use storage::VectorStore;
 
 use super::index::AppState;
 
 #[derive(Deserialize)]
 pub struct EnhanceRequest {
     pub query: String,
-}
-
-#[derive(Serialize)]
-pub struct EnhanceResponse {
-    pub result: EnhancedPrompt,
+    pub strategy: Option<PromptStrategy>,
+    pub source_id: Option<String>,
 }
 
 /// Enhance a user prompt through the full 5-stage pipeline
 pub async fn enhance_prompt(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EnhanceRequest>,
-) -> Result<Json<EnhanceResponse>, (StatusCode, String)> {
-    // Initialize LLM
-    let llm = MiniLLM::new(LLMConfig::default()).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to init LLM: {}", e),
-        )
-    })?;
-
+) -> Result<Json<EnhancedPrompt>, (StatusCode, String)> {
     // Get user preferences
     let preferences = state.metadata_store.get_preferences().map_err(|e| {
         (
@@ -39,16 +25,38 @@ pub async fn enhance_prompt(
         )
     })?;
 
+    // Get LLM instance if available
+    let llm = rememberme_llm::LLMSingleton::get().await;
+
     // Create enhancer
     let mut enhancer = PromptEnhancer::new(
-        Arc::new(llm),
         state.embedding_model.clone(),
         state.vector_store.clone(),
+        llm,
     );
+
+    // Get source profile if source_id is provided
+    let profile = if let Some(source_id) = &req.source_id {
+        state
+            .metadata_store
+            .get_source_profile(source_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to load source profile: {}", e),
+                )
+            })?
+    } else {
+        // Use a default empty profile if no source is specified
+        storage::SourceProfile::default()
+    };
+
+    // Determine strategy
+    let strategy = req.strategy.unwrap_or(PromptStrategy::FullCode);
 
     // Run enhancement pipeline
     let result = enhancer
-        .enhance(&req.query, &preferences)
+        .enhance(&req.query, &preferences, &profile, strategy)
         .await
         .map_err(|e| {
             (
@@ -57,5 +65,5 @@ pub async fn enhance_prompt(
             )
         })?;
 
-    Ok(Json(EnhanceResponse { result }))
+    Ok(Json(result))
 }

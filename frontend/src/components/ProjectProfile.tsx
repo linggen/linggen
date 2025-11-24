@@ -1,0 +1,227 @@
+import React, { useEffect, useState } from 'react';
+import { getProfile, updateProfile, generateProfile, type SourceProfile as SourceProfileType, type Resource } from '../api';
+
+export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> = ({ sourceId, onBack }) => {
+    const [profile, setProfile] = useState<SourceProfileType>({
+        name: '',
+        description: '',
+        tech_stack: [],
+        architecture_notes: [],
+        key_conventions: []
+    });
+    const [source, setSource] = useState<Resource | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [generating, setGenerating] = useState(false);
+    const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const loadData = async () => {
+        try {
+            setLoading(true);
+
+            // Load both profile and source info
+            const [profileData, sourcesResponse] = await Promise.all([
+                getProfile(sourceId),
+                fetch(`http://localhost:3000/api/resources`).then(r => r.json())
+            ]);
+
+            setProfile(profileData);
+            const foundSource = sourcesResponse.resources.find((r: Resource) => r.id === sourceId);
+            if (foundSource) {
+                setSource(foundSource);
+            }
+        } catch (err) {
+            console.error(err);
+            setMessage({ text: 'Failed to load profile', type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSave = async () => {
+        try {
+            setLoading(true);
+            await updateProfile(sourceId, profile);
+            setMessage({ text: '✓ Profile saved successfully', type: 'success' });
+        } catch (err) {
+            console.error(err);
+            setMessage({ text: '✗ Failed to save profile', type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleGenerate = async () => {
+        try {
+            setGenerating(true);
+            setMessage({ text: '⏳ Generating profile from source files... This may take a moment.', type: 'success' });
+            const data = await generateProfile(sourceId);
+            setProfile(data);
+            setMessage({ text: '✓ Profile generated successfully!', type: 'success' });
+        } catch (err) {
+            console.error(err);
+            setMessage({ text: '✗ Failed to generate profile', type: 'error' });
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleArrayChange = (field: keyof SourceProfileType, value: string) => {
+        setProfile(prev => ({
+            ...prev,
+            [field]: value.split(',').map(s => s.trim()).filter(s => s)
+        }));
+    };
+
+    return (
+        <div className="view">
+            <div className="view-header">
+                {onBack && (
+                    <button
+                        onClick={onBack}
+                        className="btn-secondary"
+                        style={{ marginBottom: '1rem' }}
+                    >
+                        ← Back to Sources
+                    </button>
+                )}
+                <h2>Source Profile</h2>
+                <p>Configure this source's tech stack, architecture, and coding conventions for better AI context.</p>
+            </div>
+
+            {source && (
+                <section className="section" style={{ marginBottom: '1rem', background: 'var(--surface-secondary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div style={{ fontSize: '2rem' }}>
+                            {source.resource_type === 'local' ? '📁' : source.resource_type === 'git' ? '🔗' : '🌐'}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <h3 style={{ margin: 0, fontSize: '1.25rem' }}>{source.name}</h3>
+                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                                <span className="badge">{source.resource_type.toUpperCase()}</span>
+                                <span title={source.path}>📍 {source.path}</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            <section className="section">
+                {message && (
+                    <div className={`status ${message.type}`} style={{ marginBottom: '1.5rem' }}>
+                        {message.text}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generating || loading}
+                        className="btn-primary"
+                    >
+                        {generating ? '⏳ Generating...' : '✨ Auto-Generate from Source'}
+                    </button>
+                    <button
+                        onClick={handleSave}
+                        disabled={loading}
+                        className="btn-primary"
+                    >
+                        {loading ? '💾 Saving...' : '💾 Save Profile'}
+                    </button>
+                </div>
+
+                <div style={{ display: 'grid', gap: '1.5rem' }}>
+                    <div className="form-group">
+                        <label htmlFor="profile-name">
+                            Source Name
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                                Human-readable name for this source
+                            </span>
+                        </label>
+                        <input
+                            id="profile-name"
+                            type="text"
+                            value={profile.name}
+                            onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))}
+                            placeholder="e.g., SailSim Engine"
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="profile-description">
+                            Description
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                                What is this source about?
+                            </span>
+                        </label>
+                        <textarea
+                            id="profile-description"
+                            value={profile.description}
+                            onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))}
+                            rows={3}
+                            placeholder="Describe the purpose and scope of this codebase..."
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="profile-tech-stack">
+                            Tech Stack
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                                Comma-separated list
+                            </span>
+                        </label>
+                        <input
+                            id="profile-tech-stack"
+                            type="text"
+                            value={profile.tech_stack.join(', ')}
+                            onChange={e => handleArrayChange('tech_stack', e.target.value)}
+                            placeholder="e.g., Rust, TypeScript, React, WebGL"
+                        />
+                        {profile.tech_stack.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                {profile.tech_stack.map((tech, i) => (
+                                    <span key={i} className="badge">{tech}</span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="profile-architecture">
+                            Architecture Notes
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                                Design patterns, project structure, key concepts
+                            </span>
+                        </label>
+                        <textarea
+                            id="profile-architecture"
+                            value={profile.architecture_notes.join(', ')}
+                            onChange={e => handleArrayChange('architecture_notes', e.target.value)}
+                            rows={4}
+                            placeholder="e.g., Clean Architecture, Modular design, Event-driven"
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="profile-conventions">
+                            Key Conventions
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                                Coding standards, naming patterns, best practices
+                            </span>
+                        </label>
+                        <textarea
+                            id="profile-conventions"
+                            value={profile.key_conventions.join(', ')}
+                            onChange={e => handleArrayChange('key_conventions', e.target.value)}
+                            rows={4}
+                            placeholder="e.g., snake_case for functions, Use Result for error handling"
+                        />
+                    </div>
+                </div>
+            </section>
+        </div>
+    );
+};

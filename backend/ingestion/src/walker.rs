@@ -19,7 +19,7 @@ impl FileWalker {
         let mut files = Vec::new();
 
         let walker = WalkBuilder::new(&self.root)
-            .hidden(false) // Allow hidden files if needed, but usually we want to skip .git
+            .hidden(true) // Ignore hidden files (like .git)
             .git_ignore(true) // Respect .gitignore
             .build();
 
@@ -27,7 +27,14 @@ impl FileWalker {
             match result {
                 Ok(entry) => {
                     if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                        files.push(entry.path().to_path_buf());
+                        let path = entry.path();
+
+                        // explicit check to skip .git if hidden(false) is ever re-enabled
+                        if path.components().any(|c| c.as_os_str() == ".git") {
+                            continue;
+                        }
+
+                        files.push(path.to_path_buf());
                     }
                 }
                 Err(err) => {

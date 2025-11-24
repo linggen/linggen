@@ -36,7 +36,7 @@ impl Ingestor for LocalIngestor {
     async fn ingest(&self) -> Result<Vec<Document>> {
         let mut documents = Vec::new();
         let walker = WalkBuilder::new(&self.path)
-            .hidden(false)
+            .hidden(true) // Ignore hidden files (like .git) by default
             .git_ignore(true)
             .build();
 
@@ -45,6 +45,11 @@ impl Ingestor for LocalIngestor {
                 Ok(entry) => {
                     if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                         let path = entry.path();
+
+                        // explicit check to skip .git if hidden(false) is ever re-enabled
+                        if path.components().any(|c| c.as_os_str() == ".git") {
+                            continue;
+                        }
 
                         // Try to read as string
                         if let Ok(content) = fs::read_to_string(path) {

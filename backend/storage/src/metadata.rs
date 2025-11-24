@@ -5,11 +5,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::preferences::UserPreferences;
+use crate::profile::SourceProfile;
 
 const SETTINGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("settings");
 const SOURCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sources");
 const JOBS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("jobs");
 const PREFERENCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("preferences");
+const PROFILE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("profile");
 
 pub struct MetadataStore {
     db: Arc<Database>,
@@ -26,6 +28,7 @@ impl MetadataStore {
             let _ = write_txn.open_table(SOURCES_TABLE)?;
             let _ = write_txn.open_table(JOBS_TABLE)?;
             let _ = write_txn.open_table(PREFERENCES_TABLE)?;
+            let _ = write_txn.open_table(PROFILE_TABLE)?;
         }
         write_txn.commit()?;
 
@@ -205,6 +208,32 @@ impl MetadataStore {
             let mut table = write_txn.open_table(PREFERENCES_TABLE)?;
             let json = serde_json::to_string(prefs)?;
             table.insert("user_prefs", json.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    // Source Profiles
+    /// Get source profile (returns default if not set)
+    pub fn get_source_profile(&self, source_id: &str) -> Result<SourceProfile> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(PROFILE_TABLE)?;
+
+        if let Some(json) = table.get(source_id)? {
+            let profile: SourceProfile = serde_json::from_str(json.value())?;
+            Ok(profile)
+        } else {
+            Ok(SourceProfile::default())
+        }
+    }
+
+    /// Update source profile
+    pub fn update_source_profile(&self, source_id: &str, profile: &SourceProfile) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(PROFILE_TABLE)?;
+            let json = serde_json::to_string(profile)?;
+            table.insert(source_id, json.as_str())?;
         }
         write_txn.commit()?;
         Ok(())

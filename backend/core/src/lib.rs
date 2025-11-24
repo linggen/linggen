@@ -29,6 +29,7 @@ pub struct Document {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
     pub id: Uuid,
+    pub source_id: String,
     pub document_id: String,
     pub content: String,
     pub embedding: Option<Vec<f32>>,

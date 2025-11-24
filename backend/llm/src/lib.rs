@@ -7,9 +7,13 @@ use std::sync::Arc;
 use tokenizers::Tokenizer;
 
 pub mod downloader;
+pub mod llm_singleton;
+pub mod model_manager;
 pub mod model_utils;
 
 use downloader::ModelDownloader;
+pub use llm_singleton::LLMSingleton;
+pub use model_manager::{FileInfo, ModelInfo, ModelManager, ModelRegistry, ModelStatus};
 
 /// Mini LLM wrapper for running lightweight models (Qwen, Phi, etc.)
 pub struct MiniLLM {
@@ -17,6 +21,13 @@ pub struct MiniLLM {
     tokenizer: Tokenizer,
     device: Device,
     config: LLMConfig,
+}
+
+impl MiniLLM {
+    /// Clear the model's KV cache by calling clear_kv_cache
+    pub fn clear_cache(&mut self) {
+        self.model.clear_kv_cache();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +56,16 @@ impl Default for LLMConfig {
 impl MiniLLM {
     /// Create a new MiniLLM instance
     pub fn new(config: LLMConfig) -> Result<Self> {
+        Self::new_with_progress(config, |_| {})
+    }
+
+    /// Create a new MiniLLM instance with progress callback
+    pub fn new_with_progress<F>(config: LLMConfig, mut progress_fn: F) -> Result<Self>
+    where
+        F: FnMut(&str),
+    {
         // Initialize device (Metal on macOS, CUDA on Linux, CPU fallback)
+        progress_fn("Initializing device...");
         let device = Self::get_device()?;
 
         // Get or download model files
@@ -53,7 +73,7 @@ impl MiniLLM {
             if config.model_path.is_none() || config.tokenizer_path.is_none() {
                 println!("No model path provided, downloading from Hugging Face...");
                 let downloader = ModelDownloader::new()?;
-                let files = downloader.download_qwen_model()?;
+                let files = downloader.download_qwen_model_with_progress(&mut progress_fn)?;
                 (files.model_path, files.tokenizer_path, files.config_path)
             } else {
                 // If paths are provided, assume config is in same directory
@@ -70,11 +90,15 @@ impl MiniLLM {
             };
 
         println!("Loading model from: {:?}", model_path);
+        progress_fn("Loading model into memory...");
         let model = Self::load_model(&model_path, &config_path, &device)?;
 
         println!("Loading tokenizer from: {:?}", tokenizer_path);
+        progress_fn("Loading tokenizer...");
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+
+        progress_fn("Model ready!");
 
         Ok(Self {
             model,
@@ -137,6 +161,9 @@ impl MiniLLM {
         user: &str,
         max_tokens: usize,
     ) -> Result<String> {
+        // Clear KV cache before each generation to avoid state issues
+        self.clear_cache();
+
         // Format prompt in Qwen chat template format
         let formatted_prompt = if system.is_empty() {
             format!(
@@ -159,17 +186,20 @@ impl MiniLLM {
         let mut tokens = encoding.get_ids().to_vec();
         let eos_token = self.tokenizer.token_to_id("<|im_end|>").unwrap_or(151645); // Qwen2 default EOS token
 
-        // Generate tokens
+        // Generate tokens one at a time
         for _ in 0..max_tokens {
             // Convert tokens to tensor
             let input_ids = Tensor::new(tokens.clone(), &self.device)?;
-            let input_ids = input_ids.unsqueeze(0)?; // Add batch dimension
+            let input_ids = input_ids.unsqueeze(0)?; // Add batch dimension [1, seq_len]
 
-            // Forward pass (position_ids will be auto-generated as None)
+            // Forward pass without KV caching (always use start_pos=0)
+            // This recomputes everything each time, which is slower but avoids
+            // KV cache management complexity and shape mismatch issues
             let logits = self.model.forward(&input_ids, 0, None)?;
 
             // Get logits for last token
-            let logits = logits.i((0, tokens.len() - 1))?;
+            let seq_len = tokens.len();
+            let logits = logits.i((0, seq_len - 1))?;
 
             // Sample next token
             let next_token =

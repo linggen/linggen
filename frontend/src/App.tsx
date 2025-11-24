@@ -1,23 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import {
-  indexDocument,
   indexSource,
-  searchDocuments,
   listJobs,
   cancelJob,
+  enhancePrompt,
+  getPreferences,
+  updatePreferences,
+  getAppStatus,
+  retryInit,
   type Resource,
   type ResourceType,
-  type SearchResult,
+  type IntentType,
+  type UserPreferences,
+  type PromptStrategy,
 } from './api'
 import { ResourceManager } from './ResourceManager'
+import { SourceProfile } from './components/ProjectProfile'
 
 // Core flows:
 // 1) Manage sources (git/local/web) via Sources view
 // 2) Index content from sources (currently local folders) into LanceDB
-// 3) Search across indexed content via a focused Search view
+// 3) AI Assistant for intent classification and prompt enhancement
 
-type View = 'sources' | 'search' | 'activity' | 'settings'
+type View = 'sources' | 'activity' | 'assistant' | 'settings'
 
 type JobStatus = 'pending' | 'running' | 'completed' | 'error'
 
@@ -34,15 +40,17 @@ interface Job {
   error?: string
 }
 
-type AppStatus = 'idle' | 'indexing' | 'error'
+type AppStatus = 'initializing' | 'idle' | 'indexing' | 'error'
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('search')
-  const [status, setStatus] = useState<AppStatus>('idle')
+  const [currentView, setCurrentView] = useState<View>('assistant')
+  const [status, setStatus] = useState<AppStatus>('initializing')
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [indexingResourceId, setIndexingResourceId] = useState<string | null>(null)
   const [indexingProgress, setIndexingProgress] = useState<string | null>(null)
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
 
   // Use ref to track polling interval and cancelling state
   const pollingIntervalRef = useRef<number | null>(null)
@@ -199,6 +207,52 @@ function App() {
     }, 600000)
   }, [updateJobProgress])
 
+  // Check app initialization status on startup
+  useEffect(() => {
+    const checkAppStatus = async () => {
+      try {
+        const response = await getAppStatus()
+        if (response.status === 'initializing') {
+          setStatus('initializing')
+          setStatusMessage(response.progress || response.message || 'Initializing...')
+        } else if (response.status === 'ready') {
+          setStatus('idle')
+          setStatusMessage(null)
+        } else if (response.status === 'error') {
+          setStatus('error')
+          setStatusMessage(response.message || 'Initialization failed')
+        }
+      } catch (error) {
+        console.error('Failed to check app status:', error)
+      }
+    }
+
+    checkAppStatus()
+
+    // Poll status every 2 seconds until ready
+    const statusInterval = setInterval(async () => {
+      try {
+        const response = await getAppStatus()
+        if (response.status === 'ready') {
+          setStatus('idle')
+          setStatusMessage(null)
+          clearInterval(statusInterval)
+        } else if (response.status === 'initializing') {
+          setStatus('initializing')
+          setStatusMessage(response.progress || response.message || 'Initializing...')
+        } else if (response.status === 'error') {
+          setStatus('error')
+          setStatusMessage(response.message || 'Initialization failed')
+          clearInterval(statusInterval)
+        }
+      } catch (error) {
+        console.error('Failed to poll app status:', error)
+      }
+    }, 2000)
+
+    return () => clearInterval(statusInterval)
+  }, [])
+
   // Fetch jobs from backend on startup
   useEffect(() => {
     const fetchJobs = async () => {
@@ -228,6 +282,7 @@ function App() {
             setIndexingResourceId(runningJob.sourceId)
             setCurrentJobId(runningJob.id) // Set the job ID for cancellation
             setIndexingProgress('Indexing in progress...')
+            startPollingJob(runningJob.id)
           }
         }
       } catch (error) {
@@ -256,11 +311,6 @@ function App() {
   }, [currentJobId, status, startPollingJob])
 
   const handleIndexResource = async (resource: Resource) => {
-    if (resource.resource_type !== 'local') {
-      // For now we only support indexing local folders
-      return
-    }
-
     setIndexingResourceId(resource.id)
     setIndexingProgress('Indexing...')
     setStatus('indexing')
@@ -368,7 +418,35 @@ function App() {
           <h1>🧠 RememberMe</h1>
           <p>Your personal knowledge hub. Search everything, instantly.</p>
         </div>
-        <StatusBadge status={status} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <StatusBadge status={status} message={statusMessage} />
+          {status === 'error' && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await retryInit()
+                  setStatus('initializing')
+                  setStatusMessage('Retrying initialization...')
+                } catch (error) {
+                  console.error('Failed to retry:', error)
+                }
+              }}
+              style={{
+                padding: '0.5rem 1rem',
+                background: 'var(--primary)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+              }}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="layout">
@@ -376,15 +454,20 @@ function App() {
 
         <main className="main">
           {currentView === 'sources' && (
-            <SourcesView
-              onIndexResource={handleIndexResource}
-              indexingResourceId={indexingResourceId}
-              indexingProgress={indexingProgress}
-              onCancelJob={handleCancelJob}
-            />
+            selectedSourceId ? (
+              <SourceProfile sourceId={selectedSourceId} onBack={() => setSelectedSourceId(null)} />
+            ) : (
+              <SourcesView
+                onIndexResource={handleIndexResource}
+                indexingResourceId={indexingResourceId}
+                indexingProgress={indexingProgress}
+                onCancelJob={handleCancelJob}
+                onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
+              />
+            )
           )}
-          {currentView === 'search' && <SearchView />}
           {currentView === 'activity' && <ActivityView jobs={jobs} />}
+          {currentView === 'assistant' && <AssistantView />}
           {currentView === 'settings' && <SettingsView />}
         </main>
       </div>
@@ -399,8 +482,8 @@ interface SidebarProps {
 
 function Sidebar({ currentView, onChangeView }: SidebarProps) {
   const items: { id: View; label: string; description: string }[] = [
+    { id: 'assistant', label: 'AI Assistant', description: 'Test intent & enhancement' },
     { id: 'sources', label: 'Sources', description: 'Your knowledge sources' },
-    { id: 'search', label: 'Search', description: 'Find anything, instantly' },
     { id: 'activity', label: 'Activity', description: 'Recent indexing jobs' },
     { id: 'settings', label: 'Settings', description: 'App configuration' },
   ]
@@ -432,13 +515,17 @@ function Sidebar({ currentView, onChangeView }: SidebarProps) {
 
 interface StatusBadgeProps {
   status: AppStatus
+  message?: string | null
 }
 
-function StatusBadge({ status }: StatusBadgeProps) {
+function StatusBadge({ status, message }: StatusBadgeProps) {
   let text = 'Idle'
   let className = 'status-pill idle'
 
-  if (status === 'indexing') {
+  if (status === 'initializing') {
+    text = message || 'Initializing'
+    className = 'status-pill initializing'
+  } else if (status === 'indexing') {
     text = 'Indexing'
     className = 'status-pill indexing'
   } else if (status === 'error') {
@@ -459,9 +546,10 @@ interface SourcesViewProps {
   indexingResourceId: string | null
   indexingProgress: string | null
   onCancelJob: () => void
+  onViewProfile: (sourceId: string) => void
 }
 
-function SourcesView({ onIndexResource, indexingResourceId, indexingProgress, onCancelJob }: SourcesViewProps) {
+function SourcesView({ onIndexResource, indexingResourceId, indexingProgress, onCancelJob, onViewProfile }: SourcesViewProps) {
   return (
     <div className="view">
       <div className="view-header">
@@ -474,145 +562,9 @@ function SourcesView({ onIndexResource, indexingResourceId, indexingProgress, on
           indexingResourceId={indexingResourceId}
           indexingProgress={indexingProgress}
           onCancelJob={onCancelJob}
+          onViewProfile={onViewProfile}
         />
       </section>
-    </div>
-  )
-}
-
-function SearchView() {
-  const [docId, setDocId] = useState('')
-  const [content, setContent] = useState('')
-  const [indexing, setIndexing] = useState(false)
-  const [indexStatus, setIndexStatus] = useState('')
-
-  const [query, setQuery] = useState('')
-  const [searching, setSearching] = useState(false)
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [searchError, setSearchError] = useState('')
-
-  const handleIndex = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIndexing(true)
-    setIndexStatus('')
-
-    try {
-      const response = await indexDocument({
-        document_id: docId,
-        content,
-      })
-      setIndexStatus(`✓ Indexed ${response.chunks_indexed} chunks for document: ${response.document_id}`)
-      setDocId('')
-      setContent('')
-    } catch (error) {
-      setIndexStatus(`✗ Error: ${error}`)
-    } finally {
-      setIndexing(false)
-    }
-  }
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!query.trim()) return
-
-    setSearching(true)
-    setSearchError('')
-
-    try {
-      const response = await searchDocuments(query, 10)
-      setResults(response.results)
-      if (response.results.length === 0) {
-        setSearchError('No results found. Try indexing some documents first!')
-      }
-    } catch (error) {
-      setSearchError(`Search failed: ${error}`)
-      setResults([])
-    } finally {
-      setSearching(false)
-    }
-  }
-
-  return (
-    <div className="view">
-      <div className="view-header">
-        <h2>Search</h2>
-        <p>Find anything across all your sources. Ask questions in natural language.</p>
-      </div>
-
-      <div className="search-layout">
-        <section className="section">
-          <h3>📥 Index a single document</h3>
-          <form onSubmit={handleIndex}>
-            <div className="form-group">
-              <label htmlFor="docId">Document ID</label>
-              <input
-                id="docId"
-                type="text"
-                value={docId}
-                onChange={(e) => setDocId(e.target.value)}
-                placeholder="e.g., doc1, my-notes, etc."
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="content">Content</label>
-              <textarea
-                id="content"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Paste your document content here..."
-                rows={6}
-                required
-              />
-            </div>
-            <button type="submit" disabled={indexing}>
-              {indexing ? 'Indexing...' : 'Index Document'}
-            </button>
-          </form>
-          {indexStatus && (
-            <div className={`status ${indexStatus.startsWith('✓') ? 'success' : 'error'}`}>
-              {indexStatus}
-            </div>
-          )}
-        </section>
-
-        <section className="section">
-          <h3>🔍 Search indexed content</h3>
-          <form onSubmit={handleSearch}>
-            <div className="form-group">
-              <label htmlFor="query">Search query</label>
-              <input
-                id="query"
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ask about your notes, code, or docs..."
-                required
-              />
-            </div>
-            <button type="submit" disabled={searching}>
-              {searching ? 'Searching...' : 'Search'}
-            </button>
-          </form>
-
-          {searchError && <div className="status error">{searchError}</div>}
-
-          {results.length > 0 && (
-            <div className="results">
-              <h3>Results ({results.length})</h3>
-              {results.map((result, idx) => (
-                <div key={idx} className="result-card">
-                  <div className="result-header">
-                    <span className="doc-id">{result.document_id}</span>
-                    <span className="score">Score: {result.score.toFixed(3)}</span>
-                  </div>
-                  <p className="result-content">{result.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
     </div>
   )
 }
@@ -667,6 +619,313 @@ function ActivityView({ jobs }: ActivityViewProps) {
         )}
       </section>
     </div>
+  )
+}
+
+function AssistantView() {
+  const [query, setQuery] = useState('')
+  const [strategy, setStrategy] = useState<PromptStrategy>('full_code')
+
+  // Unified state
+  const [processing, setProcessing] = useState(false)
+  const [result, setResult] = useState<{
+    original_query: string;
+    enhanced_prompt: string;
+    intent: IntentType;
+    context_chunks: string[];
+    preferences_applied: boolean;
+  } | null>(null)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
+
+  // Preferences state
+  const [preferences, setPreferences] = useState<UserPreferences>({})
+  const [loadingPrefs, setLoadingPrefs] = useState(false)
+  const [savingPrefs, setSavingPrefs] = useState(false)
+  const [prefsStatus, setPrefsStatus] = useState('')
+
+  useEffect(() => {
+    loadPreferences()
+  }, [])
+
+  const loadPreferences = async () => {
+    setLoadingPrefs(true)
+    try {
+      const response = await getPreferences()
+      setPreferences(response.preferences)
+    } catch (error) {
+      console.error('Failed to load preferences:', error)
+    } finally {
+      setLoadingPrefs(false)
+    }
+  }
+
+  const handleSavePreferences = async () => {
+    setSavingPrefs(true)
+    setPrefsStatus('')
+    try {
+      await updatePreferences(preferences)
+      setPrefsStatus('✓ Preferences saved')
+      setTimeout(() => setPrefsStatus(''), 3000)
+    } catch (error) {
+      setPrefsStatus(`✗ Failed to save: ${error}`)
+    } finally {
+      setSavingPrefs(false)
+    }
+  }
+
+  const handleEnhance = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!query.trim()) return
+
+    setProcessing(true)
+    setError('')
+    setResult(null)
+    setCopied(false)
+    setShowDetails(false)
+
+    try {
+      // Direct call to enhancePrompt which handles intent + enhancement
+      const enhanced = await enhancePrompt(query, strategy)
+      setResult(enhanced)
+    } catch (error) {
+      setError(`${error}`)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    if (!result) return
+    try {
+      await navigator.clipboard.writeText(result.enhanced_prompt)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
+
+  const formatIntent = (intent: IntentType): string => {
+    if (typeof intent === 'string') {
+      return intent.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    } else if (typeof intent === 'object' && 'other' in intent) {
+      return `Other: ${intent.other}`
+    }
+    return String(intent)
+  }
+
+  return (
+    <div className="view">
+      <div className="view-header">
+        <h2>🤖 AI Assistant</h2>
+        <p>Enhance your queries with context and preferences for better AI results.</p>
+      </div>
+
+      <div className="assistant-layout">
+        <div className="assistant-main-col">
+          {/* Query Input */}
+          <section className="section">
+            <form onSubmit={handleEnhance}>
+              <div className="form-group">
+                <label htmlFor="query">Your Query</label>
+                <textarea
+                  id="query"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g., 'Fix the timeout bug in auth service' or 'Explain how the login function works'"
+                  rows={3}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="strategy">Prompt Strategy</label>
+                <select
+                  id="strategy"
+                  value={strategy}
+                  onChange={(e) => setStrategy(e.target.value as PromptStrategy)}
+                >
+                  <option value="full_code">Full Code (Default)</option>
+                  <option value="reference_only">Reference Only</option>
+                  <option value="architectural">Architectural</option>
+                </select>
+              </div>
+              <button type="submit" disabled={processing}>
+                {processing ? '✨ Enhancing...' : '✨ Enhance Prompt'}
+              </button>
+            </form>
+          </section>
+
+          {/* Results Area */}
+          {error && <div className="status error">{error}</div>}
+
+          {result && (
+            <section className="section">
+              <div className="result-header-row">
+                <h3>Enhanced Prompt</h3>
+                <div className="result-badges">
+                  <span className="badge intent-badge">
+                    🎯 {formatIntent(result.intent)}
+                  </span>
+                  <span className="badge context-badge">
+                    📚 {result.context_chunks ? result.context_chunks.length : 0} Chunks
+                  </span>
+                </div>
+              </div>
+
+              <div className="enhanced-prompt-container">
+                <div className="prompt-preview">
+                  {result.enhanced_prompt.length > 300 && !showDetails
+                    ? result.enhanced_prompt.slice(0, 300) + '...'
+                    : result.enhanced_prompt}
+                </div>
+                <button
+                  type="button"
+                  className={`copy-btn ${copied ? 'copied' : ''}`}
+                  onClick={handleCopy}
+                >
+                  {copied ? '✓ Copied!' : '📋 Copy Full Prompt'}
+                </button>
+              </div>
+
+              <div className="details-toggle">
+                <button
+                  type="button"
+                  className="text-btn"
+                  onClick={() => setShowDetails(!showDetails)}
+                >
+                  {showDetails ? 'Hide Details ▲' : 'Show Details & Context ▼'}
+                </button>
+              </div>
+
+              {showDetails && (
+                <div className="details-panel">
+                  <div className="detail-group">
+                    <h4>Original Query</h4>
+                    <div className="code-block">{result.original_query}</div>
+                  </div>
+
+                  <div className="detail-group">
+                    <h4>Retrieved Context ({result.context_chunks ? result.context_chunks.length : 0})</h4>
+                    {result.context_chunks && result.context_chunks.map((chunk, i) => (
+                      <div key={i} className="context-chunk-preview">
+                        <div className="chunk-label">Chunk {i + 1}</div>
+                        <div className="code-block small">{chunk}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="detail-group">
+                    <h4>Full Enhanced Prompt</h4>
+                    <div className="code-block">{result.enhanced_prompt}</div>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {!result && !processing && !error && (
+            <div className="empty-state">
+              Enter a query above to get an optimized prompt with context.
+            </div>
+          )}
+        </div>
+
+        <div className="assistant-sidebar-col">
+          {/* User Preferences */}
+          <section className="section">
+            <h3>⚙️ User Preferences</h3>
+
+            <p className="section-description">Configure your preferences to customize prompt enhancement.</p>
+
+            {loadingPrefs ? (
+              <div className="loading">Loading preferences...</div>
+            ) : (
+              <div className="preferences-form">
+                <div className="form-group">
+                  <label htmlFor="explanation_style">Explanation Style</label>
+                  <input
+                    id="explanation_style"
+                    type="text"
+                    value={preferences.explanation_style || ''}
+                    onChange={(e) => setPreferences({ ...preferences, explanation_style: e.target.value })}
+                    placeholder="e.g., concise, detailed, bullet points"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="code_style">Code Style</label>
+                  <input
+                    id="code_style"
+                    type="text"
+                    value={preferences.code_style || ''}
+                    onChange={(e) => setPreferences({ ...preferences, code_style: e.target.value })}
+                    placeholder="e.g., functional, OOP, minimal"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="documentation_style">Documentation Style</label>
+                  <input
+                    id="documentation_style"
+                    type="text"
+                    value={preferences.documentation_style || ''}
+                    onChange={(e) => setPreferences({ ...preferences, documentation_style: e.target.value })}
+                    placeholder="e.g., JSDoc, inline comments, README"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="test_style">Test Style</label>
+                  <input
+                    id="test_style"
+                    type="text"
+                    value={preferences.test_style || ''}
+                    onChange={(e) => setPreferences({ ...preferences, test_style: e.target.value })}
+                    placeholder="e.g., unit tests, integration tests, TDD"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="language_preference">Language Preference</label>
+                  <input
+                    id="language_preference"
+                    type="text"
+                    value={preferences.language_preference || ''}
+                    onChange={(e) => setPreferences({ ...preferences, language_preference: e.target.value })}
+                    placeholder="e.g., Rust, TypeScript, Python"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="verbosity">Verbosity</label>
+                  <select
+                    id="verbosity"
+                    value={preferences.verbosity || 'balanced'}
+                    onChange={(e) => setPreferences({ ...preferences, verbosity: e.target.value })}
+                  >
+                    <option value="concise">Concise</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="detailed">Detailed</option>
+                  </select>
+                </div>
+
+                <button type="button" onClick={handleSavePreferences} disabled={savingPrefs}>
+                  {savingPrefs ? 'Saving...' : 'Save Preferences'}
+                </button>
+
+                {prefsStatus && (
+                  <div className={`status ${prefsStatus.startsWith('✓') ? 'success' : 'error'}`}>
+                    {prefsStatus}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div >
   )
 }
 

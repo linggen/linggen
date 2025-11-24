@@ -59,7 +59,7 @@ impl Ingestor for GitIngestor {
 
         let mut documents = Vec::new();
         let walker = WalkBuilder::new(&self.local_path)
-            .hidden(false) // Allow hidden files? Maybe not .git
+            .hidden(true) // Ignore hidden files (like .git)
             .git_ignore(true)
             .build();
 
