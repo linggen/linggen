@@ -110,14 +110,25 @@ impl EmbeddingModel {
         }
 
         // Tokenize all texts
+        info!(
+            "EmbeddingModel::embed_batch: tokenizing {} texts",
+            texts.len()
+        );
         let encodings = self
             .tokenizer
             .encode_batch(texts.to_vec(), true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+        info!(
+            "EmbeddingModel::embed_batch: obtained {} encodings",
+            encodings.len()
+        );
 
         // Find max sequence length for padding
         let max_len = encodings.iter().map(|e| e.len()).max().unwrap_or(0);
-
+        info!(
+            "EmbeddingModel::embed_batch: max_len for padding = {}",
+            max_len
+        );
         // Prepare batch tensors with padding
         let batch_size = texts.len();
         let mut batch_token_ids = Vec::with_capacity(batch_size * max_len);
@@ -140,23 +151,42 @@ impl EmbeddingModel {
 
         // Create batch tensors [batch_size, max_len]
         let token_ids = Tensor::from_vec(batch_token_ids, (batch_size, max_len), &self.device)?;
+        info!(
+            "EmbeddingModel::embed_batch: token_ids shape = {:?}",
+            token_ids.dims()
+        );
         let token_type_ids =
             Tensor::zeros((batch_size, max_len), candle_core::DType::U32, &self.device)?;
         let attention_mask =
             Tensor::from_vec(batch_attention_mask, (batch_size, max_len), &self.device)?;
+        info!(
+            "EmbeddingModel::embed_batch: attention_mask shape = {:?}",
+            attention_mask.dims()
+        );
 
         // Single forward pass for entire batch! 🚀
         let outputs = self
             .model
             .forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
-
+        info!(
+            "EmbeddingModel::embed_batch: model output shape = {:?}",
+            outputs.dims()
+        );
         // outputs shape: [batch_size, seq_len, hidden_size]
         // Apply mean pooling with attention mask
         let embeddings_tensor = self.mean_pooling_with_mask(&outputs, &attention_mask)?;
+        info!(
+            "EmbeddingModel::embed_batch: embeddings_tensor shape after pooling = {:?}",
+            embeddings_tensor.dims()
+        );
 
         // embeddings_tensor shape: [batch_size, hidden_size]
         // Normalize each embedding
         let normalized = self.normalize_batch(&embeddings_tensor)?;
+        info!(
+            "EmbeddingModel::embed_batch: normalized tensor shape = {:?}",
+            normalized.dims()
+        );
 
         // Convert to Vec<Vec<f32>>
         let mut embeddings = Vec::with_capacity(batch_size);

@@ -262,12 +262,22 @@ async fn run_indexing_job(
             embed_time.as_secs_f64() * 1000.0 / embeddings.len() as f64
         );
 
-        // Create chunks
+        // Derive a stable document identifier for pattern matching.
+        // Prefer the logical file path from metadata (used for glob patterns),
+        // fall back to the source_url or the document's UUID if missing.
+        let document_id: String = doc
+            .metadata
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| doc.source_url.clone());
+
+        // Create chunks – all chunks from the same file share the same document_id
         for (text, embedding) in chunks_text.iter().zip(embeddings.iter()) {
             chunk_buffer.push(Chunk {
                 id: Uuid::new_v4(),
                 source_id: running_job.source_id.clone(),
-                document_id: doc.id.clone(),
+                document_id: document_id.clone(),
                 content: text.clone(),
                 embedding: Some(embedding.clone()),
                 metadata: doc.metadata.clone(),

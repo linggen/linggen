@@ -97,7 +97,7 @@ impl Ingestor for GitIngestor {
                     }
                 }
                 Err(err) => {
-                    eprintln!("Error walking directory: {}", err);
+                    tracing::warn!("Error walking directory: {}", err);
                 }
             }
         }

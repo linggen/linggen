@@ -5,11 +5,11 @@ use axum::{
 };
 use rememberme_enhancement::ProfileManager;
 use rememberme_llm::LLMSingleton;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::SourceProfile;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::AppState;
 
@@ -18,13 +18,16 @@ pub async fn get_profile(
     State(state): State<Arc<AppState>>,
     Path(source_id): Path<String>,
 ) -> Result<Json<SourceProfile>, (StatusCode, String)> {
-    let profile = state.metadata_store.get_source_profile(&source_id).map_err(|e| {
-        error!("Failed to get source profile for {}: {}", source_id, e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to get profile: {}", e),
-        )
-    })?;
+    let profile = state
+        .metadata_store
+        .get_source_profile(&source_id)
+        .map_err(|e| {
+            error!("Failed to get source profile for {}: {}", source_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get profile: {}", e),
+            )
+        })?;
 
     Ok(Json(profile))
 }
@@ -52,8 +55,14 @@ pub async fn update_profile(
 /// Request to generate profile from source files
 #[derive(Deserialize)]
 pub struct GenerateProfileRequest {
-    /// List of file paths to analyze (optional, defaults to scanning the source directory)
+    /// List of file patterns to analyze (optional, defaults to LLM-detected patterns)
     pub files: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProjectTypeResponse {
+    project_type: String,
+    key_patterns: Vec<String>,
 }
 
 /// Generate profile for a specific source using LLM
@@ -82,7 +91,7 @@ pub async fn generate_profile(
     })?;
 
     // Get LLM instance
-    let llm = LLMSingleton::get().await;
+    let llm = rememberme_llm::LLMSingleton::get().await;
     if llm.is_none() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -90,36 +99,96 @@ pub async fn generate_profile(
         ));
     }
 
-    let profile_manager = ProfileManager::new(llm);
-
-    // 1. Auto-detect project type and get relevant files
+    let profile_manager = ProfileManager::new(llm.clone());
     let base_path = PathBuf::from(&source.path);
-    let files_to_scan = if let Some(files) = req.files {
-        files.into_iter().map(|f| base_path.join(f)).collect()
+
+    // Step 1: Get file patterns - from user, auto-detected, or fallback
+    let patterns = if let Some(files) = req.files {
+        files
     } else {
-        discover_project_files(&base_path)
+        // Auto-detect key file patterns from project root
+        match ask_llm_for_file_patterns(&base_path, llm).await {
+            Ok(patterns) => {
+                info!(
+                    "Auto-detected patterns for source {}: {:?}",
+                    source_id, patterns
+                );
+                patterns
+            }
+            Err(e) => {
+                warn!("Pattern detection failed: {}. Using fallback patterns", e);
+                get_fallback_patterns()
+            }
+        }
     };
 
-    // 2. Read file contents
-    let mut file_contents = Vec::new();
-    for path in files_to_scan {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                file_contents.push((path, content));
+    // Step 2: Query vector DB for chunks matching patterns
+    let mut all_chunks = Vec::new();
+    for pattern in &patterns {
+        match state
+            .vector_store
+            .get_chunks_by_file_pattern(&source_id, pattern)
+            .await
+        {
+            Ok(chunks) => {
+                info!(
+                    "Found {} chunks matching pattern: {}",
+                    chunks.len(),
+                    pattern
+                );
+                all_chunks.extend(chunks);
+            }
+            Err(e) => {
+                warn!("Failed to query pattern {}: {}", pattern, e);
             }
         }
     }
 
-    if file_contents.is_empty() {
+    // If no chunks found with specific patterns, try getting all chunks
+    if all_chunks.is_empty() {
+        info!("No chunks found with specific patterns, trying to fetch all chunks limit 50");
+        // Fallback: get some chunks to at least generate something
+        match state
+            .vector_store
+            .search(vec![0.0; 384], None, 50) // Zero vector to match anything, or just list
+            .await
+        {
+            Ok(chunks) => {
+                info!(
+                    "Found {} fallback chunks, first 3 document_ids: {:?}",
+                    chunks.len(),
+                    chunks
+                        .iter()
+                        .take(3)
+                        .map(|c| c.document_id.clone())
+                        .collect::<Vec<_>>()
+                );
+                all_chunks.extend(chunks);
+            }
+            Err(e) => {
+                warn!("Failed to fetch fallback chunks: {}", e);
+            }
+        }
+    }
+
+    if all_chunks.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("No valid source files found in {}", source.path),
+            format!(
+                "No indexed content found for source {}. Please index the source first.",
+                source.name
+            ),
         ));
     }
 
-    // 3. Generate profile
+    info!(
+        "Generating profile from {} indexed chunks",
+        all_chunks.len()
+    );
+
+    // Step 3: Generate profile directly from chunks
     let profile = profile_manager
-        .generate_initial_profile(file_contents)
+        .generate_initial_profile(all_chunks)
         .await
         .map_err(|e| {
             error!("Failed to generate profile: {}", e);
@@ -129,7 +198,7 @@ pub async fn generate_profile(
             )
         })?;
 
-    // 4. Save to metadata store
+    // Step 5: Save to metadata store
     state
         .metadata_store
         .update_source_profile(&source_id, &profile)
@@ -144,112 +213,68 @@ pub async fn generate_profile(
     Ok(Json(profile))
 }
 
-/// Intelligently discover relevant files for profile generation
-/// Auto-detects project type and returns appropriate files
-fn discover_project_files(base_path: &PathBuf) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    
-    // Always look for documentation files
-    for doc_pattern in &["README.md", "README.txt", "README", "CONTRIBUTING.md", "docs/README.md"] {
-        let path = base_path.join(doc_pattern);
-        if path.exists() {
-            files.push(path);
-        }
+/// Analyze root directory and suggest key file patterns (no LLM dependency)
+async fn ask_llm_for_file_patterns(
+    base_path: &PathBuf,
+    _llm: Option<Arc<tokio::sync::Mutex<rememberme_llm::MiniLLM>>>,
+) -> Result<Vec<String>, String> {
+    // List root directory files
+    let root_files = std::fs::read_dir(base_path)
+        .map_err(|e| format!("Failed to read directory: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+        .take(50) // Limit to first 50 files
+        .collect::<Vec<_>>();
+
+    // Start with common documentation patterns
+    use std::collections::HashSet;
+    let mut patterns: HashSet<String> = HashSet::new();
+    patterns.insert("*.md".to_string());
+    patterns.insert("README*".to_string());
+
+    // Simple heuristics based on root files
+    let has_cargo = root_files.iter().any(|f| f == "Cargo.toml");
+    let has_package_json = root_files.iter().any(|f| f == "package.json");
+    let has_pyproject = root_files.iter().any(|f| f == "pyproject.toml");
+    let has_requirements = root_files.iter().any(|f| f == "requirements.txt");
+
+    if has_cargo {
+        patterns.insert("Cargo.toml".to_string());
+        patterns.insert("*.toml".to_string());
     }
-    
-    // Detect project type and add type-specific files
-    let mut found_type = false;
-    
-    // Rust project detection
-    if base_path.join("Cargo.toml").exists() {
-        found_type = true;
-        files.push(base_path.join("Cargo.toml"));
-        // Check for main entry points
-        if base_path.join("src/lib.rs").exists() {
-            files.push(base_path.join("src/lib.rs"));
-        }
-        if base_path.join("src/main.rs").exists() {
-            files.push(base_path.join("src/main.rs"));
-        }
+
+    if has_package_json {
+        patterns.insert("package.json".to_string());
+        patterns.insert("*.config.*".to_string());
+        patterns.insert("*.yaml".to_string());
+        patterns.insert("*.yml".to_string());
     }
-    
-    // JavaScript/TypeScript project detection
-    if base_path.join("package.json").exists() {
-        found_type = true;
-        files.push(base_path.join("package.json"));
-        // Check for config files
-        for config in &["tsconfig.json", "vite.config.ts", "next.config.js", "webpack.config.js"] {
-            let path = base_path.join(config);
-            if path.exists() {
-                files.push(path);
-            }
-        }
-        // Check for entry points
-        for entry in &["src/index.ts", "src/index.js", "src/main.ts", "src/App.tsx"] {
-            let path = base_path.join(entry);
-            if path.exists() {
-                files.push(path);
-            }
-        }
+
+    if has_pyproject {
+        patterns.insert("pyproject.toml".to_string());
     }
-    
-    // Python project detection
-    if base_path.join("setup.py").exists() || base_path.join("pyproject.toml").exists() {
-        found_type = true;
-        if base_path.join("setup.py").exists() {
-            files.push(base_path.join("setup.py"));
-        }
-        if base_path.join("pyproject.toml").exists() {
-            files.push(base_path.join("pyproject.toml"));
-        }
-        if base_path.join("requirements.txt").exists() {
-            files.push(base_path.join("requirements.txt"));
-        }
-        // Check for main module
-        if base_path.join("__init__.py").exists() {
-            files.push(base_path.join("__init__.py"));
-        }
+
+    if has_requirements {
+        patterns.insert("requirements.txt".to_string());
     }
-    
-    // Go project detection
-    if base_path.join("go.mod").exists() {
-        found_type = true;
-        files.push(base_path.join("go.mod"));
-        if base_path.join("main.go").exists() {
-            files.push(base_path.join("main.go"));
-        }
+
+    // If heuristics didn't add much, fall back to the generic patterns
+    if patterns.len() <= 2 {
+        return Ok(get_fallback_patterns());
     }
-    
-    // Java/Maven project detection
-    if base_path.join("pom.xml").exists() {
-        found_type = true;
-        files.push(base_path.join("pom.xml"));
-    }
-    
-    // If no specific type detected, try to find any config files
-    if !found_type {
-        for pattern in &[".project", "*.toml", "*.yaml", "*.yml", "config.json"] {
-            if let Ok(entries) = std::fs::read_dir(base_path) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if pattern.contains('*') {
-                            let ext = pattern.trim_start_matches("*.");
-                            if name.ends_with(ext) {
-                                files.push(path);
-                                break;
-                            }
-                        } else if name == *pattern {
-                            files.push(path);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Limit to first 10 files to avoid overwhelming the LLM
-    files.truncate(10);
-    files
+
+    Ok(patterns.into_iter().collect())
+}
+
+/// Fallback patterns when LLM fails
+fn get_fallback_patterns() -> Vec<String> {
+    vec![
+        "*.md".to_string(),
+        "README*".to_string(),
+        "*.toml".to_string(),
+        "*.json".to_string(),
+        "*.yaml".to_string(),
+        "*.yml".to_string(),
+        "*.txt".to_string(),
+    ]
 }

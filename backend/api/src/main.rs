@@ -55,7 +55,7 @@ async fn main() {
     // Check model status using ModelManager
     let model_manager = rememberme_llm::ModelManager::new().expect("Failed to create ModelManager");
     let model_status = model_manager
-        .get_model_status("qwen2.5-1.5b")
+        .get_model_status("qwen3-4b")
         .unwrap_or(rememberme_llm::ModelStatus::NotFound);
 
     match model_status {
@@ -65,16 +65,8 @@ async fn main() {
             let _ = metadata_store.set_setting("model_initialized", "true");
 
             // Initialize the singleton with the existing model
-            let config = if let Some(home_dir) = dirs::home_dir() {
-                let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
-                rememberme_llm::LLMConfig {
-                    model_path: Some(model_dir.join("model.safetensors")),
-                    tokenizer_path: Some(model_dir.join("tokenizer.json")),
-                    ..Default::default()
-                }
-            } else {
-                rememberme_llm::LLMConfig::default()
-            };
+            // We use default config which will use the downloader logic in lib.rs to find the files
+            let config = rememberme_llm::LLMConfig::default();
 
             // Initialize singleton in background
             tokio::spawn(async move {
@@ -104,17 +96,8 @@ async fn main() {
                     }
                 };
 
-                // Use local model path
-                let config = if let Some(home_dir) = dirs::home_dir() {
-                    let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
-                    rememberme_llm::LLMConfig {
-                        model_path: Some(model_dir.join("model.safetensors")),
-                        tokenizer_path: Some(model_dir.join("tokenizer.json")),
-                        ..Default::default()
-                    }
-                } else {
-                    rememberme_llm::LLMConfig::default()
-                };
+                // Use default config to trigger download
+                let config = rememberme_llm::LLMConfig::default();
 
                 // Initialize LLM singleton
                 let config_clone = config.clone();
@@ -129,52 +112,13 @@ async fn main() {
 
                         // Register model in ModelManager
                         if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
-                            let mut files = std::collections::HashMap::new();
-                            if let Some(home_dir) = dirs::home_dir() {
-                                let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
-
-                                // Get file sizes
-                                if let Ok(metadata) =
-                                    std::fs::metadata(model_dir.join("model.safetensors"))
-                                {
-                                    files.insert(
-                                        "model.safetensors".to_string(),
-                                        rememberme_llm::FileInfo {
-                                            sha256: None,
-                                            size: metadata.len(),
-                                        },
-                                    );
-                                }
-                                if let Ok(metadata) =
-                                    std::fs::metadata(model_dir.join("tokenizer.json"))
-                                {
-                                    files.insert(
-                                        "tokenizer.json".to_string(),
-                                        rememberme_llm::FileInfo {
-                                            sha256: None,
-                                            size: metadata.len(),
-                                        },
-                                    );
-                                }
-                                if let Ok(metadata) =
-                                    std::fs::metadata(model_dir.join("config.json"))
-                                {
-                                    files.insert(
-                                        "config.json".to_string(),
-                                        rememberme_llm::FileInfo {
-                                            sha256: None,
-                                            size: metadata.len(),
-                                        },
-                                    );
-                                }
-
-                                let _ = model_manager.register_model(
-                                    "qwen2.5-1.5b",
-                                    "Qwen2.5-1.5B-Instruct",
-                                    "main",
-                                    files,
-                                );
-                            }
+                            // We use HF cache now, so just register as ready without specific file tracking for now
+                            let _ = model_manager.register_model(
+                                "qwen3-4b",
+                                "Qwen3-4B-Instruct-2507",
+                                "main",
+                                std::collections::HashMap::new(),
+                            );
                         }
 
                         // Mark as initialized in redb

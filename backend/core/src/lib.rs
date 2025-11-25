@@ -28,11 +28,17 @@ pub struct Document {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
+    /// Unique identifier for this chunk (UUID for the chunk row itself)
     pub id: Uuid,
+    /// ID of the source this chunk belongs to (matches `SourceConfig.id`, e.g. a repo or local folder)
     pub source_id: String,
+    /// Logical document identifier within a source (e.g. file path or URL), shared by all chunks from the same file
     pub document_id: String,
+    /// Raw text content of this chunk
     pub content: String,
+    /// Optional embedding vector for this chunk (e.g. 384‑dim sentence transformer output)
     pub embedding: Option<Vec<f32>>,
+    /// Arbitrary JSON metadata for this chunk (e.g. `file_path`, language, tags)
     pub metadata: serde_json::Value,
 }
 

@@ -1,10 +1,11 @@
 use anyhow::Result;
+use rememberme_core::Chunk;
 use rememberme_llm::MiniLLM;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::SourceProfile;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub struct ProfileManager {
     llm: Option<Arc<Mutex<MiniLLM>>>,
@@ -15,33 +16,96 @@ impl ProfileManager {
         Self { llm }
     }
 
-    /// Generate initial profile by scanning key files
-    pub async fn generate_initial_profile(
-        &self,
-        files: Vec<(PathBuf, String)>,
-    ) -> Result<SourceProfile> {
-        if let Some(llm) = &self.llm {
-            info!("Generating initial profile from {} files...", files.len());
+    /// Generate initial profile by scanning key chunks (grouped by file)
+    pub async fn generate_initial_profile(&self, chunks: Vec<Chunk>) -> Result<SourceProfile> {
+        // Group chunks by file path and assemble per-file content
+        let mut files: Vec<(PathBuf, String)> = Vec::new();
+        use std::collections::HashMap;
+        let mut file_map: HashMap<String, String> = HashMap::new();
 
-            // Prepare context from files (limit to avoid shape mismatch errors)
+        for chunk in &chunks {
+            let file_key = chunk
+                .metadata
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&chunk.document_id)
+                .to_string();
+            let entry = file_map.entry(file_key).or_insert_with(String::new);
+            if !entry.is_empty() {
+                entry.push_str("\n\n");
+            }
+            entry.push_str(&chunk.content);
+            // Log embedding length for debugging
+            info!(
+                "Chunk {} embedding length: {}",
+                chunk.document_id,
+                chunk.embedding.as_ref().map(|e| e.len()).unwrap_or(0)
+            );
+        }
+
+        for (path_str, content) in file_map {
+            files.push((PathBuf::from(path_str), content));
+        }
+
+        if let Some(llm) = &self.llm {
+            info!(
+                "ProfileManager: grouped {} chunks into {} files for profile generation. First 3 files: {:?}",
+                chunks.len(),
+                files.len(),
+                files
+                    .iter()
+                    .take(3)
+                    .map(|(p, _)| p.display().to_string())
+                    .collect::<Vec<_>>()
+            );
+
+            // Log a quick summary of the first few chunks for debugging
+            if let Some(first) = chunks.first() {
+                let file_path = first
+                    .metadata
+                    .get("file_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&first.document_id);
+                let snippet: String = first.content.chars().take(100).collect();
+                let emb_len = first.embedding.as_ref().map(|e| e.len()).unwrap_or(0);
+
+                info!(
+                    "Generating initial profile from {} chunks. Example chunk -> file: {}, emb_len: {}, snippet: {:?}",
+                    chunks.len(),
+                    file_path,
+                    emb_len,
+                    snippet
+                );
+            } else {
+                info!("Generating initial profile but no chunks were provided");
+            }
+
+            // Prepare context from files (limit to avoid overwhelming smaller models)
             let file_context = files
                 .iter()
                 .map(|(path, content)| {
+                    // Truncate by characters (not bytes) to avoid splitting UTF-8 code points
+                    let snippet: String = if content.chars().count() > 1000 {
+                        let mut s: String = content.chars().take(1000).collect();
+                        s.push_str("... (truncated)");
+                        s
+                    } else {
+                        content.clone()
+                    };
+
                     format!(
                         "File: {}\nContent:\n{}\n------------------",
                         path.display(),
-                        if content.len() > 1000 {
-                            format!("{}... (truncated)", &content[..1000])
-                        } else {
-                            content.clone()
-                        }
+                        snippet
                     )
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
-            // Limit total context to prevent shape mismatch
-            let context_limit = 3000;
+            // Limit total context so the local model doesn't get overwhelmed.
+            // 6k characters is usually enough to cover key docs without causing
+            // long, unstable generations.
+            let context_limit = 1000;
             let limited_context = if file_context.len() > context_limit {
                 format!("{}... (truncated)", &file_context[..context_limit])
             } else {
@@ -49,22 +113,28 @@ impl ProfileManager {
             };
 
             let system_prompt = r#"You are a senior software architect.
-Analyze the provided source files to extract a project profile.
-Identify the project name, description, tech stack (languages, frameworks, libraries), architectural patterns, and coding conventions.
+Analyze the provided source files and write a clear, plain-text PROJECT PROFILE.
 
-Output JSON only:
-{
-  "name": "Project Name",
-  "description": "Brief description",
-  "tech_stack": ["Rust", "React", "Axum"],
-  "architecture_notes": ["Microservices", "Clean Architecture"],
-  "key_conventions": ["Use snake_case", "Prefer composition"]
-}"#;
+Write a single narrative that covers:
+- Project name and a one-line summary
+- A short description of what the project does
+- The main technologies and languages used
+- High-level architecture or structure (if visible)
+- Any notable conventions or patterns
 
-            let user_prompt = format!("Analyze these files:\n\n{}", limited_context);
+IMPORTANT:
+- Keep it concise but informative (aim for 2–6 short paragraphs)."#;
+
+            let user_prompt = format!(
+                "Analyze these files and write the project profile described above:\n\n{}",
+                limited_context
+            );
+
+            info!("ProfileManager: user prompt: {}", user_prompt);
 
             // Try LLM generation with error handling
             match async {
+                info!("ProfileManager: invoking LLM to generate profile...");
                 let mut llm = llm.lock().await;
                 llm.generate_with_system(system_prompt, &user_prompt, 800)
                     .await
@@ -72,23 +142,19 @@ Output JSON only:
             .await
             {
                 Ok(response) => {
-                    // Parse JSON
-                    let json_str = response
-                        .trim()
-                        .trim_start_matches("```json")
-                        .trim_start_matches("```")
-                        .trim_end_matches("```")
-                        .trim();
-
-                    match serde_json::from_str::<SourceProfile>(json_str) {
-                        Ok(profile) => {
-                            info!("Initial profile generated successfully: {}", profile.name);
-                            return Ok(profile);
-                        }
-                        Err(e) => {
-                            error!("Failed to parse LLM response as JSON: {}", e);
-                            info!("Falling back to basic file parsing");
-                        }
+                    let text = response.trim();
+                    if !text.is_empty() {
+                        let profile = SourceProfile {
+                            profile_name: "Generated Profile".to_string(),
+                            description: text.to_string(),
+                        };
+                        info!(
+                            "ProfileManager: LLM-generated plain-text profile {}",
+                            profile.description
+                        );
+                        return Ok(profile);
+                    } else {
+                        warn!("ProfileManager: LLM returned empty profile text. Falling back to default profile.");
                     }
                 }
                 Err(e) => {
@@ -100,76 +166,50 @@ Output JSON only:
             }
         }
 
-        // Fallback: basic parsing from file contents
-        info!("Using basic file parsing for profile generation");
-        self.generate_profile_from_files(&files)
-    }
+        // Fallback: no LLM profile available – build a simple profile directly
+        // from the indexed files so the user still gets something useful.
+        if !files.is_empty() {
+            // Prefer README-like files for a human-friendly summary.
+            let readme_candidate = files.iter().find(|(path, _)| {
+                if let Some(name) = path.file_name() {
+                    let name = name.to_string_lossy().to_lowercase();
+                    name == "readme.md" || name == "readme" || name.starts_with("readme.")
+                } else {
+                    false
+                }
+            });
 
-    /// Simple fallback profile generation from common files
-    fn generate_profile_from_files(&self, files: &[(PathBuf, String)]) -> Result<SourceProfile> {
-        let mut profile = SourceProfile::default();
+            let (profile_name, description) = if let Some((path, content)) = readme_candidate {
+                // Use the first few lines of the README as a basic description.
+                let first_lines: String = content.lines().take(12).collect::<Vec<_>>().join("\n");
+                (
+                    format!("Basic Profile from {}", path.display()),
+                    first_lines,
+                )
+            } else {
+                // Fall back to the first file we saw.
+                let (path, content) = &files[0];
+                let first_lines: String = content.lines().take(12).collect::<Vec<_>>().join("\n");
+                (
+                    format!("Basic Profile from {}", path.display()),
+                    first_lines,
+                )
+            };
 
-        for (path, content) in files {
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let profile = SourceProfile {
+                profile_name,
+                description,
+            };
 
-            // Extract from Cargo.toml
-            if filename == "Cargo.toml" {
-                if let Some(name) = content.lines().find(|l| l.starts_with("name =")) {
-                    profile.name = name
-                        .split('=')
-                        .nth(1)
-                        .unwrap_or("")
-                        .trim()
-                        .trim_matches('"')
-                        .to_string();
-                }
-                if content.contains("tokio") {
-                    profile.tech_stack.push("Tokio".to_string());
-                }
-                if content.contains("axum") {
-                    profile.tech_stack.push("Axum".to_string());
-                }
-                if content.contains("serde") {
-                    profile.tech_stack.push("Serde".to_string());
-                }
-                profile.tech_stack.push("Rust".to_string());
-            }
-
-            // Extract from package.json
-            if filename == "package.json" {
-                if content.contains("react") {
-                    profile.tech_stack.push("React".to_string());
-                }
-                if content.contains("typescript") {
-                    profile.tech_stack.push("TypeScript".to_string());
-                }
-                if content.contains("vue") {
-                    profile.tech_stack.push("Vue".to_string());
-                }
-                profile.tech_stack.push("JavaScript/TypeScript".to_string());
-            }
-
-            // Extract from README
-            if filename.to_lowercase().starts_with("readme") {
-                let first_line = content.lines().next().unwrap_or("");
-                if first_line.starts_with('#') {
-                    profile.name = first_line.trim_start_matches('#').trim().to_string();
-                }
-                let first_para = content.lines().take(10).collect::<Vec<_>>().join(" ");
-                if profile.description.is_empty() && first_para.len() > 10 {
-                    profile.description = first_para.chars().take(200).collect();
-                }
-            }
+            info!("ProfileManager: generated basic fallback profile from files");
+            return Ok(profile);
         }
 
-        if profile.name.is_empty() {
-            profile.name = "Source Project".to_string();
-        }
-        if profile.description.is_empty() {
-            profile.description = "Auto-discovered source".to_string();
-        }
-
-        Ok(profile)
+        // No files available at all – return an empty profile.
+        info!(
+            "ProfileManager: no files available; returning default empty profile for manual editing"
+        );
+        Ok(SourceProfile::default())
     }
 
     /// Update profile based on user query (learning loop)

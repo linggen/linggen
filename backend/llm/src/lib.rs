@@ -1,6 +1,6 @@
 use anyhow::Result;
 use candle_core::{Device, IndexOp, Tensor};
-use candle_transformers::models::qwen2::Model as Qwen2Model;
+use candle_transformers::models::qwen3::ModelForCausalLM as Qwen3Model;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ pub use model_manager::{FileInfo, ModelInfo, ModelManager, ModelRegistry, ModelS
 
 /// Mini LLM wrapper for running lightweight models (Qwen, Phi, etc.)
 pub struct MiniLLM {
-    model: Qwen2Model,
+    model: Qwen3Model,
     tokenizer: Tokenizer,
     device: Device,
     config: LLMConfig,
@@ -45,10 +45,13 @@ impl Default for LLMConfig {
         Self {
             model_path: None, // Will auto-download if None
             tokenizer_path: None,
-            max_tokens: 512,
+            max_tokens: 1024,
+            // Temperature 0.7 provides good balance between creativity and coherence
+            // (avoids greedy sampling that can cause repetition with small models)
             temperature: 0.7,
-            top_p: 0.9,
-            repeat_penalty: 1.1,
+            top_p: 0.95,
+            // Higher repeat_penalty discourages the model from repeating tokens
+            repeat_penalty: 1.3,
         }
     }
 }
@@ -69,12 +72,12 @@ impl MiniLLM {
         let device = Self::get_device()?;
 
         // Get or download model files
-        let (model_path, tokenizer_path, config_path) =
+        let (model_paths, tokenizer_path, config_path) =
             if config.model_path.is_none() || config.tokenizer_path.is_none() {
-                println!("No model path provided, downloading from Hugging Face...");
+                tracing::info!("No model path provided, downloading from Hugging Face...");
                 let downloader = ModelDownloader::new()?;
                 let files = downloader.download_qwen_model_with_progress(&mut progress_fn)?;
-                (files.model_path, files.tokenizer_path, files.config_path)
+                (files.model_paths, files.tokenizer_path, files.config_path)
             } else {
                 // If paths are provided, assume config is in same directory
                 let model_path = config.model_path.clone().unwrap();
@@ -83,17 +86,17 @@ impl MiniLLM {
                     .ok_or_else(|| anyhow::anyhow!("Invalid model path"))?
                     .join("config.json");
                 (
-                    model_path,
+                    vec![model_path],
                     config.tokenizer_path.clone().unwrap(),
                     config_path,
                 )
             };
 
-        println!("Loading model from: {:?}", model_path);
+        tracing::info!("Loading model from {} files", model_paths.len());
         progress_fn("Loading model into memory...");
-        let model = Self::load_model(&model_path, &config_path, &device)?;
+        let model = Self::load_model(&model_paths, &config_path, &device)?;
 
-        println!("Loading tokenizer from: {:?}", tokenizer_path);
+        tracing::info!("Loading tokenizer from: {:?}", tokenizer_path);
         progress_fn("Loading tokenizer...");
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
@@ -114,11 +117,11 @@ impl MiniLLM {
         {
             match Device::new_metal(0) {
                 Ok(device) => {
-                    println!("Using Metal GPU acceleration");
+                    tracing::info!("Using Metal GPU acceleration");
                     return Ok(device);
                 }
                 Err(e) => {
-                    eprintln!("Metal not available: {}, falling back to CPU", e);
+                    tracing::warn!("Metal not available: {}, falling back to CPU", e);
                 }
             }
         }
@@ -127,26 +130,26 @@ impl MiniLLM {
         {
             match Device::new_cuda(0) {
                 Ok(device) => {
-                    println!("Using CUDA GPU acceleration");
+                    tracing::info!("Using CUDA GPU acceleration");
                     return Ok(device);
                 }
                 Err(e) => {
-                    eprintln!("CUDA not available: {}, falling back to CPU", e);
+                    tracing::warn!("CUDA not available: {}, falling back to CPU", e);
                 }
             }
         }
 
-        println!("Using CPU");
+        tracing::info!("Using CPU");
         Ok(Device::Cpu)
     }
 
-    /// Load the model from file
+    /// Load the model from multiple files
     fn load_model(
-        model_path: &PathBuf,
+        model_paths: &[PathBuf],
         config_path: &PathBuf,
         device: &Device,
-    ) -> Result<Qwen2Model> {
-        model_utils::load_model(model_path, config_path, device)
+    ) -> Result<Qwen3Model> {
+        model_utils::load_model(model_paths, config_path, device)
     }
 
     /// Generate text from a prompt
@@ -186,24 +189,74 @@ impl MiniLLM {
         let mut tokens = encoding.get_ids().to_vec();
         let eos_token = self.tokenizer.token_to_id("<|im_end|>").unwrap_or(151645); // Qwen2 default EOS token
 
+        // Initial setup for generation. We avoid manual start_pos bookkeeping here
+        // because incorrect offsets can cause runtime shape errors inside the model
+        // on some backends (e.g., "narrow invalid args start > dim_len").
+        //
+        // Instead, on each step we feed the *entire* token sequence to the model
+        // with start_pos = 0. This is slightly less efficient but much more robust.
+        let mut input_ids; // = Tensor::new(tokens.clone(), &self.device)?.unsqueeze(0)?;
+                           // Simple repetition guard: track runs of the same token to avoid degeneracy
+        let mut last_token: Option<u32> = None;
+        let mut repeat_run: u32 = 0;
+
         // Generate tokens one at a time
         for _ in 0..max_tokens {
-            // Convert tokens to tensor
-            let input_ids = Tensor::new(tokens.clone(), &self.device)?;
-            let input_ids = input_ids.unsqueeze(0)?; // Add batch dimension [1, seq_len]
+            // Since we are feeding the full sequence every time with start_pos=0
+            // (to avoid the shape issues we saw earlier with incremental generation),
+            // we MUST clear the KV cache on each step so it doesn't accumulate duplicate history.
+            self.clear_cache();
 
-            // Forward pass without KV caching (always use start_pos=0)
-            // This recomputes everything each time, which is slower but avoids
-            // KV cache management complexity and shape mismatch issues
-            let logits = self.model.forward(&input_ids, 0, None)?;
+            // Always feed the full sequence so far. This avoids mismatches between
+            // the model's internal KV cache and the external start_pos we pass.
+            input_ids = Tensor::new(tokens.clone(), &self.device)?.unsqueeze(0)?;
+
+            // Forward pass with KV caching
+            // start_pos tracks where we are in the sequence, allowing the model to use cached keys/values
+            // We always pass start_pos = 0 here to avoid out-of-bounds issues on
+            // some devices when manually tracking the offset across incremental calls.
+            let logits = self.model.forward(&input_ids, 0)?;
+
+            let seq_len = input_ids.dim(1)?;
 
             // Get logits for last token
-            let seq_len = tokens.len();
-            let logits = logits.i((0, seq_len - 1))?;
+            // Handle case where model returns [batch, 1, vocab] (just last token)
+            // vs [batch, seq_len, vocab] (full sequence)
+            let logits = if logits.dim(1)? == 1 {
+                logits.i((0, 0))?
+            } else {
+                logits.i((0, seq_len - 1))?
+            };
 
-            // Sample next token
-            let next_token =
-                model_utils::sample_token(&logits, self.config.temperature, self.config.top_p)?;
+            // Cast logits to F32 for sampling (Candle sampling usually requires F32)
+            let logits = logits.to_dtype(candle_core::DType::F32)?;
+
+            // Sample next token with repetition penalty applied to all generated tokens
+            let prompt_len = encoding.get_ids().len();
+            let generated_tokens = &tokens[prompt_len..];
+            let next_token = model_utils::sample_token(
+                &logits,
+                self.config.temperature,
+                self.config.top_p,
+                self.config.repeat_penalty,
+                generated_tokens,
+            )?;
+
+            // Repetition guard: if we see a long run of the same token, stop early
+            if Some(next_token) == last_token {
+                repeat_run += 1;
+            } else {
+                repeat_run = 0;
+                last_token = Some(next_token);
+            }
+            if repeat_run >= 32 {
+                tracing::warn!(
+                    "LLM generation stopped early due to repeated token run (token={}, run={})",
+                    next_token,
+                    repeat_run
+                );
+                break;
+            }
 
             // Check for EOS
             if next_token == eos_token {
@@ -221,6 +274,12 @@ impl MiniLLM {
             .tokenizer
             .decode(generated_tokens, true)
             .map_err(|e| anyhow::anyhow!("Decoding failed: {}", e))?;
+
+        // Log length only to avoid dumping huge, potentially noisy outputs.
+        tracing::debug!(
+            "LLM Generated Output length: {} chars",
+            text.chars().count()
+        );
 
         Ok(text)
     }

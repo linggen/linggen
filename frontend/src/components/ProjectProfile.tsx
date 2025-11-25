@@ -3,7 +3,7 @@ import { getProfile, updateProfile, generateProfile, type SourceProfile as Sourc
 
 export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> = ({ sourceId, onBack }) => {
     const [profile, setProfile] = useState<SourceProfileType>({
-        name: '',
+        profile_name: '',
         description: '',
         tech_stack: [],
         architecture_notes: [],
@@ -13,6 +13,7 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
     const [loading, setLoading] = useState(false);
     const [generating, setGenerating] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [docPatterns, setDocPatterns] = useState<string>('*.md, README*,');
 
     useEffect(() => {
         loadData();
@@ -34,6 +35,8 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                 setSource(foundSource);
             }
         } catch (err) {
+            // Only show error if it's not the default profile being loaded
+            // Actually, if we get here it means the fetch failed or json parse failed
             console.error(err);
             setMessage({ text: 'Failed to load profile', type: 'error' });
         } finally {
@@ -58,7 +61,13 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
         try {
             setGenerating(true);
             setMessage({ text: '⏳ Generating profile from source files... This may take a moment.', type: 'success' });
-            const data = await generateProfile(sourceId);
+            // Parse docPatterns into an array of glob strings
+            const files = docPatterns
+                .split(',')
+                .map(p => p.trim())
+                .filter(p => p.length > 0);
+
+            const data = await generateProfile(sourceId, { files: files.length > 0 ? files : undefined });
             setProfile(data);
             setMessage({ text: '✓ Profile generated successfully!', type: 'success' });
         } catch (err) {
@@ -69,12 +78,8 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
         }
     };
 
-    const handleArrayChange = (field: keyof SourceProfileType, value: string) => {
-        setProfile(prev => ({
-            ...prev,
-            [field]: value.split(',').map(s => s.trim()).filter(s => s)
-        }));
-    };
+    // No longer used now that the profile is a single free-form textarea,
+    // but kept here for potential future expansion.
 
     return (
         <div className="view">
@@ -88,7 +93,7 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                         ← Back to Sources
                     </button>
                 )}
-                <h2>Source Profile</h2>
+                <h2>{source ? `Source Profile: ${source.name}` : 'Source Profile'}</h2>
                 <p>Configure this source's tech stack, architecture, and coding conventions for better AI context.</p>
             </div>
 
@@ -116,108 +121,55 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                     </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating || loading}
-                        className="btn-primary"
-                    >
-                        {generating ? '⏳ Generating...' : '✨ Auto-Generate from Source'}
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={loading}
-                        className="btn-primary"
-                    >
-                        {loading ? '💾 Saving...' : '💾 Save Profile'}
-                    </button>
-                </div>
-
                 <div style={{ display: 'grid', gap: '1.5rem' }}>
                     <div className="form-group">
-                        <label htmlFor="profile-name">
-                            Source Name
+                        <label htmlFor="doc-patterns">
+                            Doc File Patterns
                             <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
-                                Human-readable name for this source
+                                Comma-separated globs (used to pick files for auto-generate)
                             </span>
                         </label>
                         <input
-                            id="profile-name"
+                            id="doc-patterns"
                             type="text"
-                            value={profile.name}
-                            onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))}
-                            placeholder="e.g., SailSim Engine"
+                            value={docPatterns}
+                            onChange={e => setDocPatterns(e.target.value)}
+                            placeholder="e.g., *.md, README*, *.txt, *.toml, *.json"
                         />
                     </div>
 
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                        <button
+                            onClick={handleGenerate}
+                            disabled={generating || loading}
+                            className="btn-primary"
+                        >
+                            {generating ? '⏳ Generating...' : '✨ Auto-Generate from Source'}
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={loading}
+                            className="btn-primary"
+                        >
+                            {loading ? '💾 Saving...' : '💾 Save Profile'}
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ display: 'grid', gap: '1.5rem', marginTop: '2rem' }}>
                     <div className="form-group">
                         <label htmlFor="profile-description">
-                            Description
+                            Profile
                             <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
-                                What is this source about?
+                                Free-form project profile text (auto-generated or edited manually)
                             </span>
                         </label>
                         <textarea
                             id="profile-description"
                             value={profile.description}
                             onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))}
-                            rows={3}
-                            placeholder="Describe the purpose and scope of this codebase..."
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label htmlFor="profile-tech-stack">
-                            Tech Stack
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
-                                Comma-separated list
-                            </span>
-                        </label>
-                        <input
-                            id="profile-tech-stack"
-                            type="text"
-                            value={profile.tech_stack.join(', ')}
-                            onChange={e => handleArrayChange('tech_stack', e.target.value)}
-                            placeholder="e.g., Rust, TypeScript, React, WebGL"
-                        />
-                        {profile.tech_stack.length > 0 && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
-                                {profile.tech_stack.map((tech, i) => (
-                                    <span key={i} className="badge">{tech}</span>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="form-group">
-                        <label htmlFor="profile-architecture">
-                            Architecture Notes
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
-                                Design patterns, project structure, key concepts
-                            </span>
-                        </label>
-                        <textarea
-                            id="profile-architecture"
-                            value={profile.architecture_notes.join(', ')}
-                            onChange={e => handleArrayChange('architecture_notes', e.target.value)}
-                            rows={4}
-                            placeholder="e.g., Clean Architecture, Modular design, Event-driven"
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label htmlFor="profile-conventions">
-                            Key Conventions
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginLeft: '0.5rem' }}>
-                                Coding standards, naming patterns, best practices
-                            </span>
-                        </label>
-                        <textarea
-                            id="profile-conventions"
-                            value={profile.key_conventions.join(', ')}
-                            onChange={e => handleArrayChange('key_conventions', e.target.value)}
-                            rows={4}
-                            placeholder="e.g., snake_case for functions, Use Result for error handling"
+                            rows={10}
+                            placeholder="High-level description of this source, tech stack, architecture, and conventions..."
                         />
                     </div>
                 </div>

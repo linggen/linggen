@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Candle ML framework
-candle-core = "0.8"
-candle-transformers = "0.8"
-candle-nn = "0.8"
+# Candle ML framework (using git for latest Qwen3 support)
+candle-core = { git = "https://github.com/huggingface/candle.git" }
+candle-transformers = { git = "https://github.com/huggingface/candle.git" }
+candle-nn = { git = "https://github.com/huggingface/candle.git" }
 
 # Tokenization
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 
 # Model downloading from Hugging Face
-hf-hub = "0.3"
+hf-hub = "0.4"
 
 # Utilities
 anyhow = "1.0"

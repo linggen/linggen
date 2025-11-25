@@ -216,6 +216,72 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Get chunks matching a file pattern (e.g., "*.md", "*.toml")
+    /// Uses SQL LIKE for pattern matching on document_id
+    pub async fn get_chunks_by_file_pattern(
+        &self,
+        source_id: &str,
+        pattern: &str,
+    ) -> Result<Vec<Chunk>> {
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        // Convert glob pattern to SQL LIKE pattern
+        // *.md -> %.md
+        // README* -> README%
+        let sql_pattern = pattern.replace("*", "%");
+
+        // Build filter: source_id matches AND document_id matches pattern
+        let filter = format!(
+            "source_id = '{}' AND document_id LIKE '{}'",
+            source_id, sql_pattern
+        );
+
+        // Query with filter (no vector search, just metadata filter)
+        let results = table.query().only_if(&filter).execute().await?;
+
+        let mut chunks = Vec::new();
+        let mut stream = results;
+
+        while let Some(batch) = stream.try_next().await? {
+            let id_col = batch
+                .column_by_name("id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            let source_id_col = batch
+                .column_by_name("source_id")
+                .map(|col| col.as_any().downcast_ref::<StringArray>().unwrap());
+            let document_id_col = batch
+                .column_by_name("document_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            let content_col = batch
+                .column_by_name("content")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                chunks.push(Chunk {
+                    id: uuid::Uuid::parse_str(id_col.value(i)).unwrap_or_default(),
+                    source_id: source_id_col
+                        .map(|c| c.value(i).to_string())
+                        .unwrap_or_default(),
+                    document_id: document_id_col.value(i).to_string(),
+                    content: content_col.value(i).to_string(),
+                    embedding: None,
+                    metadata: serde_json::Value::Null,
+                });
+            }
+        }
+
+        Ok(chunks)
+    }
+
     /// Delete all chunks for a specific document (file)
     /// This allows incremental updates - delete old chunks for one file, then add new ones
     pub async fn delete_by_document(&self, document_id: &str) -> Result<()> {

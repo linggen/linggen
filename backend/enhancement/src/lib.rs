@@ -192,12 +192,8 @@ impl PromptEnhancer {
 
         // Construct structured prompt
         let profile_text = format!(
-            "SOURCE PROFILE:\nName: {}\nDescription: {}\nTech Stack: {}\nArchitecture: {}\nConventions: {}",
-            profile.name,
-            profile.description,
-            profile.tech_stack.join(", "),
-            profile.architecture_notes.join(", "),
-            profile.key_conventions.join(", ")
+            "SOURCE PROFILE:\nName: {}\nDescription: {}",
+            profile.profile_name, profile.description,
         );
 
         let enhanced = format!(

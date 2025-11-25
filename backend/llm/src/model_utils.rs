@@ -1,40 +1,61 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use candle_transformers::models::qwen2::{Config as Qwen2Config, Model as Qwen2Model};
+use candle_transformers::models::qwen3::{Config as Qwen3Config, ModelForCausalLM as Qwen3Model};
 use std::path::PathBuf;
 
-/// Load Qwen2 model from safetensors file
+/// Load Qwen3 model from multiple safetensors files
 pub fn load_model(
-    model_path: &PathBuf,
+    model_paths: &[PathBuf],
     config_path: &PathBuf,
     device: &Device,
-) -> Result<Qwen2Model> {
-    println!("Loading model config from: {:?}", config_path);
+) -> Result<Qwen3Model> {
+    tracing::info!("Loading model config from: {:?}", config_path);
 
     // Load config
     let config_str = std::fs::read_to_string(config_path).context("Failed to read config file")?;
-    let config: Qwen2Config =
-        serde_json::from_str(&config_str).context("Failed to parse Qwen2 config")?;
+    let config: Qwen3Config =
+        serde_json::from_str(&config_str).context("Failed to parse Qwen3 config")?;
 
-    println!("Loading model weights from: {:?}", model_path);
+    tracing::info!("Loading model weights from {} files...", model_paths.len());
 
-    // Load model weights from safetensors
+    // Load model weights from safetensors with BF16 for best Metal performance
     let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[model_path.clone()], DType::F32, device)
+        VarBuilder::from_mmaped_safetensors(model_paths, DType::BF16, device)
             .context("Failed to load model from safetensors")?
     };
 
-    println!("Building Qwen2 model...");
-    let model = Qwen2Model::new(&config, vb).context("Failed to build Qwen2 model")?;
+    tracing::info!("Building Qwen3 model...");
+    let model = Qwen3Model::new(&config, vb).context("Failed to build Qwen3 model")?;
 
-    println!("✓ Model loaded successfully");
+    tracing::info!("✓ Model loaded successfully");
     Ok(model)
 }
 
-/// Sample next token from logits
-pub fn sample_token(logits: &Tensor, temperature: f64, top_p: f64) -> Result<u32> {
-    let logits = logits.to_vec1::<f32>()?;
+/// Sample next token from logits with repetition penalty
+pub fn sample_token(
+    logits: &Tensor,
+    temperature: f64,
+    top_p: f64,
+    repeat_penalty: f32,
+    previous_tokens: &[u32],
+) -> Result<u32> {
+    let mut logits = logits.to_vec1::<f32>()?;
+
+    // Apply repetition penalty to previously generated tokens
+    if repeat_penalty != 1.0 {
+        for &token_id in previous_tokens {
+            let idx = token_id as usize;
+            if idx < logits.len() {
+                // Penalize by dividing if logit is positive, multiplying if negative
+                if logits[idx] > 0.0 {
+                    logits[idx] /= repeat_penalty;
+                } else {
+                    logits[idx] *= repeat_penalty;
+                }
+            }
+        }
+    }
 
     if temperature <= 0.0 {
         // Greedy sampling

@@ -318,7 +318,7 @@ export async function retryInit(): Promise<RetryInitResponse> {
 
 // Source Profile
 export interface SourceProfile {
-    name: string;
+    profile_name: string;
     description: string;
     tech_stack: string[];
     architecture_notes: string[];
