@@ -241,6 +241,84 @@ export async function enhancePrompt(query: string, strategy?: PromptStrategy): P
     return response.json();
 }
 
+export interface ChatResponse {
+    response: string;
+}
+
+/**
+ * Stream chat response from the backend
+ * 
+ * @param message User message
+ * @param onToken Callback for each new token
+ * @param context Optional context
+ */
+export async function chatStream(
+    message: string,
+    onToken: (token: string) => void,
+    context?: string
+): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/chat/stream`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message, context }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to stream chat: ${text}`);
+    }
+
+    if (!response.body) {
+        throw new Error('Response body is null');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Append new chunk to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines from buffer
+        const lines = buffer.split('\n');
+        // Keep the last (potentially incomplete) line in buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            if (line.startsWith('data:')) {
+                // Per SSE spec there may be an optional single space after "data:"
+                // We want to remove at most one leading space, but keep any spaces
+                // that are part of the actual payload (important for tokens that
+                // encode leading spaces, e.g. " How").
+                let data = line.slice(5);
+                if (data.startsWith(' ')) {
+                    data = data.slice(1);
+                }
+                if (data.length > 0) {
+                    onToken(data);
+                }
+            }
+        }
+    }
+
+    // Process any remaining data in buffer
+    if (buffer.startsWith('data:')) {
+        let data = buffer.slice(5);
+        if (data.startsWith(' ')) {
+            data = data.slice(1);
+        }
+        if (data.length > 0) {
+            onToken(data);
+        }
+    }
+}
+
 // User Preferences
 export interface UserPreferences {
     explanation_style?: string;
@@ -321,6 +399,32 @@ export async function retryInit(): Promise<RetryInitResponse> {
     }
 
     return response.json();
+}
+
+// App Settings
+export interface AppSettings {
+    intent_detection_enabled: boolean;
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+    const response = await fetch(`${API_BASE}/api/settings`);
+    if (!response.ok) {
+        throw new Error(`Failed to get settings: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function updateAppSettings(settings: AppSettings): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/settings`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to update settings: ${response.statusText}`);
+    }
 }
 
 // Source Profile

@@ -1,12 +1,8 @@
 use crate::job_manager::JobManager;
-use axum::{extract::State, http::StatusCode, Json};
 use dashmap::DashMap;
 use embeddings::{EmbeddingModel, TextChunker};
-use rememberme_core::Chunk;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use storage::{MetadataStore, VectorStore};
-use uuid::Uuid;
 
 
 pub struct AppState {

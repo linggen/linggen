@@ -73,11 +73,17 @@ impl PromptEnhancer {
         preferences: &UserPreferences,
         profile: &SourceProfile,
         strategy: PromptStrategy,
+        intent_detection_enabled: bool,
     ) -> Result<EnhancedPrompt> {
-        // Stage 1: Intent Classification
-        info!("Stage 1: Classifying intent...");
-        let intent_result = self.intent_classifier.classify(query).await?;
-        let intent = intent_result.intent.clone();
+        // Stage 1: Intent Classification (optional, controlled by settings)
+        let intent = if intent_detection_enabled {
+            info!("Stage 1: Classifying intent (LLM)...");
+            let intent_result = self.intent_classifier.classify(query).await?;
+            intent_result.intent.clone()
+        } else {
+            info!("Stage 1: Skipping LLM intent classification (disabled in settings). Using AskQuestion.");
+            rememberme_intent::Intent::AskQuestion
+        };
 
         // Stage 2: Context Retrieval (RAG)
         info!("Stage 2: Retrieving context via RAG...");
@@ -163,17 +169,19 @@ impl PromptEnhancer {
                 PromptStrategy::ReferenceOnly => context
                     .iter()
                     .map(|c| {
+                        // Prefer explicit file_path metadata; fall back to document_id
                         let path = c
                             .metadata
                             .get("file_path")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown");
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| c.document_id.clone());
                         format!("- {}", path)
                     })
                     .collect::<Vec<_>>()
                     .join("\n"),
                 PromptStrategy::Architectural => {
-                    // For architectural, we might skip code chunks or just list files
+                    // For architectural, we list files/modules at a high level
                     context
                         .iter()
                         .map(|c| {
@@ -181,7 +189,8 @@ impl PromptEnhancer {
                                 .metadata
                                 .get("file_path")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown");
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| c.document_id.clone());
                             format!("- {}", path)
                         })
                         .collect::<Vec<_>>()

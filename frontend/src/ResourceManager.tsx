@@ -7,9 +7,16 @@ interface ResourceManagerProps {
   indexingProgress?: string | null
   onCancelJob?: () => void
   onViewProfile?: (sourceId: string) => void
+  refreshKey?: number
 }
 
-export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJob, onViewProfile }: ResourceManagerProps) {
+export function ResourceManager({
+  onIndexResource,
+  indexingResourceId,
+  onCancelJob,
+  onViewProfile,
+  refreshKey,
+}: ResourceManagerProps) {
   const [resources, setResources] = useState<Resource[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -23,7 +30,8 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
 
   useEffect(() => {
     loadResources()
-  }, [])
+    // Re-load whenever parent indicates resources have changed (e.g., after indexing)
+  }, [refreshKey])
 
   const loadResources = async () => {
     setLoading(true)

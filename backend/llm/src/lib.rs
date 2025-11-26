@@ -158,7 +158,6 @@ impl MiniLLM {
     }
 
     /// Generate text with a system prompt
-    /// Generate text with a system prompt
     pub async fn generate_with_system(
         &mut self,
         system: &str,
@@ -176,6 +175,125 @@ impl MiniLLM {
                 self.generate_robust(system, user, max_tokens).await
             }
         }
+    }
+
+    /// Generate text with streaming callback
+    ///
+    /// This is similar to `generate_fast`, but it calls `callback` with each new token string.
+    /// The callback should return `true` to continue generating, or `false` to stop.
+    pub async fn generate_stream<F>(
+        &mut self,
+        system: &str,
+        user: &str,
+        max_tokens: usize,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(String) -> bool,
+    {
+        self.clear_cache();
+
+        // Format prompt
+        let formatted_prompt = if system.is_empty() {
+            format!(
+                "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                user
+            )
+        } else {
+            format!(
+                "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                system, user
+            )
+        };
+
+        // Tokenize
+        let encoding = self
+            .tokenizer
+            .encode(formatted_prompt.clone(), true)
+            .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+
+        let prompt_tokens = encoding.get_ids().to_vec();
+        let eos_token = self.tokenizer.token_to_id("<|im_end|>").unwrap_or(151645);
+
+        let mut all_tokens = prompt_tokens.clone();
+        let mut last_token: Option<u32> = None;
+        let mut repeat_run: u32 = 0;
+        // Track how many characters we've already emitted
+        let mut emitted_chars: usize = 0;
+
+        // 1. Process prompt (prefill)
+        let mut input_ids = Tensor::new(prompt_tokens.as_slice(), &self.device)?.unsqueeze(0)?;
+        let mut logits = self.model.forward(&input_ids, 0)?;
+        let mut start_pos = prompt_tokens.len();
+
+        // 2. Generation loop
+        for _ in 0..max_tokens {
+            // Get logits for the last token only
+            let seq_len = logits.dim(1)?;
+            let next_token_logits = logits.i((0, seq_len - 1))?; // [batch, vocab]
+
+            // Sample next token
+            let next_token_logits = next_token_logits.to_dtype(candle_core::DType::F32)?;
+            let next_token = model_utils::sample_token(
+                &next_token_logits,
+                self.config.temperature,
+                self.config.top_p,
+                self.config.repeat_penalty,
+                &all_tokens[prompt_tokens.len()..], // Only penalize generated tokens
+            )?;
+
+            // Repetition check
+            if Some(next_token) == last_token {
+                repeat_run += 1;
+            } else {
+                repeat_run = 0;
+                last_token = Some(next_token);
+            }
+            if repeat_run >= 32 {
+                tracing::warn!("Stream generation stopped early due to repetition");
+                break;
+            }
+
+            if next_token == eos_token {
+                break;
+            }
+
+            all_tokens.push(next_token);
+
+            // Decode ALL generated tokens to get the full text with proper spacing
+            let full_text = self
+                .tokenizer
+                .decode(&all_tokens[prompt_tokens.len()..], true)
+                .unwrap_or_default();
+
+            // Emit only the new characters we haven't sent yet
+            // Use character-based indexing to safely handle multi-byte UTF-8 (emojis, etc.)
+            let full_chars: Vec<char> = full_text.chars().collect();
+            if full_chars.len() > emitted_chars {
+                let new_content: String = full_chars[emitted_chars..].iter().collect();
+                emitted_chars = full_chars.len();
+
+                // Filter out Unicode replacement characters (�) that can appear
+                // when the tokenizer produces imperfect UTF-8 joins across tokens.
+                let clean_content: String =
+                    new_content.chars().filter(|&c| c != '\u{FFFD}').collect();
+
+                if !clean_content.is_empty() {
+                    if !callback(clean_content) {
+                        break; // Callback requested stop
+                    }
+                }
+            }
+
+            // Prepare next input (single token)
+            input_ids = Tensor::new(&[next_token], &self.device)?.unsqueeze(0)?;
+
+            // Forward pass with KV cache
+            logits = self.model.forward(&input_ids, start_pos)?;
+            start_pos += 1;
+        }
+
+        Ok(())
     }
 
     /// Fast generation using KV caching (O(N))

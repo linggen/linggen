@@ -1,6 +1,6 @@
 use axum::{http::StatusCode, Json};
 use rememberme_intent::{IntentClassifier, IntentResult};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{error, info};
 
 #[derive(Deserialize)]

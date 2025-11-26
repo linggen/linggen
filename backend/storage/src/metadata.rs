@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::preferences::UserPreferences;
 use crate::profile::SourceProfile;
+use serde::{Deserialize, Serialize};
 
 const SETTINGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("settings");
 const SOURCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sources");
@@ -15,6 +16,21 @@ const PROFILE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("profile
 
 pub struct MetadataStore {
     db: Arc<Database>,
+}
+
+// Application-wide settings stored in the SETTINGS_TABLE under key "app_settings"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    /// Whether to use LLM-based intent detection in the enhancement pipeline
+    pub intent_detection_enabled: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            intent_detection_enabled: true,
+        }
+    }
 }
 
 impl MetadataStore {
@@ -48,6 +64,31 @@ impl MetadataStore {
         {
             let mut table = write_txn.open_table(SETTINGS_TABLE)?;
             table.insert(key, value)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get application settings (returns defaults if not set)
+    pub fn get_app_settings(&self) -> Result<AppSettings> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(SETTINGS_TABLE)?;
+
+        if let Some(json) = table.get("app_settings")? {
+            let settings: AppSettings = serde_json::from_str(json.value())?;
+            Ok(settings)
+        } else {
+            Ok(AppSettings::default())
+        }
+    }
+
+    /// Update application settings
+    pub fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            let json = serde_json::to_string(settings)?;
+            table.insert("app_settings", json.as_str())?;
         }
         write_txn.commit()?;
         Ok(())

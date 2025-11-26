@@ -9,9 +9,8 @@ use tracing::info;
 
 mod handlers;
 use handlers::{
-    add_resource, cancel_job, classify_intent, enhance_prompt, get_app_status, get_preferences,
-    index_source, list_jobs, list_resources, remove_resource, retry_init, update_preferences,
-    AppState,
+    add_resource, cancel_job, chat_stream, classify_intent, enhance_prompt, get_app_status,
+    index_source, list_jobs, list_resources, remove_resource, retry_init, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -195,7 +194,12 @@ async fn main() {
                 .parse::<axum::http::HeaderValue>()
                 .unwrap(),
         )
-        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        // Allow common HTTP methods used by the frontend, including PUT for profile/preferences
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+        ])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
     // Build our application with routes
@@ -205,16 +209,21 @@ async fn main() {
         .route("/api/index_source", post(index_source))
         .route("/api/classify", post(classify_intent))
         .route("/api/enhance", post(enhance_prompt))
+        .route("/api/chat/stream", post(chat_stream))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/cancel", post(cancel_job))
         .route("/api/resources", post(add_resource))
         .route("/api/resources", get(list_resources))
         .route("/api/resources/remove", post(remove_resource))
         .route(
-            "/api/preferences",
-            get(handlers::preferences::get_preferences)
-                .put(handlers::preferences::update_preferences),
+            "/api/settings",
+            get(handlers::settings::get_settings).put(handlers::settings::update_settings),
         )
+        // .route(
+        //     "/api/preferences",
+        //     get(handlers::preferences::get_preferences)
+        //         .put(handlers::preferences::update_preferences),
+        // )
         .route(
             "/api/sources/:source_id/profile",
             get(handlers::profile::get_profile).put(handlers::profile::update_profile),

@@ -1,77 +1,27 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// User's preferred explanation style
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExplanationStyle {
-    /// Brief, to-the-point explanations
-    Concise,
-    /// Detailed with examples
-    Detailed,
-    /// Step-by-step breakdown
-    StepByStep,
-}
-
-impl Default for ExplanationStyle {
-    fn default() -> Self {
-        Self::Concise
-    }
-}
-
-/// User's preferred output format
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputFormat {
-    /// Bullet points
-    Bullets,
-    /// Prose/paragraph format
-    Prose,
-    /// Code with inline comments
-    CodeWithComments,
-    /// Code diff format
-    CodeDiff,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        Self::Bullets
-    }
-}
-
 /// User preferences for code generation and explanations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserPreferences {
-    /// How verbose should explanations be
-    pub explanation_style: ExplanationStyle,
+    /// Style of explanation (e.g. "concise", "detailed", "bullet points")
+    pub explanation_style: Option<String>,
 
-    /// Preferred output format
-    pub output_format: OutputFormat,
+    /// Preferred coding style (e.g. "functional", "OOP", "minimal")
+    pub code_style: Option<String>,
 
-    /// Preferred programming language (when applicable)
-    pub preferred_language: Option<String>,
+    /// Documentation preference (e.g. "JSDoc", "inline comments")
+    pub documentation_style: Option<String>,
 
-    /// Whether to include examples in explanations
-    pub include_examples: bool,
+    /// Testing preference (e.g. "unit tests", "TDD")
+    pub test_style: Option<String>,
 
-    /// Whether to show related code/files
-    pub show_related_code: bool,
+    /// Preferred programming language
+    #[serde(alias = "preferred_language")]
+    pub language_preference: Option<String>,
 
-    /// Maximum explanation length (words)
-    pub max_explanation_words: usize,
-}
-
-impl Default for UserPreferences {
-    fn default() -> Self {
-        Self {
-            explanation_style: ExplanationStyle::Concise,
-            output_format: OutputFormat::Bullets,
-            preferred_language: None,
-            include_examples: true,
-            show_related_code: true,
-            max_explanation_words: 300,
-        }
-    }
+    /// Verbosity level ("concise", "balanced", "detailed")
+    pub verbosity: Option<String>,
 }
 
 impl UserPreferences {
@@ -79,49 +29,58 @@ impl UserPreferences {
     pub fn to_prompt_instructions(&self) -> String {
         let mut instructions: Vec<String> = Vec::new();
 
-        // Style
-        match self.explanation_style {
-            ExplanationStyle::Concise => {
-                instructions.push("Keep explanations concise and to-the-point".to_string())
-            }
-            ExplanationStyle::Detailed => {
-                instructions.push("Provide detailed explanations with context".to_string())
-            }
-            ExplanationStyle::StepByStep => {
-                instructions.push("Break down explanations step-by-step".to_string())
+        // Explanation Style
+        if let Some(style) = &self.explanation_style {
+            if !style.is_empty() {
+                instructions.push(format!("Explanation style: {}", style));
             }
         }
 
-        // Format
-        match self.output_format {
-            OutputFormat::Bullets => {
-                instructions.push("Format output as bullet points".to_string())
+        // Code Style
+        if let Some(style) = &self.code_style {
+            if !style.is_empty() {
+                instructions.push(format!("Code style: {}", style));
             }
-            OutputFormat::Prose => instructions.push("Use prose/paragraph format".to_string()),
-            OutputFormat::CodeWithComments => {
-                instructions.push("Show code with inline comments".to_string())
-            }
-            OutputFormat::CodeDiff => instructions.push("Show changes as code diffs".to_string()),
         }
 
-        // Examples
-        if self.include_examples {
-            instructions.push("Include examples when helpful".to_string());
+        // Documentation Style
+        if let Some(style) = &self.documentation_style {
+            if !style.is_empty() {
+                instructions.push(format!("Documentation style: {}", style));
+            }
+        }
+
+        // Test Style
+        if let Some(style) = &self.test_style {
+            if !style.is_empty() {
+                instructions.push(format!("Test style: {}", style));
+            }
+        }
+
+        // Language Preference
+        if let Some(lang) = &self.language_preference {
+            if !lang.is_empty() {
+                instructions.push(format!("Preferred language: {}", lang));
+            }
+        }
+
+        // Verbosity
+        if let Some(verbosity) = &self.verbosity {
+            match verbosity.as_str() {
+                "concise" => instructions.push("Be extremely concise".to_string()),
+                "detailed" => {
+                    instructions.push("Provide detailed, comprehensive output".to_string())
+                }
+                // balanced is default/neutral
+                _ => {}
+            }
+        }
+
+        if instructions.is_empty() {
+            "Use default coding best practices.".to_string()
         } else {
-            instructions.push("Skip examples unless critical".to_string());
+            instructions.join(". ")
         }
-
-        // Related code
-        if self.show_related_code {
-            instructions.push("Mention related code/modules".to_string());
-        }
-
-        // Language
-        if let Some(lang) = &self.preferred_language {
-            instructions.push(format!("Prefer {} when showing code", lang));
-        }
-
-        instructions.join(". ")
     }
 }
 
@@ -132,25 +91,29 @@ mod tests {
     #[test]
     fn test_default_preferences() {
         let prefs = UserPreferences::default();
-        assert_eq!(prefs.explanation_style, ExplanationStyle::Concise);
-        assert_eq!(prefs.output_format, OutputFormat::Bullets);
-        assert!(prefs.include_examples);
+        assert!(prefs.explanation_style.is_none());
+        assert_eq!(
+            prefs.to_prompt_instructions(),
+            "Use default coding best practices."
+        );
     }
 
     #[test]
     fn test_prompt_instructions() {
         let prefs = UserPreferences {
-            explanation_style: ExplanationStyle::Concise,
-            output_format: OutputFormat::CodeDiff,
-            preferred_language: Some("Rust".to_string()),
-            include_examples: false,
-            show_related_code: true,
-            max_explanation_words: 200,
+            explanation_style: Some("bullet points".to_string()),
+            code_style: Some("functional".to_string()),
+            documentation_style: None,
+            test_style: Some("TDD".to_string()),
+            language_preference: Some("Rust".to_string()),
+            verbosity: Some("concise".to_string()),
         };
 
         let instructions = prefs.to_prompt_instructions();
-        assert!(instructions.contains("concise"));
-        assert!(instructions.contains("code diff"));
-        assert!(instructions.contains("Rust"));
+        assert!(instructions.contains("Explanation style: bullet points"));
+        assert!(instructions.contains("Code style: functional"));
+        assert!(instructions.contains("Test style: TDD"));
+        assert!(instructions.contains("Preferred language: Rust"));
+        assert!(instructions.contains("Be extremely concise"));
     }
 }

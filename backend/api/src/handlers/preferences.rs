@@ -45,3 +45,4 @@ pub async fn update_preferences(
 
     Ok(StatusCode::OK)
 }
+

@@ -4,7 +4,6 @@ use axum::{
     response::Json,
 };
 use rememberme_enhancement::ProfileManager;
-use rememberme_llm::LLMSingleton;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

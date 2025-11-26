@@ -5,18 +5,19 @@ import {
   listJobs,
   cancelJob,
   enhancePrompt,
-  getPreferences,
-  updatePreferences,
   getAppStatus,
   retryInit,
+  getAppSettings,
+  updateAppSettings,
+  type AppSettings,
   type Resource,
   type ResourceType,
   type IntentType,
-  type UserPreferences,
   type PromptStrategy,
 } from './api'
 import { ResourceManager } from './ResourceManager'
 import { SourceProfile } from './components/ProjectProfile'
+import { Chat } from './components/Chat'
 
 // Core flows:
 // 1) Manage sources (git/local/web) via Sources view
@@ -51,6 +52,7 @@ function App() {
   const [indexingProgress, setIndexingProgress] = useState<string | null>(null)
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [resourcesVersion, setResourcesVersion] = useState(0) // bump to refresh sources list
 
   // Use ref to track polling interval and cancelling state
   const pollingIntervalRef = useRef<number | null>(null)
@@ -127,14 +129,15 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
+          // Trigger a refresh of source stats/details
+          setResourcesVersion((v) => v + 1)
+
           setTimeout(() => {
             setIndexingResourceId(null)
             setIndexingProgress(null)
             setCurrentJobId(null)
             setStatus('idle')
           }, 3000)
-
-          setCurrentView('activity')
         } else if (job.status === 'Failed') {
           // Stop polling
           if (pollingIntervalRef.current) {
@@ -163,6 +166,9 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
+          // Trigger a refresh of source stats/details as well
+          setResourcesVersion((v) => v + 1)
+
           setTimeout(() => {
             setIndexingResourceId(null)
             setIndexingProgress(null)
@@ -170,8 +176,6 @@ function App() {
             isCancellingRef.current = false
             setStatus(errorMsg.includes('cancelled') ? 'idle' : 'error')
           }, 3000)
-
-          setCurrentView('activity')
         }
       }
     } catch (error) {
@@ -463,6 +467,7 @@ function App() {
                 indexingProgress={indexingProgress}
                 onCancelJob={handleCancelJob}
                 onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
+                resourcesVersion={resourcesVersion}
               />
             )
           )}
@@ -547,9 +552,17 @@ interface SourcesViewProps {
   indexingProgress: string | null
   onCancelJob: () => void
   onViewProfile: (sourceId: string) => void
+  resourcesVersion: number
 }
 
-function SourcesView({ onIndexResource, indexingResourceId, indexingProgress, onCancelJob, onViewProfile }: SourcesViewProps) {
+function SourcesView({
+  onIndexResource,
+  indexingResourceId,
+  indexingProgress,
+  onCancelJob,
+  onViewProfile,
+  resourcesVersion,
+}: SourcesViewProps) {
   return (
     <div className="view">
       <div className="view-header">
@@ -563,6 +576,7 @@ function SourcesView({ onIndexResource, indexingResourceId, indexingProgress, on
           indexingProgress={indexingProgress}
           onCancelJob={onCancelJob}
           onViewProfile={onViewProfile}
+          refreshKey={resourcesVersion}
         />
       </section>
     </div>
@@ -638,42 +652,6 @@ function AssistantView() {
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
-
-  // Preferences state
-  const [preferences, setPreferences] = useState<UserPreferences>({})
-  const [loadingPrefs, setLoadingPrefs] = useState(false)
-  const [savingPrefs, setSavingPrefs] = useState(false)
-  const [prefsStatus, setPrefsStatus] = useState('')
-
-  useEffect(() => {
-    loadPreferences()
-  }, [])
-
-  const loadPreferences = async () => {
-    setLoadingPrefs(true)
-    try {
-      const response = await getPreferences()
-      setPreferences(response.preferences)
-    } catch (error) {
-      console.error('Failed to load preferences:', error)
-    } finally {
-      setLoadingPrefs(false)
-    }
-  }
-
-  const handleSavePreferences = async () => {
-    setSavingPrefs(true)
-    setPrefsStatus('')
-    try {
-      await updatePreferences(preferences)
-      setPrefsStatus('✓ Preferences saved')
-      setTimeout(() => setPrefsStatus(''), 3000)
-    } catch (error) {
-      setPrefsStatus(`✗ Failed to save: ${error}`)
-    } finally {
-      setSavingPrefs(false)
-    }
-  }
 
   const handleEnhance = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -833,96 +811,7 @@ function AssistantView() {
         </div>
 
         <div className="assistant-sidebar-col">
-          {/* User Preferences */}
-          <section className="section">
-            <h3>⚙️ User Preferences</h3>
-
-            <p className="section-description">Configure your preferences to customize prompt enhancement.</p>
-
-            {loadingPrefs ? (
-              <div className="loading">Loading preferences...</div>
-            ) : (
-              <div className="preferences-form">
-                <div className="form-group">
-                  <label htmlFor="explanation_style">Explanation Style</label>
-                  <input
-                    id="explanation_style"
-                    type="text"
-                    value={preferences.explanation_style || ''}
-                    onChange={(e) => setPreferences({ ...preferences, explanation_style: e.target.value })}
-                    placeholder="e.g., concise, detailed, bullet points"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="code_style">Code Style</label>
-                  <input
-                    id="code_style"
-                    type="text"
-                    value={preferences.code_style || ''}
-                    onChange={(e) => setPreferences({ ...preferences, code_style: e.target.value })}
-                    placeholder="e.g., functional, OOP, minimal"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="documentation_style">Documentation Style</label>
-                  <input
-                    id="documentation_style"
-                    type="text"
-                    value={preferences.documentation_style || ''}
-                    onChange={(e) => setPreferences({ ...preferences, documentation_style: e.target.value })}
-                    placeholder="e.g., JSDoc, inline comments, README"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="test_style">Test Style</label>
-                  <input
-                    id="test_style"
-                    type="text"
-                    value={preferences.test_style || ''}
-                    onChange={(e) => setPreferences({ ...preferences, test_style: e.target.value })}
-                    placeholder="e.g., unit tests, integration tests, TDD"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="language_preference">Language Preference</label>
-                  <input
-                    id="language_preference"
-                    type="text"
-                    value={preferences.language_preference || ''}
-                    onChange={(e) => setPreferences({ ...preferences, language_preference: e.target.value })}
-                    placeholder="e.g., Rust, TypeScript, Python"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="verbosity">Verbosity</label>
-                  <select
-                    id="verbosity"
-                    value={preferences.verbosity || 'balanced'}
-                    onChange={(e) => setPreferences({ ...preferences, verbosity: e.target.value })}
-                  >
-                    <option value="concise">Concise</option>
-                    <option value="balanced">Balanced</option>
-                    <option value="detailed">Detailed</option>
-                  </select>
-                </div>
-
-                <button type="button" onClick={handleSavePreferences} disabled={savingPrefs}>
-                  {savingPrefs ? 'Saving...' : 'Save Preferences'}
-                </button>
-
-                {prefsStatus && (
-                  <div className={`status ${prefsStatus.startsWith('✓') ? 'success' : 'error'}`}>
-                    {prefsStatus}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
+          <Chat />
         </div>
       </div>
     </div >
@@ -930,6 +819,45 @@ function AssistantView() {
 }
 
 function SettingsView() {
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        setLoading(true)
+        const data = await getAppSettings()
+        setSettings(data)
+      } catch (err) {
+        console.error('Failed to load app settings:', err)
+        setMessage('✗ Failed to load settings')
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadSettings()
+  }, [])
+
+  const handleToggleIntent = async () => {
+    if (!settings || saving) return
+    const next = { ...settings, intent_detection_enabled: !settings.intent_detection_enabled }
+    setSettings(next)
+    setSaving(true)
+    setMessage(null)
+    try {
+      await updateAppSettings(next)
+      setMessage('✓ Settings saved')
+    } catch (err) {
+      console.error('Failed to save settings:', err)
+      setMessage('✗ Failed to save settings')
+    } finally {
+      setSaving(false)
+      setTimeout(() => setMessage(null), 3000)
+    }
+  }
+
   return (
     <div className="view">
       <div className="view-header">
@@ -953,12 +881,44 @@ function SettingsView() {
         <div className="settings-group">
           <h3>Search Engine</h3>
           <div className="settings-item">
-            <span className="settings-label">AI Model</span>
+            <span className="settings-label">Embedding Model</span>
             <span className="settings-value">all-MiniLM-L6-v2</span>
           </div>
           <div className="settings-item">
             <span className="settings-label">Privacy</span>
             <span className="settings-value">100% local, offline-capable, your data never leaves your device</span>
+          </div>
+          <div className="settings-item">
+            <span className="settings-label">LLM Model</span>
+            <span className="settings-value">Qwen3-4B-Instruct (local)</span>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <h3>AI Pipeline</h3>
+          {message && (
+            <div className={`status ${message.startsWith('✓') ? 'success' : 'error'}`} style={{ marginBottom: '0.75rem' }}>
+              {message}
+            </div>
+          )}
+          <div className="settings-item">
+            <span className="settings-label">LLM Intent Detection</span>
+            <span className="settings-value">
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!settings?.intent_detection_enabled}
+                  onChange={handleToggleIntent}
+                  disabled={loading || saving || !settings}
+                />
+                <span>{settings?.intent_detection_enabled ? 'Enabled' : 'Disabled'}</span>
+              </label>
+            </span>
+          </div>
+          <div className="settings-item settings-item-muted">
+            <span>
+              When disabled, the enhancer skips the LLM-based intent detector and treats all queries as general questions.
+            </span>
           </div>
         </div>
       </section>
