@@ -275,6 +275,9 @@ mod tests {
                 source_type: SourceType::Local,
                 path: "/tmp/docs".to_string(),
                 enabled: true,
+                chunk_count: None,
+                file_count: None,
+                total_size_bytes: None,
             };
 
             store.add_source(&source)?;

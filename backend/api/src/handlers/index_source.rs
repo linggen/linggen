@@ -360,24 +360,105 @@ async fn run_indexing_job(
     let processed_size_mb = (successful_files as f64 / files_count as f64) * total_size_mb;
     let estimated_lancedb_size_mb = embedding_size_mb + processed_size_mb;
 
-    tracing::info!("✅ Indexing complete!");
-    tracing::info!(
-        "  Files: {} successful, {} failed ({} total)",
-        successful_files,
-        failed_files,
-        files_count
-    );
-    tracing::info!(
-        "  Content: {:.2} MB processed, {} chunks created",
-        processed_size_mb,
-        total_chunks
-    );
     tracing::info!(
         "  LanceDB size: ~{:.2} MB ({:.2} MB embeddings + {:.2} MB metadata)",
         estimated_lancedb_size_mb,
         embedding_size_mb,
         processed_size_mb
     );
+
+    // 4. Auto-generate profile
+    tracing::info!(
+        "🤖 Auto-generating profile for source {}...",
+        initial_job.source_id
+    );
+
+    // Get LLM instance
+    let llm = rememberme_llm::LLMSingleton::get().await;
+    if let Some(llm) = llm {
+        let profile_manager = rememberme_enhancement::ProfileManager::new(Some(llm));
+
+        // Fetch chunks for profile generation (prioritize READMEs)
+        // We can use the vector store to get chunks, or just use the ones we just created if we kept them.
+        // But chunk_buffer was drained. Let's query the store to be safe and consistent.
+        // We'll ask for READMEs first, then everything else if needed.
+
+        let mut profile_chunks = Vec::new();
+
+        // Try to get README chunks first
+        match state
+            .vector_store
+            .get_chunks_by_file_pattern(&initial_job.source_id, "README*")
+            .await
+        {
+            Ok(chunks) => profile_chunks.extend(chunks),
+            Err(e) => tracing::warn!("Failed to fetch README chunks: {}", e),
+        }
+
+        // If we have very few chunks, maybe fetch more?
+        // For now, let's just trust the ProfileManager's fallback logic if we pass what we have.
+        // Actually, let's just fetch a reasonable sample if READMEs are missing.
+        if profile_chunks.is_empty() {
+            match state.vector_store.search(vec![0.0; 384], None, 50).await {
+                Ok(chunks) => {
+                    // Filter for this source only (search returns global results potentially?)
+                    // VectorStore::search doesn't filter by source_id in the current impl shown earlier.
+                    // We should probably use get_chunks_by_file_pattern with "*"
+                    tracing::info!("No READMEs found, trying to fetch all chunks...");
+                }
+                Err(_) => {}
+            }
+
+            match state
+                .vector_store
+                .get_chunks_by_file_pattern(&initial_job.source_id, "*")
+                .await
+            {
+                Ok(chunks) => {
+                    // Take first 50 to avoid overwhelming
+                    profile_chunks.extend(chunks.into_iter().take(50));
+                }
+                Err(e) => tracing::warn!("Failed to fetch fallback chunks: {}", e),
+            }
+        }
+
+        if !profile_chunks.is_empty() {
+            match profile_manager
+                .generate_initial_profile(profile_chunks)
+                .await
+            {
+                Ok(profile) => {
+                    if let Err(e) = state
+                        .metadata_store
+                        .update_source_profile(&initial_job.source_id, &profile)
+                    {
+                        tracing::error!("Failed to save auto-generated profile: {}", e);
+                    } else {
+                        tracing::info!("✅ Auto-generated profile saved successfully!");
+                    }
+                }
+                Err(e) => tracing::error!("Failed to generate profile: {}", e),
+            }
+        } else {
+            tracing::warn!("No chunks available for profile generation");
+        }
+    } else {
+        tracing::warn!("LLM not available, skipping auto-profile generation");
+    }
+
+    // 5. Save stats to source config in Redb
+    tracing::info!("💾 Saving stats to source config...");
+    if let Ok(Some(mut source)) = state.metadata_store.get_source(&initial_job.source_id) {
+        source.chunk_count = Some(total_chunks);
+        source.file_count = Some(successful_files);
+        source.total_size_bytes = completed_job.total_size_bytes;
+
+        if let Err(e) = state.metadata_store.update_source(&source) {
+            tracing::error!("Failed to save stats to source: {}", e);
+        } else {
+            tracing::info!("✅ Stats saved to source config!");
+        }
+    }
 }
 
 fn check_cancellation(

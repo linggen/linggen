@@ -30,6 +30,12 @@ export async function indexSource(sourceId: string): Promise<IndexSourceResponse
 // Resource Management
 export type ResourceType = 'git' | 'local' | 'web';
 
+export interface SourceStats {
+    chunk_count: number;
+    file_count: number;
+    total_size_bytes: number;
+}
+
 export interface Resource {
     id: string;
     name: string;
@@ -37,6 +43,7 @@ export interface Resource {
     path: string;
     enabled: boolean;
     latest_job?: Job;
+    stats?: SourceStats;
 }
 
 export interface AddResourceRequest {

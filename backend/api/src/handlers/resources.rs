@@ -55,6 +55,8 @@ pub struct ListResourcesResponse {
     pub resources: Vec<ResourceInfo>,
 }
 
+use storage::SourceStats;
+
 #[derive(Serialize)]
 pub struct ResourceInfo {
     pub id: String,
@@ -63,6 +65,7 @@ pub struct ResourceInfo {
     pub path: String,
     pub enabled: bool,
     pub latest_job: Option<IndexingJob>,
+    pub stats: Option<SourceStats>,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +89,9 @@ pub async fn add_resource(
         source_type: req.resource_type.into(),
         path: req.path.clone(),
         enabled: true,
+        chunk_count: None,
+        file_count: None,
+        total_size_bytes: None,
     };
 
     state
@@ -118,6 +124,17 @@ pub async fn list_resources(
             .get_latest_job_for_source(&s.id)
             .unwrap_or(None); // Log error in real app
 
+        // Use cached stats from SourceConfig
+        let stats = if s.chunk_count.is_some() && s.total_size_bytes.is_some() {
+            Some(SourceStats {
+                chunk_count: s.chunk_count.unwrap_or(0),
+                file_count: s.file_count.unwrap_or(0),
+                total_size_bytes: s.total_size_bytes.unwrap_or(0),
+            })
+        } else {
+            None
+        };
+
         resources.push(ResourceInfo {
             id: s.id,
             name: s.name,
@@ -125,6 +142,7 @@ pub async fn list_resources(
             path: s.path,
             enabled: s.enabled,
             latest_job,
+            stats,
         });
     }
 

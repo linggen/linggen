@@ -47,6 +47,29 @@ impl ProfileManager {
             files.push((PathBuf::from(path_str), content));
         }
 
+        // Sort files to prioritize READMEs
+        files.sort_by(|(path_a, _), (path_b, _)| {
+            let name_a = path_a
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let name_b = path_b
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+
+            let is_readme_a = name_a.contains("readme");
+            let is_readme_b = name_b.contains("readme");
+
+            if is_readme_a && !is_readme_b {
+                std::cmp::Ordering::Less
+            } else if !is_readme_a && is_readme_b {
+                std::cmp::Ordering::Greater
+            } else {
+                path_a.cmp(path_b)
+            }
+        });
+
         if let Some(llm) = &self.llm {
             info!(
                 "ProfileManager: grouped {} chunks into {} files for profile generation. First 3 files: {:?}",
@@ -113,17 +136,18 @@ impl ProfileManager {
             };
 
             let system_prompt = r#"You are a senior software architect.
-Analyze the provided source files and write a clear, plain-text PROJECT PROFILE.
+Analyze the provided source files and write a clear, CONCISE project profile.
 
 Write a single narrative that covers:
 - Project name and a one-line summary
 - A short description of what the project does
 - The main technologies and languages used
 - High-level architecture or structure (if visible)
-- Any notable conventions or patterns
 
 IMPORTANT:
-- Keep it concise but informative (aim for 2–6 short paragraphs)."#;
+- Keep it extremely concise (max 3-4 short paragraphs).
+- Do not use flowery language. Be direct and technical.
+- Focus on the "what" and "how"."#;
 
             let user_prompt = format!(
                 "Analyze these files and write the project profile described above:\n\n{}",
@@ -136,7 +160,7 @@ IMPORTANT:
             match async {
                 info!("ProfileManager: invoking LLM to generate profile...");
                 let mut llm = llm.lock().await;
-                llm.generate_with_system(system_prompt, &user_prompt, 800)
+                llm.generate_with_system(system_prompt, &user_prompt, 300)
                     .await
             }
             .await

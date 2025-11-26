@@ -13,7 +13,7 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
     const [loading, setLoading] = useState(false);
     const [generating, setGenerating] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-    const [docPatterns, setDocPatterns] = useState<string>('*.md, README*,');
+    const [docPatterns, setDocPatterns] = useState<string>('README*,');
 
     useEffect(() => {
         loadData();
@@ -108,6 +108,32 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                             <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
                                 <span className="badge">{source.resource_type.toUpperCase()}</span>
                                 <span title={source.path}>📍 {source.path}</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {source && source.stats && (
+                <section className="section" style={{ marginBottom: '1rem', background: 'var(--surface-secondary)' }}>
+                    <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--text-secondary)' }}>📊 Indexing Statistics</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
+                        <div style={{ padding: '1rem', background: 'var(--surface)', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Files Indexed</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: '600', color: 'var(--primary)' }}>
+                                {source.stats.file_count.toLocaleString()}
+                            </div>
+                        </div>
+                        <div style={{ padding: '1rem', background: 'var(--surface)', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Chunks Created</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: '600', color: 'var(--primary)' }}>
+                                {source.stats.chunk_count.toLocaleString()}
+                            </div>
+                        </div>
+                        <div style={{ padding: '1rem', background: 'var(--surface)', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Total Size</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: '600', color: 'var(--primary)' }}>
+                                {(source.stats.total_size_bytes / 1024).toFixed(2)} KB
                             </div>
                         </div>
                     </div>

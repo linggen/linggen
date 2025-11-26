@@ -15,6 +15,10 @@ pub struct SourceConfig {
     pub source_type: SourceType,
     pub path: String, // URL or file path
     pub enabled: bool,
+    // Cached stats from last successful indexing
+    pub chunk_count: Option<usize>,
+    pub file_count: Option<usize>,
+    pub total_size_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

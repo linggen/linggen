@@ -480,7 +480,7 @@ select:focus {
 
 .resource-table-header {
   display: grid;
-  grid-template-columns: 3fr 3fr 1.2fr 1.2fr;
+  grid-template-columns: 2.5fr 2.5fr 1.5fr 1.2fr 1.3fr;
   gap: 1rem;
   padding: 1rem 1.5rem;
   background: linear-gradient(
@@ -498,7 +498,7 @@ select:focus {
 
 .resource-row {
   display: grid;
-  grid-template-columns: 3fr 3fr 1.2fr 1.2fr;
+  grid-template-columns: 2.5fr 2.5fr 1.5fr 1.2fr 1.3fr;
   gap: 1rem;
   padding: 1.1rem 1.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
@@ -523,10 +523,62 @@ select:focus {
 
 .col-name,
 .col-location,
+.col-stats,
 .col-status,
 .col-actions {
   display: flex;
   align-items: center;
+}
+
+.col-stats {
+  font-size: 0.85rem;
+}
+
+.stats-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-item {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.stat-value {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+
+.stats-empty {
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.resource-title-link {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+  transition: color 0.2s;
+}
+
+.resource-title-link:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
 }
 
 .resource-name-cell {

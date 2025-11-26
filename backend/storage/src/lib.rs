@@ -305,6 +305,55 @@ impl VectorStore {
 
         Ok(())
     }
+
+    pub async fn get_source_stats(&self, source_id: &str) -> Result<SourceStats> {
+        // Check if table exists first
+        let table_names = self.conn.table_names().execute().await?;
+        if !table_names.contains(&self.table_name) {
+            return Ok(SourceStats {
+                chunk_count: 0,
+                file_count: 0,
+                total_size_bytes: 0,
+            });
+        }
+
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        let filter = format!("source_id = '{}'", source_id);
+        let results = table.query().only_if(&filter).execute().await?;
+
+        let mut chunk_count = 0;
+        let mut total_size_bytes = 0;
+        let mut stream = results;
+
+        while let Some(batch) = stream.try_next().await? {
+            chunk_count += batch.num_rows();
+
+            let content_col = batch
+                .column_by_name("content")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                total_size_bytes += content_col.value(i).len();
+            }
+        }
+
+        Ok(SourceStats {
+            chunk_count,
+            file_count: 0, // file_count is tracked in metadata, not in vector store
+            total_size_bytes,
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SourceStats {
+    pub chunk_count: usize,
+    pub file_count: usize,
+    pub total_size_bytes: usize,
 }
 
 #[cfg(test)]

@@ -158,7 +158,122 @@ impl MiniLLM {
     }
 
     /// Generate text with a system prompt
+    /// Generate text with a system prompt
     pub async fn generate_with_system(
+        &mut self,
+        system: &str,
+        user: &str,
+        max_tokens: usize,
+    ) -> Result<String> {
+        // Try fast generation first
+        match self.generate_fast(system, user, max_tokens).await {
+            Ok(text) => Ok(text),
+            Err(e) => {
+                tracing::warn!(
+                    "Fast generation failed: {}. Falling back to robust (slow) generation.",
+                    e
+                );
+                self.generate_robust(system, user, max_tokens).await
+            }
+        }
+    }
+
+    /// Fast generation using KV caching (O(N))
+    async fn generate_fast(
+        &mut self,
+        system: &str,
+        user: &str,
+        max_tokens: usize,
+    ) -> Result<String> {
+        self.clear_cache();
+
+        // Format prompt
+        let formatted_prompt = if system.is_empty() {
+            format!(
+                "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                user
+            )
+        } else {
+            format!(
+                "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                system, user
+            )
+        };
+
+        // Tokenize
+        let encoding = self
+            .tokenizer
+            .encode(formatted_prompt.clone(), true)
+            .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+
+        let prompt_tokens = encoding.get_ids().to_vec();
+        let eos_token = self.tokenizer.token_to_id("<|im_end|>").unwrap_or(151645);
+
+        let mut all_tokens = prompt_tokens.clone();
+        let mut last_token: Option<u32> = None;
+        let mut repeat_run: u32 = 0;
+
+        // 1. Process prompt (prefill)
+        let mut input_ids = Tensor::new(prompt_tokens.as_slice(), &self.device)?.unsqueeze(0)?;
+        let mut logits = self.model.forward(&input_ids, 0)?;
+        let mut start_pos = prompt_tokens.len();
+
+        // 2. Generation loop
+        for _ in 0..max_tokens {
+            // Get logits for the last token only
+            let seq_len = logits.dim(1)?;
+            let next_token_logits = logits.i((0, seq_len - 1))?; // [batch, vocab]
+
+            // Sample next token
+            let next_token_logits = next_token_logits.to_dtype(candle_core::DType::F32)?;
+            let next_token = model_utils::sample_token(
+                &next_token_logits,
+                self.config.temperature,
+                self.config.top_p,
+                self.config.repeat_penalty,
+                &all_tokens[prompt_tokens.len()..], // Only penalize generated tokens
+            )?;
+
+            // Repetition check
+            if Some(next_token) == last_token {
+                repeat_run += 1;
+            } else {
+                repeat_run = 0;
+                last_token = Some(next_token);
+            }
+            if repeat_run >= 32 {
+                tracing::warn!("Fast generation stopped early due to repetition");
+                break;
+            }
+
+            if next_token == eos_token {
+                break;
+            }
+
+            all_tokens.push(next_token);
+
+            // Prepare next input (single token)
+            input_ids = Tensor::new(&[next_token], &self.device)?.unsqueeze(0)?;
+
+            // Forward pass with KV cache
+            logits = self.model.forward(&input_ids, start_pos)?;
+            start_pos += 1;
+        }
+
+        // Decode
+        let generated_part = &all_tokens[prompt_tokens.len()..];
+        let text = self
+            .tokenizer
+            .decode(generated_part, true)
+            .map_err(|e| anyhow::anyhow!("Decoding failed: {}", e))?;
+
+        tracing::debug!("Fast generation finished. Length: {}", text.len());
+        Ok(text)
+    }
+
+    /// Robust (but slow) generation that re-processes context every step (O(N^2))
+    /// Used as fallback if fast generation fails due to shape/cache errors.
+    async fn generate_robust(
         &mut self,
         system: &str,
         user: &str,
@@ -313,7 +428,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = LLMConfig::default();
-        assert_eq!(config.max_tokens, 512);
+        assert_eq!(config.max_tokens, 1024);
         assert_eq!(config.temperature, 0.7);
     }
 }

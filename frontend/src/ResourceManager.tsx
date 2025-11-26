@@ -168,6 +168,7 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
             <div className="resource-table-header">
               <div className="col-name">Resource</div>
               <div className="col-location">Location</div>
+              <div className="col-stats">Stats</div>
               <div className="col-status">Last Indexed</div>
               <div className="col-actions">Actions</div>
             </div>
@@ -183,13 +184,43 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
                     <div className="resource-name-cell">
                       <span className="resource-icon">{getResourceIcon(resource.resource_type)}</span>
                       <div className="resource-details">
-                        <div className="resource-title">{resource.name}</div>
+                        <a
+                          href="#"
+                          className="resource-title-link"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            onViewProfile?.(resource.id);
+                          }}
+                          title="View profile"
+                        >
+                          {resource.name}
+                        </a>
                         <div className="resource-type-badge">{resource.resource_type.toUpperCase()}</div>
                       </div>
                     </div>
                   </div>
                   <div className="col-location">
                     <span className="resource-path-text">{resource.path}</span>
+                  </div>
+                  <div className="col-stats">
+                    {resource.stats ? (
+                      <div className="stats-cell">
+                        <div className="stat-item" title="Files">
+                          <span className="stat-value">{resource.stats.file_count.toLocaleString()}</span>
+                          <span className="stat-label">files</span>
+                        </div>
+                        <div className="stat-item" title="Chunks">
+                          <span className="stat-value">{resource.stats.chunk_count.toLocaleString()}</span>
+                          <span className="stat-label">chunks</span>
+                        </div>
+                        <div className="stat-item" title="Size">
+                          <span className="stat-value">{(resource.stats.total_size_bytes / 1024).toFixed(0)}</span>
+                          <span className="stat-label">KB</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="stats-empty">-</span>
+                    )}
                   </div>
                   <div className="col-status">
                     {indexingResourceId === resource.id ? (
@@ -249,14 +280,6 @@ export function ResourceManager({ onIndexResource, indexingResourceId, onCancelJ
                           )}
                         </>
                       )}
-                      <button
-                        type="button"
-                        className="btn-action btn-profile"
-                        onClick={() => onViewProfile?.(resource.id)}
-                        title="View/Edit Profile"
-                      >
-                        Profile
-                      </button>
                       <button
                         type="button"
                         className="btn-action btn-remove"
