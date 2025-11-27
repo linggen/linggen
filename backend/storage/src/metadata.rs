@@ -28,7 +28,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            intent_detection_enabled: true,
+            intent_detection_enabled: false,
         }
     }
 }
@@ -275,6 +275,60 @@ impl MetadataStore {
             let mut table = write_txn.open_table(PROFILE_TABLE)?;
             let json = serde_json::to_string(profile)?;
             table.insert(source_id, json.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Clear all data from all tables
+    pub fn clear_all(&self) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            // Clear each table by removing all entries
+            let mut settings_table = write_txn.open_table(SETTINGS_TABLE)?;
+            let keys: Vec<String> = settings_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                settings_table.remove(key.as_str())?;
+            }
+
+            let mut sources_table = write_txn.open_table(SOURCES_TABLE)?;
+            let keys: Vec<String> = sources_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                sources_table.remove(key.as_str())?;
+            }
+
+            let mut jobs_table = write_txn.open_table(JOBS_TABLE)?;
+            let keys: Vec<String> = jobs_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                jobs_table.remove(key.as_str())?;
+            }
+
+            let mut preferences_table = write_txn.open_table(PREFERENCES_TABLE)?;
+            let keys: Vec<String> = preferences_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                preferences_table.remove(key.as_str())?;
+            }
+
+            let mut profile_table = write_txn.open_table(PROFILE_TABLE)?;
+            let keys: Vec<String> = profile_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                profile_table.remove(key.as_str())?;
+            }
         }
         write_txn.commit()?;
         Ok(())

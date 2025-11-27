@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod clear_data;
 pub mod enhance;
 pub mod index;
 pub mod index_source;
@@ -12,6 +13,7 @@ pub mod settings;
 pub mod status;
 
 pub use chat::chat_stream;
+pub use clear_data::clear_all_data;
 pub use enhance::enhance_prompt;
 pub use index::AppState;
 pub use index_source::index_source;

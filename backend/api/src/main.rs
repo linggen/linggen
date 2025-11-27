@@ -9,8 +9,8 @@ use tracing::info;
 
 mod handlers;
 use handlers::{
-    add_resource, cancel_job, chat_stream, classify_intent, enhance_prompt, get_app_status,
-    index_source, list_jobs, list_resources, remove_resource, retry_init, AppState,
+    add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, enhance_prompt,
+    get_app_status, index_source, list_jobs, list_resources, remove_resource, retry_init, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -219,6 +219,7 @@ async fn main() {
             "/api/settings",
             get(handlers::settings::get_settings).put(handlers::settings::update_settings),
         )
+        .route("/api/clear_all_data", post(clear_all_data))
         // .route(
         //     "/api/preferences",
         //     get(handlers::preferences::get_preferences)

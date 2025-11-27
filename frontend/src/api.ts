@@ -221,6 +221,11 @@ export interface EnhancedPromptResponse {
     enhanced_prompt: string;
     intent: IntentType;
     context_chunks: string[];
+    context_metadata?: {
+        source_id: string;
+        document_id: string;
+        file_path: string;
+    }[];
     preferences_applied: boolean;
 }
 
@@ -424,6 +429,16 @@ export async function updateAppSettings(settings: AppSettings): Promise<void> {
     });
     if (!response.ok) {
         throw new Error(`Failed to update settings: ${response.statusText}`);
+    }
+}
+
+    export async function clearAllData(): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/clear_all_data`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to clear data: ${text}`);
     }
 }
 

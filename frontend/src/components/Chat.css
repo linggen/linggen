@@ -20,6 +20,12 @@
   color: var(--text);
 }
 
+.chat-caption {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;

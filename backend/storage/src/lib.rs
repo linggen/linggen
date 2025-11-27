@@ -216,6 +216,17 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Clear all chunks from the vector store by dropping and recreating the table
+    pub async fn clear_all(&self) -> Result<()> {
+        // Check if table exists
+        let table_names = self.conn.table_names().execute().await?;
+        if table_names.contains(&self.table_name) {
+            // Drop the table (namespace is empty array for default namespace)
+            self.conn.drop_table(&self.table_name, &[]).await?;
+        }
+        Ok(())
+    }
+
     /// Get chunks matching a file pattern (e.g., "*.md", "*.toml")
     /// Uses SQL LIKE for pattern matching on document_id
     pub async fn get_chunks_by_file_pattern(

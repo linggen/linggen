@@ -22,6 +22,17 @@ pub enum PromptStrategy {
     Architectural,
 }
 
+/// Lightweight metadata about a context chunk returned to the frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextChunkMeta {
+    /// ID of the source this chunk belongs to
+    pub source_id: String,
+    /// Logical document identifier (usually file path)
+    pub document_id: String,
+    /// File path alias for convenience (falls back to document_id)
+    pub file_path: String,
+}
+
 /// Result of prompt enhancement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedPrompt {
@@ -34,8 +45,12 @@ pub struct EnhancedPrompt {
     /// Detected intent
     pub intent: Intent,
 
-    /// Retrieved context chunks
+    /// Retrieved context chunks (raw text)
     pub context_chunks: Vec<String>,
+
+    /// Metadata for each retrieved context chunk (aligned with context_chunks)
+    #[serde(default)]
+    pub context_metadata: Vec<ContextChunkMeta>,
 
     /// Applied user preferences
     pub preferences_applied: bool,
@@ -123,12 +138,31 @@ impl PromptEnhancer {
 
         // Build result
         let chunk_contents: Vec<String> = top_chunks.iter().map(|c| c.content.clone()).collect();
+        let context_metadata: Vec<ContextChunkMeta> = top_chunks
+            .iter()
+            .map(|c| {
+                // Prefer explicit file_path metadata; fall back to document_id
+                let file_path = c
+                    .metadata
+                    .get("file_path")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| c.document_id.clone());
+
+                ContextChunkMeta {
+                    source_id: c.source_id.clone(),
+                    document_id: c.document_id.clone(),
+                    file_path,
+                }
+            })
+            .collect();
 
         Ok(EnhancedPrompt {
             original_query: query.to_string(),
             enhanced_prompt: enhanced,
             intent,
             context_chunks: chunk_contents,
+            context_metadata,
             preferences_applied: true,
         })
     }

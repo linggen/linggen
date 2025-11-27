@@ -94,7 +94,6 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                     </button>
                 )}
                 <h2>{source ? `Source Profile: ${source.name}` : 'Source Profile'}</h2>
-                <p>Configure this source's tech stack, architecture, and coding conventions for better AI context.</p>
             </div>
 
             {source && (

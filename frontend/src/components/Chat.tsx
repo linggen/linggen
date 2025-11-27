@@ -99,6 +99,7 @@ export function Chat() {
     <div className="chat-container">
       <div className="chat-header">
         <h3>💬 Quick Chat</h3>
+        <p className="chat-caption">Powered by Qwen3-4B · Does not use indexed context yet</p>
       </div>
 
       <div className="chat-messages">
