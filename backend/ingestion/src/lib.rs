@@ -11,6 +11,9 @@ pub use watcher::FileWatcher;
 pub mod service;
 pub use service::IngestionService;
 
+pub mod extract;
+pub use extract::extract_text;
+
 pub mod git;
 pub use git::GitIngestor;
 

@@ -126,8 +126,10 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
-          // Trigger a refresh of source stats/details
-          setResourcesVersion((v) => v + 1)
+          // Trigger a refresh of source stats/details (with small delay to ensure backend saves stats)
+          setTimeout(() => {
+            setResourcesVersion((v) => v + 1)
+          }, 500)
 
           setTimeout(() => {
             setIndexingResourceId(null)
@@ -163,8 +165,10 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
-          // Trigger a refresh of source stats/details as well
-          setResourcesVersion((v) => v + 1)
+          // Trigger a refresh of source stats/details (with small delay)
+          setTimeout(() => {
+            setResourcesVersion((v) => v + 1)
+          }, 500)
 
           setTimeout(() => {
             setIndexingResourceId(null)

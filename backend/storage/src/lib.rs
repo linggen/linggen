@@ -317,6 +317,83 @@ impl VectorStore {
         Ok(())
     }
 
+    /// List unique document_ids (files) for a source
+    pub async fn list_documents(&self, source_id: &str) -> Result<Vec<DocumentInfo>> {
+        // Check if table exists first
+        let table_names = self.conn.table_names().execute().await?;
+        if !table_names.contains(&self.table_name) {
+            return Ok(Vec::new());
+        }
+
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        let filter = format!("source_id = '{}'", source_id);
+        let results = table.query().only_if(&filter).execute().await?;
+
+        // Collect document_ids and count chunks per document
+        let mut doc_chunks: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut stream = results;
+
+        while let Some(batch) = stream.try_next().await? {
+            let document_id_col = batch
+                .column_by_name("document_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                let doc_id = document_id_col.value(i).to_string();
+                *doc_chunks.entry(doc_id).or_insert(0) += 1;
+            }
+        }
+
+        let mut documents: Vec<DocumentInfo> = doc_chunks
+            .into_iter()
+            .map(|(document_id, chunk_count)| DocumentInfo {
+                document_id,
+                chunk_count,
+            })
+            .collect();
+
+        // Sort by document_id for consistent ordering
+        documents.sort_by(|a, b| a.document_id.cmp(&b.document_id));
+
+        Ok(documents)
+    }
+
+    /// Delete chunks by source_id AND document_id (for uploaded files)
+    pub async fn delete_document_from_source(
+        &self,
+        source_id: &str,
+        document_id: &str,
+    ) -> Result<usize> {
+        let table_names = self.conn.table_names().execute().await?;
+        if !table_names.contains(&self.table_name) {
+            return Ok(0);
+        }
+
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        // Count chunks to delete first
+        let filter = format!(
+            "source_id = '{}' AND document_id = '{}'",
+            source_id, document_id
+        );
+        let results = table.query().only_if(&filter).execute().await?;
+        let mut count = 0;
+        let mut stream = results;
+        while let Some(batch) = stream.try_next().await? {
+            count += batch.num_rows();
+        }
+
+        // Delete chunks matching both source_id and document_id
+        table.delete(&filter).await?;
+
+        Ok(count)
+    }
+
     pub async fn get_source_stats(&self, source_id: &str) -> Result<SourceStats> {
         // Check if table exists first
         let table_names = self.conn.table_names().execute().await?;
@@ -365,6 +442,12 @@ pub struct SourceStats {
     pub chunk_count: usize,
     pub file_count: usize,
     pub total_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DocumentInfo {
+    pub document_id: String,
+    pub chunk_count: usize,
 }
 
 #[cfg(test)]

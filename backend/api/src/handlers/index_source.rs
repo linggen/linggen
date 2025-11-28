@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
 use ingestion::{GitIngestor, Ingestor, LocalIngestor, WebIngestor};
-use rememberme_core::{Chunk, IndexingJob, JobStatus, SourceType};
+use rememberme_core::{Chunk, IndexingJob, JobStatus, SourceConfig, SourceType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,11 +81,11 @@ pub async fn index_source(
     // 4. Spawn background task for ingestion and indexing
     let state_clone = state.clone();
     let job_id_clone = job_id.clone();
-    let source_path = source.path.clone();
+    let source_clone = source.clone();
     let initial_job = job.clone();
 
     tokio::spawn(async move {
-        run_indexing_job(state_clone, job_id_clone, source_path, initial_job).await;
+        run_indexing_job(state_clone, job_id_clone, source_clone, initial_job).await;
     });
 
     Ok(Json(IndexSourceResponse {
@@ -98,10 +98,11 @@ pub async fn index_source(
 async fn run_indexing_job(
     state: Arc<AppState>,
     job_id: String,
-    source_path: String,
+    source: SourceConfig,
     initial_job: IndexingJob,
 ) {
     let mut running_job = initial_job.clone();
+    let source_path = source.path.clone();
 
     // 0. Acquire permit from JobManager (this blocks if queue is full)
     tracing::info!("Job {} waiting for execution permit...", job_id);
@@ -120,12 +121,25 @@ async fn run_indexing_job(
             SourceType::Local => "Local",
             SourceType::Git => "Git",
             SourceType::Web => "Web",
+            SourceType::Uploads => "Uploads",
         },
         source_path
     );
 
+    // Log patterns if any
+    if !source.include_patterns.is_empty() {
+        tracing::info!("Include patterns: {:?}", source.include_patterns);
+    }
+    if !source.exclude_patterns.is_empty() {
+        tracing::info!("Exclude patterns: {:?}", source.exclude_patterns);
+    }
+
     let ingestor: Box<dyn Ingestor> = match initial_job.source_type {
-        SourceType::Local => Box::new(LocalIngestor::new(PathBuf::from(&source_path))),
+        SourceType::Local | SourceType::Uploads => Box::new(LocalIngestor::with_patterns(
+            PathBuf::from(&source_path),
+            &source.include_patterns,
+            &source.exclude_patterns,
+        )),
         SourceType::Git => {
             // Store repos in ./backend/data/repos/<source_id>
             let mut repo_path = std::env::current_dir().unwrap_or_default();
@@ -367,83 +381,87 @@ async fn run_indexing_job(
         processed_size_mb
     );
 
-    // 4. Auto-generate profile
-    tracing::info!(
-        "🤖 Auto-generating profile for source {}...",
-        initial_job.source_id
-    );
+    // 4. Auto-generate profile (skip for Uploads type - these are just document drops)
+    if !matches!(initial_job.source_type, SourceType::Uploads) {
+        tracing::info!(
+            "🤖 Auto-generating profile for source {}...",
+            initial_job.source_id
+        );
 
-    // Get LLM instance
-    let llm = rememberme_llm::LLMSingleton::get().await;
-    if let Some(llm) = llm {
-        let profile_manager = rememberme_enhancement::ProfileManager::new(Some(llm));
+        // Get LLM instance
+        let llm = rememberme_llm::LLMSingleton::get().await;
+        if let Some(llm) = llm {
+            let profile_manager = rememberme_enhancement::ProfileManager::new(Some(llm));
 
-        // Fetch chunks for profile generation (prioritize READMEs)
-        // We can use the vector store to get chunks, or just use the ones we just created if we kept them.
-        // But chunk_buffer was drained. Let's query the store to be safe and consistent.
-        // We'll ask for READMEs first, then everything else if needed.
+            // Fetch chunks for profile generation (prioritize READMEs)
+            // We can use the vector store to get chunks, or just use the ones we just created if we kept them.
+            // But chunk_buffer was drained. Let's query the store to be safe and consistent.
+            // We'll ask for READMEs first, then everything else if needed.
 
-        let mut profile_chunks = Vec::new();
+            let mut profile_chunks = Vec::new();
 
-        // Try to get README chunks first
-        match state
-            .vector_store
-            .get_chunks_by_file_pattern(&initial_job.source_id, "README*")
-            .await
-        {
-            Ok(chunks) => profile_chunks.extend(chunks),
-            Err(e) => tracing::warn!("Failed to fetch README chunks: {}", e),
-        }
-
-        // If we have very few chunks, maybe fetch more?
-        // For now, let's just trust the ProfileManager's fallback logic if we pass what we have.
-        // Actually, let's just fetch a reasonable sample if READMEs are missing.
-        if profile_chunks.is_empty() {
-            match state.vector_store.search(vec![0.0; 384], None, 50).await {
-                Ok(chunks) => {
-                    // Filter for this source only (search returns global results potentially?)
-                    // VectorStore::search doesn't filter by source_id in the current impl shown earlier.
-                    // We should probably use get_chunks_by_file_pattern with "*"
-                    tracing::info!("No READMEs found, trying to fetch all chunks...");
-                }
-                Err(_) => {}
-            }
-
+            // Try to get README chunks first
             match state
                 .vector_store
-                .get_chunks_by_file_pattern(&initial_job.source_id, "*")
+                .get_chunks_by_file_pattern(&initial_job.source_id, "README*")
                 .await
             {
-                Ok(chunks) => {
-                    // Take first 50 to avoid overwhelming
-                    profile_chunks.extend(chunks.into_iter().take(50));
-                }
-                Err(e) => tracing::warn!("Failed to fetch fallback chunks: {}", e),
+                Ok(chunks) => profile_chunks.extend(chunks),
+                Err(e) => tracing::warn!("Failed to fetch README chunks: {}", e),
             }
-        }
 
-        if !profile_chunks.is_empty() {
-            match profile_manager
-                .generate_initial_profile(profile_chunks)
-                .await
-            {
-                Ok(profile) => {
-                    if let Err(e) = state
-                        .metadata_store
-                        .update_source_profile(&initial_job.source_id, &profile)
-                    {
-                        tracing::error!("Failed to save auto-generated profile: {}", e);
-                    } else {
-                        tracing::info!("✅ Auto-generated profile saved successfully!");
+            // If we have very few chunks, maybe fetch more?
+            // For now, let's just trust the ProfileManager's fallback logic if we pass what we have.
+            // Actually, let's just fetch a reasonable sample if READMEs are missing.
+            if profile_chunks.is_empty() {
+                match state.vector_store.search(vec![0.0; 384], None, 50).await {
+                    Ok(chunks) => {
+                        // Filter for this source only (search returns global results potentially?)
+                        // VectorStore::search doesn't filter by source_id in the current impl shown earlier.
+                        // We should probably use get_chunks_by_file_pattern with "*"
+                        tracing::info!("No READMEs found, trying to fetch all chunks...");
                     }
+                    Err(_) => {}
                 }
-                Err(e) => tracing::error!("Failed to generate profile: {}", e),
+
+                match state
+                    .vector_store
+                    .get_chunks_by_file_pattern(&initial_job.source_id, "*")
+                    .await
+                {
+                    Ok(chunks) => {
+                        // Take first 50 to avoid overwhelming
+                        profile_chunks.extend(chunks.into_iter().take(50));
+                    }
+                    Err(e) => tracing::warn!("Failed to fetch fallback chunks: {}", e),
+                }
+            }
+
+            if !profile_chunks.is_empty() {
+                match profile_manager
+                    .generate_initial_profile(profile_chunks)
+                    .await
+                {
+                    Ok(profile) => {
+                        if let Err(e) = state
+                            .metadata_store
+                            .update_source_profile(&initial_job.source_id, &profile)
+                        {
+                            tracing::error!("Failed to save auto-generated profile: {}", e);
+                        } else {
+                            tracing::info!("✅ Auto-generated profile saved successfully!");
+                        }
+                    }
+                    Err(e) => tracing::error!("Failed to generate profile: {}", e),
+                }
+            } else {
+                tracing::warn!("No chunks available for profile generation");
             }
         } else {
-            tracing::warn!("No chunks available for profile generation");
+            tracing::warn!("LLM not available, skipping auto-profile generation");
         }
     } else {
-        tracing::warn!("LLM not available, skipping auto-profile generation");
+        tracing::info!("⏭️  Skipping profile generation for Uploads source");
     }
 
     // 5. Save stats to source config in Redb

@@ -1,22 +1,72 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use glob::Pattern;
 use ignore::WalkBuilder;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use rememberme_core::{Document, SourceType};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use uuid::Uuid;
 
+use crate::extract::extract_text;
 use crate::Ingestor;
 
 pub struct LocalIngestor {
     pub path: PathBuf,
+    pub include_patterns: Vec<Pattern>,
+    pub exclude_patterns: Vec<Pattern>,
 }
 
 impl LocalIngestor {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        }
+    }
+
+    /// Create a new LocalIngestor with include/exclude glob patterns
+    pub fn with_patterns(
+        path: PathBuf,
+        include_patterns: &[String],
+        exclude_patterns: &[String],
+    ) -> Self {
+        let include = include_patterns
+            .iter()
+            .filter_map(|p| Pattern::new(p).ok())
+            .collect();
+        let exclude = exclude_patterns
+            .iter()
+            .filter_map(|p| Pattern::new(p).ok())
+            .collect();
+
+        Self {
+            path,
+            include_patterns: include,
+            exclude_patterns: exclude,
+        }
+    }
+
+    /// Check if a file path matches the include/exclude patterns
+    fn matches_patterns(&self, relative_path: &str) -> bool {
+        // If include patterns are specified, file must match at least one
+        let include_match = if self.include_patterns.is_empty() {
+            true // No include patterns = include all
+        } else {
+            self.include_patterns.iter().any(|p| {
+                p.matches(relative_path)
+                    || p.matches(relative_path.rsplit('/').next().unwrap_or(relative_path))
+            })
+        };
+
+        // If exclude patterns are specified, file must NOT match any
+        let exclude_match = self.exclude_patterns.iter().any(|p| {
+            p.matches(relative_path)
+                || p.matches(relative_path.rsplit('/').next().unwrap_or(relative_path))
+        });
+
+        include_match && !exclude_match
     }
 
     pub fn watch(&self) -> Result<()> {
@@ -35,6 +85,8 @@ impl LocalIngestor {
 impl Ingestor for LocalIngestor {
     async fn ingest(&self) -> Result<Vec<Document>> {
         let mut documents = Vec::new();
+        let mut skipped_by_pattern = 0;
+
         let walker = WalkBuilder::new(&self.path)
             .hidden(true) // Ignore hidden files (like .git) by default
             .git_ignore(true)
@@ -51,14 +103,20 @@ impl Ingestor for LocalIngestor {
                             continue;
                         }
 
-                        // Try to read as string
-                        if let Ok(content) = fs::read_to_string(path) {
-                            let relative_path = path
-                                .strip_prefix(&self.path)
-                                .unwrap_or(path)
-                                .to_string_lossy()
-                                .to_string();
+                        let relative_path = path
+                            .strip_prefix(&self.path)
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .to_string();
 
+                        // Apply include/exclude pattern filtering
+                        if !self.matches_patterns(&relative_path) {
+                            skipped_by_pattern += 1;
+                            continue;
+                        }
+
+                        // Extract text from file (supports PDF, DOCX, and plain text)
+                        if let Some(content) = extract_text(path) {
                             let doc = Document {
                                 id: Uuid::new_v4().to_string(),
                                 source_type: SourceType::Local,
@@ -76,6 +134,13 @@ impl Ingestor for LocalIngestor {
                     tracing::warn!("Error walking directory: {}", err);
                 }
             }
+        }
+
+        if skipped_by_pattern > 0 {
+            tracing::info!(
+                "Skipped {} files due to include/exclude patterns",
+                skipped_by_pattern
+            );
         }
 
         Ok(documents)

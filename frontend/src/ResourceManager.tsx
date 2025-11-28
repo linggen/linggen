@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { addResource, listResources, removeResource, type Resource, type ResourceType } from './api'
+import { useState, useEffect, useRef } from 'react'
+import { addResource, listResources, removeResource, renameResource, uploadFile, type Resource, type ResourceType } from './api'
 
 interface ResourceManagerProps {
   onIndexResource?: (resource: Resource) => void
@@ -26,7 +26,19 @@ export function ResourceManager({
   const [name, setName] = useState('')
   const [resourceType, setResourceType] = useState<ResourceType>('local')
   const [path, setPath] = useState('')
+  const [includePatterns, setIncludePatterns] = useState('')
+  const [excludePatterns, setExcludePatterns] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [adding, setAdding] = useState(false)
+
+  // Rename state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const editInputRef = useRef<HTMLInputElement>(null)
+
+  // Upload state
+  const [uploadingSourceId, setUploadingSourceId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadResources()
@@ -53,15 +65,35 @@ export function ResourceManager({
     setSuccess('')
 
     try {
-      await addResource({
+      // Parse comma-separated patterns into arrays
+      const includePatternsArray = includePatterns
+        .split(',')
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+      const excludePatternsArray = excludePatterns
+        .split(',')
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+
+      const newResource = await addResource({
         name,
         resource_type: resourceType,
         path,
+        include_patterns: includePatternsArray.length > 0 ? includePatternsArray : undefined,
+        exclude_patterns: excludePatternsArray.length > 0 ? excludePatternsArray : undefined,
       })
       setSuccess(`✓ Added resource: ${name}`)
       setName('')
       setPath('')
+      setIncludePatterns('')
+      setExcludePatterns('')
+      setShowAdvanced(false)
       await loadResources()
+
+      // For uploads type, navigate to detail page to upload files
+      if (resourceType === 'uploads' && newResource.id) {
+        onViewProfile?.(newResource.id)
+      }
     } catch (err) {
       setError(`✗ Failed to add resource: ${err}`)
     } finally {
@@ -86,6 +118,69 @@ export function ResourceManager({
     }
   }
 
+  const startRename = (resource: Resource) => {
+    setEditingId(resource.id)
+    setEditName(resource.name)
+    // Focus input after render
+    setTimeout(() => editInputRef.current?.focus(), 0)
+  }
+
+  const handleRename = async (id: string) => {
+    if (!editName.trim()) {
+      setEditingId(null)
+      return
+    }
+
+    setError('')
+    setSuccess('')
+
+    try {
+      await renameResource(id, editName.trim())
+      setSuccess(`✓ Renamed resource to: ${editName.trim()}`)
+      setEditingId(null)
+      await loadResources()
+    } catch (err) {
+      setError(`✗ Failed to rename resource: ${err}`)
+    }
+  }
+
+  const cancelRename = () => {
+    setEditingId(null)
+    setEditName('')
+  }
+
+  const handleUploadClick = (sourceId: string) => {
+    setUploadingSourceId(sourceId)
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0 || !uploadingSourceId) {
+      setUploadingSourceId(null)
+      return
+    }
+
+    setError('')
+    setSuccess('')
+
+    try {
+      for (const file of Array.from(files)) {
+        const result = await uploadFile(uploadingSourceId, file)
+        setSuccess(`✓ Uploaded "${result.filename}": ${result.chunks_created} chunks created`)
+      }
+      await loadResources()
+    } catch (err) {
+      setError(`✗ Failed to upload: ${err}`)
+    } finally {
+      setUploadingSourceId(null)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   const getResourceIcon = (type: ResourceType) => {
     switch (type) {
       case 'git':
@@ -94,6 +189,8 @@ export function ResourceManager({
         return '📁'
       case 'web':
         return '🌐'
+      case 'uploads':
+        return '📥'
       default:
         return '📄'
     }
@@ -107,6 +204,8 @@ export function ResourceManager({
         return '/path/to/folder'
       case 'web':
         return 'https://docs.example.com'
+      case 'uploads':
+        return 'Managed by RememberMe (folder created automatically)'
       default:
         return ''
     }
@@ -136,26 +235,89 @@ export function ResourceManager({
             <select
               id="type"
               value={resourceType}
-              onChange={(e) => setResourceType(e.target.value as ResourceType)}
+              onChange={(e) => {
+                const newType = e.target.value as ResourceType
+                setResourceType(newType)
+                // Clear path when switching to uploads since it's managed
+                if (newType === 'uploads') {
+                  setPath('')
+                }
+              }}
             >
               <option value="local">Local Folder</option>
               <option value="git">Git Repository</option>
               <option value="web">Website</option>
+              <option value="uploads">Uploads</option>
             </select>
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="path">Path / URL</label>
-          <input
-            id="path"
-            type="text"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder={getPlaceholder(resourceType)}
-            required
-          />
-        </div>
+        {resourceType === 'uploads' ? (
+          <div className="uploads-hint">
+            <span className="label-hint">
+              Upload documents (PDF, DOCX, TXT, MD) directly. Click "Upload" on the source to add files.
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="form-group">
+              <label htmlFor="path">Path / URL</label>
+              <input
+                id="path"
+                type="text"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                placeholder={getPlaceholder(resourceType)}
+                required
+              />
+            </div>
+
+            {/* Advanced options toggle */}
+            <button
+              type="button"
+              className="btn-toggle-advanced"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+            >
+              {showAdvanced ? '▼ Hide Filters' : '▶ File Filters (optional)'}
+            </button>
+
+            {showAdvanced && (
+              <div className="advanced-options">
+                <div className="form-group">
+                  <label htmlFor="includePatterns">
+                    Include Patterns
+                    <span className="label-hint">Only index files matching these patterns</span>
+                  </label>
+                  <input
+                    id="includePatterns"
+                    type="text"
+                    value={includePatterns}
+                    onChange={(e) => setIncludePatterns(e.target.value)}
+                    placeholder="*.cs, *.md, *.json"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="excludePatterns">
+                    Exclude Patterns
+                    <span className="label-hint">Skip files matching these patterns</span>
+                  </label>
+                  <input
+                    id="excludePatterns"
+                    type="text"
+                    value={excludePatterns}
+                    onChange={(e) => setExcludePatterns(e.target.value)}
+                    placeholder="*.meta, *.asset, *.prefab"
+                  />
+                </div>
+
+                <div className="pattern-examples">
+                  <strong>Examples:</strong> <code>*.cs</code> (C# files), <code>*.md</code> (Markdown), <code>src/*.ts</code> (TypeScript in src)
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
         <button type="submit" disabled={adding}>
           {adding ? 'Adding...' : '+ Add Resource'}
@@ -164,6 +326,16 @@ export function ResourceManager({
 
       {error && <div className="status error">{error}</div>}
       {success && <div className="status success">{success}</div>}
+
+      {/* Hidden file input for uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.docx,.doc,.txt,.md,.markdown,.json,.yaml,.yml,.toml,.csv,.xml,.html,.htm,.rst,.tex"
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
 
       {/* Resources List */}
       <div className="resources-list">
@@ -192,23 +364,47 @@ export function ResourceManager({
                     <div className="resource-name-cell">
                       <span className="resource-icon">{getResourceIcon(resource.resource_type)}</span>
                       <div className="resource-details">
-                        <a
-                          href="#"
-                          className="resource-title-link"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            onViewProfile?.(resource.id);
-                          }}
-                          title="View profile"
-                        >
-                          {resource.name}
-                        </a>
+                        {editingId === resource.id ? (
+                          <div className="rename-input-container">
+                            <input
+                              ref={editInputRef}
+                              type="text"
+                              className="rename-input"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  handleRename(resource.id)
+                                } else if (e.key === 'Escape') {
+                                  cancelRename()
+                                }
+                              }}
+                              onBlur={() => handleRename(resource.id)}
+                            />
+                          </div>
+                        ) : (
+                          <a
+                            href="#"
+                            className="resource-title-link"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onViewProfile?.(resource.id);
+                            }}
+                            title="View profile"
+                          >
+                            {resource.name}
+                          </a>
+                        )}
                         <div className="resource-type-badge">{resource.resource_type.toUpperCase()}</div>
                       </div>
                     </div>
                   </div>
                   <div className="col-location">
-                    <span className="resource-path-text">{resource.path}</span>
+                    {resource.resource_type === 'uploads' ? (
+                      <span className="uploads-location-hint">Direct upload</span>
+                    ) : (
+                      <span className="resource-path-text">{resource.path}</span>
+                    )}
                   </div>
                   <div className="col-stats">
                     {resource.stats ? (
@@ -265,7 +461,16 @@ export function ResourceManager({
                   </div>
                   <div className="col-actions">
                     <div className="action-buttons">
-                      {resource.resource_type === 'local' && (
+                      {resource.resource_type === 'uploads' ? (
+                        <button
+                          type="button"
+                          className="btn-action btn-upload"
+                          onClick={() => handleUploadClick(resource.id)}
+                          disabled={uploadingSourceId === resource.id}
+                        >
+                          {uploadingSourceId === resource.id ? 'Uploading...' : 'Upload'}
+                        </button>
+                      ) : resource.resource_type === 'local' && (
                         <>
                           {indexingResourceId === resource.id ? (
                             <button
@@ -288,6 +493,15 @@ export function ResourceManager({
                           )}
                         </>
                       )}
+                      <button
+                        type="button"
+                        className="btn-action btn-rename"
+                        onClick={() => startRename(resource)}
+                        title="Rename resource"
+                        disabled={indexingResourceId === resource.id || editingId !== null}
+                      >
+                        Rename
+                      </button>
                       <button
                         type="button"
                         className="btn-action btn-remove"

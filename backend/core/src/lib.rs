@@ -6,6 +6,7 @@ pub enum SourceType {
     Git,
     Local,
     Web,
+    Uploads,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,11 @@ pub struct SourceConfig {
     pub source_type: SourceType,
     pub path: String, // URL or file path
     pub enabled: bool,
+    // File pattern filters (glob patterns like "*.cs", "*.md")
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
     // Cached stats from last successful indexing
     pub chunk_count: Option<usize>,
     pub file_count: Option<usize>,

@@ -28,7 +28,7 @@ export async function indexSource(sourceId: string): Promise<IndexSourceResponse
 }
 
 // Resource Management
-export type ResourceType = 'git' | 'local' | 'web';
+export type ResourceType = 'git' | 'local' | 'web' | 'uploads';
 
 export interface SourceStats {
     chunk_count: number;
@@ -42,6 +42,8 @@ export interface Resource {
     resource_type: ResourceType;
     path: string;
     enabled: boolean;
+    include_patterns: string[];
+    exclude_patterns: string[];
     latest_job?: Job;
     stats?: SourceStats;
 }
@@ -50,6 +52,8 @@ export interface AddResourceRequest {
     name: string;
     resource_type: ResourceType;
     path: string;
+    include_patterns?: string[];
+    exclude_patterns?: string[];
 }
 
 export interface AddResourceResponse {
@@ -58,6 +62,8 @@ export interface AddResourceResponse {
     resource_type: ResourceType;
     path: string;
     enabled: boolean;
+    include_patterns: string[];
+    exclude_patterns: string[];
 }
 
 export interface ListResourcesResponse {
@@ -106,6 +112,105 @@ export async function removeResource(id: string): Promise<RemoveResourceResponse
 
     if (!response.ok) {
         throw new Error(`Failed to remove resource: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export interface RenameResourceResponse {
+    success: boolean;
+    id: string;
+    name: string;
+}
+
+export async function renameResource(id: string, name: string): Promise<RenameResourceResponse> {
+    const response = await fetch(`${API_BASE}/api/resources/rename`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id, name }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to rename resource: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+// File Upload for Uploads sources
+export interface UploadFileResponse {
+    success: boolean;
+    source_id: string;
+    filename: string;
+    chunks_created: number;
+}
+
+export async function uploadFile(sourceId: string, file: File): Promise<UploadFileResponse> {
+    const formData = new FormData();
+    formData.append('source_id', sourceId);
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE}/api/upload`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || `Failed to upload file: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+// List uploaded files for a source
+export interface FileInfo {
+    filename: string;
+    chunk_count: number;
+}
+
+export interface ListFilesResponse {
+    source_id: string;
+    files: FileInfo[];
+}
+
+export async function listUploadedFiles(sourceId: string): Promise<ListFilesResponse> {
+    const response = await fetch(`${API_BASE}/api/upload/files`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source_id: sourceId }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to list files: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+// Delete an uploaded file
+export interface DeleteFileResponse {
+    success: boolean;
+    source_id: string;
+    filename: string;
+    chunks_deleted: number;
+}
+
+export async function deleteUploadedFile(sourceId: string, filename: string): Promise<DeleteFileResponse> {
+    const response = await fetch(`${API_BASE}/api/upload/delete`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source_id: sourceId, filename }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to delete file: ${response.statusText}`);
     }
 
     return response.json();

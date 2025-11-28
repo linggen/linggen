@@ -3,10 +3,10 @@ use async_trait::async_trait;
 use git2::Repository;
 use ignore::WalkBuilder;
 use rememberme_core::{Document, SourceType};
-use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::extract::extract_text;
 use crate::Ingestor;
 
 pub struct GitIngestor {
@@ -74,18 +74,18 @@ impl Ingestor for GitIngestor {
                             continue;
                         }
 
-                        // Try to read as string. If binary, skip.
-                        if let Ok(content) = fs::read_to_string(path) {
-                            let relative_path = path
-                                .strip_prefix(&self.local_path)
-                                .unwrap_or(path)
-                                .to_string_lossy()
-                                .to_string();
+                        let relative_path = path
+                            .strip_prefix(&self.local_path)
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .to_string();
 
+                        // Extract text from file (supports PDF, DOCX, and plain text)
+                        if let Some(content) = extract_text(path) {
                             let doc = Document {
                                 id: Uuid::new_v4().to_string(),
                                 source_type: SourceType::Git,
-                                source_url: format!("{}/blob/HEAD/{}", self.url, relative_path), // Rough approximation
+                                source_url: format!("{}/blob/HEAD/{}", self.url, relative_path),
                                 content,
                                 metadata: serde_json::json!({
                                     "file_path": relative_path,
