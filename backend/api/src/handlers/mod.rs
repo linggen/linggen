@@ -23,4 +23,6 @@ pub use jobs::{cancel_job, list_jobs};
 
 pub use resources::{add_resource, list_resources, remove_resource};
 pub use retry_init::retry_init;
+pub mod search;
+pub use search::search;
 pub use status::get_app_status;

@@ -20,6 +20,21 @@
             ]
         },
         {
+            "label": "cargo build mcp-server",
+            "type": "shell",
+            "command": "cargo build -p mcp-server",
+            "options": {
+                "cwd": "${workspaceFolder}/backend",
+                "env": {
+                    "PATH": "${workspaceFolder}/tools/protoc/bin:${env:PATH}"
+                }
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$rustc"
+            ]
+        },
+        {
             "type": "npm",
             "script": "dev",
             "path": "frontend",

@@ -409,6 +409,8 @@ export async function retryInit(): Promise<RetryInitResponse> {
 // App Settings
 export interface AppSettings {
     intent_detection_enabled: boolean;
+    server_port?: number;
+    server_address?: string;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -432,7 +434,7 @@ export async function updateAppSettings(settings: AppSettings): Promise<void> {
     }
 }
 
-    export async function clearAllData(): Promise<void> {
+export async function clearAllData(): Promise<void> {
     const response = await fetch(`${API_BASE}/api/clear_all_data`, {
         method: 'POST',
     });

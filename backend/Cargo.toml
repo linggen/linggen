@@ -9,5 +9,6 @@ members = [
     "intent",
     "llm",
     "storage",
+    "mcp-server",
 ]
 resolver = "2"

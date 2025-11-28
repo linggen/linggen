@@ -23,12 +23,20 @@ pub struct MetadataStore {
 pub struct AppSettings {
     /// Whether to use LLM-based intent detection in the enhancement pipeline
     pub intent_detection_enabled: bool,
+
+    /// Server port (defaults to 3000)
+    pub server_port: Option<u16>,
+
+    /// Server bind address (defaults to "127.0.0.1")
+    pub server_address: Option<String>,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             intent_detection_enabled: false,
+            server_port: None,
+            server_address: None,
         }
     }
 }

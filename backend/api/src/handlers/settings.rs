@@ -7,12 +7,16 @@ use crate::handlers::index::AppState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettingsDto {
     pub intent_detection_enabled: bool,
+    pub server_port: Option<u16>,
+    pub server_address: Option<String>,
 }
 
 impl From<storage::metadata::AppSettings> for AppSettingsDto {
     fn from(s: storage::metadata::AppSettings) -> Self {
         Self {
             intent_detection_enabled: s.intent_detection_enabled,
+            server_port: s.server_port,
+            server_address: s.server_address,
         }
     }
 }
@@ -21,6 +25,8 @@ impl From<AppSettingsDto> for storage::metadata::AppSettings {
     fn from(dto: AppSettingsDto) -> Self {
         Self {
             intent_detection_enabled: dto.intent_detection_enabled,
+            server_port: dto.server_port,
+            server_address: dto.server_address,
         }
     }
 }
@@ -29,15 +35,12 @@ impl From<AppSettingsDto> for storage::metadata::AppSettings {
 pub async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AppSettingsDto>, (StatusCode, String)> {
-    let settings = state
-        .metadata_store
-        .get_app_settings()
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to load settings: {}", e),
-            )
-        })?;
+    let settings = state.metadata_store.get_app_settings().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to load settings: {}", e),
+        )
+    })?;
 
     Ok(Json(settings.into()))
 }
@@ -61,5 +64,3 @@ pub async fn update_settings(
 
     Ok(StatusCode::OK)
 }
-
-

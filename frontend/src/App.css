@@ -47,7 +47,7 @@ body {
 .app {
   max-width: 1600px;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 0 1.5rem 1.5rem;
   width: 100%;
 }
 
@@ -166,9 +166,11 @@ body {
 }
 
 .section {
-  background: linear-gradient(145deg,
-      rgba(45, 45, 45, 0.6),
-      rgba(36, 36, 36, 0.8));
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.6),
+    rgba(36, 36, 36, 0.8)
+  );
   border-radius: 12px;
   padding: 2rem;
   border: 1px solid rgba(100, 108, 255, 0.15);
@@ -290,9 +292,11 @@ button:disabled {
 }
 
 .result-card {
-  background: linear-gradient(145deg,
-      rgba(45, 45, 45, 0.5),
-      rgba(36, 36, 36, 0.7));
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.5),
+    rgba(36, 36, 36, 0.7)
+  );
   border: 1px solid rgba(100, 108, 255, 0.15);
   border-radius: 10px;
   padding: 1.25rem;
@@ -304,9 +308,11 @@ button:disabled {
 
 .result-card:hover {
   border-color: var(--primary);
-  background: linear-gradient(145deg,
-      rgba(45, 45, 45, 0.6),
-      rgba(36, 36, 36, 0.8));
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.6),
+    rgba(36, 36, 36, 0.8)
+  );
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(100, 108, 255, 0.2), 0 2px 4px rgba(0, 0, 0, 0.3);
   border-left: 3px solid var(--primary);
@@ -393,7 +399,6 @@ button:disabled {
 }
 
 @keyframes pulse {
-
   0%,
   100% {
     opacity: 1;
@@ -477,9 +482,11 @@ select:focus {
   border: 1px solid rgba(100, 108, 255, 0.15);
   border-radius: 10px;
   overflow: hidden;
-  background: linear-gradient(145deg,
-      rgba(45, 45, 45, 0.6),
-      rgba(36, 36, 36, 0.8));
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.6),
+    rgba(36, 36, 36, 0.8)
+  );
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3),
     0 2px 4px -1px rgba(0, 0, 0, 0.2);
 }
@@ -489,9 +496,11 @@ select:focus {
   grid-template-columns: 2.5fr 2.5fr 1.5fr 1.2fr 1.3fr;
   gap: 1rem;
   padding: 1rem 1.5rem;
-  background: linear-gradient(180deg,
-      rgba(100, 108, 255, 0.08),
-      rgba(100, 108, 255, 0.04));
+  background: linear-gradient(
+    180deg,
+    rgba(100, 108, 255, 0.08),
+    rgba(100, 108, 255, 0.04)
+  );
   border-bottom: 1px solid rgba(100, 108, 255, 0.2);
   font-size: 0.7rem;
   font-weight: 700;
@@ -512,9 +521,11 @@ select:focus {
 }
 
 .resource-row:hover {
-  background: linear-gradient(90deg,
-      rgba(100, 108, 255, 0.05),
-      rgba(100, 108, 255, 0.02));
+  background: linear-gradient(
+    90deg,
+    rgba(100, 108, 255, 0.05),
+    rgba(100, 108, 255, 0.02)
+  );
   border-left: 3px solid var(--primary);
   padding-left: calc(1.5rem - 3px);
 }
@@ -757,7 +768,6 @@ select:focus {
 }
 
 @media (max-width: 1024px) {
-
   .resource-table-header,
   .resource-row {
     grid-template-columns: 1.5fr 2fr 1.2fr 1.3fr;
@@ -1292,7 +1302,7 @@ select:focus {
   margin-bottom: 0.5rem;
 }
 
-.composer-header>div {
+.composer-header > div {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -1443,9 +1453,11 @@ select:focus {
 }
 
 .modal {
-  background: linear-gradient(145deg,
-      rgba(45, 45, 45, 0.95),
-      rgba(36, 36, 36, 0.98));
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.95),
+    rgba(36, 36, 36, 0.98)
+  );
   border-radius: 16px;
   border: 1px solid rgba(100, 108, 255, 0.3);
   max-width: 1000px;
