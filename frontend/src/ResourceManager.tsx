@@ -319,9 +319,11 @@ export function ResourceManager({
           </>
         )}
 
-        <button type="submit" disabled={adding}>
-          {adding ? 'Adding...' : '+ Add Resource'}
-        </button>
+        <div className="form-actions">
+          <button type="submit" className="btn-action btn-index" disabled={adding}>
+            {adding ? 'Adding...' : '+ Add Resource'}
+          </button>
+        </div>
       </form>
 
       {error && <div className="status error">{error}</div>}

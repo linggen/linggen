@@ -56,3 +56,4 @@ coverage/
 # Debug / Release builds
 **/debug/
 **/release/
+assets/
