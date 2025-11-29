@@ -28,44 +28,46 @@ impl ModelDownloader {
     }
 
     /// Download Qwen3-4B-Instruct-2507 model files with progress callback
+    /// Note: hf-hub caches files, so "Fetching" will be instant if already downloaded
     pub fn download_qwen_model_with_progress<F>(&self, mut progress_fn: F) -> Result<QwenModelFiles>
     where
         F: FnMut(&str),
     {
-        tracing::info!("Downloading Qwen3-4B-Instruct-2507 model...");
-        progress_fn("Starting download...");
+        tracing::info!("Loading Qwen3-4B-Instruct-2507 model...");
+        progress_fn("Checking model files...");
 
         let repo = self.api.model("Qwen/Qwen3-4B-Instruct-2507".to_string());
 
-        // Download model files (3 safetensors files for Qwen3-4B)
-        tracing::info!("  Downloading model weights (part 1/3)...");
-        progress_fn("Downloading model weights 1/3...");
+        // Fetch model files (3 safetensors files for Qwen3-4B)
+        // hf-hub will download if not cached, or return cached path instantly
+        tracing::info!("  Fetching model weights (part 1/3)...");
+        progress_fn("Fetching model weights 1/3...");
         let model_path_1 = repo
             .get("model-00001-of-00003.safetensors")
             .context("Failed to download model-00001-of-00003.safetensors")?;
 
-        tracing::info!("  Downloading model weights (part 2/3)...");
-        progress_fn("Downloading model weights 2/3...");
+        tracing::info!("  Fetching model weights (part 2/3)...");
+        progress_fn("Fetching model weights 2/3...");
         let model_path_2 = repo
             .get("model-00002-of-00003.safetensors")
             .context("Failed to download model-00002-of-00003.safetensors")?;
 
-        tracing::info!("  Downloading model weights (part 3/3)...");
-        progress_fn("Downloading model weights 3/3...");
+        tracing::info!("  Fetching model weights (part 3/3)...");
+        progress_fn("Fetching model weights 3/3...");
         let model_path_3 = repo
             .get("model-00003-of-00003.safetensors")
             .context("Failed to download model-00003-of-00003.safetensors")?;
 
-        // Download tokenizer
-        tracing::info!("  Downloading tokenizer...");
-        progress_fn("Downloading tokenizer (4/5)...");
+        // Fetch tokenizer
+        tracing::info!("  Fetching tokenizer...");
+        progress_fn("Fetching tokenizer...");
         let tokenizer_path = repo
             .get("tokenizer.json")
             .context("Failed to download tokenizer.json")?;
 
-        // Download config
-        tracing::info!("  Downloading config...");
-        progress_fn("Downloading config (5/5)...");
+        // Fetch config
+        tracing::info!("  Fetching config...");
+        progress_fn("Fetching config...");
         let config_path = match repo.get("config.json") {
             Ok(path) => path,
             Err(e) => {
@@ -95,8 +97,8 @@ impl ModelDownloader {
             }
         };
 
-        tracing::info!("✓ Model downloaded successfully");
-        progress_fn("Model downloaded successfully!");
+        tracing::info!("✓ Model files ready");
+        progress_fn("Model files ready!");
 
         Ok(QwenModelFiles {
             model_paths: vec![model_path_1, model_path_2, model_path_3],

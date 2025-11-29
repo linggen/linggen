@@ -54,22 +54,9 @@ pub async fn enhance_prompt(
     // Determine strategy
     let strategy = req.strategy.unwrap_or(PromptStrategy::FullCode);
 
-    // Read app settings to see if intent detection is enabled
-    let intent_detection_enabled = state
-        .metadata_store
-        .get_app_settings()
-        .map(|s| s.intent_detection_enabled)
-        .unwrap_or(true);
-
-    // Run enhancement pipeline
+    // Run enhancement pipeline (intent detection is now handled by MCP)
     let result = enhancer
-        .enhance(
-            &req.query,
-            &preferences,
-            &profile,
-            strategy,
-            intent_detection_enabled,
-        )
+        .enhance(&req.query, &preferences, &profile, strategy)
         .await
         .map_err(|e| {
             (

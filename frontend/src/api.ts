@@ -514,6 +514,7 @@ export async function retryInit(): Promise<RetryInitResponse> {
 // App Settings
 export interface AppSettings {
     intent_detection_enabled: boolean;
+    llm_enabled: boolean;
     server_port?: number;
     server_address?: string;
 }

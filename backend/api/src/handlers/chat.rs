@@ -98,7 +98,7 @@ pub async fn chat_stream(
     } else {
         Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "LLM is still initializing. Please try again in a moment.".to_string(),
+            "LLM is not available. Please enable it in Settings and wait for it to initialize.".to_string(),
         ))
     }
 }

@@ -7,6 +7,7 @@ use crate::handlers::index::AppState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettingsDto {
     pub intent_detection_enabled: bool,
+    pub llm_enabled: bool,
     pub server_port: Option<u16>,
     pub server_address: Option<String>,
 }
@@ -15,6 +16,7 @@ impl From<storage::metadata::AppSettings> for AppSettingsDto {
     fn from(s: storage::metadata::AppSettings) -> Self {
         Self {
             intent_detection_enabled: s.intent_detection_enabled,
+            llm_enabled: s.llm_enabled,
             server_port: s.server_port,
             server_address: s.server_address,
         }
@@ -25,6 +27,7 @@ impl From<AppSettingsDto> for storage::metadata::AppSettings {
     fn from(dto: AppSettingsDto) -> Self {
         Self {
             intent_detection_enabled: dto.intent_detection_enabled,
+            llm_enabled: dto.llm_enabled,
             server_port: dto.server_port,
             server_address: dto.server_address,
         }

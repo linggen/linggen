@@ -94,7 +94,7 @@ pub async fn generate_profile(
     if llm.is_none() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "LLM is not available".to_string(),
+            "LLM is not available. Please enable it in Settings and wait for it to initialize.".to_string(),
         ));
     }
 

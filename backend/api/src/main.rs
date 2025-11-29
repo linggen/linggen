@@ -49,106 +49,119 @@ async fn main() {
         MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
     );
 
-    // Initialize LLM model using ModelManager
-    info!("Checking LLM model initialization...");
+    // Check if LLM is enabled in settings
+    let app_settings = metadata_store
+        .get_app_settings()
+        .unwrap_or_default();
 
-    // Check model status using ModelManager
-    let model_manager = rememberme_llm::ModelManager::new().expect("Failed to create ModelManager");
-    let model_status = model_manager
-        .get_model_status("qwen3-4b")
-        .unwrap_or(rememberme_llm::ModelStatus::NotFound);
+    if app_settings.llm_enabled {
+        // Initialize LLM model using ModelManager
+        info!("LLM is enabled, checking model initialization...");
 
-    match model_status {
-        rememberme_llm::ModelStatus::Ready => {
-            info!("LLM model already initialized and ready, loading into singleton...");
-            // Mark as initialized in redb
-            let _ = metadata_store.set_setting("model_initialized", "true");
+        // Check model status using ModelManager
+        let model_manager =
+            rememberme_llm::ModelManager::new().expect("Failed to create ModelManager");
+        let model_status = model_manager
+            .get_model_status("qwen3-4b")
+            .unwrap_or(rememberme_llm::ModelStatus::NotFound);
 
-            // Initialize the singleton with the existing model
-            // We use default config which will use the downloader logic in lib.rs to find the files
-            let config = rememberme_llm::LLMConfig::default();
+        match model_status {
+            rememberme_llm::ModelStatus::Ready => {
+                info!("LLM model already initialized and ready, loading into singleton...");
+                // Mark as initialized in redb
+                let _ = metadata_store.set_setting("model_initialized", "true");
 
-            // Initialize singleton in background
-            tokio::spawn(async move {
-                match rememberme_llm::LLMSingleton::initialize(config).await {
-                    Ok(_) => info!("LLM singleton loaded successfully"),
-                    Err(e) => info!("Failed to load LLM singleton: {}", e),
-                }
-            });
-        }
-        rememberme_llm::ModelStatus::NotFound | rememberme_llm::ModelStatus::Corrupted => {
-            if model_status == rememberme_llm::ModelStatus::Corrupted {
-                info!("LLM model corrupted, will attempt to use anyway...");
-            } else {
-                info!("LLM model not found, will attempt initialization...");
-            }
-
-            let metadata_store_clone = metadata_store.clone();
-            tokio::spawn(async move {
-                // Clone for the closure
-                let metadata_store_for_progress = metadata_store_clone.clone();
-
-                // Progress callback that saves to redb
-                let progress_callback = move |msg: &str| {
-                    info!("Model init progress: {}", msg);
-                    if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg) {
-                        info!("Failed to save progress: {}", e);
-                    }
-                };
-
-                // Use default config to trigger download
+                // Initialize the singleton with the existing model
+                // We use default config which will use the downloader logic in lib.rs to find the files
                 let config = rememberme_llm::LLMConfig::default();
 
-                // Initialize LLM singleton
-                let config_clone = config.clone();
-                match rememberme_llm::LLMSingleton::initialize_with_progress(
-                    config_clone,
-                    progress_callback,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        info!("LLM singleton initialized successfully");
-
-                        // Register model in ModelManager
-                        if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
-                            // We use HF cache now, so just register as ready without specific file tracking for now
-                            let _ = model_manager.register_model(
-                                "qwen3-4b",
-                                "Qwen3-4B-Instruct-2507",
-                                "main",
-                                std::collections::HashMap::new(),
-                            );
-                        }
-
-                        // Mark as initialized in redb
-                        if let Err(e) =
-                            metadata_store_clone.set_setting("model_initialized", "true")
-                        {
-                            info!("Failed to save model initialization state: {}", e);
-                        }
-                        if let Err(e) = metadata_store_clone.set_setting("init_progress", "") {
-                            info!("Failed to clear progress: {}", e);
-                        }
+                // Initialize singleton in background
+                tokio::spawn(async move {
+                    match rememberme_llm::LLMSingleton::initialize(config).await {
+                        Ok(_) => info!("LLM singleton loaded successfully"),
+                        Err(e) => info!("Failed to load LLM singleton: {}", e),
                     }
-                    Err(e) => {
-                        let error_msg = format!("Failed to initialize LLM model: {}", e);
-                        info!("{}", error_msg);
-                        if let Err(e) = metadata_store_clone.set_setting("init_error", &error_msg) {
-                            info!("Failed to save error: {}", e);
-                        }
-                        if let Err(e) =
-                            metadata_store_clone.set_setting("model_initialized", "error")
-                        {
-                            info!("Failed to save model error state: {}", e);
-                        }
-                    }
+                });
+            }
+            rememberme_llm::ModelStatus::NotFound | rememberme_llm::ModelStatus::Corrupted => {
+                if model_status == rememberme_llm::ModelStatus::Corrupted {
+                    info!("LLM model corrupted, will attempt to use anyway...");
+                } else {
+                    info!("LLM model not found, will attempt initialization...");
                 }
-            });
+
+                let metadata_store_clone = metadata_store.clone();
+                tokio::spawn(async move {
+                    // Clone for the closure
+                    let metadata_store_for_progress = metadata_store_clone.clone();
+
+                    // Progress callback that saves to redb
+                    let progress_callback = move |msg: &str| {
+                        info!("Model init progress: {}", msg);
+                        if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg)
+                        {
+                            info!("Failed to save progress: {}", e);
+                        }
+                    };
+
+                    // Use default config to trigger download
+                    let config = rememberme_llm::LLMConfig::default();
+
+                    // Initialize LLM singleton
+                    let config_clone = config.clone();
+                    match rememberme_llm::LLMSingleton::initialize_with_progress(
+                        config_clone,
+                        progress_callback,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("LLM singleton initialized successfully");
+
+                            // Register model in ModelManager
+                            if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
+                                // We use HF cache now, so just register as ready without specific file tracking for now
+                                let _ = model_manager.register_model(
+                                    "qwen3-4b",
+                                    "Qwen3-4B-Instruct-2507",
+                                    "main",
+                                    std::collections::HashMap::new(),
+                                );
+                            }
+
+                            // Mark as initialized in redb
+                            if let Err(e) =
+                                metadata_store_clone.set_setting("model_initialized", "true")
+                            {
+                                info!("Failed to save model initialization state: {}", e);
+                            }
+                            if let Err(e) = metadata_store_clone.set_setting("init_progress", "") {
+                                info!("Failed to clear progress: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Failed to initialize LLM model: {}", e);
+                            info!("{}", error_msg);
+                            if let Err(e) =
+                                metadata_store_clone.set_setting("init_error", &error_msg)
+                            {
+                                info!("Failed to save error: {}", e);
+                            }
+                            if let Err(e) =
+                                metadata_store_clone.set_setting("model_initialized", "error")
+                            {
+                                info!("Failed to save model error state: {}", e);
+                            }
+                        }
+                    }
+                });
+            }
+            rememberme_llm::ModelStatus::Downloading => {
+                info!("LLM model is currently downloading...");
+            }
         }
-        rememberme_llm::ModelStatus::Downloading => {
-            info!("LLM model is currently downloading...");
-        }
+    } else {
+        info!("LLM is disabled in settings, skipping model initialization");
     }
 
     // Clean up stale jobs that were running when server stopped

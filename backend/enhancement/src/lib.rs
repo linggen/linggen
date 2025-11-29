@@ -82,23 +82,18 @@ impl PromptEnhancer {
     }
 
     /// Enhance a user prompt through the pipeline
+    /// Note: LLM-based intent detection is deprecated and always skipped.
+    /// Intent is now provided externally by MCP (Cursor).
     pub async fn enhance(
         &mut self,
         query: &str,
         preferences: &UserPreferences,
         profile: &SourceProfile,
         strategy: PromptStrategy,
-        intent_detection_enabled: bool,
     ) -> Result<EnhancedPrompt> {
-        // Stage 1: Intent Classification (optional, controlled by settings)
-        let intent = if intent_detection_enabled {
-            info!("Stage 1: Classifying intent (LLM)...");
-            let intent_result = self.intent_classifier.classify(query).await?;
-            intent_result.intent.clone()
-        } else {
-            info!("Stage 1: Skipping LLM intent classification (disabled in settings). Using AskQuestion.");
-            rememberme_intent::Intent::AskQuestion
-        };
+        // Stage 1: Intent Classification - always use default (intent now comes from MCP)
+        info!("Stage 1: Using default intent (AskQuestion). Intent detection is provided by MCP.");
+        let intent = rememberme_intent::Intent::AskQuestion;
 
         // Stage 2: Context Retrieval (RAG)
         info!("Stage 2: Retrieving context via RAG...");

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { getAppSettings, updateAppSettings, clearAllData, type AppSettings } from '../api'
+import { useState, useEffect, useRef } from 'react'
+import { getAppSettings, updateAppSettings, clearAllData, getAppStatus, retryInit, type AppSettings, type AppStatusResponse } from '../api'
 
 export function SettingsView() {
     const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -7,6 +7,10 @@ export function SettingsView() {
     const [saving, setSaving] = useState(false)
     const [message, setMessage] = useState<string | null>(null)
     const [clearing, setClearing] = useState(false)
+    const [llmInitializing, setLlmInitializing] = useState(false)
+    const [llmProgress, setLlmProgress] = useState<string | null>(null)
+    const [llmStatus, setLlmStatus] = useState<'disabled' | 'initializing' | 'ready' | 'error'>('disabled')
+    const progressPollRef = useRef<number | null>(null)
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -14,6 +18,12 @@ export function SettingsView() {
                 setLoading(true)
                 const data = await getAppSettings()
                 setSettings(data)
+                
+                // Also check initial LLM status
+                if (data.llm_enabled) {
+                    const status = await getAppStatus()
+                    updateLlmStatusFromAppStatus(status)
+                }
             } catch (err) {
                 console.error('Failed to load app settings:', err)
                 setMessage('✗ Failed to load settings')
@@ -22,16 +32,94 @@ export function SettingsView() {
             }
         }
         loadSettings()
+
+        // Cleanup polling on unmount
+        return () => {
+            if (progressPollRef.current) {
+                clearInterval(progressPollRef.current)
+            }
+        }
     }, [])
 
-    const handleToggleIntent = async () => {
+    const updateLlmStatusFromAppStatus = (status: AppStatusResponse) => {
+        if (status.status === 'ready') {
+            setLlmStatus('ready')
+            setLlmProgress(null)
+            setLlmInitializing(false)
+        } else if (status.status === 'error') {
+            setLlmStatus('error')
+            setLlmProgress(status.message || 'Error')
+            setLlmInitializing(false)
+        } else if (status.status === 'initializing') {
+            setLlmStatus('initializing')
+            setLlmProgress(status.progress || 'Initializing...')
+            setLlmInitializing(true)
+        }
+    }
+
+    const startProgressPolling = () => {
+        // Poll every 1 second for progress updates
+        progressPollRef.current = window.setInterval(async () => {
+            try {
+                const status = await getAppStatus()
+                updateLlmStatusFromAppStatus(status)
+                
+                // Stop polling when done
+                if (status.status === 'ready' || status.status === 'error') {
+                    if (progressPollRef.current) {
+                        clearInterval(progressPollRef.current)
+                        progressPollRef.current = null
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to poll status:', err)
+            }
+        }, 1000)
+    }
+
+    const handleToggleLlm = async () => {
         if (!settings || saving) return
-        const next = { ...settings, intent_detection_enabled: !settings.intent_detection_enabled }
+        const newEnabled = !settings.llm_enabled
+        const next = { ...settings, llm_enabled: newEnabled }
         setSettings(next)
         setSaving(true)
         setMessage(null)
+        
         try {
             await updateAppSettings(next)
+            
+            if (newEnabled) {
+                // When enabling, trigger model initialization
+                setLlmInitializing(true)
+                setLlmStatus('initializing')
+                setLlmProgress('Initializing LLM...')
+                
+                const initResult = await retryInit()
+                if (initResult.success) {
+                    // Immediately check status to get actual progress
+                    try {
+                        const status = await getAppStatus()
+                        updateLlmStatusFromAppStatus(status)
+                    } catch (e) {
+                        // Ignore, polling will catch up
+                    }
+                    startProgressPolling()
+                } else {
+                    setLlmStatus('error')
+                    setLlmProgress(initResult.message)
+                    setLlmInitializing(false)
+                }
+            } else {
+                // When disabling, just update status
+                setLlmStatus('disabled')
+                setLlmProgress(null)
+                setLlmInitializing(false)
+                if (progressPollRef.current) {
+                    clearInterval(progressPollRef.current)
+                    progressPollRef.current = null
+                }
+            }
+            
             setMessage('✓ Settings saved')
         } catch (err) {
             console.error('Failed to save settings:', err)
@@ -97,36 +185,68 @@ export function SettingsView() {
                         <span className="settings-label">Privacy</span>
                         <span className="settings-value">100% local, offline-capable, your data never leaves your device</span>
                     </div>
-                    <div className="settings-item">
-                        <span className="settings-label">LLM Model</span>
-                        <span className="settings-value">Qwen3-4B-Instruct (local)</span>
-                    </div>
                 </div>
 
                 <div className="settings-group">
-                    <h3>AI Pipeline</h3>
+                    <h3>Local LLM (Qwen3-4B)</h3>
                     {message && (
                         <div className={`status ${message.startsWith('✓') ? 'success' : 'error'}`} style={{ marginBottom: '0.75rem' }}>
                             {message}
                         </div>
                     )}
                     <div className="settings-item">
-                        <span className="settings-label">LLM Intent Detection</span>
+                        <span className="settings-label">Enable Local LLM</span>
                         <span className="settings-value">
                             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                                 <input
                                     type="checkbox"
-                                    checked={!!settings?.intent_detection_enabled}
-                                    onChange={handleToggleIntent}
-                                    disabled={loading || saving || !settings}
+                                    checked={!!settings?.llm_enabled}
+                                    onChange={handleToggleLlm}
+                                    disabled={loading || saving || llmInitializing || !settings}
                                 />
-                                <span>{settings?.intent_detection_enabled ? 'Enabled' : 'Disabled'}</span>
+                                <span>
+                                    {settings?.llm_enabled 
+                                        ? (llmStatus === 'ready' ? 'Enabled (Ready)' : llmStatus === 'error' ? 'Enabled (Error)' : 'Enabled')
+                                        : 'Disabled'}
+                                </span>
                             </label>
                         </span>
                     </div>
+                    {llmInitializing && llmProgress && (
+                        <div className="settings-item" style={{ 
+                            background: 'var(--bg-tertiary)', 
+                            borderRadius: '8px', 
+                            padding: '0.75rem',
+                            border: '1px solid var(--border-color)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ 
+                                    display: 'inline-block', 
+                                    width: '12px', 
+                                    height: '12px', 
+                                    border: '2px solid var(--accent)', 
+                                    borderTopColor: 'transparent',
+                                    borderRadius: '50%',
+                                    animation: 'spin 1s linear infinite'
+                                }} />
+                                <span style={{ color: 'var(--text-muted)' }}>{llmProgress}</span>
+                            </div>
+                        </div>
+                    )}
+                    {llmStatus === 'error' && !llmInitializing && llmProgress && (
+                        <div className="settings-item" style={{ 
+                            background: 'rgba(239, 68, 68, 0.1)', 
+                            borderRadius: '8px', 
+                            padding: '0.75rem',
+                            border: '1px solid var(--error)'
+                        }}>
+                            <span style={{ color: 'var(--error)' }}>⚠️ {llmProgress}</span>
+                        </div>
+                    )}
                     <div className="settings-item settings-item-muted">
                         <span>
-                            When disabled, the enhancer skips the LLM-based intent detector and treats all queries as general questions.
+                            The local Qwen3-4B LLM enables features like chat, profile generation, and AI-powered analysis. 
+                            When disabled, these features will not be available. The model (~3GB) will be downloaded when you first enable it.
                         </span>
                     </div>
                 </div>

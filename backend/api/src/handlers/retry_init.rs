@@ -1,6 +1,7 @@
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::info;
 
 use super::AppState;
 
@@ -11,7 +12,22 @@ pub struct RetryInitResponse {
 }
 
 /// Retry model initialization (clears error state and triggers re-download)
+/// Only runs if llm_enabled is true in settings
 pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitResponse> {
+    // Check if LLM is enabled
+    let app_settings = state
+        .metadata_store
+        .get_app_settings()
+        .unwrap_or_default();
+
+    if !app_settings.llm_enabled {
+        return Json(RetryInitResponse {
+            success: false,
+            message: "LLM is disabled in settings. Enable it first to initialize the model."
+                .to_string(),
+        });
+    }
+
     // Clear error state
     if let Err(e) = state.metadata_store.set_setting("model_initialized", "") {
         return Json(RetryInitResponse {
@@ -34,46 +50,56 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
         });
     }
 
-    // Trigger re-initialization
+    // Trigger re-initialization using the same pattern as main.rs
     let metadata_store_clone = state.metadata_store.clone();
     tokio::spawn(async move {
-        let progress_callback = |msg: &str| {
-            tracing::info!("Model init progress: {}", msg);
-            if let Err(e) = metadata_store_clone.set_setting("init_progress", msg) {
-                tracing::info!("Failed to save progress: {}", e);
+        // Clone for the closure
+        let metadata_store_for_progress = metadata_store_clone.clone();
+
+        // Progress callback that saves to redb
+        let progress_callback = move |msg: &str| {
+            info!("Model init progress: {}", msg);
+            if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg) {
+                info!("Failed to save progress: {}", e);
             }
         };
 
-        // Use local model path
-        let config = if let Some(home_dir) = dirs::home_dir() {
-            let model_dir = home_dir.join(".rememberme/models/qwen2.5-1.5b");
-            rememberme_llm::LLMConfig {
-                model_path: Some(model_dir.join("model.safetensors")),
-                tokenizer_path: Some(model_dir.join("tokenizer.json")),
-                ..Default::default()
-            }
-        } else {
-            rememberme_llm::LLMConfig::default()
-        };
+        // Use default config to trigger download
+        let config = rememberme_llm::LLMConfig::default();
 
-        match rememberme_llm::MiniLLM::new_with_progress(config, progress_callback) {
+        // Initialize LLM singleton
+        match rememberme_llm::LLMSingleton::initialize_with_progress(config, progress_callback)
+            .await
+        {
             Ok(_) => {
-                tracing::info!("LLM model initialized successfully");
+                info!("LLM singleton initialized successfully");
+
+                // Register model in ModelManager
+                if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
+                    let _ = model_manager.register_model(
+                        "qwen3-4b",
+                        "Qwen3-4B-Instruct-2507",
+                        "main",
+                        std::collections::HashMap::new(),
+                    );
+                }
+
+                // Mark as initialized in redb
                 if let Err(e) = metadata_store_clone.set_setting("model_initialized", "true") {
-                    tracing::info!("Failed to save model initialization state: {}", e);
+                    info!("Failed to save model initialization state: {}", e);
                 }
                 if let Err(e) = metadata_store_clone.set_setting("init_progress", "") {
-                    tracing::info!("Failed to clear progress: {}", e);
+                    info!("Failed to clear progress: {}", e);
                 }
             }
             Err(e) => {
                 let error_msg = format!("Failed to initialize LLM model: {}", e);
-                tracing::info!("{}", error_msg);
+                info!("{}", error_msg);
                 if let Err(e) = metadata_store_clone.set_setting("init_error", &error_msg) {
-                    tracing::info!("Failed to save error: {}", e);
+                    info!("Failed to save error: {}", e);
                 }
                 if let Err(e) = metadata_store_clone.set_setting("model_initialized", "error") {
-                    tracing::info!("Failed to save model error state: {}", e);
+                    info!("Failed to save model error state: {}", e);
                 }
             }
         }
@@ -81,6 +107,6 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
 
     Json(RetryInitResponse {
         success: true,
-        message: "Model initialization retry started".to_string(),
+        message: "Model initialization started".to_string(),
     })
 }
