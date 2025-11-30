@@ -205,7 +205,7 @@ export function ResourceManager({
       case 'web':
         return 'https://docs.example.com'
       case 'uploads':
-        return 'Managed by RememberMe (folder created automatically)'
+        return 'Managed by Linggen (folder created automatically)'
       default:
         return ''
     }

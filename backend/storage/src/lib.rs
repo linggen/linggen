@@ -5,7 +5,7 @@ use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::{connect, Connection};
-use rememberme_core::Chunk;
+use linggen_core::Chunk;
 use std::sync::Arc;
 
 pub mod metadata;

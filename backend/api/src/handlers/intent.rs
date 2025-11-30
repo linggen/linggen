@@ -1,5 +1,5 @@
 use axum::{http::StatusCode, Json};
-use rememberme_intent::{IntentClassifier, IntentResult};
+use linggen_intent::{IntentClassifier, IntentResult};
 use serde::Deserialize;
 use tracing::{error, info};
 
@@ -15,7 +15,7 @@ pub async fn classify_intent(
     info!("Classifying intent for query: {}", req.query);
 
     // Get LLM instance if available
-    let llm = rememberme_llm::LLMSingleton::get().await;
+    let llm = linggen_llm::LLMSingleton::get().await;
 
     // Use the intent classifier with optional LLM support
     let mut classifier = IntentClassifier::new(llm);

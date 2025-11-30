@@ -1,7 +1,7 @@
 use anyhow::Result;
 use embeddings::EmbeddingModel;
-use rememberme_core::Chunk;
-use rememberme_intent::{Intent, IntentClassifier};
+use linggen_core::Chunk;
+use linggen_intent::{Intent, IntentClassifier};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use storage::{SourceProfile, UserPreferences, VectorStore};
@@ -56,7 +56,7 @@ pub struct EnhancedPrompt {
     pub preferences_applied: bool,
 }
 
-use rememberme_llm::MiniLLM;
+use linggen_llm::MiniLLM;
 use tokio::sync::Mutex;
 
 /// Prompt enhancer - orchestrates all stages
@@ -93,7 +93,7 @@ impl PromptEnhancer {
     ) -> Result<EnhancedPrompt> {
         // Stage 1: Intent Classification - always use default (intent now comes from MCP)
         info!("Stage 1: Using default intent (AskQuestion). Intent detection is provided by MCP.");
-        let intent = rememberme_intent::Intent::AskQuestion;
+        let intent = linggen_intent::Intent::AskQuestion;
 
         // Stage 2: Context Retrieval (RAG)
         info!("Stage 2: Retrieving context via RAG...");

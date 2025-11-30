@@ -1,4 +1,4 @@
-# RememberMe Features
+# Linggen Features
 
 ## 1. Universal Ingestion Engine
 - [ ] **Git Integration**: Index full repositories, tracking commits and branches.

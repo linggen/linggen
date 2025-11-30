@@ -1,5 +1,5 @@
 @echo off
-echo Building RememberMe for distribution...
+echo Building Linggen for distribution...
 
 REM Build frontend
 echo.
@@ -19,34 +19,34 @@ cd ..
 REM Create distribution directory
 echo.
 echo Creating distribution package...
-if not exist dist\rememberme mkdir dist\rememberme
-copy backend\target\release\api.exe dist\rememberme\rememberme.exe
-xcopy /E /I frontend\dist dist\rememberme\frontend
-if not exist dist\rememberme\data mkdir dist\rememberme\data
+if not exist dist\linggen mkdir dist\linggen
+copy backend\target\release\api.exe dist\linggen\linggen.exe
+xcopy /E /I frontend\dist dist\linggen\frontend
+if not exist dist\linggen\data mkdir dist\linggen\data
 
 REM Create README for users
-echo RememberMe RAG - Local Semantic Search > dist\rememberme\README.txt
-echo. >> dist\rememberme\README.txt
-echo To run: >> dist\rememberme\README.txt
-echo   rememberme.exe >> dist\rememberme\README.txt
-echo. >> dist\rememberme\README.txt
-echo The application will start on http://localhost:3000 >> dist\rememberme\README.txt
-echo Open your browser and navigate to that URL. >> dist\rememberme\README.txt
-echo. >> dist\rememberme\README.txt
-echo Data will be stored in the .\data directory. >> dist\rememberme\README.txt
+echo Linggen RAG - Local Semantic Search > dist\linggen\README.txt
+echo. >> dist\linggen\README.txt
+echo To run: >> dist\linggen\README.txt
+echo   linggen.exe >> dist\linggen\README.txt
+echo. >> dist\linggen\README.txt
+echo The application will start on http://localhost:3000 >> dist\linggen\README.txt
+echo Open your browser and navigate to that URL. >> dist\linggen\README.txt
+echo. >> dist\linggen\README.txt
+echo Data will be stored in the .\data directory. >> dist\linggen\README.txt
 
 REM Create run script
-echo @echo off > dist\rememberme\run.bat
-echo echo Starting RememberMe... >> dist\rememberme\run.bat
-echo echo Open your browser to: http://localhost:3000 >> dist\rememberme\run.bat
-echo start http://localhost:3000 >> dist\rememberme\run.bat
-echo rememberme.exe >> dist\rememberme\run.bat
+echo @echo off > dist\linggen\run.bat
+echo echo Starting Linggen... >> dist\linggen\run.bat
+echo echo Open your browser to: http://localhost:3000 >> dist\linggen\run.bat
+echo start http://localhost:3000 >> dist\linggen\run.bat
+echo linggen.exe >> dist\linggen\run.bat
 
 echo.
 echo Build complete!
-echo Distribution package: dist\rememberme\
+echo Distribution package: dist\linggen\
 echo.
 echo To test:
-echo   cd dist\rememberme
+echo   cd dist\linggen
 echo   run.bat
 

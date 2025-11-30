@@ -11,7 +11,7 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_LIMIT: usize = 5;
 
 #[derive(Clone)]
-struct RememberMeTool {
+struct LinggenTool {
     api_url: String,
     client: reqwest::Client,
     tool_router: ToolRouter<Self>,
@@ -145,7 +145,7 @@ struct EnhanceParameters {
 }
 
 #[tool_router]
-impl RememberMeTool {
+impl LinggenTool {
     fn new(api_url: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
@@ -212,7 +212,7 @@ impl RememberMeTool {
     }
 
     #[tool(
-        description = "Search the RememberMe knowledge base for relevant code snippets and documentation. Returns raw context chunks that match the query."
+        description = "Search the Linggen knowledge base for relevant code snippets and documentation. Returns raw context chunks that match the query."
     )]
     async fn search_codebase(
         &self,
@@ -281,7 +281,7 @@ impl RememberMeTool {
     }
 
     #[tool(
-        description = "Enhance a user prompt with relevant context from the RememberMe knowledge base. Returns a fully enhanced prompt ready for AI assistants, including detected intent and applied preferences."
+        description = "Enhance a user prompt with relevant context from the Linggen knowledge base. Returns a fully enhanced prompt ready for AI assistants, including detected intent and applied preferences."
     )]
     async fn enhance_prompt(
         &self,
@@ -346,7 +346,7 @@ impl RememberMeTool {
     }
 
     #[tool(
-        description = "List all indexed sources/projects in RememberMe. Shows what codebases are available for searching, including their stats (file count, chunk count, size)."
+        description = "List all indexed sources/projects in Linggen. Shows what codebases are available for searching, including their stats (file count, chunk count, size)."
     )]
     async fn list_sources(&self) -> Result<CallToolResult, McpError> {
         info!("=== TOOL CALL: list_sources ===");
@@ -384,8 +384,8 @@ impl RememberMeTool {
         let mut output = String::new();
 
         if resources.resources.is_empty() {
-            output.push_str("No sources indexed in RememberMe.\n\n");
-            output.push_str("To add a source, use the RememberMe web UI at http://localhost:5173");
+            output.push_str("No sources indexed in Linggen.\n\n");
+            output.push_str("To add a source, use the Linggen web UI at http://localhost:5173");
         } else {
             output.push_str(&format!(
                 "## Indexed Sources ({} total)\n\n",
@@ -423,7 +423,7 @@ impl RememberMeTool {
     }
 
     #[tool(
-        description = "Get the current status of the RememberMe backend service. Shows if the service is ready, initializing, or has errors."
+        description = "Get the current status of the Linggen backend service. Shows if the service is ready, initializing, or has errors."
     )]
     async fn get_status(&self) -> Result<CallToolResult, McpError> {
         info!("=== TOOL CALL: get_status ===");
@@ -458,7 +458,7 @@ impl RememberMeTool {
         );
 
         let mut output = String::new();
-        output.push_str("## RememberMe Status\n\n");
+        output.push_str("## Linggen Status\n\n");
         output.push_str(&format!("**Status:** {}\n", status.status));
 
         if let Some(msg) = &status.message {
@@ -481,18 +481,18 @@ impl RememberMeTool {
 
 // Use the tool_handler macro to implement ServerHandler with proper tool routing
 #[tool_handler]
-impl rmcp::ServerHandler for RememberMeTool {
+impl rmcp::ServerHandler for LinggenTool {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
-                name: "rememberme-mcp".into(),
+                name: "linggen-mcp".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 ..Default::default()
             },
             instructions: Some(
-                "RememberMe MCP Server - Search and enhance prompts with your codebase context."
+                "Linggen MCP Server - Search and enhance prompts with your codebase context."
                     .to_string(),
             ),
         }
@@ -510,7 +510,7 @@ async fn main() -> Result<()> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/rememberme-mcp.log")
+        .open("/tmp/linggen-mcp.log")
         .expect("Failed to open log file");
 
     // Create a layer that writes to stderr
@@ -535,7 +535,7 @@ async fn main() -> Result<()> {
         let mut marker_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/rememberme-mcp.log")
+            .open("/tmp/linggen-mcp.log")
             .expect("Failed to open log file");
         writeln!(
             marker_file,
@@ -545,14 +545,14 @@ async fn main() -> Result<()> {
         .ok();
     }
 
-    info!("Starting RememberMe MCP Server...");
+    info!("Starting Linggen MCP Server...");
 
     let api_url =
-        std::env::var("REMEMBERME_API_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+        std::env::var("LINGGEN_API_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     info!("API URL: {}", api_url);
 
-    let tool = RememberMeTool::new(api_url);
+    let tool = LinggenTool::new(api_url);
 
     // Use the recommended serve pattern with stdio transport
     let service = tool.serve(stdio()).await.inspect_err(|e| {
@@ -571,7 +571,7 @@ async fn main() -> Result<()> {
         let mut marker_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/rememberme-mcp.log")
+            .open("/tmp/linggen-mcp.log")
             .expect("Failed to open log file");
         writeln!(
             marker_file,

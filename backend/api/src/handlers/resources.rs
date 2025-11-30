@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use rememberme_core::{IndexingJob, SourceConfig, SourceType};
+use linggen_core::{IndexingJob, SourceConfig, SourceType};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;

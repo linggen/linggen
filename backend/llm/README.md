@@ -1,4 +1,4 @@
-# RememberMe LLM Module
+# Linggen LLM Module
 
 Lightweight LLM inference using Candle framework for prompt enhancement.
 
@@ -48,7 +48,7 @@ backend/models/
 ## Usage
 
 ```rust
-use rememberme_llm::{MiniLLM, LLMConfig};
+use linggen_llm::{MiniLLM, LLMConfig};
 
 // Initialize
 let config = LLMConfig::default();

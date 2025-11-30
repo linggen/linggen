@@ -25,6 +25,14 @@
             "webRoot": "${workspaceFolder}/frontend",
             "preLaunchTask": "npm: dev"
         },
+        {
+            "name": "Linggensite",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:5174",
+            "webRoot": "${workspaceFolder}/linggensite",
+            "preLaunchTask": "npm: dev - linggensite"
+        }
     ],
     "compounds": [
         {

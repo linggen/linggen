@@ -65,17 +65,17 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
         };
 
         // Use default config to trigger download
-        let config = rememberme_llm::LLMConfig::default();
+        let config = linggen_llm::LLMConfig::default();
 
         // Initialize LLM singleton
-        match rememberme_llm::LLMSingleton::initialize_with_progress(config, progress_callback)
+        match linggen_llm::LLMSingleton::initialize_with_progress(config, progress_callback)
             .await
         {
             Ok(_) => {
                 info!("LLM singleton initialized successfully");
 
                 // Register model in ModelManager
-                if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
+                if let Ok(model_manager) = linggen_llm::ModelManager::new() {
                     let _ = model_manager.register_model(
                         "qwen3-4b",
                         "Qwen3-4B-Instruct-2507",

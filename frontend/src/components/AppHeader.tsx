@@ -22,7 +22,7 @@ export function AppHeader({ status, message, onRetry }: AppHeaderProps) {
     return (
         <header className="app-header">
             <div>
-                <h1>🧠 RememberMe</h1>
+                <h1>🧠 Linggen</h1>
                 <p>Your personal knowledge hub. Search everything, instantly.</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

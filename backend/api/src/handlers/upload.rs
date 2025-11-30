@@ -8,7 +8,7 @@ use axum::{
     Json,
 };
 use ingestion::extract_text;
-use rememberme_core::Chunk;
+use linggen_core::Chunk;
 use serde::Serialize;
 use std::io::Write;
 use std::sync::Arc;
@@ -123,7 +123,7 @@ pub async fn upload_file(
             )
         })?;
 
-    if !matches!(source.source_type, rememberme_core::SourceType::Uploads) {
+    if !matches!(source.source_type, linggen_core::SourceType::Uploads) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(UploadError {

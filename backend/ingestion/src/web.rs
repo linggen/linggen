@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use rememberme_core::{Document, SourceType};
+use linggen_core::{Document, SourceType};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use std::collections::HashSet;

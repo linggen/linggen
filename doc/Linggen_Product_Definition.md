@@ -1,20 +1,20 @@
-# RememberMe — 产品定义文档
+# Linggen — 产品定义文档
 
 ## 🎯 一句话简介  
-**RememberMe = 开发者的个人 AI 记忆层（Personal AI Brain）**  
+**Linggen = 开发者的个人 AI 记忆层（Personal AI Brain）**  
 让 AI 不再忘记你，不再忘记你的项目、风格、历史与偏好。  
-无论你使用 Cursor、VS Code、ChatGPT、Claude 还是本地 LLM，RememberMe 都能自动增强你的提问，让 AI 输出更精准、更懂你、减少重复解释。
+无论你使用 Cursor、VS Code、ChatGPT、Claude 还是本地 LLM，Linggen 都能自动增强你的提问，让 AI 输出更精准、更懂你、减少重复解释。
 
 ---
 
 ## 🧭 产品定位  
-RememberMe 不是新的 AI IDE，不是 Cursor 替代品，不是另一个 Chat。  
+Linggen 不是新的 AI IDE，不是 Cursor 替代品，不是另一个 Chat。  
 它是：
 
 ### ⭐ AI 的“前置记忆 + 意图理解 + 智能提问中间层”  
 - Cursor → 提供智能编辑  
 - ChatGPT/Claude → 提供强力推理  
-- **RememberMe → 提供长期记忆、偏好学习、项目理解、自动补全智能提问**
+- **Linggen → 提供长期记忆、偏好学习、项目理解、自动补全智能提问**
 
 它站在所有 AI 工具之前，成为开发者的“AI 影子大脑”。
 
@@ -45,7 +45,7 @@ AI 不理解真正意图 → 输出差。
 用户喜欢 bullet points？喜欢 concise？喜欢 AAA？  
 AI 永远记不住。
 
-RememberMe 全部解决。
+Linggen 全部解决。
 
 ---
 
@@ -140,13 +140,13 @@ RememberMe 全部解决。
 ### ⭐ 不创建聊天 UI  
 ### ⭐ 只创建一个“轻量输入面板（Spotlight风格）”
 
-按快捷键 → 输入一句 → RememberMe 增强 → 自动贴入 Cursor → 用户按 Enter。
+按快捷键 → 输入一句 → Linggen 增强 → 自动贴入 Cursor → 用户按 Enter。
 
 体验流：
 
 1. ⌘ + Shift + E → 打开输入框  
 2. 用户输入一句话  
-3. RememberMe 补全 + 注入 Memory  
+3. Linggen 补全 + 注入 Memory  
 4. 自动聚焦 Cursor Chat  
 5. 自动粘贴  
 6. 用户按 Enter  
@@ -202,7 +202,7 @@ RememberMe 全部解决。
 ---
 
 ## 🔐 隐私和本地化  
-RememberMe 完全可以做到：
+Linggen 完全可以做到：
 
 - 本地运行  
 - 本地存储  
@@ -255,7 +255,7 @@ RememberMe 完全可以做到：
 ---
 
 ## 📘 总结  
-RememberMe 不是聊天工具、不是 IDE 插件，它是：
+Linggen 不是聊天工具、不是 IDE 插件，它是：
 
 > **AI 时代每个开发者的个人长期记忆层。  
 让 AI 越用越懂你，成为你的影子大脑。**  

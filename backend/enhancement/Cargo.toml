@@ -1,15 +1,15 @@
 [package]
-name = "rememberme-enhancement"
+name = "linggen-enhancement"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 # Our crates
-rememberme-core = { path = "../core" }
-rememberme-intent = { path = "../intent" }
+linggen-core = { path = "../core" }
+linggen-intent = { path = "../intent" }
 storage = { path = "../storage" }
 embeddings = { path = "../embeddings" }
-rememberme-llm = { path = "../llm" }
+linggen-llm = { path = "../llm" }
 
 
 # Utilities

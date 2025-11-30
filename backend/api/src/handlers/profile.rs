@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use rememberme_enhancement::ProfileManager;
+use linggen_enhancement::ProfileManager;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,7 +90,7 @@ pub async fn generate_profile(
     })?;
 
     // Get LLM instance
-    let llm = rememberme_llm::LLMSingleton::get().await;
+    let llm = linggen_llm::LLMSingleton::get().await;
     if llm.is_none() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -215,7 +215,7 @@ pub async fn generate_profile(
 /// Analyze root directory and suggest key file patterns (no LLM dependency)
 async fn ask_llm_for_file_patterns(
     base_path: &PathBuf,
-    _llm: Option<Arc<tokio::sync::Mutex<rememberme_llm::MiniLLM>>>,
+    _llm: Option<Arc<tokio::sync::Mutex<linggen_llm::MiniLLM>>>,
 ) -> Result<Vec<String>, String> {
     // List root directory files
     let root_files = std::fs::read_dir(base_path)

@@ -1,11 +1,11 @@
 [package]
-name = "rememberme-intent"
+name = "linggen-intent"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 # Our LLM
-rememberme-llm = { path = "../llm" }
+linggen-llm = { path = "../llm" }
 
 # Utilities
 anyhow = "1.0"

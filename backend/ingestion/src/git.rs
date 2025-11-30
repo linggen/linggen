@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use git2::Repository;
 use ignore::WalkBuilder;
-use rememberme_core::{Document, SourceType};
+use linggen_core::{Document, SourceType};
 use std::path::PathBuf;
 use uuid::Uuid;
 

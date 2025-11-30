@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use glob::Pattern;
 use ignore::WalkBuilder;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use rememberme_core::{Document, SourceType};
+use linggen_core::{Document, SourceType};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use uuid::Uuid;

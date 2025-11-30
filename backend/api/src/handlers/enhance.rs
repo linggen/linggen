@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, Json};
-use rememberme_enhancement::{EnhancedPrompt, PromptEnhancer, PromptStrategy};
+use linggen_enhancement::{EnhancedPrompt, PromptEnhancer, PromptStrategy};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ pub async fn enhance_prompt(
     })?;
 
     // Get LLM instance if available
-    let llm = rememberme_llm::LLMSingleton::get().await;
+    let llm = linggen_llm::LLMSingleton::get().await;
 
     // Create enhancer
     let mut enhancer = PromptEnhancer::new(

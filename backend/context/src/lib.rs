@@ -1,6 +1,6 @@
 use anyhow::Result;
-use rememberme_core::Chunk;
-use rememberme_llm::MiniLLM;
+use linggen_core::Chunk;
+use linggen_llm::MiniLLM;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;

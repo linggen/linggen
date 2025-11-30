@@ -1,5 +1,5 @@
 [package]
-name = "rememberme-llm"
+name = "linggen-llm"
 version = "0.1.0"
 edition = "2021"
 

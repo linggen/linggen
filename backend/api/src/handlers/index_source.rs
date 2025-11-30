@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
 use ingestion::{GitIngestor, Ingestor, LocalIngestor, WebIngestor};
-use rememberme_core::{Chunk, IndexingJob, JobStatus, SourceConfig, SourceType};
+use linggen_core::{Chunk, IndexingJob, JobStatus, SourceConfig, SourceType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -382,17 +382,15 @@ async fn run_indexing_job(
     );
 
     // 4. Auto-generate profile (skip for Uploads type - these are just document drops)
-    if !matches!(initial_job.source_type, SourceType::Uploads) {
+        if !matches!(initial_job.source_type, SourceType::Uploads) {
         tracing::info!(
             "🤖 Auto-generating profile for source {}...",
             initial_job.source_id
         );
 
-        // Get LLM instance
-        let llm = rememberme_llm::LLMSingleton::get().await;
+            // Get LLM instance
+            let llm = linggen_llm::LLMSingleton::get().await;
         if let Some(llm) = llm {
-            let profile_manager = rememberme_enhancement::ProfileManager::new(Some(llm));
-
             // Fetch chunks for profile generation (prioritize READMEs)
             // We can use the vector store to get chunks, or just use the ones we just created if we kept them.
             // But chunk_buffer was drained. Let's query the store to be safe and consistent.
@@ -438,6 +436,7 @@ async fn run_indexing_job(
             }
 
             if !profile_chunks.is_empty() {
+                let profile_manager = linggen_enhancement::ProfileManager::new(Some(llm));
                 match profile_manager
                     .generate_initial_profile(profile_chunks)
                     .await

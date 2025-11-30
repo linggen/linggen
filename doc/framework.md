@@ -1,4 +1,4 @@
-# RememberMe Framework Architecture
+# Linggen Framework Architecture
 
 ## High-Level Architecture
 

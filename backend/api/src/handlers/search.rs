@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::AppState;
-use rememberme_core::Chunk;
+use linggen_core::Chunk;
 
 #[derive(Deserialize)]
 pub struct SearchRequest {

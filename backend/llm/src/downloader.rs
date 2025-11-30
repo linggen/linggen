@@ -14,7 +14,7 @@ impl ModelDownloader {
         let api = Api::new()?;
         let cache_dir = dirs::cache_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not find cache directory"))?
-            .join("rememberme")
+            .join("linggen")
             .join("models");
 
         std::fs::create_dir_all(&cache_dir)?;
@@ -77,7 +77,7 @@ impl ModelDownloader {
                 );
                 let fallback_dir = dirs::cache_dir()
                     .ok_or_else(|| anyhow::anyhow!("No cache dir"))?
-                    .join("rememberme")
+                    .join("linggen")
                     .join("models");
                 std::fs::create_dir_all(&fallback_dir)?;
                 let output_path = fallback_dir.join("config.json");

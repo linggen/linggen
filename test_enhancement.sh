@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# RememberMe Prompt Enhancement System - Test Script
+# Linggen Prompt Enhancement System - Test Script
 # This demonstrates the full 5-stage pipeline
 
 BASE_URL="http://localhost:3000"
 
-echo "🚀 Testing RememberMe Prompt Enhancement Pipeline"
+echo "🚀 Testing Linggen Prompt Enhancement Pipeline"
 echo "=================================================="
 echo ""
 

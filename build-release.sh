@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🔨 Building RememberMe for distribution..."
+echo "🔨 Building Linggen for distribution..."
 
 # Colors
 GREEN='\033[0;32m'
@@ -23,17 +23,17 @@ cd ..
 
 # Create distribution directory
 echo -e "${BLUE}📁 Creating distribution package...${NC}"
-mkdir -p dist/rememberme
-cp backend/target/release/api dist/rememberme/rememberme
-cp -r frontend/dist dist/rememberme/frontend
-mkdir -p dist/rememberme/data
+mkdir -p dist/linggen
+cp backend/target/release/api dist/linggen/linggen
+cp -r frontend/dist dist/linggen/frontend
+mkdir -p dist/linggen/data
 
 # Create README for users
-cat > dist/rememberme/README.txt << 'EOF'
-RememberMe RAG - Local Semantic Search
+cat > dist/linggen/README.txt << 'EOF'
+Linggen RAG - Local Semantic Search
 
 To run:
-  ./rememberme
+  ./linggen
 
 The application will start on http://localhost:3000
 Open your browser and navigate to that URL.
@@ -46,23 +46,23 @@ Requirements:
 EOF
 
 # Create run script
-cat > dist/rememberme/run.sh << 'EOF'
+cat > dist/linggen/run.sh << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
-echo "Starting RememberMe..."
+echo "Starting Linggen..."
 echo "Open your browser to: http://localhost:3000"
-./rememberme
+./linggen
 EOF
-chmod +x dist/rememberme/run.sh
+chmod +x dist/linggen/run.sh
 
 echo -e "${GREEN}✅ Build complete!${NC}"
-echo -e "Distribution package: ${BLUE}dist/rememberme/${NC}"
+echo -e "Distribution package: ${BLUE}dist/linggen/${NC}"
 echo ""
 echo "To test:"
-echo "  cd dist/rememberme"
+echo "  cd dist/linggen"
 echo "  ./run.sh"
 echo ""
 echo "To create archive:"
 echo "  cd dist"
-echo "  tar -czf rememberme-$(uname -s)-$(uname -m).tar.gz rememberme/"
+echo "  tar -czf linggen-$(uname -s)-$(uname -m).tar.gz linggen/"
 

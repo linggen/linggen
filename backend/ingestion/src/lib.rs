@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use rememberme_core::Document;
+use linggen_core::Document;
 
 pub mod walker;
 pub use walker::FileWalker;

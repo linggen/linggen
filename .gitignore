@@ -15,6 +15,13 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
+linggensite/node_modules/
+linggensite/dist/
+linggensite/.env
+linggensite/.env.local
+linggensite/old_static/
+
+
 # IDE
 .vscode/*
 !.vscode/launch.json

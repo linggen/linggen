@@ -10,5 +10,6 @@ members = [
     "llm",
     "storage",
     "mcp-server",
+    "mcp-http",
 ]
 resolver = "2"

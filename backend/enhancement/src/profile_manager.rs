@@ -1,6 +1,6 @@
 use anyhow::Result;
-use rememberme_core::Chunk;
-use rememberme_llm::MiniLLM;
+use linggen_core::Chunk;
+use linggen_llm::MiniLLM;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::SourceProfile;

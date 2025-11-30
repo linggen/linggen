@@ -24,7 +24,7 @@ pub async fn chat_stream(
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
     // Get LLM instance
-    let llm = rememberme_llm::LLMSingleton::get().await;
+    let llm = linggen_llm::LLMSingleton::get().await;
 
     if let Some(llm) = llm {
         // Create a channel for streaming tokens

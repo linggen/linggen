@@ -11,6 +11,7 @@ mod handlers;
 use handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
     enhance_prompt, get_app_status, index_source, list_jobs, list_resources, list_uploaded_files,
+    mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
     remove_resource, rename_resource, retry_init, upload_file, AppState,
 };
 mod job_manager;
@@ -29,7 +30,7 @@ async fn main() {
         .compact() // Use compact format
         .init();
 
-    info!("RememberMe Backend API starting...");
+    info!("Linggen Backend API starting...");
 
     // Initialize embedding model and vector store
     info!("Loading embedding model...");
@@ -50,9 +51,7 @@ async fn main() {
     );
 
     // Check if LLM is enabled in settings
-    let app_settings = metadata_store
-        .get_app_settings()
-        .unwrap_or_default();
+    let app_settings = metadata_store.get_app_settings().unwrap_or_default();
 
     if app_settings.llm_enabled {
         // Initialize LLM model using ModelManager
@@ -60,31 +59,31 @@ async fn main() {
 
         // Check model status using ModelManager
         let model_manager =
-            rememberme_llm::ModelManager::new().expect("Failed to create ModelManager");
+            linggen_llm::ModelManager::new().expect("Failed to create ModelManager");
         let model_status = model_manager
             .get_model_status("qwen3-4b")
-            .unwrap_or(rememberme_llm::ModelStatus::NotFound);
+            .unwrap_or(linggen_llm::ModelStatus::NotFound);
 
         match model_status {
-            rememberme_llm::ModelStatus::Ready => {
+            linggen_llm::ModelStatus::Ready => {
                 info!("LLM model already initialized and ready, loading into singleton...");
                 // Mark as initialized in redb
                 let _ = metadata_store.set_setting("model_initialized", "true");
 
                 // Initialize the singleton with the existing model
                 // We use default config which will use the downloader logic in lib.rs to find the files
-                let config = rememberme_llm::LLMConfig::default();
+                let config = linggen_llm::LLMConfig::default();
 
                 // Initialize singleton in background
                 tokio::spawn(async move {
-                    match rememberme_llm::LLMSingleton::initialize(config).await {
+                    match linggen_llm::LLMSingleton::initialize(config).await {
                         Ok(_) => info!("LLM singleton loaded successfully"),
                         Err(e) => info!("Failed to load LLM singleton: {}", e),
                     }
                 });
             }
-            rememberme_llm::ModelStatus::NotFound | rememberme_llm::ModelStatus::Corrupted => {
-                if model_status == rememberme_llm::ModelStatus::Corrupted {
+            linggen_llm::ModelStatus::NotFound | linggen_llm::ModelStatus::Corrupted => {
+                if model_status == linggen_llm::ModelStatus::Corrupted {
                     info!("LLM model corrupted, will attempt to use anyway...");
                 } else {
                     info!("LLM model not found, will attempt initialization...");
@@ -98,18 +97,19 @@ async fn main() {
                     // Progress callback that saves to redb
                     let progress_callback = move |msg: &str| {
                         info!("Model init progress: {}", msg);
-                        if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg)
+                        if let Err(e) =
+                            metadata_store_for_progress.set_setting("init_progress", msg)
                         {
                             info!("Failed to save progress: {}", e);
                         }
                     };
 
                     // Use default config to trigger download
-                    let config = rememberme_llm::LLMConfig::default();
+                    let config = linggen_llm::LLMConfig::default();
 
                     // Initialize LLM singleton
                     let config_clone = config.clone();
-                    match rememberme_llm::LLMSingleton::initialize_with_progress(
+                    match linggen_llm::LLMSingleton::initialize_with_progress(
                         config_clone,
                         progress_callback,
                     )
@@ -119,7 +119,7 @@ async fn main() {
                             info!("LLM singleton initialized successfully");
 
                             // Register model in ModelManager
-                            if let Ok(model_manager) = rememberme_llm::ModelManager::new() {
+                            if let Ok(model_manager) = linggen_llm::ModelManager::new() {
                                 // We use HF cache now, so just register as ready without specific file tracking for now
                                 let _ = model_manager.register_model(
                                     "qwen3-4b",
@@ -156,7 +156,7 @@ async fn main() {
                     }
                 });
             }
-            rememberme_llm::ModelStatus::Downloading => {
+            linggen_llm::ModelStatus::Downloading => {
                 info!("LLM model is currently downloading...");
             }
         }
@@ -169,7 +169,7 @@ async fn main() {
     if let Ok(jobs) = metadata_store.get_jobs(None) {
         let running_jobs: Vec<_> = jobs
             .iter()
-            .filter(|j| matches!(j.status, rememberme_core::JobStatus::Running))
+            .filter(|j| matches!(j.status, linggen_core::JobStatus::Running))
             .collect();
         if !running_jobs.is_empty() {
             info!(
@@ -178,7 +178,7 @@ async fn main() {
             );
             for job in running_jobs {
                 let mut failed_job = job.clone();
-                failed_job.status = rememberme_core::JobStatus::Failed;
+                failed_job.status = linggen_core::JobStatus::Failed;
                 failed_job.finished_at = Some(chrono::Utc::now().to_rfc3339());
                 failed_job.error = Some("Server was restarted".to_string());
                 if let Err(e) = metadata_store.update_job(&failed_job) {
@@ -201,20 +201,24 @@ async fn main() {
         job_manager,
     });
 
-    // Configure CORS
+    // Create MCP state (wraps app_state for MCP handlers)
+    let mcp_state = Arc::new(McpState::new());
+    let mcp_app_state = Arc::new(McpAppState {
+        app: app_state.clone(),
+        mcp: mcp_state,
+    });
+
+    // Configure CORS - allow any origin for MCP clients
     let cors = tower_http::cors::CorsLayer::new()
-        .allow_origin(
-            "http://localhost:5173"
-                .parse::<axum::http::HeaderValue>()
-                .unwrap(),
-        )
-        // Allow common HTTP methods used by the frontend, including PUT for profile/preferences
+        .allow_origin(tower_http::cors::Any)
+        // Allow common HTTP methods used by the frontend and MCP
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::OPTIONS,
         ])
-        .allow_headers([axum::http::header::CONTENT_TYPE]);
+        .allow_headers(tower_http::cors::Any);
 
     // Build our application with routes
     let api_routes = Router::new()
@@ -251,8 +255,17 @@ async fn main() {
             "/api/sources/:source_id/profile/generate",
             post(handlers::profile::generate_profile),
         )
-        .with_state(app_state)
-        .layer(cors);
+        .with_state(app_state);
+
+    // MCP routes (for Cursor integration)
+    let mcp_routes = Router::new()
+        .route("/mcp/sse", get(mcp_sse_handler))
+        .route("/mcp/message", post(mcp_message_handler))
+        .route("/mcp/health", get(mcp_health_handler))
+        .with_state(mcp_app_state);
+
+    // Combine API and MCP routes
+    let combined_routes = api_routes.merge(mcp_routes).layer(cors);
 
     // Serve static frontend files (if they exist)
     //
@@ -266,10 +279,10 @@ async fn main() {
 
     let app = if let Some(frontend_dir) = frontend_dir {
         info!("Serving frontend from: {:?}", frontend_dir);
-        api_routes.fallback_service(ServeDir::new(frontend_dir))
+        combined_routes.fallback_service(ServeDir::new(frontend_dir))
     } else {
         info!("Frontend assets not found, serving API only");
-        api_routes.route("/", get(handler))
+        combined_routes.route("/", get(handler))
     };
 
     // Run it
@@ -280,5 +293,5 @@ async fn main() {
 }
 
 async fn handler() -> &'static str {
-    "Hello from RememberMe Backend!"
+    "Hello from Linggen Backend!"
 }

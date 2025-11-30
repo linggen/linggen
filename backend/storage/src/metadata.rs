@@ -1,6 +1,6 @@
 use anyhow::Result;
+use linggen_core::{IndexingJob, SourceConfig};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
-use rememberme_core::{IndexingJob, SourceConfig};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -353,7 +353,7 @@ impl MetadataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rememberme_core::SourceType;
+    use linggen_core::SourceType;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use rememberme_core::{IndexingJob, JobStatus};
+        use linggen_core::{IndexingJob, JobStatus};
         use tempfile::NamedTempFile;
 
         #[test]
@@ -385,6 +385,8 @@ mod tests {
                 source_type: SourceType::Local,
                 path: "/tmp/docs".to_string(),
                 enabled: true,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
                 chunk_count: None,
                 file_count: None,
                 total_size_bytes: None,

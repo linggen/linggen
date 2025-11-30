@@ -46,7 +46,7 @@ impl ModelManager {
         let home_dir =
             dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
 
-        let models_dir = home_dir.join(".rememberme/models");
+        let models_dir = home_dir.join(".linggen/models");
         let registry_path = models_dir.join("registry.json");
 
         // Create models directory if it doesn't exist

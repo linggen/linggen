@@ -1,12 +1,12 @@
 [package]
-name = "rememberme-context"
+name = "linggen-context"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 # Our crates
-rememberme-core = { path = "../core" }
-rememberme-llm = { path = "../llm" }
+linggen-core = { path = "../core" }
+linggen-llm = { path = "../llm" }
 
 # Utilities
 anyhow = "1.0"

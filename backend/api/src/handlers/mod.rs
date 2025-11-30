@@ -5,6 +5,7 @@ pub mod index;
 pub mod index_source;
 pub mod intent;
 pub mod jobs;
+pub mod mcp;
 pub mod preferences;
 pub mod profile;
 pub mod resources;

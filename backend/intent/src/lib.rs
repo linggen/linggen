@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rememberme_llm::MiniLLM;
+use linggen_llm::MiniLLM;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
