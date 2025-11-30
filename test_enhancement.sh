@@ -3,7 +3,7 @@
 # Linggen Prompt Enhancement System - Test Script
 # This demonstrates the full 5-stage pipeline
 
-BASE_URL="http://localhost:3000"
+BASE_URL="http://localhost:7000"
 
 echo "🚀 Testing Linggen Prompt Enhancement Pipeline"
 echo "=================================================="

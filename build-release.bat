@@ -30,7 +30,7 @@ echo. >> dist\linggen\README.txt
 echo To run: >> dist\linggen\README.txt
 echo   linggen.exe >> dist\linggen\README.txt
 echo. >> dist\linggen\README.txt
-echo The application will start on http://localhost:3000 >> dist\linggen\README.txt
+echo The application will start on http://localhost:7000 >> dist\linggen\README.txt
 echo Open your browser and navigate to that URL. >> dist\linggen\README.txt
 echo. >> dist\linggen\README.txt
 echo Data will be stored in the .\data directory. >> dist\linggen\README.txt
@@ -38,8 +38,8 @@ echo Data will be stored in the .\data directory. >> dist\linggen\README.txt
 REM Create run script
 echo @echo off > dist\linggen\run.bat
 echo echo Starting Linggen... >> dist\linggen\run.bat
-echo echo Open your browser to: http://localhost:3000 >> dist\linggen\run.bat
-echo start http://localhost:3000 >> dist\linggen\run.bat
+echo echo Open your browser to: http://localhost:7000 >> dist\linggen\run.bat
+echo start http://localhost:7000 >> dist\linggen\run.bat
 echo linggen.exe >> dist\linggen\run.bat
 
 echo.

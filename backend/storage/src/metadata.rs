@@ -30,7 +30,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub llm_enabled: bool,
 
-    /// Server port (defaults to 3000)
+    /// Server port (defaults to 7000)
     pub server_port: Option<u16>,
 
     /// Server bind address (defaults to "127.0.0.1")

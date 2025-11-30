@@ -34,7 +34,7 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
             // Load both profile and source info
             const [profileData, sourcesResponse] = await Promise.all([
                 getProfile(sourceId),
-                fetch(`http://localhost:3000/api/resources`).then(r => r.json())
+                fetch(`http://localhost:7000/api/resources`).then(r => r.json())
             ]);
 
             setProfile(profileData);

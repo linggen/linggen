@@ -11,40 +11,37 @@
 ## Current Status
 
 - **Frontend**: React + Vite setup, connected to backend.
-- **Backend**: Rust Axum server, CORS enabled.
+- **Backend**: Rust Axum server with integrated MCP endpoint.
 - **Ingestion**: Basic file walker and watcher implemented.
-- **MCP Server**: HTTP/SSE-based MCP server for Cursor integration.
+- **MCP**: Built-in SSE endpoint for Cursor integration (no separate binary needed).
 
 ## Quick Start
 
 ### Prerequisites
 
 - Rust (latest stable)
-- Node.js & npm
+- Node.js & npm (for frontend development)
 
 ### Running the Project
 
-1. **Start the Linggen Backend**:
+1. **Start the Linggen Server**:
 
    ```bash
-   cd backend && cargo run -p api
+   cd backend && cargo run -p api --release
    ```
 
-   The API will be available at `http://localhost:3000`.
+   This starts:
+   - **API** at `http://localhost:7000/api/*`
+   - **MCP endpoint** at `http://localhost:7000/mcp/*`
+   - **Frontend** at `http://localhost:7000/` (if built)
 
-2. **Start the Frontend** (optional):
+2. **Start the Frontend** (for development):
 
    ```bash
    cd frontend && npm run dev
    ```
 
    Access the web UI at `http://localhost:5173`.
-
-3. **Start the MCP Server** (for Cursor integration):
-   ```bash
-   cd backend && cargo run -p mcp-http
-   ```
-   The MCP server will be available at `http://localhost:3001`.
 
 ### Cursor Integration
 
@@ -54,22 +51,31 @@ Add to your `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "linggen": {
-      "url": "http://localhost:3001/mcp/sse"
+      "url": "http://localhost:7000/mcp/sse"
     }
   }
 }
 ```
 
-See [Cursor MCP Setup](doc/cursor-mcp-setup.md) for detailed instructions.
+Restart Cursor, and the Linggen tools will be available in chat.
+
+See [Cursor MCP Setup](doc/cursor-mcp-setup.md) for detailed instructions and team setup.
 
 ## Architecture
 
 ```
-┌─────────────┐     HTTP      ┌─────────────┐     HTTP      ┌─────────────┐
-│   Cursor    │◄────────────► │  mcp-http   │◄────────────► │ Linggen API │
-│   (IDE)     │    SSE        │  (Gateway)  │               │  (Backend)  │
-└─────────────┘               └─────────────┘               └─────────────┘
-     :3001                         :3001                         :3000
+┌─────────────────────────────────────────────────────────────────┐
+│                         Linggen Server                          │
+│                                                                 │
+│  ┌─────────┐     SSE      ┌──────────────────────────────────┐  │
+│  │ Cursor  │◄────────────►│  /mcp/*  - MCP SSE endpoint      │  │
+│  └─────────┘              │  /api/*  - REST API              │  │
+│                           │  /       - Frontend (if built)   │  │
+│  ┌─────────┐     HTTP     └──────────────────────────────────┘  │
+│  │ Web UI  │◄────────────►                                      │
+│  └─────────┘                                                    │
+└─────────────────────────────────────────────────────────────────┘
+                          localhost:7000
 ```
 
 ## License

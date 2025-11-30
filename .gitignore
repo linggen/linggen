@@ -64,3 +64,4 @@ coverage/
 **/debug/
 **/release/
 assets/
+dist/

@@ -7,11 +7,15 @@ interface Message {
   content: string
 }
 
+interface ChatProps {
+  llmEnabled: boolean
+}
+
 // Typing effect configuration
 const TYPING_INTERVAL_MS = 25
 const CHARS_PER_TICK = 2
 
-export function Chat() {
+export function Chat({ llmEnabled }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: 'Hello! I can help you understand your codebase. Ask me anything!' }
   ])
@@ -93,6 +97,37 @@ export function Chat() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // If LLM is disabled, show a message instead of the chat interface
+  if (!llmEnabled) {
+    return (
+      <div className="chat-container">
+        <div className="chat-header">
+          <h3>💬 Quick Chat</h3>
+          <p className="chat-caption">Powered by Qwen3-4B</p>
+        </div>
+        <div className="chat-messages" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '300px',
+          padding: '2rem'
+        }}>
+          <div style={{
+            textAlign: 'center',
+            color: 'var(--text-muted)',
+            maxWidth: '400px'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔒</div>
+            <h4>Chat Disabled</h4>
+            <p style={{ marginTop: '0.5rem', lineHeight: '1.6' }}>
+              The local LLM is currently disabled. Enable it in Settings to use the chat feature.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

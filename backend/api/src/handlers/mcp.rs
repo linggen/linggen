@@ -625,9 +625,8 @@ async fn execute_enhance_prompt(
 
     // Header with intent info
     output.push_str(&format!(
-        "## Enhanced Prompt\n\n**Detected Intent:** {} (confidence: {:.0}%)\n",
-        response.intent.intent_type,
-        response.intent.confidence * 100.0
+        "## Enhanced Prompt\n\n**Detected Intent:** {}\n",
+        response.intent
     ));
 
     if response.preferences_applied {
@@ -659,7 +658,7 @@ async fn execute_enhance_prompt(
 
     info!(
         "=== MCP TOOL RESPONSE: enhance_prompt ===\n  Intent: {}\n  Chunks: {}\n  Output length: {} chars",
-        response.intent.intent_type,
+        response.intent,
         response.context_chunks.len(),
         output.len()
     );

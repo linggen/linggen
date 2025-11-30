@@ -141,10 +141,25 @@ section {
     position: relative;
 }
 
+section:not(:first-of-type)::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    max-width: 800px;
+    height: 1px;
+    background: linear-gradient(90deg,
+            transparent,
+            rgba(0, 212, 170, 0.15),
+            transparent);
+}
+
 .section-title {
-    font-size: 2.5rem;
+    font-size: 3rem;
     text-align: center;
-    margin-bottom: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
     background: linear-gradient(135deg, var(--color-spirit-jade), var(--color-ethereal-purple));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -153,6 +168,9 @@ section {
     align-items: center;
     justify-content: center;
     gap: var(--spacing-sm);
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    line-height: 1.2;
 }
 
 .title-decoration {
@@ -163,10 +181,12 @@ section {
 
 .section-description {
     text-align: center;
-    font-size: 1.125rem;
+    font-size: 1.25rem;
     color: var(--color-text-secondary);
-    max-width: 700px;
-    margin: 0 auto var(--spacing-lg);
+    max-width: 720px;
+    margin: 0 auto 4rem;
+    line-height: 1.6;
+    font-weight: 400;
 }
 
 /* ==========================================
@@ -409,34 +429,39 @@ section {
 
 .hero-title {
     font-size: 4rem;
-    margin-bottom: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    letter-spacing: -0.02em;
 }
 
 .brand-name {
-    font-size: 5rem;
+    font-size: 5.5rem;
     font-weight: 700;
     background: linear-gradient(135deg, var(--color-qi-gold), var(--color-qi-amber));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
     filter: drop-shadow(0 0 30px rgba(251, 191, 36, 0.3));
-    letter-spacing: 0.05em;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
 }
 
 .hero-subtitle {
-    font-size: 1.5rem;
+    font-size: 1.75rem;
     color: var(--color-spirit-jade);
-    margin-bottom: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
     font-weight: 300;
     text-shadow: var(--glow-spirit);
+    letter-spacing: 0.01em;
+    line-height: 1.4;
 }
 
 .hero-description {
-    font-size: 1.125rem;
+    font-size: 1.25rem;
     color: var(--color-text-secondary);
-    max-width: 700px;
-    margin: 0 auto var(--spacing-lg);
-    line-height: 1.8;
+    max-width: 650px;
+    margin: 0 auto var(--spacing-xl);
+    line-height: 1.7;
+    font-weight: 400;
 }
 
 .hero-description strong {
@@ -453,17 +478,18 @@ section {
 }
 
 .btn {
-    padding: 1rem 2.5rem;
+    padding: 1.125rem 2.75rem;
     font-size: 1.125rem;
     font-weight: 600;
     text-decoration: none;
-    border-radius: 50px;
-    transition: all 0.3s ease;
+    border-radius: 12px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: inline-block;
     cursor: pointer;
     border: none;
     position: relative;
     overflow: hidden;
+    letter-spacing: 0.01em;
 }
 
 .btn::before {
@@ -487,12 +513,12 @@ section {
 .btn-primary {
     background: linear-gradient(135deg, var(--color-spirit-jade), var(--color-spirit-cyan));
     color: var(--color-cosmic-dark);
-    box-shadow: var(--glow-spirit);
+    box-shadow: 0 4px 16px rgba(0, 212, 170, 0.3);
 }
 
 .btn-primary:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 0 40px rgba(0, 212, 170, 0.6);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(0, 212, 170, 0.4);
 }
 
 .btn-secondary {
@@ -502,9 +528,9 @@ section {
 }
 
 .btn-secondary:hover {
-    background: rgba(0, 212, 170, 0.1);
-    transform: translateY(-3px);
-    box-shadow: var(--glow-spirit);
+    background: rgba(0, 212, 170, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 212, 170, 0.2);
 }
 
 /* Scroll Indicator */
@@ -621,13 +647,14 @@ section {
 }
 
 .feature-card {
-    background: rgba(17, 24, 39, 0.6);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(0, 212, 170, 0.2);
-    border-radius: 20px;
-    padding: var(--spacing-lg);
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(0, 212, 170, 0.15);
+    border-radius: 24px;
+    padding: 2.5rem;
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 .feature-card::before {
@@ -656,9 +683,9 @@ section {
 }
 
 .feature-card:hover {
-    transform: translateY(-10px);
-    border-color: var(--color-spirit-jade);
-    box-shadow: var(--glow-spirit);
+    transform: translateY(-8px);
+    border-color: rgba(0, 212, 170, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 212, 170, 0.2), 0 0 20px rgba(0, 212, 170, 0.1);
 }
 
 .feature-icon {
@@ -668,15 +695,18 @@ section {
 }
 
 .feature-card h3 {
-    font-size: 1.5rem;
+    font-size: 1.75rem;
     color: var(--color-spirit-jade);
-    margin-bottom: var(--spacing-sm);
+    margin-bottom: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
 }
 
 .feature-card p {
     color: var(--color-text-secondary);
-    margin-bottom: var(--spacing-md);
+    margin-bottom: 1.5rem;
     line-height: 1.7;
+    font-size: 1.05rem;
 }
 
 .feature-list {
@@ -715,21 +745,22 @@ section {
 }
 
 .doc-card {
-    background: rgba(17, 24, 39, 0.6);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(167, 139, 250, 0.2);
-    border-radius: 16px;
-    padding: var(--spacing-md);
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(167, 139, 250, 0.15);
+    border-radius: 20px;
+    padding: 2rem;
     text-decoration: none;
     color: inherit;
-    transition: all 0.3s ease;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: block;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
 .doc-card:hover {
-    transform: translateY(-8px);
-    border-color: var(--color-ethereal-purple);
-    box-shadow: 0 0 30px rgba(167, 139, 250, 0.3);
+    transform: translateY(-6px);
+    border-color: rgba(167, 139, 250, 0.4);
+    box-shadow: 0 8px 28px rgba(167, 139, 250, 0.2), 0 0 16px rgba(167, 139, 250, 0.1);
 }
 
 .doc-icon {
@@ -738,14 +769,17 @@ section {
 }
 
 .doc-card h3 {
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     color: var(--color-ethereal-purple);
-    margin-bottom: var(--spacing-xs);
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
 }
 
 .doc-card p {
     color: var(--color-text-secondary);
-    font-size: 0.95rem;
+    font-size: 1rem;
+    line-height: 1.6;
 }
 
 /* ==========================================

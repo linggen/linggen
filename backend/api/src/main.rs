@@ -258,8 +258,9 @@ async fn main() {
         .with_state(app_state);
 
     // MCP routes (for Cursor integration)
+    // Note: /mcp/sse accepts both GET (SSE stream) and POST (messages) per MCP streamable HTTP spec
     let mcp_routes = Router::new()
-        .route("/mcp/sse", get(mcp_sse_handler))
+        .route("/mcp/sse", get(mcp_sse_handler).post(mcp_message_handler))
         .route("/mcp/message", post(mcp_message_handler))
         .route("/mcp/health", get(mcp_health_handler))
         .with_state(mcp_app_state);
@@ -286,7 +287,7 @@ async fn main() {
     };
 
     // Run it
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 7000));
     info!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

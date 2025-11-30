@@ -35,7 +35,7 @@ Linggen RAG - Local Semantic Search
 To run:
   ./linggen
 
-The application will start on http://localhost:3000
+The application will start on http://localhost:7000
 Open your browser and navigate to that URL.
 
 Data will be stored in the ./data directory.
@@ -50,7 +50,7 @@ cat > dist/linggen/run.sh << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 echo "Starting Linggen..."
-echo "Open your browser to: http://localhost:3000"
+echo "Open your browser to: http://localhost:7000"
 ./linggen
 EOF
 chmod +x dist/linggen/run.sh

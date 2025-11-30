@@ -1,49 +1,72 @@
 # Linggen MCP Server (stdio) - DEPRECATED
 
-> **Note:** This stdio-based MCP server requires installing a local binary on each user's machine.
-> For team environments, use the new **HTTP/SSE MCP server** (`mcp-http`) instead.
-> See [mcp-http/README.md](../mcp-http/README.md) for setup instructions.
+> **⚠️ DEPRECATED:** This stdio-based MCP server requires installing a local binary on each user's machine.
+> 
+> **Use the unified Linggen API server instead**, which includes MCP endpoints at `/mcp/*`.
+> See [Cursor MCP Setup Guide](../../doc/cursor-mcp-setup.md) for instructions.
 
-## Build
+## Recommended: Use Unified API Server
+
+The Linggen API server now includes MCP endpoints. No separate binary needed!
+
+1. Start the server:
+   ```bash
+   cargo run -p api --release
+   ```
+
+2. Configure Cursor (`~/.cursor/mcp.json`):
+   ```json
+   {
+     "mcpServers": {
+       "linggen": {
+         "url": "http://localhost:7000/mcp/sse"
+       }
+     }
+   }
+   ```
+
+For team setups, just point to your shared server:
+```json
+{
+  "mcpServers": {
+    "linggen": {
+      "url": "http://linggen.company.internal:7000/mcp/sse"
+    }
+  }
+}
+```
+
+**No local installation required for team members!**
+
+---
+
+## Legacy: stdio MCP Server (Not Recommended)
+
+If you still need the stdio-based server for some reason:
+
+### Build
 
 ```bash
 cargo build -p mcp-server --release
-chmod +x /Users/lianghuang/workspace/rust/linggen/backend/target/release/mcp-server
 ```
 
-## In Cursor mcp.json (Local Binary)
+### Configure Cursor
 
 ```json
 {
   "mcpServers": {
     "linggen": {
-      "command": "/Users/lianghuang/workspace/rust/linggen/backend/target/release/mcp-server",
+      "command": "/path/to/mcp-server",
       "args": [],
       "env": {
-        "LINGGEN_API_URL": "http://localhost:3000"
+        "LINGGEN_API_URL": "http://localhost:7000"
       }
     }
   }
 }
 ```
 
-## Recommended: Use HTTP/SSE MCP Server Instead
-
-For team setups where you don't want each user to install a binary:
-
-```json
-{
-  "mcpServers": {
-    "linggen": {
-      "url": "http://linggen.company.internal:3001/mcp/sse"
-    }
-  }
-}
-```
-
-See [mcp-http/README.md](../mcp-http/README.md) for full documentation.
-
-## Debug
+### Debug
 
 ```bash
 tail -100f /tmp/linggen-mcp.log

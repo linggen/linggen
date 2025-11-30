@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { enhancePrompt, getProfile, listResources, type EnhancedPromptResponse, type Resource, type IntentType, type SourceProfile as SourceProfileMeta } from '../api'
+import { enhancePrompt, getProfile, listResources, getAppSettings, type EnhancedPromptResponse, type Resource, type IntentType, type SourceProfile as SourceProfileMeta, type AppSettings } from '../api'
 import { Chat } from '../components/Chat'
 
 type ComposerBlockType = 'profile' | 'chunk' | 'question' | 'path'
@@ -44,6 +44,9 @@ export function AssistantView() {
     const [includedProfileSourceIds, setIncludedProfileSourceIds] = useState<Set<string>>(new Set())
     const [loadingProfiles, setLoadingProfiles] = useState(false)
 
+    // App settings (for LLM enabled status)
+    const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+
     useEffect(() => {
         const loadSourcesAndProfiles = async () => {
             try {
@@ -75,7 +78,17 @@ export function AssistantView() {
             }
         }
 
+        const loadSettings = async () => {
+            try {
+                const settings = await getAppSettings()
+                setAppSettings(settings)
+            } catch (err) {
+                console.error('Failed to load app settings:', err)
+            }
+        }
+
         loadSourcesAndProfiles()
+        loadSettings()
     }, [])
 
     const handleEnhance = async (e: React.FormEvent) => {
@@ -464,7 +477,7 @@ export function AssistantView() {
                 </div>
 
                 <div className="assistant-sidebar-col">
-                    <Chat />
+                    <Chat llmEnabled={appSettings?.llm_enabled ?? false} />
                 </div>
 
                 {/* Full-text popup modal */}
