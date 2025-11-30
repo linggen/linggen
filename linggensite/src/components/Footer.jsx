@@ -6,8 +6,6 @@ function Footer() {
                     <strong>Linggen</strong> - Cultivate Your Knowledge Spiritual Roots
                 </p>
                 <p className="footer-links">
-                    <a href="https://github.com/LiangHuangBC/linggen">GitHub</a>
-                    <span className="separator">·</span>
                     <a href="#docs">Documentation</a>
                     <span className="separator">·</span>
                     <a href="#get-started">Get Started</a>

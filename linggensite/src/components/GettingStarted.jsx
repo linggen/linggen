@@ -93,7 +93,7 @@ open http://localhost:8080`
                 <div className="next-steps">
                     <h3>Next Steps</h3>
                     <ul>
-                        <li>Download the latest release from GitHub</li>
+                        <li>Download the latest release from our website</li>
                         <li>Index additional sources (Git repos, websites, documents)</li>
                         <li>Explore the web interface and API</li>
                         <li>Set up VS Code integration for seamless workflow</li>
