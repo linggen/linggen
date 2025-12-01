@@ -9,7 +9,7 @@ import {
   type Resource,
   type ResourceType,
 } from './api'
-import { SourceProfile } from './components/ProjectProfile'
+import { SourceDetail } from './components/SourceDetail'
 import { AppHeader } from './components/AppHeader'
 import { SourcesView } from './views/SourcesView'
 import { ActivityView } from './views/ActivityView'
@@ -450,7 +450,7 @@ function App() {
       <main className="main">
         {currentView === 'sources' && (
           selectedSourceId ? (
-            <SourceProfile 
+            <SourceDetail 
               sourceId={selectedSourceId} 
               onBack={() => setSelectedSourceId(null)} 
               onIndexComplete={() => setResourcesVersion(v => v + 1)}

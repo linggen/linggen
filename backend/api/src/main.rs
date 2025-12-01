@@ -1,4 +1,4 @@
-use axum::{routing::get, routing::post, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, routing::post, Router};
 use dashmap::DashMap;
 use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
@@ -335,7 +335,11 @@ async fn main() {
         .with_state(mcp_app_state);
 
     // Combine API and MCP routes
-    let combined_routes = api_routes.merge(mcp_routes).layer(cors);
+    // Increase body limit to 100MB for large file uploads (default is 2MB)
+    let combined_routes = api_routes
+        .merge(mcp_routes)
+        .layer(cors)
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024));
 
     // Serve static frontend files (if they exist)
     //

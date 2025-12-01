@@ -38,7 +38,9 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
     const [files, setFiles] = useState<FileInfo[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
+    const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing'>('uploading');
     const [deletingFile, setDeletingFile] = useState<string | null>(null);
+    const [fileToDelete, setFileToDelete] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -99,7 +101,9 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
 
     const loadFiles = async () => {
         try {
+            console.log('loadFiles: Fetching files for source', sourceId);
             const response = await listUploadedFiles(sourceId);
+            console.log('loadFiles: Received', response.files.length, 'files:', response.files);
             setFiles(response.files);
         } catch (err) {
             console.error('Failed to load files:', err);
@@ -186,14 +190,19 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
         await processFiles(Array.from(selectedFiles));
     };
 
-    const handleDeleteFile = async (filename: string) => {
-        if (!confirm(`Delete "${filename}" and all its chunks?`)) return;
+    const handleDeleteFile = (filename: string) => {
+        setFileToDelete(filename);
+    };
 
-        setDeletingFile(filename);
+    const confirmDeleteFile = async () => {
+        if (!fileToDelete) return;
+
+        setDeletingFile(fileToDelete);
+        setFileToDelete(null);
         setMessage(null);
 
         try {
-            const result = await deleteUploadedFile(sourceId, filename);
+            const result = await deleteUploadedFile(sourceId, fileToDelete);
             setMessage({ text: `✓ Deleted "${result.filename}": ${result.chunks_deleted} chunks removed`, type: 'success' });
             await loadFiles();
             await loadData();
@@ -237,25 +246,39 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
     const processFiles = async (filesToUpload: File[]) => {
         setUploading(true);
         setUploadProgress(0);
+        setUploadPhase('uploading');
         setMessage(null);
 
         try {
             let uploadedCount = 0;
             for (const file of filesToUpload) {
+                console.log('processFiles: Starting upload for', file.name);
                 setUploadProgress(0);
+                setUploadPhase('uploading');
                 const result = await uploadFile(sourceId, file, (percent) => {
                     setUploadProgress(percent);
+                    // Switch to processing phase when upload is complete
+                    if (percent === 100) {
+                        setUploadPhase('processing');
+                    }
                 });
+                console.log('processFiles: Upload complete for', file.name, 'result:', result);
                 uploadedCount++;
                 setMessage({ text: `✓ Uploaded ${uploadedCount}/${filesToUpload.length}: "${result.filename}" (${result.chunks_created} chunks)`, type: 'success' });
             }
+            console.log('processFiles: All uploads complete, waiting for backend to sync...');
+            // Small delay to ensure LanceDB has committed the data
+            await new Promise(resolve => setTimeout(resolve, 500));
+            console.log('processFiles: Refreshing file list...');
             await loadFiles();
+            console.log('processFiles: File list refreshed');
             await loadData();
         } catch (err) {
             setMessage({ text: `✗ Failed to upload: ${err}`, type: 'error' });
         } finally {
             setUploading(false);
             setUploadProgress(0);
+            setUploadPhase('uploading');
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -695,7 +718,9 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                         </div>
                         <div style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--text)', marginBottom: '0.25rem' }}>
                             {uploading 
-                                ? `Uploading... ${uploadProgress}%` 
+                                ? (uploadPhase === 'processing' 
+                                    ? 'Processing (extracting, chunking, embedding)...' 
+                                    : `Uploading... ${uploadProgress}%`)
                                 : isDragging 
                                     ? 'Drop files here' 
                                     : 'Drop files here or click to browse'}
@@ -710,15 +735,32 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                                 overflow: 'hidden',
                                 margin: '0.5rem auto'
                             }}>
-                                <div style={{ 
-                                    width: `${uploadProgress}%`, 
-                                    height: '100%', 
-                                    backgroundColor: 'var(--primary)', 
-                                    transition: 'width 0.2s ease',
-                                    borderRadius: '3px'
-                                }} />
+                                {uploadPhase === 'processing' ? (
+                                    <div style={{ 
+                                        width: '30%', 
+                                        height: '100%', 
+                                        backgroundColor: 'var(--primary)', 
+                                        borderRadius: '3px',
+                                        animation: 'processing-slide 1.5s ease-in-out infinite',
+                                    }} />
+                                ) : (
+                                    <div style={{ 
+                                        width: `${uploadProgress}%`, 
+                                        height: '100%', 
+                                        backgroundColor: 'var(--primary)', 
+                                        transition: 'width 0.2s ease',
+                                        borderRadius: '3px'
+                                    }} />
+                                )}
                             </div>
                         )}
+                        <style>{`
+                            @keyframes processing-slide {
+                                0% { transform: translateX(0); }
+                                50% { transform: translateX(233%); }
+                                100% { transform: translateX(0); }
+                            }
+                        `}</style>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                             PDF, DOCX, TXT, MD, JSON, YAML, and more
                         </div>
@@ -866,6 +908,64 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                             fontFamily: 'inherit',
                         }}
                     />
+                </div>
+            )}
+
+            {/* Delete File Confirmation Modal */}
+            {fileToDelete && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div className="modal-content" style={{
+                        backgroundColor: 'var(--card-bg)',
+                        borderRadius: '12px',
+                        padding: '1.5rem',
+                        maxWidth: '400px',
+                        width: '90%',
+                        border: '1px solid var(--border)',
+                    }}>
+                        <h3 style={{ marginTop: 0, marginBottom: '1rem', color: 'var(--text)' }}>Delete File?</h3>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                            Are you sure you want to delete "<strong>{fileToDelete}</strong>" and all its chunks? This cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setFileToDelete(null)}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border)',
+                                    background: 'transparent',
+                                    color: 'var(--text)',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDeleteFile}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    background: '#ef4444',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

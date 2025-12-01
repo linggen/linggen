@@ -39,10 +39,13 @@ pub async fn upload_file(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>, (StatusCode, Json<UploadError>)> {
+    tracing::debug!("upload_file: Starting file upload request");
+
     let mut source_id: Option<String> = None;
     let mut file_data: Option<(String, Vec<u8>)> = None;
 
     // Parse multipart form
+    tracing::debug!("upload_file: Parsing multipart form");
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -255,7 +258,9 @@ pub async fn upload_file(
         })?;
 
     // Store new chunks in LanceDB
+    tracing::debug!("upload_file: Storing {} chunks in LanceDB", chunks_created);
     state.vector_store.add(chunks).await.map_err(|e| {
+        tracing::error!("upload_file: Failed to store chunks: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(UploadError {
@@ -263,6 +268,7 @@ pub async fn upload_file(
             }),
         )
     })?;
+    tracing::debug!("upload_file: Successfully stored chunks in LanceDB");
 
     tracing::info!(
         "Successfully uploaded '{}' to source '{}': {} chunks created",
@@ -333,6 +339,11 @@ pub async fn list_uploaded_files(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ListFilesRequest>,
 ) -> Result<Json<ListFilesResponse>, (StatusCode, Json<UploadError>)> {
+    tracing::debug!(
+        "list_uploaded_files: Listing files for source '{}'",
+        req.source_id
+    );
+
     // Verify source exists
     let _source = state
         .metadata_store
@@ -375,6 +386,12 @@ pub async fn list_uploaded_files(
             chunk_count: doc.chunk_count,
         })
         .collect();
+
+    tracing::debug!(
+        "list_uploaded_files: Found {} files for source '{}'",
+        files.len(),
+        req.source_id
+    );
 
     Ok(Json(ListFilesResponse {
         source_id: req.source_id,

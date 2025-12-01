@@ -217,22 +217,50 @@ export interface UploadFileResponse {
     chunks_created: number;
 }
 
-export async function uploadFile(sourceId: string, file: File): Promise<UploadFileResponse> {
+export async function uploadFile(
+    sourceId: string, 
+    file: File,
+    onProgress?: (percent: number) => void
+): Promise<UploadFileResponse> {
     const formData = new FormData();
     formData.append('source_id', sourceId);
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/api/upload`, {
-        method: 'POST',
-        body: formData,
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable && onProgress) {
+                const percent = Math.round((event.loaded / event.total) * 100);
+                onProgress(percent);
+            }
+        });
+
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    resolve(response);
+                } catch {
+                    reject(new Error('Failed to parse response'));
+                }
+            } else {
+                try {
+                    const errorData = JSON.parse(xhr.responseText);
+                    reject(new Error(errorData.error || `Upload failed: ${xhr.statusText}`));
+                } catch {
+                    reject(new Error(`Upload failed: ${xhr.statusText}`));
+                }
+            }
+        });
+
+        xhr.addEventListener('error', () => {
+            reject(new Error('Network error during upload'));
+        });
+
+        xhr.open('POST', `${API_BASE}/api/upload`);
+        xhr.send(formData);
     });
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(errorData.error || `Failed to upload file: ${response.statusText}`);
-    }
-
-    return response.json();
 }
 
 // List uploaded files for a source
