@@ -41,6 +41,10 @@ export function ResourceManager({
   const [uploadingSourceId, setUploadingSourceId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Remove confirmation modal state
+  const [removeConfirm, setRemoveConfirm] = useState<{ id: string; name: string } | null>(null)
+  const [removing, setRemoving] = useState(false)
+
   // Track whether component is mounted to avoid setting state after unmount
   const isMountedRef = useRef(true)
 
@@ -139,20 +143,26 @@ export function ResourceManager({
     }
   }
 
-  const handleRemove = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to remove "${name}"?`)) {
-      return
-    }
+  const handleRemove = (id: string, name: string) => {
+    setRemoveConfirm({ id, name })
+  }
 
+  const confirmRemove = async () => {
+    if (!removeConfirm) return
+
+    setRemoving(true)
     setError('')
     setSuccess('')
 
     try {
-      await removeResource(id)
-      setSuccess(`✓ Removed resource: ${name}`)
+      await removeResource(removeConfirm.id)
+      setSuccess(`✓ Removed resource: ${removeConfirm.name}`)
+      setRemoveConfirm(null)
       await loadResources()
     } catch (err) {
       setError(`✗ Failed to remove resource: ${err}`)
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -559,6 +569,50 @@ export function ResourceManager({
           </div>
         )}
       </div>
+
+      {/* Remove Confirmation Modal */}
+      {removeConfirm && (
+        <div className="modal-overlay" onClick={() => !removing && setRemoveConfirm(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>🗑️ Remove Source</h3>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: '1rem', color: 'var(--text)' }}>
+                Are you sure you want to remove <strong>"{removeConfirm.name}"</strong>?
+              </p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                This will delete:
+              </p>
+              <ul style={{ margin: '0 0 1rem 1.5rem', color: 'var(--text-muted)', lineHeight: '1.8', fontSize: '0.85rem' }}>
+                <li>All indexed chunks from the vector database</li>
+                <li>Source configuration and profile</li>
+              </ul>
+              <p style={{ color: '#ef4444', fontWeight: '500', fontSize: '0.85rem' }}>
+                This action cannot be undone.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setRemoveConfirm(null)}
+                disabled={removing}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={confirmRemove}
+                disabled={removing}
+              >
+                {removing ? 'Removing...' : '🗑️ Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
