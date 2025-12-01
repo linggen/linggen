@@ -178,129 +178,126 @@ export function SettingsView() {
         }
     }
 
+    const getLlmStatusBadge = () => {
+        if (!settings?.llm_enabled) {
+            return <span className="llm-status-badge disabled">Disabled</span>
+        }
+        if (llmStatus === 'ready') {
+            return <span className="llm-status-badge ready">Ready</span>
+        }
+        if (llmStatus === 'error') {
+            return <span className="llm-status-badge error">Error</span>
+        }
+        if (llmStatus === 'initializing') {
+            return <span className="llm-status-badge initializing">Initializing...</span>
+        }
+        return <span className="llm-status-badge">Enabled</span>
+    }
+
     return (
-        <div className="view">
-            <section className="section settings-section">
-                <div className="settings-group">
+        <div className="view settings-view">
+            {message && (
+                <div className={`settings-toast ${message.startsWith('✓') ? 'success' : 'error'}`}>
+                    {message}
+                </div>
+            )}
+
+            <section className="settings-card">
+                <div className="settings-card-header">
+                    <span className="settings-icon">💾</span>
                     <h3>Data Storage</h3>
-                    <div className="settings-item">
-                        <span className="settings-label">Search index</span>
-                        <span className="settings-value">./backend/data/lancedb</span>
+                </div>
+                <div className="settings-card-body">
+                    <div className="settings-row">
+                        <span className="settings-row-label">Search index</span>
+                        <span className="settings-row-value mono">~/Library/Application Support/Linggen/lancedb</span>
                     </div>
-                    <div className="settings-item">
-                        <span className="settings-label">Source metadata</span>
-                        <span className="settings-value">./backend/data/metadata.redb</span>
+                    <div className="settings-row">
+                        <span className="settings-row-label">Source metadata</span>
+                        <span className="settings-row-value mono">~/Library/Application Support/Linggen/metadata.redb</span>
                     </div>
                 </div>
+            </section>
 
-                <div className="settings-group">
+            <section className="settings-card">
+                <div className="settings-card-header">
+                    <span className="settings-icon">🔍</span>
                     <h3>Search Engine</h3>
-                    <div className="settings-item">
-                        <span className="settings-label">Embedding Model</span>
-                        <span className="settings-value">all-MiniLM-L6-v2</span>
+                </div>
+                <div className="settings-card-body">
+                    <div className="settings-row">
+                        <span className="settings-row-label">Embedding Model</span>
+                        <span className="settings-row-value">all-MiniLM-L6-v2</span>
                     </div>
-                    <div className="settings-item">
-                        <span className="settings-label">Privacy</span>
-                        <span className="settings-value">100% local, offline-capable, your data never leaves your device</span>
+                    <div className="settings-row">
+                        <span className="settings-row-label">Privacy</span>
+                        <span className="settings-row-value highlight">100% local · offline-capable · data never leaves your device</span>
                     </div>
                 </div>
+            </section>
 
-                <div className="settings-group">
-                    <h3>Local LLM (Qwen3-4B)</h3>
-                    {message && (
-                        <div className={`status ${message.startsWith('✓') ? 'success' : 'error'}`} style={{ marginBottom: '0.75rem' }}>
-                            {message}
-                        </div>
-                    )}
-                    <div className="settings-item">
-                        <span className="settings-label">Enable Local LLM</span>
-                        <span className="settings-value">
-                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <section className="settings-card">
+                <div className="settings-card-header">
+                    <span className="settings-icon">🤖</span>
+                    <h3>Local LLM</h3>
+                    <span className="settings-model-name">Qwen3-4B</span>
+                </div>
+                <div className="settings-card-body">
+                    <div className="settings-row llm-toggle-row">
+                        <div className="llm-toggle-left">
+                            <label className="toggle-switch">
                                 <input
                                     type="checkbox"
                                     checked={!!settings?.llm_enabled}
                                     onChange={handleToggleLlm}
                                     disabled={loading || saving || llmInitializing || !settings}
                                 />
-                                <span>
-                                    {settings?.llm_enabled 
-                                        ? (llmStatus === 'ready' ? 'Enabled (Ready)' : llmStatus === 'error' ? 'Enabled (Error)' : 'Enabled')
-                                        : 'Disabled'}
-                                </span>
+                                <span className="toggle-slider"></span>
                             </label>
-                        </span>
-                    </div>
-                    {llmInitializing && llmProgress && (
-                        <div className="settings-item" style={{ 
-                            background: 'var(--bg-tertiary)', 
-                            borderRadius: '8px', 
-                            padding: '0.75rem',
-                            border: '1px solid var(--border-color)'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ 
-                                    display: 'inline-block', 
-                                    width: '12px', 
-                                    height: '12px', 
-                                    border: '2px solid var(--accent)', 
-                                    borderTopColor: 'transparent',
-                                    borderRadius: '50%',
-                                    animation: 'spin 1s linear infinite'
-                                }} />
-                                <span style={{ color: 'var(--text-muted)' }}>{llmProgress}</span>
-                            </div>
+                            <span className="settings-row-label">Enable Local LLM</span>
                         </div>
-                    )}
-                    {llmStatus === 'error' && !llmInitializing && llmProgress && (
-                        <div className="settings-item" style={{ 
-                            background: 'rgba(239, 68, 68, 0.1)', 
-                            borderRadius: '8px', 
-                            padding: '0.75rem',
-                            border: '1px solid var(--error)'
-                        }}>
-                            <span style={{ color: 'var(--error)' }}>⚠️ {llmProgress}</span>
-                        </div>
-                    )}
-                    <div className="settings-item settings-item-muted">
-                        <span>
-                            The local Qwen3-4B LLM enables features like chat, profile generation, and AI-powered analysis. 
-                            When disabled, these features will not be available. The model (~3GB) will be downloaded when you first enable it.
-                        </span>
+                        {getLlmStatusBadge()}
                     </div>
-                </div>
 
-                <div className="settings-group">
-                    <h3>Danger Zone</h3>
-                    <div className="settings-item">
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Clear All Data</div>
-                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                        Permanently delete all indexed data, sources, profiles, and settings. This cannot be undone.
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={handleClearAllData}
-                                    disabled={clearing}
-                                    style={{
-                                        padding: '0.5rem 1rem',
-                                        background: 'var(--error)',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '6px',
-                                        cursor: clearing ? 'not-allowed' : 'pointer',
-                                        fontSize: '0.9rem',
-                                        fontWeight: '500',
-                                        opacity: clearing ? 0.5 : 1,
-                                        whiteSpace: 'nowrap',
-                                    }}
-                                >
-                                    {clearing ? 'Clearing...' : '🗑️ Clear All Data'}
-                                </button>
-                            </div>
+                    {llmInitializing && llmProgress && (
+                        <div className="llm-progress-bar">
+                            <div className="llm-progress-spinner"></div>
+                            <span>{llmProgress}</span>
                         </div>
+                    )}
+
+                    {llmStatus === 'error' && !llmInitializing && llmProgress && (
+                        <div className="llm-error-message">
+                            <span>⚠️ {llmProgress}</span>
+                        </div>
+                    )}
+
+                    <p className="settings-description">
+                        Enables chat, profile generation, and AI-powered analysis. 
+                        The model (~3GB) will be downloaded on first enable.
+                    </p>
+                </div>
+            </section>
+
+            <section className="settings-card danger">
+                <div className="settings-card-header">
+                    <span className="settings-icon">⚠️</span>
+                    <h3>Danger Zone</h3>
+                </div>
+                <div className="settings-card-body">
+                    <div className="danger-action">
+                        <div className="danger-action-info">
+                            <strong>Clear All Data</strong>
+                            <p>Permanently delete all indexed data, sources, profiles, and settings. This cannot be undone.</p>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn-danger"
+                            onClick={handleClearAllData}
+                            disabled={clearing}
+                        >
+                            {clearing ? 'Clearing...' : '🗑️ Clear All Data'}
+                        </button>
                     </div>
                 </div>
             </section>

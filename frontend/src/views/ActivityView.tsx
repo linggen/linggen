@@ -36,12 +36,7 @@ export function ActivityView({ jobs }: ActivityViewProps) {
 
     return (
         <div className="view">
-            <div className="view-header">
-                <h2>Activity & Status</h2>
-                <p>Monitor background jobs and system health.</p>
-            </div>
-
-            <section className="section" style={{ marginBottom: '2rem' }}>
+            <section className="section" style={{ marginBottom: '1.25rem' }}>
                 <h3>System Status</h3>
                 <div className="status-grid">
                     <div className="status-item">

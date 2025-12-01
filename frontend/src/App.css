@@ -55,6 +55,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-top: 1rem;
   margin-bottom: 2rem;
   min-height: auto;
   padding: 0 0.5rem;
@@ -145,11 +146,12 @@ body {
 
 .view-header {
   margin-bottom: 1rem;
+  margin-top: 0;
 }
 
 .view-header h2 {
-  font-size: 1.8rem;
-  margin-bottom: 0.5rem;
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
   margin-top: 0;
   background: linear-gradient(135deg, #646cff 0%, #8b5cf6 100%);
   -webkit-background-clip: text;
@@ -161,8 +163,9 @@ body {
 
 .view-header p {
   color: var(--text-muted);
-  font-size: 1rem;
-  line-height: 1.6;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .section {
@@ -959,7 +962,320 @@ select:focus {
   color: var(--error);
 }
 
-/* Settings */
+/* Settings View - Polished */
+.settings-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 800px;
+}
+
+.settings-toast {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  animation: slideDown 0.3s ease-out;
+}
+
+.settings-toast.success {
+  background: rgba(76, 175, 80, 0.15);
+  border: 1px solid var(--success);
+  color: var(--success);
+}
+
+.settings-toast.error {
+  background: rgba(244, 67, 54, 0.15);
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+.settings-card {
+  background: linear-gradient(
+    145deg,
+    rgba(45, 45, 45, 0.6),
+    rgba(36, 36, 36, 0.8)
+  );
+  border: 1px solid rgba(100, 108, 255, 0.12);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.settings-card:hover {
+  border-color: rgba(100, 108, 255, 0.25);
+}
+
+.settings-card.danger {
+  border-color: rgba(244, 67, 54, 0.25);
+}
+
+.settings-card.danger:hover {
+  border-color: rgba(244, 67, 54, 0.4);
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-icon {
+  font-size: 1.1rem;
+}
+
+.settings-model-name {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  background: rgba(100, 108, 255, 0.15);
+  color: var(--primary);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.settings-card-body {
+  padding: 1rem 1.25rem;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 1rem;
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row-label {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.settings-row-value {
+  font-size: 0.85rem;
+  color: var(--text);
+  text-align: right;
+}
+
+.settings-row-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.settings-row-value.highlight {
+  color: var(--success);
+  font-weight: 500;
+}
+
+.settings-description {
+  margin: 0.75rem 0 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* LLM Toggle Row */
+.llm-toggle-row {
+  padding: 0.75rem 0;
+}
+
+.llm-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 24px;
+  transition: all 0.3s;
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: all 0.3s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--primary);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* LLM Status Badge */
+.llm-status-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.llm-status-badge.disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.llm-status-badge.ready {
+  background: rgba(76, 175, 80, 0.15);
+  color: var(--success);
+}
+
+.llm-status-badge.error {
+  background: rgba(244, 67, 54, 0.15);
+  color: var(--error);
+}
+
+.llm-status-badge.initializing {
+  background: rgba(100, 108, 255, 0.15);
+  color: var(--primary);
+}
+
+/* LLM Progress */
+.llm-progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.5rem;
+  background: rgba(100, 108, 255, 0.08);
+  border: 1px solid rgba(100, 108, 255, 0.2);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--primary);
+}
+
+.llm-progress-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(100, 108, 255, 0.3);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.llm-error-message {
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.5rem;
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--error);
+}
+
+/* Danger Zone */
+.danger-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+}
+
+.danger-action-info {
+  flex: 1;
+  min-width: 200px;
+}
+
+.danger-action .btn-danger {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.danger-action-info strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.danger-action-info p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.btn-danger {
+  width: auto;
+  padding: 0.5rem 1rem;
+  background: var(--error);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #d32f2f;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Legacy settings classes (kept for compatibility) */
 .settings-section {
   display: flex;
   flex-direction: column;

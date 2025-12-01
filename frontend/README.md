@@ -75,3 +75,6 @@ export default defineConfig([
 ## Tauri
 
 open frontend/src-tauri/target/release/bundle/macos/Linggen.app
+
+TO view logs:
+./frontend/src-tauri/target/release/bundle/macos/Linggen.app/Contents/MacOS/linggen-desktop

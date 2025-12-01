@@ -4,6 +4,8 @@ interface AppHeaderProps {
     onRetry?: () => void
 }
 
+import logo from '../assets/logo.svg'
+
 export function AppHeader({ status, message, onRetry }: AppHeaderProps) {
     let statusText = 'Idle'
     let statusClassName = 'status-pill idle'
@@ -22,7 +24,10 @@ export function AppHeader({ status, message, onRetry }: AppHeaderProps) {
     return (
         <header className="app-header">
             <div>
-                <h1>🧠 Linggen</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                    <img src={logo} alt="Linggen Logo" style={{ width: '32px', height: '32px' }} />
+                    <h1 style={{ margin: 0, fontSize: '1.5rem' }}>Linggen</h1>
+                </div>
                 <p>Your personal knowledge hub. Search everything, instantly.</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

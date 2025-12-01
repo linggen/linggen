@@ -1,5 +1,6 @@
 use axum::{routing::get, routing::post, Router};
 use dashmap::DashMap;
+use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
 use std::net::SocketAddr;
 use std::{path::PathBuf, sync::Arc};
@@ -34,10 +35,22 @@ async fn main() {
     info!("Linggen Backend API starting...");
 
     // Initialize embedding model and vector store
+    // Use a stable application data directory so the app works
+    // regardless of where it's launched from (Finder, CLI, DMG-installed, etc.)
     info!("Initializing metadata store...");
-    let metadata_store = Arc::new(
-        MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
-    );
+
+    let base_data_dir = data_dir()
+        .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"))
+        .join("Linggen");
+
+    let metadata_path = base_data_dir.join("metadata.redb");
+    let lancedb_path = base_data_dir.join("lancedb");
+
+    info!("Using metadata store at {:?}", metadata_path);
+    info!("Using LanceDB store at {:?}", lancedb_path);
+
+    let metadata_store =
+        Arc::new(MetadataStore::new(&metadata_path).expect("Failed to initialize metadata store"));
 
     // Initialize embedding model in background
     info!("Loading embedding model (async)...");
@@ -96,9 +109,13 @@ async fn main() {
 
     info!("Connecting to LanceDB...");
     let vector_store = Arc::new(
-        VectorStore::new("./data/lancedb")
-            .await
-            .expect("Failed to initialize vector store"),
+        VectorStore::new(
+            lancedb_path
+                .to_str()
+                .expect("Failed to convert lancedb path to string"),
+        )
+        .await
+        .expect("Failed to initialize vector store"),
     );
 
     // Check if LLM is enabled in settings
