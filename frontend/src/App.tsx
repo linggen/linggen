@@ -126,10 +126,11 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
-          // Trigger a refresh of source stats/details (with small delay to ensure backend saves stats)
+          // Trigger a refresh of source stats/details (with delay to ensure backend saves stats)
           setTimeout(() => {
+            console.log('Refreshing resources after job completion...')
             setResourcesVersion((v) => v + 1)
-          }, 500)
+          }, 2000)
 
           setTimeout(() => {
             setIndexingResourceId(null)
@@ -165,10 +166,11 @@ function App() {
           }
           setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
 
-          // Trigger a refresh of source stats/details (with small delay)
+          // Trigger a refresh of source stats/details (with delay)
           setTimeout(() => {
+            console.log('Refreshing resources after job failure...')
             setResourcesVersion((v) => v + 1)
-          }, 500)
+          }, 2000)
 
           setTimeout(() => {
             setIndexingResourceId(null)
@@ -186,6 +188,8 @@ function App() {
 
   // Start polling for a job
   const startPollingJob = useCallback((jobId: string) => {
+    console.log('Starting polling for job:', jobId)
+    
     // Clear any existing polling
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current)
@@ -194,7 +198,8 @@ function App() {
       clearTimeout(pollingTimeoutRef.current)
     }
 
-    // Start polling every second
+    // Call immediately, then poll every second
+    updateJobProgress(jobId)
     pollingIntervalRef.current = setInterval(() => {
       updateJobProgress(jobId)
     }, 1000)
@@ -445,7 +450,11 @@ function App() {
       <main className="main">
         {currentView === 'sources' && (
           selectedSourceId ? (
-            <SourceProfile sourceId={selectedSourceId} onBack={() => setSelectedSourceId(null)} />
+            <SourceProfile 
+              sourceId={selectedSourceId} 
+              onBack={() => setSelectedSourceId(null)} 
+              onIndexComplete={() => setResourcesVersion(v => v + 1)}
+            />
           ) : (
             <SourcesView
               onIndexResource={handleIndexResource}
@@ -472,8 +481,8 @@ interface TopNavProps {
 
 function TopNav({ currentView, onChangeView }: TopNavProps) {
   const items: { id: View; label: string }[] = [
-    { id: 'assistant', label: 'AI Assistant' },
     { id: 'sources', label: 'Sources' },
+    { id: 'assistant', label: 'AI Assistant' },
     { id: 'activity', label: 'Activity' },
     { id: 'settings', label: 'Settings' },
   ]

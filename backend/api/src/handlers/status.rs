@@ -12,7 +12,7 @@ pub struct AppStatus {
 }
 
 pub async fn get_app_status(State(state): State<Arc<AppState>>) -> Json<AppStatus> {
-    // Check if model is initialized
+    // Check if embedding model is initialized (always required for indexing/search)
     let model_initialized = state
         .metadata_store
         .get_setting("model_initialized")

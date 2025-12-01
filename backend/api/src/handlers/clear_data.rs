@@ -1,6 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
 use std::sync::Arc;
+use tracing::info;
 
 use super::index::AppState;
 
@@ -13,6 +14,7 @@ pub struct ClearDataResponse {
 pub async fn clear_all_data(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ClearDataResponse>, (StatusCode, String)> {
+    info!("Clearing all data...");
     let mut errors = Vec::new();
 
     // Clear all chunks from LanceDB

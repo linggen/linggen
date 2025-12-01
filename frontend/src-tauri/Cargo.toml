@@ -1,6 +1,6 @@
 [package]
 name = "linggen-desktop"
-version = "0.1.0"
+version = "0.5.0"
 description = "Linggen Desktop App"
 authors = ["Liang Huang"]
 edition = "2021"

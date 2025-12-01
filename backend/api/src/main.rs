@@ -14,7 +14,7 @@ use handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
     enhance_prompt, get_app_status, index_source, list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    remove_resource, rename_resource, retry_init, upload_file, AppState,
+    remove_resource, rename_resource, retry_init, update_resource_patterns, upload_file, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -302,6 +302,7 @@ async fn main() {
         .route("/api/resources", get(list_resources))
         .route("/api/resources/remove", post(remove_resource))
         .route("/api/resources/rename", post(rename_resource))
+        .route("/api/resources/patterns", post(update_resource_patterns))
         .route("/api/upload", post(upload_file))
         .route("/api/upload/files", post(list_uploaded_files))
         .route("/api/upload/delete", post(delete_uploaded_file))

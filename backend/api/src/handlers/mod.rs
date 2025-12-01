@@ -23,7 +23,9 @@ pub use intent::classify_intent;
 pub use jobs::{cancel_job, list_jobs};
 // pub use preferences::{get_preferences, update_preferences};
 
-pub use resources::{add_resource, list_resources, remove_resource, rename_resource};
+pub use resources::{
+    add_resource, list_resources, remove_resource, rename_resource, update_resource_patterns,
+};
 pub use retry_init::retry_init;
 pub mod search;
 pub use search::search;

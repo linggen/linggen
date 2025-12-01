@@ -13,6 +13,7 @@ interface ResourceManagerProps {
 export function ResourceManager({
   onIndexResource,
   indexingResourceId,
+  indexingProgress,
   onCancelJob,
   onViewProfile,
   refreshKey,
@@ -282,9 +283,9 @@ export function ResourceManager({
               }}
             >
               <option value="local">Local Folder</option>
-              <option value="git">Git Repository</option>
-              <option value="web">Website</option>
               <option value="uploads">Uploads</option>
+              <option value="git" disabled>Git Repository (Coming Soon)</option>
+              <option value="web" disabled>Website (Coming Soon)</option>
             </select>
           </div>
         </div>
@@ -469,7 +470,7 @@ export function ResourceManager({
                     {indexingResourceId === resource.id ? (
                       <div className="indexing-indicator">
                         <span className="spinner">⏳</span>
-                        <span className="indexing-label">Indexing...</span>
+                        <span className="indexing-label">{indexingProgress || 'Indexing...'}</span>
                       </div>
                     ) : resource.latest_job ? (
                       <div className="status-cell">

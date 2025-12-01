@@ -182,6 +182,33 @@ export async function renameResource(id: string, name: string): Promise<RenameRe
     return response.json();
 }
 
+export interface UpdateResourcePatternsResponse {
+    success: boolean;
+    id: string;
+    include_patterns: string[];
+    exclude_patterns: string[];
+}
+
+export async function updateResourcePatterns(
+    id: string, 
+    include_patterns: string[], 
+    exclude_patterns: string[]
+): Promise<UpdateResourcePatternsResponse> {
+    const response = await fetch(`${API_BASE}/api/resources/patterns`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id, include_patterns, exclude_patterns }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to update patterns: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
 // File Upload for Uploads sources
 export interface UploadFileResponse {
     success: boolean;

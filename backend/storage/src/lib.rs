@@ -7,6 +7,7 @@ use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::{connect, Connection};
 use linggen_core::Chunk;
 use std::sync::Arc;
+use tracing::debug;
 
 pub mod metadata;
 pub mod preferences;
@@ -229,6 +230,7 @@ impl VectorStore {
             // Drop the table (namespace is empty array for default namespace)
             self.conn.drop_table(&self.table_name, &[]).await?;
         }
+        debug!("Dropped table: {}", self.table_name);
         Ok(())
     }
 

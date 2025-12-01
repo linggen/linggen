@@ -103,6 +103,21 @@ pub struct RenameResourceResponse {
     pub name: String,
 }
 
+#[derive(Deserialize)]
+pub struct UpdateResourcePatternsRequest {
+    pub id: String,
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct UpdateResourcePatternsResponse {
+    pub success: bool,
+    pub id: String,
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+}
+
 pub async fn add_resource(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AddResourceRequest>,
@@ -240,5 +255,39 @@ pub async fn rename_resource(
         success: true,
         id: req.id,
         name: req.name,
+    }))
+}
+
+pub async fn update_resource_patterns(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateResourcePatternsRequest>,
+) -> Result<Json<UpdateResourcePatternsResponse>, (StatusCode, String)> {
+    // Get the existing source
+    let mut source = state
+        .metadata_store
+        .get_source(&req.id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Source not found: {}", req.id),
+            )
+        })?;
+
+    // Update the patterns
+    source.include_patterns = req.include_patterns.clone();
+    source.exclude_patterns = req.exclude_patterns.clone();
+
+    // Save the updated source
+    state
+        .metadata_store
+        .update_source(&source)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(UpdateResourcePatternsResponse {
+        success: true,
+        id: req.id,
+        include_patterns: req.include_patterns,
+        exclude_patterns: req.exclude_patterns,
     }))
 }

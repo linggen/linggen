@@ -7,6 +7,7 @@ export function SettingsView() {
     const [saving, setSaving] = useState(false)
     const [message, setMessage] = useState<string | null>(null)
     const [clearing, setClearing] = useState(false)
+    const [showClearConfirm, setShowClearConfirm] = useState(false)
     const [llmInitializing, setLlmInitializing] = useState(false)
     const [llmProgress, setLlmProgress] = useState<string | null>(null)
     const [llmStatus, setLlmStatus] = useState<'disabled' | 'initializing' | 'ready' | 'error'>('disabled')
@@ -148,20 +149,12 @@ export function SettingsView() {
         }
     }
 
-    const handleClearAllData = async () => {
-        const confirmed = window.confirm(
-            '⚠️ WARNING: This will permanently delete ALL indexed data, sources, and settings.\n\n' +
-            'This includes:\n' +
-            '• All indexed chunks in LanceDB\n' +
-            '• All source configurations\n' +
-            '• All profiles\n' +
-            '• All indexing history\n\n' +
-            'This action CANNOT be undone!\n\n' +
-            'Are you sure you want to continue?'
-        )
+    const handleClearAllData = () => {
+        setShowClearConfirm(true)
+    }
 
-        if (!confirmed) return
-
+    const confirmClearAllData = async () => {
+        setShowClearConfirm(false)
         setClearing(true)
         setMessage(null)
         try {
@@ -301,6 +294,51 @@ export function SettingsView() {
                     </div>
                 </div>
             </section>
+
+            {/* Clear Data Confirmation Modal */}
+            {showClearConfirm && (
+                <div className="modal-overlay" onClick={() => setShowClearConfirm(false)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>⚠️ Clear All Data</h3>
+                        </div>
+                        <div className="modal-body">
+                            <p style={{ marginBottom: '1rem', color: 'var(--text)' }}>
+                                This will <strong>permanently delete</strong>:
+                            </p>
+                            <ul style={{ margin: '0 0 1rem 1.5rem', color: 'var(--text-muted)', lineHeight: '1.8' }}>
+                                <li>All indexed chunks in vector database</li>
+                                <li>All source configurations</li>
+                                <li>All project profiles</li>
+                                <li>All indexing history</li>
+                                <li>All uploaded files</li>
+                            </ul>
+                            <p style={{ marginBottom: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                ✓ Your settings and downloaded models will be preserved.
+                            </p>
+                            <p style={{ color: '#ef4444', fontWeight: '600' }}>
+                                This action cannot be undone!
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => setShowClearConfirm(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-danger"
+                                onClick={confirmClearAllData}
+                            >
+                                🗑️ Yes, Delete Everything
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

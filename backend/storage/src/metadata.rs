@@ -302,20 +302,33 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Clear all data from all tables
+    /// Clear all user data from all tables, but preserve model initialization state
+    /// This keeps: model_initialized, init_progress, app_settings (llm_enabled, etc.)
     pub fn clear_all(&self) -> Result<()> {
+        // Settings to preserve (model initialization state)
+        let preserved_settings = [
+            "model_initialized",
+            "init_progress",
+            "init_error",
+            "app_settings",
+        ];
+
         let write_txn = self.db.begin_write()?;
         {
-            // Clear each table by removing all entries
+            // Clear settings table, but preserve model-related settings
             let mut settings_table = write_txn.open_table(SETTINGS_TABLE)?;
             let keys: Vec<String> = settings_table
                 .iter()?
                 .map(|r| r.map(|(k, _)| k.value().to_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             for key in keys {
-                settings_table.remove(key.as_str())?;
+                // Only remove if NOT in preserved list
+                if !preserved_settings.contains(&key.as_str()) {
+                    settings_table.remove(key.as_str())?;
+                }
             }
 
+            // Clear sources table completely
             let mut sources_table = write_txn.open_table(SOURCES_TABLE)?;
             let keys: Vec<String> = sources_table
                 .iter()?
@@ -325,6 +338,7 @@ impl MetadataStore {
                 sources_table.remove(key.as_str())?;
             }
 
+            // Clear jobs table completely
             let mut jobs_table = write_txn.open_table(JOBS_TABLE)?;
             let keys: Vec<String> = jobs_table
                 .iter()?
@@ -334,6 +348,7 @@ impl MetadataStore {
                 jobs_table.remove(key.as_str())?;
             }
 
+            // Clear preferences table completely
             let mut preferences_table = write_txn.open_table(PREFERENCES_TABLE)?;
             let keys: Vec<String> = preferences_table
                 .iter()?
@@ -343,6 +358,7 @@ impl MetadataStore {
                 preferences_table.remove(key.as_str())?;
             }
 
+            // Clear profile table completely
             let mut profile_table = write_txn.open_table(PROFILE_TABLE)?;
             let keys: Vec<String> = profile_table
                 .iter()?
