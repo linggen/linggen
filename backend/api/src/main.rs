@@ -4,6 +4,7 @@ use embeddings::{EmbeddingModel, TextChunker};
 use std::net::SocketAddr;
 use std::{path::PathBuf, sync::Arc};
 use storage::{MetadataStore, VectorStore};
+use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tracing::info;
 
@@ -33,8 +34,63 @@ async fn main() {
     info!("Linggen Backend API starting...");
 
     // Initialize embedding model and vector store
-    info!("Loading embedding model...");
-    let embedding_model = Arc::new(EmbeddingModel::new().expect("Failed to load embedding model"));
+    info!("Initializing metadata store...");
+    let metadata_store = Arc::new(
+        MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
+    );
+
+    // Initialize embedding model in background
+    info!("Loading embedding model (async)...");
+    // Reset initialization state to ensure UI shows initializing
+    if let Err(e) = metadata_store.set_setting("model_initialized", "false") {
+        tracing::error!("Failed to reset model_initialized: {}", e);
+    }
+    if let Err(e) = metadata_store.set_setting("init_progress", "Starting...") {
+        tracing::error!("Failed to reset init_progress: {}", e);
+    }
+
+    let embedding_model = Arc::new(RwLock::new(None));
+    let embedding_model_clone = embedding_model.clone();
+    let metadata_store_clone = metadata_store.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) =
+            metadata_store_clone.set_setting("init_progress", "Downloading embedding model...")
+        {
+            tracing::error!("Failed to set init_progress: {}", e);
+        }
+
+        // Load model in blocking task
+        let model_result = tokio::task::spawn_blocking(|| EmbeddingModel::new()).await;
+
+        match model_result {
+            Ok(Ok(model)) => {
+                let mut lock = embedding_model_clone.write().await;
+                *lock = Some(model);
+                if let Err(e) = metadata_store_clone.set_setting("init_progress", "Ready") {
+                    tracing::error!("Failed to set init_progress to Ready: {}", e);
+                }
+                if let Err(e) = metadata_store_clone.set_setting("model_initialized", "true") {
+                    tracing::error!("Failed to set model_initialized to true: {}", e);
+                }
+                info!("Embedding model loaded successfully");
+            }
+            Ok(Err(e)) => {
+                let error_msg = format!("Failed to load embedding model: {}", e);
+                if let Err(e) = metadata_store_clone.set_setting("init_error", &error_msg) {
+                    tracing::error!("Failed to set init_error: {}", e);
+                }
+                if let Err(e) = metadata_store_clone.set_setting("model_initialized", "error") {
+                    tracing::error!("Failed to set model_initialized to error: {}", e);
+                }
+                tracing::error!("{}", error_msg);
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to join embedding model task: {}", e);
+                tracing::error!("{}", error_msg);
+            }
+        }
+    });
 
     let chunker = Arc::new(TextChunker::new());
 
@@ -43,11 +99,6 @@ async fn main() {
         VectorStore::new("./data/lancedb")
             .await
             .expect("Failed to initialize vector store"),
-    );
-
-    info!("Initializing metadata store...");
-    let metadata_store = Arc::new(
-        MetadataStore::new("./data/metadata.redb").expect("Failed to initialize metadata store"),
     );
 
     // Check if LLM is enabled in settings
@@ -271,9 +322,10 @@ async fn main() {
     // Serve static frontend files (if they exist)
     //
     // Supported layouts:
+    // - macOS .app bundle:             ../Resources/frontend (relative to MacOS/ dir where binary runs)
     // - Development / in-repo build:   ../frontend/dist
     // - Packaged build-release bundle: ./frontend
-    let frontend_dir: Option<PathBuf> = ["./frontend", "../frontend/dist"]
+    let frontend_dir: Option<PathBuf> = ["../Resources/frontend", "./frontend", "../frontend/dist"]
         .iter()
         .map(PathBuf::from)
         .find(|p| p.exists());
@@ -287,8 +339,11 @@ async fn main() {
     };
 
     // Run it
-    let addr = SocketAddr::from(([127, 0, 0, 1], 7000));
+    // Bind to 0.0.0.0 to allow both local and remote access
+    // Remote users can access the UI at http://<linggen-ip>:8787
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8787));
     info!("listening on {}", addr);
+    info!("Remote access available at http://<your-ip>:8787");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

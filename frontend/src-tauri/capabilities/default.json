@@ -1,0 +1,43 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "identifier": "default",
+    "description": "Default capabilities for the Linggen desktop app",
+    "windows": [
+        "main"
+    ],
+    "permissions": [
+        "core:default",
+        "core:window:default",
+        "core:window:allow-show",
+        "core:window:allow-hide",
+        "core:window:allow-close",
+        "core:window:allow-set-title",
+        "shell:default",
+        "shell:allow-open",
+        {
+            "identifier": "shell:allow-spawn",
+            "allow": [
+                {
+                    "name": "linggen-backend",
+                    "sidecar": true,
+                    "args": true
+                }
+            ]
+        },
+        {
+            "identifier": "shell:allow-kill",
+            "allow": [
+                {
+                    "name": "linggen-backend",
+                    "sidecar": true
+                }
+            ]
+        }
+    ],
+    "remote": {
+        "urls": [
+            "http://localhost:8787/*",
+            "http://127.0.0.1:8787/*"
+        ]
+    }
+}

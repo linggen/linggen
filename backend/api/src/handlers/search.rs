@@ -21,8 +21,13 @@ pub async fn search(
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
     // 1. Embed the query
-    let embedding = state
-        .embedding_model
+    let model_guard = state.embedding_model.read().await;
+    let model = model_guard.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Embedding model is initializing. Please try again in a few seconds.".to_string(),
+    ))?;
+
+    let embedding = model
         .embed(&req.query)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

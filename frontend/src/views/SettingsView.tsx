@@ -11,30 +11,49 @@ export function SettingsView() {
     const [llmProgress, setLlmProgress] = useState<string | null>(null)
     const [llmStatus, setLlmStatus] = useState<'disabled' | 'initializing' | 'ready' | 'error'>('disabled')
     const progressPollRef = useRef<number | null>(null)
+    const isMountedRef = useRef(true)
 
     useEffect(() => {
-        const loadSettings = async () => {
+        isMountedRef.current = true
+
+        const loadSettingsWithRetry = async (attempt = 1) => {
             try {
+                if (!isMountedRef.current) return
                 setLoading(true)
+                setMessage(null)
                 const data = await getAppSettings()
+                if (!isMountedRef.current) return
                 setSettings(data)
-                
+
                 // Also check initial LLM status
                 if (data.llm_enabled) {
                     const status = await getAppStatus()
+                    if (!isMountedRef.current) return
                     updateLlmStatusFromAppStatus(status)
                 }
             } catch (err) {
-                console.error('Failed to load app settings:', err)
-                setMessage('✗ Failed to load settings')
+                console.error('Failed to load app settings (attempt', attempt, '):', err)
+                if (!isMountedRef.current) return
+
+                if (attempt < 5) {
+                    // Soft message while we keep retrying
+                    setMessage(`Loading settings (retry ${attempt + 1}/5)...`)
+                    setTimeout(() => loadSettingsWithRetry(attempt + 1), 500 * attempt)
+                } else {
+                    setMessage('✗ Failed to load settings')
+                }
             } finally {
-                setLoading(false)
+                if (isMountedRef.current) {
+                    setLoading(false)
+                }
             }
         }
-        loadSettings()
+
+        loadSettingsWithRetry()
 
         // Cleanup polling on unmount
         return () => {
+            isMountedRef.current = false
             if (progressPollRef.current) {
                 clearInterval(progressPollRef.current)
             }
@@ -63,7 +82,6 @@ export function SettingsView() {
             try {
                 const status = await getAppStatus()
                 updateLlmStatusFromAppStatus(status)
-                
                 // Stop polling when done
                 if (status.status === 'ready' || status.status === 'error') {
                     if (progressPollRef.current) {

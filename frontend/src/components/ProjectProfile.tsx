@@ -34,7 +34,7 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
             // Load both profile and source info
             const [profileData, sourcesResponse] = await Promise.all([
                 getProfile(sourceId),
-                fetch(`http://localhost:7000/api/resources`).then(r => r.json())
+                fetch(`http://localhost:8787/api/resources`).then(r => r.json())
             ]);
 
             setProfile(profileData);
@@ -247,96 +247,96 @@ export const SourceProfile: React.FC<{ sourceId: string; onBack?: () => void }> 
                 {source?.resource_type === 'uploads' && (
                     <>
                         {/* Hidden file input */}
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        accept=".pdf,.docx,.doc,.txt,.md,.markdown,.json,.yaml,.yml,.toml,.csv,.xml,.html,.htm,.rst,.tex"
-                        style={{ display: 'none' }}
-                        onChange={handleFileChange}
-                    />
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            accept=".pdf,.docx,.doc,.txt,.md,.markdown,.json,.yaml,.yml,.toml,.csv,.xml,.html,.htm,.rst,.tex"
+                            style={{ display: 'none' }}
+                            onChange={handleFileChange}
+                        />
 
-                    {/* Drag & Drop Zone */}
-                    <div
-                        ref={dropZoneRef}
-                        onDragEnter={handleDragEnter}
-                        onDragLeave={handleDragLeave}
-                        onDragOver={handleDragOver}
-                        onDrop={handleDrop}
-                        onClick={handleUploadClick}
-                        style={{
-                            border: `2px dashed ${isDragging ? 'var(--primary)' : 'var(--border)'}`,
-                            borderRadius: '12px',
-                            padding: '2rem',
-                            textAlign: 'center',
-                            cursor: uploading ? 'wait' : 'pointer',
-                            background: isDragging ? 'rgba(100, 108, 255, 0.1)' : 'var(--surface)',
-                            transition: 'all 0.2s ease',
-                            marginBottom: '1.5rem',
-                        }}
-                    >
-                        <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>
-                            {uploading ? '⏳' : isDragging ? '📥' : '📤'}
-                        </div>
-                        <div style={{ fontSize: '1rem', fontWeight: '500', color: 'var(--text)', marginBottom: '0.25rem' }}>
-                            {uploading ? 'Uploading...' : isDragging ? 'Drop files here' : 'Drop files here or click to browse'}
-                        </div>
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                            Supports PDF, DOCX, TXT, MD, JSON, YAML, and more
-                        </div>
-                    </div>
-
-                    {/* File List */}
-                    {files.length > 0 && (
-                        <>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                                <h4 style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
-                                    📁 {files.length} file{files.length !== 1 ? 's' : ''} uploaded
-                                </h4>
+                        {/* Drag & Drop Zone */}
+                        <div
+                            ref={dropZoneRef}
+                            onDragEnter={handleDragEnter}
+                            onDragLeave={handleDragLeave}
+                            onDragOver={handleDragOver}
+                            onDrop={handleDrop}
+                            onClick={handleUploadClick}
+                            style={{
+                                border: `2px dashed ${isDragging ? 'var(--primary)' : 'var(--border)'}`,
+                                borderRadius: '12px',
+                                padding: '2rem',
+                                textAlign: 'center',
+                                cursor: uploading ? 'wait' : 'pointer',
+                                background: isDragging ? 'rgba(100, 108, 255, 0.1)' : 'var(--surface)',
+                                transition: 'all 0.2s ease',
+                                marginBottom: '1.5rem',
+                            }}
+                        >
+                            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>
+                                {uploading ? '⏳' : isDragging ? '📥' : '📤'}
                             </div>
-                            <div style={{ background: 'var(--surface)', borderRadius: '8px', overflow: 'hidden' }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                            <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Filename</th>
-                                            <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem', width: '80px' }}>Chunks</th>
-                                            <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem', width: '80px' }}></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {files.map((file) => (
-                                            <tr key={file.filename} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                <td style={{ padding: '0.5rem 0.75rem' }}>
-                                                    <span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{file.filename}</span>
-                                                </td>
-                                                <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                                    {file.chunk_count}
-                                                </td>
-                                                <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.filename); }}
-                                                        disabled={deletingFile === file.filename}
-                                                        style={{
-                                                            background: 'transparent',
-                                                            border: 'none',
-                                                            color: deletingFile === file.filename ? 'var(--text-secondary)' : '#ef4444',
-                                                            cursor: deletingFile === file.filename ? 'wait' : 'pointer',
-                                                            padding: '0.25rem 0.5rem',
-                                                            borderRadius: '4px',
-                                                            fontSize: '0.8rem',
-                                                        }}
-                                                        title="Delete file"
-                                                    >
-                                                        {deletingFile === file.filename ? '...' : '✕'}
-                                                    </button>
-                                                </td>
+                            <div style={{ fontSize: '1rem', fontWeight: '500', color: 'var(--text)', marginBottom: '0.25rem' }}>
+                                {uploading ? 'Uploading...' : isDragging ? 'Drop files here' : 'Drop files here or click to browse'}
+                            </div>
+                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                Supports PDF, DOCX, TXT, MD, JSON, YAML, and more
+                            </div>
+                        </div>
+
+                        {/* File List */}
+                        {files.length > 0 && (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                                    <h4 style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                                        📁 {files.length} file{files.length !== 1 ? 's' : ''} uploaded
+                                    </h4>
+                                </div>
+                                <div style={{ background: 'var(--surface)', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Filename</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem', width: '80px' }}>Chunks</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '500', color: 'var(--text-secondary)', fontSize: '0.8rem', width: '80px' }}></th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
+                                        </thead>
+                                        <tbody>
+                                            {files.map((file) => (
+                                                <tr key={file.filename} style={{ borderBottom: '1px solid var(--border)' }}>
+                                                    <td style={{ padding: '0.5rem 0.75rem' }}>
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{file.filename}</span>
+                                                    </td>
+                                                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                        {file.chunk_count}
+                                                    </td>
+                                                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.filename); }}
+                                                            disabled={deletingFile === file.filename}
+                                                            style={{
+                                                                background: 'transparent',
+                                                                border: 'none',
+                                                                color: deletingFile === file.filename ? 'var(--text-secondary)' : '#ef4444',
+                                                                cursor: deletingFile === file.filename ? 'wait' : 'pointer',
+                                                                padding: '0.25rem 0.5rem',
+                                                                borderRadius: '4px',
+                                                                fontSize: '0.8rem',
+                                                            }}
+                                                            title="Delete file"
+                                                        >
+                                                            {deletingFile === file.filename ? '...' : '✕'}
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
                     </>
                 )}
             </section>

@@ -30,7 +30,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub llm_enabled: bool,
 
-    /// Server port (defaults to 7000)
+    /// Server port (defaults to 8787)
     pub server_port: Option<u16>,
 
     /// Server bind address (defaults to "127.0.0.1")
@@ -50,7 +50,14 @@ impl Default for AppSettings {
 
 impl MetadataStore {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        let db = Database::create(path)?;
+        let path_ref = path.as_ref();
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path_ref.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let db = Database::create(path_ref)?;
 
         // Initialize tables on first creation
         let write_txn = db.begin_write()?;

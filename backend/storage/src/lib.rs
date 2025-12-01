@@ -23,6 +23,11 @@ pub struct VectorStore {
 
 impl VectorStore {
     pub async fn new(uri: &str) -> Result<Self> {
+        // Create directory if it doesn't exist (for file-based URIs)
+        if !uri.starts_with("http") && !uri.starts_with("s3") {
+            std::fs::create_dir_all(uri)?;
+        }
+
         let conn = connect(uri).execute().await?;
         Ok(Self {
             conn,

@@ -18,6 +18,13 @@
             ]
         },
         {
+            "name": "Tauri Desktop App",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run tauri:dev",
+            "cwd": "${workspaceFolder}/frontend"
+        },
+        {
             "name": "Frontend",
             "type": "chrome",
             "request": "launch",

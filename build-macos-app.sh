@@ -98,12 +98,64 @@ exec "$DIR/linggen"
 EOF
 chmod +x "${APP_DIR}/Contents/MacOS/linggen-launcher"
 
-# Create a simple icon (you should replace with real icon)
-# For now, create placeholder
+# App icon handling
+# Prefer a pre-generated assets/icon.icns, but if it's missing and we have a PNG,
+# auto-generate icon.icns from the PNG using sips + iconutil (macOS tools).
 if [ -f "assets/icon.icns" ]; then
-    cp assets/icon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
+    cp "assets/icon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 else
-    echo -e "${BLUE}⚠️  No icon found at assets/icon.icns - using placeholder${NC}"
+    # Try to find a PNG to use as the source icon.
+    ICON_SOURCE_PNG=""
+
+    # 1) Explicit app icon in assets/ if present
+    if [ -f "assets/icon.png" ]; then
+        ICON_SOURCE_PNG="assets/icon.png"
+    # 2) Prefer the Linggen site logo if available
+    elif [ -f "linggensite/src/assets/logo.png" ]; then
+        ICON_SOURCE_PNG="linggensite/src/assets/logo.png"
+    else
+        # 3) Fall back to the first PNG in assets (e.g. a Figma-exported asset)
+        PNG_CANDIDATES=(assets/*.png)
+        if [ -f "${PNG_CANDIDATES[0]}" ]; then
+            ICON_SOURCE_PNG="${PNG_CANDIDATES[0]}"
+        fi
+    fi
+
+    if [ -n "$ICON_SOURCE_PNG" ]; then
+        echo -e "${BLUE}🎨 Generating assets/icon.icns from ${ICON_SOURCE_PNG}...${NC}"
+
+        if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
+            ICON_TMP_DIR="$(mktemp -d /tmp/linggen_icon.XXXXXX)"
+            ICONSET_DIR="${ICON_TMP_DIR}/icon.iconset"
+            mkdir -p "$ICONSET_DIR"
+
+            # Force output format to PNG so iconutil is happy even if the
+            # source file is actually a JPEG with a .png extension.
+            sips -s format png -z 16 16     "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_16x16.png"
+            sips -s format png -z 32 32     "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_16x16@2x.png"
+            sips -s format png -z 32 32     "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_32x32.png"
+            sips -s format png -z 64 64     "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_32x32@2x.png"
+            sips -s format png -z 128 128   "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_128x128.png"
+            sips -s format png -z 256 256   "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_128x128@2x.png"
+            sips -s format png -z 256 256   "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_256x256.png"
+            sips -s format png -z 512 512   "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_256x256@2x.png"
+            sips -s format png -z 512 512   "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_512x512.png"
+            sips -s format png -z 1024 1024 "$ICON_SOURCE_PNG" --out "$ICONSET_DIR/icon_512x512@2x.png"
+
+            iconutil -c icns "$ICONSET_DIR" -o "assets/icon.icns"
+            rm -rf "$ICON_TMP_DIR"
+
+            if [ -f "assets/icon.icns" ]; then
+                cp "assets/icon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+            else
+                echo -e "${BLUE}⚠️  Failed to generate assets/icon.icns - app will use default icon${NC}"
+            fi
+        else
+            echo -e "${BLUE}⚠️  'sips' and/or 'iconutil' not found - cannot generate icon.icns from PNG${NC}"
+        fi
+    else
+        echo -e "${BLUE}⚠️  No PNG found in assets/ to generate an icon from - app will use default icon${NC}"
+    fi
 fi
 
 echo -e "${GREEN}✅ App bundle created: ${APP_DIR}${NC}"

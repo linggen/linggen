@@ -57,18 +57,18 @@ pub struct EnhancedPrompt {
 }
 
 use linggen_llm::MiniLLM;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 /// Prompt enhancer - orchestrates all stages
 pub struct PromptEnhancer {
     intent_classifier: IntentClassifier,
-    embedding_model: Arc<EmbeddingModel>,
+    embedding_model: Arc<RwLock<Option<EmbeddingModel>>>,
     vector_store: Arc<VectorStore>,
 }
 
 impl PromptEnhancer {
     pub fn new(
-        embedding_model: Arc<EmbeddingModel>,
+        embedding_model: Arc<RwLock<Option<EmbeddingModel>>>,
         vector_store: Arc<VectorStore>,
         llm: Option<Arc<Mutex<MiniLLM>>>,
     ) -> Self {
@@ -85,7 +85,7 @@ impl PromptEnhancer {
     /// Note: LLM-based intent detection is deprecated and always skipped.
     /// Intent is now provided externally by MCP (Cursor).
     pub async fn enhance(
-        &mut self,
+        &self,
         query: &str,
         preferences: &UserPreferences,
         profile: &SourceProfile,
@@ -97,7 +97,13 @@ impl PromptEnhancer {
 
         // Stage 2: Context Retrieval (RAG)
         info!("Stage 2: Retrieving context via RAG...");
-        let query_embedding = self.embedding_model.embed(query)?;
+
+        let model_guard = self.embedding_model.read().await;
+        let model = model_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Embedding model is initializing"))?;
+
+        let query_embedding = model.embed(query)?;
         let rag_chunks = self
             .vector_store
             .search(query_embedding, Some(query), 5)
@@ -164,7 +170,7 @@ impl PromptEnhancer {
 
     /// Generate the final enhanced prompt using a template-based approach
     async fn generate_enhanced_prompt(
-        &mut self,
+        &self,
         query: &str,
         intent: &Intent,
         context: &[Chunk],

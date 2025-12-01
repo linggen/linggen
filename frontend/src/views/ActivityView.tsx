@@ -1,4 +1,6 @@
 
+import { useEffect, useState } from 'react'
+import { getAppStatus, type AppStatusResponse } from '../api'
 
 type JobStatus = 'pending' | 'running' | 'completed' | 'error'
 
@@ -20,12 +22,53 @@ interface ActivityViewProps {
 }
 
 export function ActivityView({ jobs }: ActivityViewProps) {
+    const [systemStatus, setSystemStatus] = useState<AppStatusResponse | null>(null)
+
+    useEffect(() => {
+        const fetchStatus = () => {
+            getAppStatus().then(setSystemStatus).catch(console.error)
+        }
+
+        fetchStatus()
+        const interval = setInterval(fetchStatus, 2000)
+        return () => clearInterval(interval)
+    }, [])
+
     return (
         <div className="view">
-            <section className="section">
-                <div className="view-header" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
-                    <h2>Activity</h2>
+            <div className="view-header">
+                <h2>Activity & Status</h2>
+                <p>Monitor background jobs and system health.</p>
+            </div>
+
+            <section className="section" style={{ marginBottom: '2rem' }}>
+                <h3>System Status</h3>
+                <div className="status-grid">
+                    <div className="status-item">
+                        <span className="label">Backend Status</span>
+                        <span className={`value ${systemStatus?.status === 'ready' ? 'success' : systemStatus?.status === 'error' ? 'error' : 'warning'}`}>
+                            {systemStatus?.status?.toUpperCase() || 'CONNECTING...'}
+                        </span>
+                    </div>
+                    <div className="status-item">
+                        <span className="label">Embedding Model</span>
+                        <span className="value">
+                            {systemStatus?.status === 'initializing'
+                                ? (systemStatus.progress || 'Initializing...')
+                                : (systemStatus?.status === 'ready' ? 'Loaded' : 'Unknown')}
+                        </span>
+                    </div>
+                    <div className="status-item">
+                        <span className="label">Active Jobs</span>
+                        <span className="value">
+                            {jobs.filter(j => j.status === 'running' || j.status === 'pending').length}
+                        </span>
+                    </div>
                 </div>
+            </section>
+
+            <section className="section">
+                <h3>Job History</h3>
                 {jobs.length === 0 ? (
                     <div className="empty-state">No activity yet. Add a source and click "Index now" to get started!</div>
                 ) : (

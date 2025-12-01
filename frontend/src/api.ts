@@ -1,4 +1,47 @@
-const API_BASE = 'http://localhost:7000';
+// Determine the API base URL:
+// - In Tauri desktop app (any non-http/https protocol or Tauri UA), always use localhost:8787
+// - In browser on localhost:8787, use localhost:8787
+// - In browser on remote IP (http://linggen-ip:8787), use that IP
+function getApiBase(): string {
+    if (typeof window === 'undefined') {
+        return 'http://localhost:8787';
+    }
+
+    const origin = window.location.origin;
+    const protocol = window.location.protocol;
+
+    // Detect Tauri more robustly
+    const isTauriProtocol =
+        protocol !== 'http:' && protocol !== 'https:'; // e.g. app://, tauri://, file://
+
+    // @ts-ignore - __TAURI__ is injected by Tauri
+    const hasTauriGlobal = typeof window.__TAURI__ !== 'undefined';
+
+    const ua = navigator.userAgent.toLowerCase();
+    const isTauriUA = ua.includes('tauri');
+
+    const isTauriEnv =
+        isTauriProtocol ||
+        hasTauriGlobal ||
+        isTauriUA ||
+        origin.startsWith('tauri://') ||
+        origin.startsWith('app://') ||
+        origin === 'null';
+
+    if (isTauriEnv) {
+        return 'http://localhost:8787';
+    }
+
+    // In Vite dev server (localhost:5173), point to backend
+    if (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173')) {
+        return 'http://localhost:8787';
+    }
+
+    // For browser access (local or remote), use the current origin
+    return origin;
+}
+
+const API_BASE = getApiBase();
 
 export interface IndexSourceRequest {
     source_id: string;

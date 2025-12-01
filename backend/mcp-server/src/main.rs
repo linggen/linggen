@@ -548,7 +548,7 @@ async fn main() -> Result<()> {
     info!("Starting Linggen MCP Server...");
 
     let api_url =
-        std::env::var("LINGGEN_API_URL").unwrap_or_else(|_| "http://localhost:7000".to_string());
+        std::env::var("LINGGEN_API_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     info!("API URL: {}", api_url);
 

@@ -40,9 +40,46 @@ export function ResourceManager({
   const [uploadingSourceId, setUploadingSourceId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Track whether component is mounted to avoid setting state after unmount
+  const isMountedRef = useRef(true)
+
   useEffect(() => {
-    loadResources()
+    isMountedRef.current = true
+    const controller = new AbortController()
+
+    // Retry a few times on startup because the backend may still be initializing
+    const loadWithRetry = async (attempt = 1) => {
+      try {
+        if (!isMountedRef.current) return
+        setLoading(true)
+        setError('')
+        const response = await listResources()
+        if (!isMountedRef.current) return
+        setResources(response.resources)
+      } catch (err) {
+        console.error('Failed to load resources (attempt', attempt, '):', err)
+        if (!isMountedRef.current) return
+
+        if (attempt < 5) {
+          // Backoff a bit between retries
+          setTimeout(() => loadWithRetry(attempt + 1), 500 * attempt)
+        } else {
+          setError(`Failed to load resources: ${err}`)
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadWithRetry()
+
     // Re-load whenever parent indicates resources have changed (e.g., after indexing)
+    return () => {
+      isMountedRef.current = false
+      controller.abort()
+    }
   }, [refreshKey])
 
   const loadResources = async () => {
@@ -524,4 +561,3 @@ export function ResourceManager({
     </div>
   )
 }
-

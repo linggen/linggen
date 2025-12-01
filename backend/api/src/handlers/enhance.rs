@@ -29,7 +29,7 @@ pub async fn enhance_prompt(
     let llm = linggen_llm::LLMSingleton::get().await;
 
     // Create enhancer
-    let mut enhancer = PromptEnhancer::new(
+    let enhancer = PromptEnhancer::new(
         state.embedding_model.clone(),
         state.vector_store.clone(),
         llm,

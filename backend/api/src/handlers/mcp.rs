@@ -797,7 +797,7 @@ async fn call_enhance_internal(
     let llm = linggen_llm::LLMSingleton::get().await;
 
     // Create enhancer
-    let mut enhancer = PromptEnhancer::new(
+    let enhancer = PromptEnhancer::new(
         app_state.embedding_model.clone(),
         app_state.vector_store.clone(),
         llm,

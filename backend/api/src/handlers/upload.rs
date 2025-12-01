@@ -202,17 +202,24 @@ pub async fn upload_file(
 
     // Generate embeddings
     let chunk_refs: Vec<&str> = chunks_text.iter().map(|s| s.as_str()).collect();
-    let embeddings = state
-        .embedding_model
-        .embed_batch(&chunk_refs)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(UploadError {
-                    error: format!("Failed to generate embeddings: {}", e),
-                }),
-            )
-        })?;
+
+    let model_guard = state.embedding_model.read().await;
+    let model = model_guard.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(UploadError {
+            error: "Embedding model is initializing. Please try again in a few seconds."
+                .to_string(),
+        }),
+    ))?;
+
+    let embeddings = model.embed_batch(&chunk_refs).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(UploadError {
+                error: format!("Failed to generate embeddings: {}", e),
+            }),
+        )
+    })?;
 
     // Create chunks for storage
     let chunks: Vec<Chunk> = chunks_text

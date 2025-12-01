@@ -1,0 +1,60 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "Linggen",
+    "version": "0.1.0",
+    "identifier": "dev.linggen.desktop",
+    "build": {
+        "beforeDevCommand": "npm run dev",
+        "beforeBuildCommand": "npm run build",
+        "devUrl": "http://localhost:5173",
+        "frontendDist": "../dist"
+    },
+    "app": {
+        "withGlobalTauri": false,
+        "windows": [
+            {
+                "fullscreen": false,
+                "resizable": true,
+                "title": "Linggen",
+                "width": 1400,
+                "height": 900,
+                "minWidth": 1200,
+                "minHeight": 700,
+                "center": true,
+                "visible": false
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns"
+        ],
+        "externalBin": [
+            "linggen-backend"
+        ],
+        "macOS": {
+            "entitlements": null,
+            "exceptionDomain": "localhost",
+            "frameworks": [],
+            "providerShortName": null,
+            "signingIdentity": null,
+            "minimumSystemVersion": "12.0"
+        },
+        "shortDescription": "AI-powered personal knowledge assistant",
+        "longDescription": "Linggen is a local-first AI assistant that indexes your files, documents, and code to provide intelligent search and chat capabilities.",
+        "copyright": "Copyright 2024 Linggen. All rights reserved."
+    },
+    "plugins": {
+        "shell": {
+            "open": true
+        }
+    }
+}

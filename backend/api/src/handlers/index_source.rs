@@ -255,7 +255,25 @@ async fn run_indexing_job(
         // Embed
         let embed_start = std::time::Instant::now();
         let chunk_refs: Vec<&str> = chunks_text.iter().map(|s| s.as_str()).collect();
-        let embeddings = match state.embedding_model.embed_batch(&chunk_refs) {
+
+        let model_guard = state.embedding_model.read().await;
+        let model = match model_guard.as_ref() {
+            Some(m) => m,
+            None => {
+                let error_msg = "Embedding model is not ready yet. Please wait.".to_string();
+                tracing::error!("{}", error_msg);
+                let failed_job = IndexingJob {
+                    status: JobStatus::Failed,
+                    finished_at: Some(Utc::now().to_rfc3339()),
+                    error: Some(error_msg),
+                    ..running_job
+                };
+                let _ = state.metadata_store.update_job(&failed_job);
+                return;
+            }
+        };
+
+        let embeddings = match model.embed_batch(&chunk_refs) {
             Ok(emb) => emb,
             Err(e) => {
                 tracing::error!(
@@ -382,14 +400,14 @@ async fn run_indexing_job(
     );
 
     // 4. Auto-generate profile (skip for Uploads type - these are just document drops)
-        if !matches!(initial_job.source_type, SourceType::Uploads) {
+    if !matches!(initial_job.source_type, SourceType::Uploads) {
         tracing::info!(
             "🤖 Auto-generating profile for source {}...",
             initial_job.source_id
         );
 
-            // Get LLM instance
-            let llm = linggen_llm::LLMSingleton::get().await;
+        // Get LLM instance
+        let llm = linggen_llm::LLMSingleton::get().await;
         if let Some(llm) = llm {
             // Fetch chunks for profile generation (prioritize READMEs)
             // We can use the vector store to get chunks, or just use the ones we just created if we kept them.
