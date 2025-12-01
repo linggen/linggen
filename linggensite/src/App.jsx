@@ -5,6 +5,7 @@ import VideoDemo from './components/VideoDemo'
 import Features from './components/Features'
 import Documentation from './components/Documentation'
 import GettingStarted from './components/GettingStarted'
+import BetaDisclaimer from './components/BetaDisclaimer'
 import Footer from './components/Footer'
 import './App.css'
 
@@ -42,6 +43,7 @@ function App() {
       <Features />
       <Documentation />
       <GettingStarted />
+      <BetaDisclaimer />
       <Footer />
     </div>
   )

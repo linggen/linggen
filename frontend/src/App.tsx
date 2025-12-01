@@ -41,7 +41,7 @@ interface Job {
 type AppStatus = 'initializing' | 'idle' | 'indexing' | 'error'
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('assistant')
+  const [currentView, setCurrentView] = useState<View>('sources')
   const [status, setStatus] = useState<AppStatus>('initializing')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])

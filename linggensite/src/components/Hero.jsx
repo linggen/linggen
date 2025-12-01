@@ -8,15 +8,20 @@ function Hero() {
                 <h1 className="hero-title">
                     <span className="brand-name">Linggen</span>
                 </h1>
-                <p className="hero-subtitle">Cultivate Your Knowledge Spiritual Roots</p>
+                <p className="hero-subtitle">Local-first AI for your code and knowledge</p>
                 <p className="hero-description">
-                    Like spiritual roots that determine cultivation potential,
-                    <strong> Linggen</strong> enhances your ability to absorb, store, and recall knowledge through AI-powered semantic search.
+                    <strong>Linggen</strong> indexes your projects, documents, and notes on your own machine,
+                    then lets you search and chat with them using AI – with your data staying completely local.
                 </p>
                 <div className="cta-buttons">
-                    <a href="#get-started" className="btn btn-primary">Begin Your Journey</a>
-                    <a href="#features" className="btn btn-secondary">Discover Features</a>
+                    <a href="#get-started" className="btn btn-primary">
+                        Download for macOS (Beta)
+                    </a>
+                    <a href="#features" className="btn btn-secondary">Explore Features</a>
                 </div>
+                <p className="hero-note">
+                    Windows &amp; Linux support coming soon.
+                </p>
             </div>
 
             <div className="scroll-indicator">

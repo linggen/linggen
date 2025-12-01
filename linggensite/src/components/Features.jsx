@@ -1,36 +1,36 @@
 function Features() {
     const features = [
         {
-            icon: '📚',
-            title: 'Universal Ingestion',
-            description: 'Like absorbing spiritual energy, Linggen ingests knowledge from Git repositories, local files, documentation sites, and more.',
+            icon: '📂',
+            title: 'Index Your Projects Locally',
+            description: 'Point Linggen at your codebases and folders. It builds a private, searchable index on your machine – nothing leaves your device.',
             items: [
-                'Git repository indexing',
-                'Local filesystem monitoring',
-                'Web content crawling',
-                'Real-time updates'
+                'Local folders and project directories',
+                'Source-aware indexing for code & docs',
+                'Fast incremental re-indexing',
+                'Respects .gitignore patterns'
             ]
         },
         {
-            icon: '🧠',
-            title: 'Semantic Memory',
-            description: 'Advanced vector embeddings create your personal knowledge core - enabling instant, context-aware search across all your information.',
+            icon: '🔍',
+            title: 'Semantic Search & Profiles',
+            description: 'Ask natural-language questions and generate high-level profiles of your projects with AI assistance.',
             items: [
-                'AI-powered embeddings',
-                'Lightning-fast retrieval',
-                'Contextual understanding',
-                'Privacy-first local storage'
+                'Semantic search across files and chunks',
+                'Source stats: files, chunks, size',
+                'AI-generated project profiles',
+                'Works offline once models are downloaded'
             ]
         },
         {
-            icon: '⚡',
-            title: 'Seamless Integration',
-            description: 'Extend your powers into your daily workflow through integrations with VS Code, chat applications, and AI assistants.',
+            icon: '🔒',
+            title: 'Privacy-First & Developer-Focused',
+            description: 'Built for developers who care about privacy. Your code stays on your machine, and deeper integrations are on the roadmap.',
             items: [
-                'MCP protocol support',
-                'VS Code extension',
-                'API endpoints',
-                'Cross-platform compatible'
+                'macOS desktop app (beta)',
+                'Local backend built in Rust',
+                'Cursor / MCP integration (coming soon)',
+                'VS Code extension & HTTP API (roadmap)'
             ]
         }
     ]
@@ -40,7 +40,7 @@ function Features() {
             <div className="container">
                 <h2 className="section-title">
                     <span className="title-decoration">◆</span>
-                    Three Realms of Power
+                    Core Features
                     <span className="title-decoration">◆</span>
                 </h2>
 

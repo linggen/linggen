@@ -6,51 +6,28 @@ function GettingStarted() {
     const steps = [
         {
             number: 1,
-            title: 'Download Linggen',
-            description: 'Get the installer for your platform:',
-            code: `# macOS
-Download: linggen-mac.dmg
-
-# Linux (Debian/Ubuntu)
-Download: linggen-linux.deb
-
-# Linux (Fedora/RHEL)
-Download: linggen-linux.rpm`
+            title: 'Download Linggen for macOS',
+            description: 'Get the latest beta release:',
+            code: `1. Visit linggen.dev
+2. Click "Download for macOS (Beta)"
+3. Open the downloaded .dmg file`
         },
         {
             number: 2,
-            title: 'Install Linggen',
-            description: 'Install using your platform\'s package manager:',
-            code: `# macOS: Open DMG and drag to Applications
-
-# Linux (Debian/Ubuntu)
-sudo dpkg -i linggen-linux.deb
-
-# Linux (Fedora/RHEL)
-sudo rpm -i linggen-linux.rpm`
+            title: 'Install the App',
+            description: 'Install Linggen like any Mac application:',
+            code: `1. Drag "Linggen" into Applications
+2. On first launch, macOS may ask for confirmation
+3. Grant file access when prompted`
         },
         {
             number: 3,
-            title: 'Launch & Index',
-            description: 'Start Linggen and add your first knowledge source:',
-            code: `# Launch the application
-linggen
-
-# Index a Git repository
-linggen index --type git --path /path/to/repo
-
-# Index a local folder
-linggen index --type folder --path /path/to/docs`
-        },
-        {
-            number: 4,
-            title: 'Search & Explore',
-            description: 'Query your knowledge base with semantic search:',
-            code: `# Search your indexed content
-linggen search "your query here"
-
-# Or use the web interface
-open http://localhost:8080`
+            title: 'Add a Source & Index',
+            description: 'Start building your personal knowledge index:',
+            code: `1. Open Linggen
+2. Go to the "Sources" tab
+3. Add a Local Folder (e.g. your main project)
+4. Click "Index" and watch the progress`
         }
     ]
 
@@ -65,7 +42,7 @@ open http://localhost:8080`
             <div className="container">
                 <h2 className="section-title">
                     <span className="title-decoration">◆</span>
-                    Begin Your Journey
+                    Get Started
                     <span className="title-decoration">◆</span>
                 </h2>
 
@@ -91,13 +68,12 @@ open http://localhost:8080`
                 </div>
 
                 <div className="next-steps">
-                    <h3>Next Steps</h3>
+                    <h3>What's Next?</h3>
                     <ul>
-                        <li>Download the latest release from our website</li>
-                        <li>Index additional sources (Git repos, websites, documents)</li>
-                        <li>Explore the web interface and API</li>
-                        <li>Set up VS Code integration for seamless workflow</li>
-                        <li>Join the community and contribute</li>
+                        <li>Ask questions in the AI Assistant tab</li>
+                        <li>Add more sources (projects, docs, notes)</li>
+                        <li>Generate and customize project profiles</li>
+                        <li>Send feedback or report issues to hello@linggen.dev</li>
                     </ul>
                 </div>
             </div>

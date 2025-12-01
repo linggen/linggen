@@ -18,7 +18,7 @@ function Navigation() {
         const element = document.getElementById(id)
         if (element) {
             element.scrollIntoView({ behavior: 'smooth' })
-            setMobileMenuOpen(false) // Close mobile menu after clicking
+            setMobileMenuOpen(false)
         }
     }
 
@@ -40,7 +40,7 @@ function Navigation() {
 
                 <div className={`nav-links ${mobileMenuOpen ? 'mobile-open' : ''}`}>
                     <a onClick={() => scrollToSection('features')}>Features</a>
-                    <a onClick={() => scrollToSection('docs')}>Docs</a>
+                    <a onClick={() => scrollToSection('demo')}>Demo</a>
                     <a onClick={() => scrollToSection('get-started')}>Get Started</a>
                 </div>
             </div>

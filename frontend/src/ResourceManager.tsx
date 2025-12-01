@@ -536,7 +536,7 @@ export function ResourceManager({
                               type="button"
                               className="btn-action btn-index"
                               onClick={() => onIndexResource?.(resource)}
-                              disabled={!onIndexResource || indexingResourceId !== null}
+                              disabled={!onIndexResource || indexingResourceId === resource.id}
                             >
                               {resource.latest_job?.status === 'Completed' ? 'Update' : 'Index'}
                             </button>

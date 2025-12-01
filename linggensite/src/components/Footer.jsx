@@ -3,15 +3,15 @@ function Footer() {
         <footer className="footer">
             <div className="container">
                 <p className="footer-text">
-                    <strong>Linggen</strong> - Cultivate Your Knowledge Spiritual Roots
+                    <strong>Linggen</strong> – Local-first AI for your code and knowledge
                 </p>
                 <p className="footer-links">
-                    <a href="#docs">Documentation</a>
+                    <a href="mailto:hello@linggen.dev">Contact</a>
                     <span className="separator">·</span>
                     <a href="#get-started">Get Started</a>
                 </p>
                 <p className="footer-credit">
-                    Built with ❤️ and Rust
+                    Built with Rust &amp; Tauri
                 </p>
             </div>
         </footer>
