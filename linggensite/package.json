@@ -1,6 +1,6 @@
 {
   "name": "linggensite",
-  "version": "1.0.0",
+  "version": "0.1.0-beta",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -10,7 +10,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
     "react": "^19.2.0",
