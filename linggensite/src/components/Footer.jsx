@@ -3,7 +3,7 @@ function Footer() {
         <footer className="footer">
             <div className="container">
                 <p className="footer-text">
-                    <strong>Linggen</strong> – Local-first AI for your code and knowledge
+                    <strong>Linggen</strong> – Local-first memory layer for your code and knowledge
                 </p>
                 <p className="footer-links">
                     <a href="mailto:hello@linggen.dev">Contact</a>

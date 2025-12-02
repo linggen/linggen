@@ -50,7 +50,7 @@
             "minimumSystemVersion": "12.0"
         },
         "shortDescription": "AI-powered personal knowledge assistant",
-        "longDescription": "Linggen is a local-first AI assistant that indexes your files, documents, and code to provide intelligent search and chat capabilities.",
+        "longDescription": "Linggen is a local-first memory layer that indexes your files, documents, and code to provide intelligent search and chat capabilities.",
         "copyright": "Copyright 2024 Linggen. All rights reserved."
     },
     "plugins": {

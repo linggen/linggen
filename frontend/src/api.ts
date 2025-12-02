@@ -89,6 +89,7 @@ export interface Resource {
     exclude_patterns: string[];
     latest_job?: Job;
     stats?: SourceStats;
+    last_upload_time?: string;
 }
 
 export interface AddResourceRequest {

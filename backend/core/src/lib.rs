@@ -28,6 +28,8 @@ pub struct SourceConfig {
     // Track individual file sizes for uploads (filename -> size in bytes)
     #[serde(default)]
     pub file_sizes: std::collections::HashMap<String, usize>,
+    // Last upload time for uploads sources (ISO 8601 timestamp)
+    pub last_upload_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

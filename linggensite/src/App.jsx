@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react'
-import Navigation from './components/Navigation'
-import Hero from './components/Hero'
-import VideoDemo from './components/VideoDemo'
-import Features from './components/Features'
-import Documentation from './components/Documentation'
-import GettingStarted from './components/GettingStarted'
-import BetaDisclaimer from './components/BetaDisclaimer'
-import Footer from './components/Footer'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import HomePage from './pages/HomePage'
+import DocsLayout from './pages/DocsLayout'
+import QuickStart from './pages/docs/QuickStart'
+import Sources from './pages/docs/Sources'
+import MCPSetup from './pages/docs/MCPSetup'
+import Search from './pages/docs/Search'
 import './App.css'
 
-function App() {
+function AppContent() {
+  const location = useLocation()
+
   useEffect(() => {
-    // Scroll-triggered animations
+    // Scroll-triggered animations - run after route change
     const observerOptions = {
       threshold: 0.1,
       rootMargin: '0px 0px -50px 0px'
@@ -25,27 +26,41 @@ function App() {
       })
     }, observerOptions)
 
-    // Observe all animatable elements
-    document.querySelectorAll('.feature-card, .doc-card, .step, .video-container').forEach(el => {
-      observer.observe(el)
-    })
+    // Small delay to ensure DOM is ready after route change
+    const timeoutId = setTimeout(() => {
+      // Observe all animatable elements
+      document.querySelectorAll('.feature-card, .guide-card').forEach(el => {
+        observer.observe(el)
+      })
+    }, 100)
 
-    return () => observer.disconnect()
-  }, [])
+    return () => {
+      clearTimeout(timeoutId)
+      observer.disconnect()
+    }
+  }, [location.pathname])
 
   return (
     <div className="App">
       <div className="spiritual-energy"></div>
-
-      <Navigation />
-      <Hero />
-      <VideoDemo />
-      <Features />
-      <Documentation />
-      <GettingStarted />
-      <BetaDisclaimer />
-      <Footer />
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/docs" element={<DocsLayout />}>
+          <Route index element={<QuickStart />} />
+          <Route path="sources" element={<Sources />} />
+          <Route path="mcp" element={<MCPSetup />} />
+          <Route path="search" element={<Search />} />
+        </Route>
+      </Routes>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   )
 }
 

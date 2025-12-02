@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use ingestion::extract_text;
 use linggen_core::Chunk;
@@ -314,6 +315,9 @@ pub async fn upload_file(
         // Track the file size in the file_sizes map
         source.file_sizes.insert(filename.clone(), file_size);
 
+        // Update last upload time
+        source.last_upload_time = Some(Utc::now().to_rfc3339());
+
         let _ = state.metadata_store.update_source(&source);
     }
 
@@ -598,6 +602,9 @@ async fn process_upload_with_progress(
                 .saturating_add(file_size),
         );
         source.file_sizes.insert(filename.clone(), file_size);
+
+        // Update last upload time
+        source.last_upload_time = Some(Utc::now().to_rfc3339());
 
         let _ = state.metadata_store.update_source(&source);
     }

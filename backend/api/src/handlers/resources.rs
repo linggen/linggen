@@ -77,6 +77,7 @@ pub struct ResourceInfo {
     pub exclude_patterns: Vec<String>,
     pub latest_job: Option<IndexingJob>,
     pub stats: Option<SourceStats>,
+    pub last_upload_time: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +144,7 @@ pub async fn add_resource(
         file_count: None,
         total_size_bytes: None,
         file_sizes: std::collections::HashMap::new(),
+        last_upload_time: None,
     };
 
     state
@@ -198,6 +200,7 @@ pub async fn list_resources(
             exclude_patterns: s.exclude_patterns,
             latest_job,
             stats,
+            last_upload_time: s.last_upload_time,
         });
     }
 

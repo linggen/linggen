@@ -1,36 +1,36 @@
 function Features() {
     const features = [
         {
-            icon: '📂',
-            title: 'Index Your Projects Locally',
-            description: 'Point Linggen at your codebases and folders. It builds a private, searchable index on your machine – nothing leaves your device.',
+            icon: '🧠',
+            title: 'RAG-Powered Memory Layer',
+            description: 'Linggen uses Retrieval-Augmented Generation (RAG) to give your AI tools deep context about your codebase and documents.',
             items: [
-                'Local folders and project directories',
-                'Source-aware indexing for code & docs',
-                'Fast incremental re-indexing',
-                'Respects .gitignore patterns'
+                'Semantic search across all your files',
+                'Vector embeddings stored locally',
+                'Automatic chunking & indexing',
+                'Works offline once models downloaded'
             ]
         },
         {
-            icon: '🔍',
-            title: 'Semantic Search & Profiles',
-            description: 'Ask natural-language questions and generate high-level profiles of your projects with AI assistance.',
+            icon: '🔌',
+            title: 'MCP Server Integration',
+            description: 'Connect Linggen to AI coding tools like Cursor via the Model Context Protocol (MCP). One server, all your context.',
             items: [
-                'Semantic search across files and chunks',
-                'Source stats: files, chunks, size',
-                'AI-generated project profiles',
-                'Works offline once models are downloaded'
+                'Built-in MCP server at localhost:8787',
+                'Works with Cursor IDE out of the box',
+                'Team support: share one server across devs',
+                'Extensible for other MCP-compatible tools'
             ]
         },
         {
             icon: '🔒',
-            title: 'Privacy-First & Developer-Focused',
-            description: 'Built for developers who care about privacy. Your code stays on your machine, and deeper integrations are on the roadmap.',
+            title: 'Privacy-First & Local',
+            description: 'Your code stays on your machine. No cloud, no telemetry, no data leaving your device.',
             items: [
                 'macOS desktop app (beta)',
-                'Local backend built in Rust',
-                'Cursor / MCP integration (coming soon)',
-                'VS Code extension & HTTP API (roadmap)'
+                'High-performance Rust backend',
+                'Local LanceDB vector store',
+                'Windows & Linux coming soon'
             ]
         }
     ]

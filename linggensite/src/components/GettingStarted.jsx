@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DOWNLOAD_URL } from '../constants'
 
 function GettingStarted() {
     const [copiedIndex, setCopiedIndex] = useState(null)
@@ -7,10 +8,9 @@ function GettingStarted() {
         {
             number: 1,
             title: 'Download Linggen for macOS',
-            description: 'Get the latest beta release:',
-            code: `1. Visit linggen.dev
-2. Click "Download for macOS (Beta)"
-3. Open the downloaded .dmg file`
+            description: 'Get the latest beta release from GitHub:',
+            code: null,
+            downloadLink: DOWNLOAD_URL
         },
         {
             number: 2,
@@ -53,15 +53,31 @@ function GettingStarted() {
                             <div className="step-content">
                                 <h3>{step.title}</h3>
                                 <p>{step.description}</p>
-                                <div className="code-block">
-                                    <code>{step.code}</code>
-                                    <button
-                                        className="copy-btn"
-                                        onClick={() => copyCode(step.code, index)}
-                                    >
-                                        {copiedIndex === index ? 'Copied!' : 'Copy'}
-                                    </button>
-                                </div>
+                                {step.downloadLink ? (
+                                    <div className="download-block">
+                                        <a 
+                                            href={step.downloadLink} 
+                                            className="download-btn"
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                        >
+                                            ⬇️ Download from GitHub Releases
+                                        </a>
+                                        <p className="download-note">
+                                            Download the <code>.dmg</code> file and open it to install.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="code-block">
+                                        <code>{step.code}</code>
+                                        <button
+                                            className="copy-btn"
+                                            onClick={() => copyCode(step.code, index)}
+                                        >
+                                            {copiedIndex === index ? 'Copied!' : 'Copy'}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

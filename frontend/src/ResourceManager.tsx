@@ -199,6 +199,20 @@ export function ResourceManager({
 
   const handleUploadClick = (sourceId: string) => {
     setUploadingSourceId(sourceId)
+    
+    // Listen for window focus to detect when file dialog is closed without selection
+    // This handles the case where user cancels the file picker
+    const handleWindowFocus = () => {
+      // Small delay to allow onChange to fire first if a file was selected
+      setTimeout(() => {
+        if (fileInputRef.current && fileInputRef.current.files?.length === 0) {
+          setUploadingSourceId(null)
+        }
+      }, 300)
+      window.removeEventListener('focus', handleWindowFocus)
+    }
+    window.addEventListener('focus', handleWindowFocus)
+    
     fileInputRef.current?.click()
   }
 
@@ -504,6 +518,16 @@ export function ResourceManager({
                             <span>Failed</span>
                           </div>
                         )}
+                      </div>
+                    ) : resource.resource_type === 'uploads' && resource.last_upload_time ? (
+                      <div className="status-completed">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                          <path d="M4 7L6 9L10 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span title={new Date(resource.last_upload_time).toLocaleString()}>
+                          {new Date(resource.last_upload_time).toLocaleDateString()}
+                        </span>
                       </div>
                     ) : (
                       <span className="status-never">Never</span>
