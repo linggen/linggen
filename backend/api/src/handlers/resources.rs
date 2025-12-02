@@ -142,6 +142,7 @@ pub async fn add_resource(
         chunk_count: None,
         file_count: None,
         total_size_bytes: None,
+        file_sizes: std::collections::HashMap::new(),
     };
 
     state

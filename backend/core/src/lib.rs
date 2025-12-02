@@ -25,6 +25,9 @@ pub struct SourceConfig {
     pub chunk_count: Option<usize>,
     pub file_count: Option<usize>,
     pub total_size_bytes: Option<usize>,
+    // Track individual file sizes for uploads (filename -> size in bytes)
+    #[serde(default)]
+    pub file_sizes: std::collections::HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

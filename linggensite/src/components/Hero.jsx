@@ -14,7 +14,7 @@ function Hero() {
                     then lets you search and chat with them using AI – with your data staying completely local.
                 </p>
                 <div className="cta-buttons">
-                    <a href="#get-started" className="btn btn-primary">
+                    <a href="https://github.com/linggen/linggen-releases/releases/latest" className="btn btn-primary" target="_blank" rel="noopener noreferrer">
                         Download for macOS (Beta)
                     </a>
                     <a href="#features" className="btn btn-secondary">Explore Features</a>

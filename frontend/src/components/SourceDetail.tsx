@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { getProfile, updateProfile, generateProfile, listUploadedFiles, deleteUploadedFile, uploadFile, renameResource, indexSource, updateResourcePatterns, getAppSettings, type SourceProfile as SourceProfileType, type Resource, type FileInfo } from '../api';
+import { getProfile, updateProfile, generateProfile, listUploadedFiles, deleteUploadedFile, uploadFileWithProgress, renameResource, indexSource, updateResourcePatterns, getAppSettings, type SourceProfile as SourceProfileType, type Resource, type FileInfo, type UploadProgressInfo } from '../api';
 
 interface SourceDetailProps {
     sourceId: string;
@@ -38,7 +38,8 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
     const [files, setFiles] = useState<FileInfo[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
-    const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing'>('uploading');
+    const [uploadPhase, setUploadPhase] = useState<string>('uploading');
+    const [uploadStatusMessage, setUploadStatusMessage] = useState<string>('');
     const [deletingFile, setDeletingFile] = useState<string | null>(null);
     const [fileToDelete, setFileToDelete] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -247,6 +248,7 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
         setUploading(true);
         setUploadProgress(0);
         setUploadPhase('uploading');
+        setUploadStatusMessage('Starting upload...');
         setMessage(null);
 
         try {
@@ -255,13 +257,14 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                 console.log('processFiles: Starting upload for', file.name);
                 setUploadProgress(0);
                 setUploadPhase('uploading');
-                const result = await uploadFile(sourceId, file, (percent) => {
-                    setUploadProgress(percent);
-                    // Switch to processing phase when upload is complete
-                    if (percent === 100) {
-                        setUploadPhase('processing');
-                    }
+                setUploadStatusMessage(`Uploading ${file.name}...`);
+                
+                const result = await uploadFileWithProgress(sourceId, file, (info: UploadProgressInfo) => {
+                    setUploadProgress(info.progress);
+                    setUploadPhase(info.phase);
+                    setUploadStatusMessage(info.message);
                 });
+                
                 console.log('processFiles: Upload complete for', file.name, 'result:', result);
                 uploadedCount++;
                 setMessage({ text: `✓ Uploaded ${uploadedCount}/${filesToUpload.length}: "${result.filename}" (${result.chunks_created} chunks)`, type: 'success' });
@@ -279,6 +282,7 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
             setUploading(false);
             setUploadProgress(0);
             setUploadPhase('uploading');
+            setUploadStatusMessage('');
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -718,49 +722,35 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                         </div>
                         <div style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--text)', marginBottom: '0.25rem' }}>
                             {uploading 
-                                ? (uploadPhase === 'processing' 
-                                    ? 'Processing (extracting, chunking, embedding)...' 
-                                    : `Uploading... ${uploadProgress}%`)
+                                ? `${uploadStatusMessage} (${uploadProgress}%)`
                                 : isDragging 
                                     ? 'Drop files here' 
                                     : 'Drop files here or click to browse'}
                         </div>
                         {uploading && (
-                            <div style={{ 
-                                width: '100%', 
-                                maxWidth: '300px', 
-                                height: '6px', 
-                                backgroundColor: 'var(--border)', 
-                                borderRadius: '3px', 
-                                overflow: 'hidden',
-                                margin: '0.5rem auto'
-                            }}>
-                                {uploadPhase === 'processing' ? (
-                                    <div style={{ 
-                                        width: '30%', 
-                                        height: '100%', 
-                                        backgroundColor: 'var(--primary)', 
-                                        borderRadius: '3px',
-                                        animation: 'processing-slide 1.5s ease-in-out infinite',
-                                    }} />
-                                ) : (
+                            <>
+                                <div style={{ 
+                                    width: '100%', 
+                                    maxWidth: '300px', 
+                                    height: '6px', 
+                                    backgroundColor: 'var(--border)', 
+                                    borderRadius: '3px', 
+                                    overflow: 'hidden',
+                                    margin: '0.5rem auto'
+                                }}>
                                     <div style={{ 
                                         width: `${uploadProgress}%`, 
                                         height: '100%', 
                                         backgroundColor: 'var(--primary)', 
-                                        transition: 'width 0.2s ease',
+                                        transition: 'width 0.3s ease',
                                         borderRadius: '3px'
                                     }} />
-                                )}
-                            </div>
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                    {uploadPhase === 'embedding' ? '⚡ This may take a moment for large files' : ''}
+                                </div>
+                            </>
                         )}
-                        <style>{`
-                            @keyframes processing-slide {
-                                0% { transform: translateX(0); }
-                                50% { transform: translateX(233%); }
-                                100% { transform: translateX(0); }
-                            }
-                        `}</style>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                             PDF, DOCX, TXT, MD, JSON, YAML, and more
                         </div>

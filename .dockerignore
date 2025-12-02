@@ -1,0 +1,31 @@
+# Ignore build artifacts
+target/
+frontend/dist/
+frontend/node_modules/
+frontend/src-tauri/target/
+frontend/src-tauri/binaries/
+
+# Ignore local data
+*.redb
+lancedb/
+models/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore git
+.git/
+
+# Ignore other build outputs
+dist/
+*.dmg
+*.app
+*.deb
+*.AppImage
+
+# Ignore docs/site
+linggensite/
+doc/

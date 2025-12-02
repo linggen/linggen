@@ -30,4 +30,4 @@ pub use retry_init::retry_init;
 pub mod search;
 pub use search::search;
 pub use status::get_app_status;
-pub use upload::{delete_uploaded_file, list_uploaded_files, upload_file};
+pub use upload::{delete_uploaded_file, list_uploaded_files, upload_file, upload_file_stream};

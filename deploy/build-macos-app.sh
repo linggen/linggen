@@ -4,6 +4,9 @@ set -e
 # Linggen macOS App Builder
 # Creates a .app bundle and .dmg for distribution
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 APP_NAME="Linggen"
 VERSION="0.1.0"
 BUNDLE_ID="dev.linggen.app"

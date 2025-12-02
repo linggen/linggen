@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getProfile, updateProfile, generateProfile, listUploadedFiles, deleteUploadedFile, uploadFile, renameResource, indexSource, updateResourcePatterns, getAppSettings, type SourceProfile as SourceProfileType, type Resource, type FileInfo } from '../api';
 

@@ -217,6 +217,82 @@ export interface UploadFileResponse {
     chunks_created: number;
 }
 
+export interface UploadProgressInfo {
+    phase: string;
+    progress: number;
+    message: string;
+    error?: string;
+    result?: UploadFileResponse;
+}
+
+// Upload with streaming progress (shows extracting, chunking, embedding progress)
+export async function uploadFileWithProgress(
+    sourceId: string,
+    file: File,
+    onProgress?: (info: UploadProgressInfo) => void
+): Promise<UploadFileResponse> {
+    const formData = new FormData();
+    formData.append('source_id', sourceId);
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE}/api/upload/stream`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: UploadFileResponse | null = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events (data: {...}\n\n)
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || ''; // Keep incomplete data in buffer
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                try {
+                    const data = JSON.parse(line.slice(6)) as UploadProgressInfo;
+                    if (onProgress) {
+                        onProgress(data);
+                    }
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    if (data.result) {
+                        result = data.result;
+                    }
+                } catch (e) {
+                    if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+                        throw e;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!result) {
+        throw new Error('Upload completed but no result received');
+    }
+
+    return result;
+}
+
+// Simple upload without detailed progress (legacy)
 export async function uploadFile(
     sourceId: string, 
     file: File,

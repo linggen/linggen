@@ -4,6 +4,9 @@ set -e
 # Linggen Tauri Desktop App Builder
 # Creates a native desktop app using Tauri
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 APP_NAME="Linggen"
 VERSION="0.1.0"
 
@@ -110,43 +113,48 @@ echo -e "${GREEN}║           ✅ Tauri Build Complete!                    ║$
 echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Find the actual DMG file
-DMG_PATH=$(find frontend/src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
-APP_PATH="frontend/src-tauri/target/release/bundle/macos/${APP_NAME}.app"
+# Copy artifacts to dist/macos
+echo -e "${BLUE}📦 Copying artifacts to dist/macos/...${NC}"
+mkdir -p dist/macos
 
-echo "📋 Build Artifacts:"
-echo ""
-if [ -d "$APP_PATH" ]; then
-    APP_SIZE=$(du -sh "$APP_PATH" | cut -f1)
-    echo "  📱 macOS App:"
-    echo "     $APP_PATH"
-    echo "     Size: $APP_SIZE"
-else
-    echo "  ⚠️  macOS App not found (check for errors above)"
+# Find and copy DMG
+DMG_SRC=$(find frontend/src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
+APP_SRC="frontend/src-tauri/target/release/bundle/macos/${APP_NAME}.app"
+
+if [ -d "$APP_SRC" ]; then
+    rm -rf "dist/macos/${APP_NAME}.app"
+    cp -r "$APP_SRC" "dist/macos/"
+    echo "  ✓ Copied ${APP_NAME}.app"
 fi
-echo ""
 
+if [ -n "$DMG_SRC" ] && [ -f "$DMG_SRC" ]; then
+    DMG_NAME=$(basename "$DMG_SRC")
+    cp "$DMG_SRC" "dist/macos/$DMG_NAME"
+    echo "  ✓ Copied $DMG_NAME"
+fi
+
+echo ""
+echo "📋 Build Artifacts in dist/macos/:"
+echo ""
+if [ -d "dist/macos/${APP_NAME}.app" ]; then
+    APP_SIZE=$(du -sh "dist/macos/${APP_NAME}.app" | cut -f1)
+    echo "  📱 macOS App: dist/macos/${APP_NAME}.app ($APP_SIZE)"
+fi
+
+DMG_PATH=$(find dist/macos -name "*.dmg" 2>/dev/null | head -n 1)
 if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
     DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
-    echo "  💿 DMG Installer:"
-    echo "     $DMG_PATH"
-    echo "     Size: $DMG_SIZE"
-else
-    echo "  ⚠️  DMG not found (check for errors above)"
+    echo "  💿 DMG: $DMG_PATH ($DMG_SIZE)"
 fi
 echo ""
 
 echo "📋 Quick Actions:"
 echo ""
 echo "  Test the app:"
-echo "    open \"$APP_PATH\""
+echo "    open \"dist/macos/${APP_NAME}.app\""
 echo ""
 echo "  Code sign (optional):"
-echo "    codesign --deep --force --sign \"Developer ID Application: Your Name\" \"$APP_PATH\""
-echo ""
-echo "  Create a signed DMG:"
-echo "    codesign --deep --force --sign \"Developer ID Application: Your Name\" \"$APP_PATH\""
-echo "    hdiutil create -volname Linggen -srcfolder \"$APP_PATH\" -ov -format UDZO Linggen-signed.dmg"
+echo "    codesign --deep --force --sign \"Developer ID Application: Your Name\" \"dist/macos/${APP_NAME}.app\""
 echo ""
 echo "📋 Development:"
 echo ""
@@ -157,5 +165,5 @@ echo "  Tauri dev (uses running backend or starts sidecar):"
 echo "    cd frontend && npm run tauri:dev"
 echo ""
 echo "  Rebuild without backend:"
-echo "    ./build-tauri-app.sh --skip-backend"
+echo "    ./deploy/build-tauri-app.sh --skip-backend"
 echo ""

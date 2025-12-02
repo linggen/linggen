@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 echo "🔨 Building Linggen for distribution..."
 
 # Colors
@@ -21,16 +24,21 @@ cd backend
 cargo build --release --package api
 cd ..
 
-# Create distribution directory
+# Create distribution directory (standalone server, not Tauri app)
+PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+DIST_DIR="dist/standalone-${PLATFORM}-${ARCH}"
+
 echo -e "${BLUE}📁 Creating distribution package...${NC}"
-mkdir -p dist/linggen
-cp backend/target/release/api dist/linggen/linggen
-cp -r frontend/dist dist/linggen/frontend
-mkdir -p dist/linggen/data
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
+cp backend/target/release/api "$DIST_DIR/linggen"
+cp -r frontend/dist "$DIST_DIR/frontend"
+mkdir -p "$DIST_DIR/data"
 
 # Create README for users
-cat > dist/linggen/README.txt << 'EOF'
-Linggen RAG - Local Semantic Search
+cat > "$DIST_DIR/README.txt" << 'EOF'
+Linggen RAG - Local Semantic Search (Standalone Server)
 
 To run:
   ./linggen
@@ -46,23 +54,22 @@ Requirements:
 EOF
 
 # Create run script
-cat > dist/linggen/run.sh << 'EOF'
+cat > "$DIST_DIR/run.sh" << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 echo "Starting Linggen..."
 echo "Open your browser to: http://localhost:7000"
 ./linggen
 EOF
-chmod +x dist/linggen/run.sh
+chmod +x "$DIST_DIR/run.sh"
 
 echo -e "${GREEN}✅ Build complete!${NC}"
-echo -e "Distribution package: ${BLUE}dist/linggen/${NC}"
+echo -e "Distribution package: ${BLUE}${DIST_DIR}/${NC}"
 echo ""
 echo "To test:"
-echo "  cd dist/linggen"
+echo "  cd $DIST_DIR"
 echo "  ./run.sh"
 echo ""
 echo "To create archive:"
-echo "  cd dist"
-echo "  tar -czf linggen-$(uname -s)-$(uname -m).tar.gz linggen/"
+echo "  tar -czf dist/linggen-standalone-${PLATFORM}-${ARCH}.tar.gz -C dist standalone-${PLATFORM}-${ARCH}/"
 

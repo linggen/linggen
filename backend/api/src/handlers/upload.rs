@@ -3,21 +3,25 @@
 //! Accepts files via multipart form, extracts text, chunks, embeds, and stores in LanceDB.
 
 use axum::{
+    body::Body,
     extract::{Multipart, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
+use futures::stream::{self, StreamExt};
 use ingestion::extract_text;
 use linggen_core::Chunk;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::index::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct UploadResponse {
     pub success: bool,
     pub source_id: String,
@@ -224,7 +228,8 @@ pub async fn upload_file(
         )
     })?;
 
-    // Create chunks for storage
+    // Create chunks for storage (include file_size in metadata for tracking)
+    let file_size = data.len();
     let chunks: Vec<Chunk> = chunks_text
         .iter()
         .zip(embeddings.iter())
@@ -237,6 +242,7 @@ pub async fn upload_file(
             metadata: serde_json::json!({
                 "file_path": filename,
                 "uploaded": true,
+                "file_size": file_size,
             }),
         })
         .collect();
@@ -286,6 +292,9 @@ pub async fn upload_file(
             .saturating_add(chunks_created);
         source.chunk_count = Some(adjusted_chunks);
 
+        // Get the previous file size (if re-uploading)
+        let previous_file_size = source.file_sizes.get(&filename).copied().unwrap_or(0);
+
         // Only increment file count if this is a brand new file for this source
         let current_files = source.file_count.unwrap_or(0);
         source.file_count = Some(if previous_chunks > 0 {
@@ -294,13 +303,16 @@ pub async fn upload_file(
             current_files + 1
         });
 
-        // For size, avoid double-counting on re-upload: only add size for brand new files
+        // Update total size: subtract old file size, add new file size
         let current_size = source.total_size_bytes.unwrap_or(0);
-        source.total_size_bytes = Some(if previous_chunks > 0 {
+        source.total_size_bytes = Some(
             current_size
-        } else {
-            current_size + data.len()
-        });
+                .saturating_sub(previous_file_size)
+                .saturating_add(file_size),
+        );
+
+        // Track the file size in the file_sizes map
+        source.file_sizes.insert(filename.clone(), file_size);
 
         let _ = state.metadata_store.update_source(&source);
     }
@@ -313,9 +325,303 @@ pub async fn upload_file(
     }))
 }
 
-// --- List and Delete files for uploads sources ---
+// --- Streaming upload with progress updates ---
 
-use serde::Deserialize;
+#[derive(Serialize, Clone)]
+pub struct UploadProgress {
+    pub phase: String,
+    pub progress: u8,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<UploadResponse>,
+}
+
+/// Upload a file with streaming progress updates
+/// Returns Server-Sent Events (SSE) style progress updates
+pub async fn upload_file_stream(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Response {
+    let (tx, mut rx) = mpsc::channel::<UploadProgress>(10);
+
+    // Spawn the upload processing in background
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        let result = process_upload_with_progress(state_clone, &mut multipart, tx.clone()).await;
+        if let Err(e) = result {
+            let _ = tx
+                .send(UploadProgress {
+                    phase: "error".to_string(),
+                    progress: 0,
+                    message: e.clone(),
+                    error: Some(e),
+                    result: None,
+                })
+                .await;
+        }
+    });
+
+    // Create SSE stream from receiver
+    let stream = stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(progress) => {
+                let json = serde_json::to_string(&progress).unwrap_or_default();
+                let data = format!("data: {}\n\n", json);
+                Some((Ok::<_, std::convert::Infallible>(data), rx))
+            }
+            None => None,
+        }
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+async fn process_upload_with_progress(
+    state: Arc<AppState>,
+    multipart: &mut Multipart,
+    tx: mpsc::Sender<UploadProgress>,
+) -> Result<(), String> {
+    // Send initial progress
+    let _ = tx
+        .send(UploadProgress {
+            phase: "receiving".to_string(),
+            progress: 5,
+            message: "Receiving file...".to_string(),
+            error: None,
+            result: None,
+        })
+        .await;
+
+    // Parse multipart form
+    let mut source_id: Option<String> = None;
+    let mut file_data: Option<(String, Vec<u8>)> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| e.to_string())? {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        if field_name == "source_id" {
+            source_id = Some(field.text().await.map_err(|e| e.to_string())?);
+        } else if field_name == "file" {
+            let filename = field.file_name().unwrap_or("unknown").to_string();
+            let data = field.bytes().await.map_err(|e| e.to_string())?;
+            file_data = Some((filename, data.to_vec()));
+        }
+    }
+
+    let source_id = source_id.ok_or("Missing source_id field")?;
+    let (filename, data) = file_data.ok_or("Missing file field")?;
+
+    // Verify source exists
+    let source = state
+        .metadata_store
+        .get_source(&source_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Source not found: {}", source_id))?;
+
+    // Check source type
+    if !matches!(source.source_type, linggen_core::SourceType::Uploads) {
+        return Err(format!("Source '{}' is not an uploads type", source_id));
+    }
+
+    // Progress: Extracting text
+    let _ = tx
+        .send(UploadProgress {
+            phase: "extracting".to_string(),
+            progress: 15,
+            message: "Extracting text from file...".to_string(),
+            error: None,
+            result: None,
+        })
+        .await;
+
+    // Write to temp file and extract
+    let extension = filename.split('.').last().unwrap_or("txt");
+    let mut temp_file = NamedTempFile::with_suffix(&format!(".{}", extension))
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    temp_file
+        .write_all(&data)
+        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+
+    let content = extract_text(temp_file.path())
+        .ok_or_else(|| format!("Failed to extract text from '{}'", filename))?;
+
+    if content.trim().is_empty() {
+        return Err("File contains no extractable text".to_string());
+    }
+
+    tracing::info!("Extracted {} characters from '{}'", content.len(), filename);
+
+    // Progress: Chunking
+    let _ = tx
+        .send(UploadProgress {
+            phase: "chunking".to_string(),
+            progress: 30,
+            message: "Splitting into chunks...".to_string(),
+            error: None,
+            result: None,
+        })
+        .await;
+
+    let chunks_text = state.chunker.chunk(&content);
+    tracing::info!("Created {} chunks", chunks_text.len());
+
+    if chunks_text.is_empty() {
+        return Err("File produced no chunks".to_string());
+    }
+
+    // Progress: Embedding (this is the slow part)
+    let _ = tx
+        .send(UploadProgress {
+            phase: "embedding".to_string(),
+            progress: 40,
+            message: format!("Generating embeddings for {} chunks...", chunks_text.len()),
+            error: None,
+            result: None,
+        })
+        .await;
+
+    let chunk_refs: Vec<&str> = chunks_text.iter().map(|s| s.as_str()).collect();
+
+    let model_guard = state.embedding_model.read().await;
+    let model = model_guard
+        .as_ref()
+        .ok_or("Embedding model is initializing. Please try again.")?;
+
+    // For large documents, embed in batches and report progress
+    let total_chunks = chunk_refs.len();
+    let batch_size = 10.max(total_chunks / 5); // At least 5 progress updates
+    let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
+
+    for (batch_idx, chunk_batch) in chunk_refs.chunks(batch_size).enumerate() {
+        let batch_embeddings = model
+            .embed_batch(chunk_batch)
+            .map_err(|e| format!("Failed to generate embeddings: {}", e))?;
+        all_embeddings.extend(batch_embeddings);
+
+        // Calculate progress (40-85% is embedding phase)
+        let processed = (batch_idx + 1) * batch_size;
+        let progress =
+            40 + ((processed.min(total_chunks) as f32 / total_chunks as f32) * 45.0) as u8;
+
+        let _ = tx
+            .send(UploadProgress {
+                phase: "embedding".to_string(),
+                progress,
+                message: format!(
+                    "Embedding chunks... {}/{}",
+                    processed.min(total_chunks),
+                    total_chunks
+                ),
+                error: None,
+                result: None,
+            })
+            .await;
+    }
+    drop(model_guard);
+
+    // Progress: Storing
+    let _ = tx
+        .send(UploadProgress {
+            phase: "storing".to_string(),
+            progress: 90,
+            message: "Storing in database...".to_string(),
+            error: None,
+            result: None,
+        })
+        .await;
+
+    // Create chunks
+    let file_size = data.len();
+    let chunks: Vec<Chunk> = chunks_text
+        .iter()
+        .zip(all_embeddings.iter())
+        .map(|(text, embedding)| Chunk {
+            id: Uuid::new_v4(),
+            source_id: source_id.clone(),
+            document_id: filename.clone(),
+            content: text.clone(),
+            embedding: Some(embedding.clone()),
+            metadata: serde_json::json!({
+                "file_path": filename,
+                "uploaded": true,
+                "file_size": file_size,
+            }),
+        })
+        .collect();
+
+    let chunks_created = chunks.len();
+
+    // Delete existing chunks for this file (if re-uploading)
+    let previous_chunks = state
+        .vector_store
+        .delete_document_from_source(&source_id, &filename)
+        .await
+        .map_err(|e| format!("Failed to delete existing chunks: {}", e))?;
+
+    // Store new chunks
+    state
+        .vector_store
+        .add(chunks)
+        .await
+        .map_err(|e| format!("Failed to store chunks: {}", e))?;
+
+    // Update source stats
+    if let Ok(Some(mut source)) = state.metadata_store.get_source(&source_id) {
+        let current_chunks = source.chunk_count.unwrap_or(0);
+        source.chunk_count = Some(
+            current_chunks
+                .saturating_sub(previous_chunks)
+                .saturating_add(chunks_created),
+        );
+
+        let previous_file_size = source.file_sizes.get(&filename).copied().unwrap_or(0);
+        let current_files = source.file_count.unwrap_or(0);
+        source.file_count = Some(if previous_chunks > 0 {
+            current_files
+        } else {
+            current_files + 1
+        });
+
+        let current_size = source.total_size_bytes.unwrap_or(0);
+        source.total_size_bytes = Some(
+            current_size
+                .saturating_sub(previous_file_size)
+                .saturating_add(file_size),
+        );
+        source.file_sizes.insert(filename.clone(), file_size);
+
+        let _ = state.metadata_store.update_source(&source);
+    }
+
+    // Send completion
+    let _ = tx
+        .send(UploadProgress {
+            phase: "complete".to_string(),
+            progress: 100,
+            message: "Upload complete!".to_string(),
+            error: None,
+            result: Some(UploadResponse {
+                success: true,
+                source_id,
+                filename,
+                chunks_created,
+            }),
+        })
+        .await;
+
+    Ok(())
+}
+
+// --- List and Delete files for uploads sources ---
 
 #[derive(Deserialize)]
 pub struct ListFilesRequest {
@@ -461,13 +767,33 @@ pub async fn delete_uploaded_file(
 
     // Update source stats
     if let Ok(Some(mut source)) = state.metadata_store.get_source(&req.source_id) {
+        // Subtract chunk count
         source.chunk_count = Some(
             source
                 .chunk_count
                 .unwrap_or(0)
                 .saturating_sub(chunks_deleted),
         );
+
+        // Decrement file count
         source.file_count = Some(source.file_count.unwrap_or(0).saturating_sub(1));
+
+        // Subtract file size from total and remove from tracking map
+        if let Some(file_size) = source.file_sizes.remove(&req.filename) {
+            source.total_size_bytes = Some(
+                source
+                    .total_size_bytes
+                    .unwrap_or(0)
+                    .saturating_sub(file_size),
+            );
+            tracing::debug!(
+                "delete_uploaded_file: Subtracted {} bytes for '{}', new total: {:?}",
+                file_size,
+                req.filename,
+                source.total_size_bytes
+            );
+        }
+
         let _ = state.metadata_store.update_source(&source);
     }
 
