@@ -52,18 +52,21 @@ pub async fn upload_file(
     // Parse multipart form
     tracing::debug!("upload_file: Parsing multipart form");
     while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("upload_file: Failed to read multipart field: {}", e);
         (
             StatusCode::BAD_REQUEST,
             Json(UploadError {
-                error: format!("Failed to read multipart field: {}", e),
+                error: format!("Failed to read multipart field: {}. This may indicate the request body is too large or malformed. Ensure the file is under 100MB and the Content-Type header is 'multipart/form-data'.", e),
             }),
         )
     })? {
         let name = field.name().unwrap_or("").to_string();
+        tracing::debug!("upload_file: Processing multipart field: {}", name);
 
         match name.as_str() {
             "source_id" => {
                 source_id = Some(field.text().await.map_err(|e| {
+                    tracing::error!("upload_file: Failed to read source_id field: {}", e);
                     (
                         StatusCode::BAD_REQUEST,
                         Json(UploadError {
@@ -71,23 +74,29 @@ pub async fn upload_file(
                         }),
                     )
                 })?);
+                tracing::debug!("upload_file: Read source_id: {}", source_id.as_ref().unwrap());
             }
             "file" => {
                 let filename = field
                     .file_name()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
+                tracing::debug!("upload_file: Reading file field: {}", filename);
                 let data = field.bytes().await.map_err(|e| {
+                    tracing::error!("upload_file: Failed to read file data for '{}': {}", filename, e);
                     (
                         StatusCode::BAD_REQUEST,
                         Json(UploadError {
-                            error: format!("Failed to read file data: {}", e),
+                            error: format!("Failed to read file data: {}. This may indicate the file is too large (max 100MB) or the request was corrupted. Original error: {}", e, e),
                         }),
                     )
                 })?;
+                tracing::debug!("upload_file: Read {} bytes for file '{}'", data.len(), filename);
                 file_data = Some((filename, data.to_vec()));
             }
-            _ => {}
+            _ => {
+                tracing::debug!("upload_file: Ignoring unknown field: {}", name);
+            }
         }
     }
 
@@ -409,14 +418,27 @@ async fn process_upload_with_progress(
     let mut source_id: Option<String> = None;
     let mut file_data: Option<(String, Vec<u8>)> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| e.to_string())? {
+    tracing::debug!("process_upload_with_progress: Starting multipart parsing");
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("process_upload_with_progress: Failed to read multipart field: {}", e);
+        format!("Failed to read multipart field: {}. This may indicate the request body is too large or malformed. Ensure the file is under 100MB and the Content-Type header is 'multipart/form-data'.", e)
+    })? {
         let field_name = field.name().unwrap_or("").to_string();
+        tracing::debug!("process_upload_with_progress: Processing field: {}", field_name);
 
         if field_name == "source_id" {
-            source_id = Some(field.text().await.map_err(|e| e.to_string())?);
+            source_id = Some(field.text().await.map_err(|e| {
+                tracing::error!("process_upload_with_progress: Failed to read source_id: {}", e);
+                format!("Failed to read source_id: {}", e)
+            })?);
         } else if field_name == "file" {
             let filename = field.file_name().unwrap_or("unknown").to_string();
-            let data = field.bytes().await.map_err(|e| e.to_string())?;
+            tracing::debug!("process_upload_with_progress: Reading file: {}", filename);
+            let data = field.bytes().await.map_err(|e| {
+                tracing::error!("process_upload_with_progress: Failed to read file data for '{}': {}", filename, e);
+                format!("Failed to read file data: {}. This may indicate the file is too large (max 100MB) or the request was corrupted.", e)
+            })?;
+            tracing::debug!("process_upload_with_progress: Read {} bytes for file '{}'", data.len(), filename);
             file_data = Some((filename, data.to_vec()));
         }
     }

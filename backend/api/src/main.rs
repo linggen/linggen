@@ -14,7 +14,8 @@ use handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
     enhance_prompt, get_app_status, index_source, list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    remove_resource, rename_resource, retry_init, update_resource_patterns, upload_file, upload_file_stream, AppState,
+    remove_resource, rename_resource, retry_init, update_resource_patterns, upload_file,
+    upload_file_stream, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -289,6 +290,15 @@ async fn main() {
         .allow_headers(tower_http::cors::Any);
 
     // Build our application with routes
+    // Upload routes need higher body limit for large files (100MB)
+    let upload_routes = Router::new()
+        .route("/api/upload", post(upload_file))
+        .route("/api/upload/stream", post(upload_file_stream))
+        .route("/api/upload/files", post(list_uploaded_files))
+        .route("/api/upload/delete", post(delete_uploaded_file))
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100MB for file uploads
+        .with_state(app_state.clone());
+
     let api_routes = Router::new()
         .route("/api/status", get(get_app_status))
         .route("/api/retry_init", post(retry_init))
@@ -303,10 +313,6 @@ async fn main() {
         .route("/api/resources/remove", post(remove_resource))
         .route("/api/resources/rename", post(rename_resource))
         .route("/api/resources/patterns", post(update_resource_patterns))
-        .route("/api/upload", post(upload_file))
-        .route("/api/upload/stream", post(upload_file_stream))
-        .route("/api/upload/files", post(list_uploaded_files))
-        .route("/api/upload/delete", post(delete_uploaded_file))
         .route(
             "/api/settings",
             get(handlers::settings::get_settings).put(handlers::settings::update_settings),
@@ -336,11 +342,12 @@ async fn main() {
         .with_state(mcp_app_state);
 
     // Combine API and MCP routes
-    // Increase body limit to 100MB for large file uploads (default is 2MB)
+    // Upload routes already have their own body limit, so we use a smaller default for other routes
     let combined_routes = api_routes
+        .merge(upload_routes)
         .merge(mcp_routes)
         .layer(cors)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024));
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)); // 10MB default for other routes
 
     // Serve static frontend files (if they exist)
     //
