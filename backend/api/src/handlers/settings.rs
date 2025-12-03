@@ -10,6 +10,14 @@ pub struct AppSettingsDto {
     pub llm_enabled: bool,
     pub server_port: Option<u16>,
     pub server_address: Option<String>,
+    /// Whether anonymous analytics is enabled (default: true)
+    /// Collects usage data to help improve Linggen. No code or personal info is sent.
+    #[serde(default = "default_analytics_enabled")]
+    pub analytics_enabled: bool,
+}
+
+fn default_analytics_enabled() -> bool {
+    true
 }
 
 impl From<storage::metadata::AppSettings> for AppSettingsDto {
@@ -19,6 +27,7 @@ impl From<storage::metadata::AppSettings> for AppSettingsDto {
             llm_enabled: s.llm_enabled,
             server_port: s.server_port,
             server_address: s.server_address,
+            analytics_enabled: s.analytics_enabled.unwrap_or(true),
         }
     }
 }
@@ -30,6 +39,7 @@ impl From<AppSettingsDto> for storage::metadata::AppSettings {
             llm_enabled: dto.llm_enabled,
             server_port: dto.server_port,
             server_address: dto.server_address,
+            analytics_enabled: Some(dto.analytics_enabled),
         }
     }
 }

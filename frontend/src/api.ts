@@ -692,6 +692,8 @@ export interface AppSettings {
     llm_enabled: boolean;
     server_port?: number;
     server_address?: string;
+    /** Whether anonymous analytics is enabled (default: true) */
+    analytics_enabled: boolean;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {

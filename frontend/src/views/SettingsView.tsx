@@ -272,6 +272,51 @@ export function SettingsView() {
                 </div>
             </section>
 
+            <section className="settings-card">
+                <div className="settings-card-header">
+                    <span className="settings-icon">📊</span>
+                    <h3>Analytics</h3>
+                </div>
+                <div className="settings-card-body">
+                    <div className="settings-row llm-toggle-row">
+                        <div className="llm-toggle-left">
+                            <label className="toggle-switch">
+                                <input
+                                    type="checkbox"
+                                    checked={settings?.analytics_enabled ?? true}
+                                    onChange={async () => {
+                                        if (!settings || saving) return
+                                        const next = { ...settings, analytics_enabled: !settings.analytics_enabled }
+                                        setSettings(next)
+                                        setSaving(true)
+                                        try {
+                                            await updateAppSettings(next)
+                                            setMessage('✓ Settings saved')
+                                        } catch (err) {
+                                            console.error('Failed to save settings:', err)
+                                            setMessage('✗ Failed to save settings')
+                                        } finally {
+                                            setSaving(false)
+                                            setTimeout(() => setMessage(null), 3000)
+                                        }
+                                    }}
+                                    disabled={loading || saving || !settings}
+                                />
+                                <span className="toggle-slider"></span>
+                            </label>
+                            <span className="settings-row-label">Help improve Linggen</span>
+                        </div>
+                        <span className={`llm-status-badge ${settings?.analytics_enabled !== false ? 'ready' : 'disabled'}`}>
+                            {settings?.analytics_enabled !== false ? 'Enabled' : 'Disabled'}
+                        </span>
+                    </div>
+                    <p className="settings-description">
+                        Send anonymous usage statistics to help improve Linggen. 
+                        We only collect basic usage data (app launches, sources added) — <strong>no code content, file paths, or personal information is ever sent</strong>.
+                    </p>
+                </div>
+            </section>
+
             <section className="settings-card danger">
                 <div className="settings-card-header">
                     <span className="settings-icon">⚠️</span>

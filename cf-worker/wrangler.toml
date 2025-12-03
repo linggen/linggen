@@ -1,0 +1,15 @@
+name = "linggen-analytics"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# D1 database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "linggen_analytics"
+database_id = "2faee297-29b4-4ef1-8936-77420eb16049"
+migrations_dir = "migrations"
+
+# Optional: API key for basic auth (set via wrangler secret)
+# Run: wrangler secret put ANALYTICS_API_KEY
+[vars]
+# ANALYTICS_API_KEY = ""  # Set via wrangler secret for security

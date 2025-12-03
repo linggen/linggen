@@ -35,6 +35,15 @@ pub struct AppSettings {
 
     /// Server bind address (defaults to "127.0.0.1")
     pub server_address: Option<String>,
+
+    /// Whether anonymous analytics is enabled (default: true)
+    /// Collects usage data to help improve Linggen. No code or personal info is sent.
+    #[serde(default = "default_analytics_enabled")]
+    pub analytics_enabled: Option<bool>,
+}
+
+fn default_analytics_enabled() -> Option<bool> {
+    Some(true)
 }
 
 impl Default for AppSettings {
@@ -44,6 +53,7 @@ impl Default for AppSettings {
             llm_enabled: false,
             server_port: None,
             server_address: None,
+            analytics_enabled: Some(true),
         }
     }
 }
@@ -413,6 +423,8 @@ mod tests {
                 chunk_count: None,
                 file_count: None,
                 total_size_bytes: None,
+                file_sizes: std::collections::HashMap::new(),
+                last_upload_time: None,
             };
 
             store.add_source(&source)?;

@@ -2,9 +2,17 @@
 
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, RunEvent, WindowEvent,
+};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
 
 /// Global state to hold the backend child process and whether we started it
 struct BackendProcess {
@@ -88,6 +96,63 @@ fn main() {
                 }
             }
 
+            // Create system tray icon with menu
+            let show_item = MenuItem::with_id(app, "show", "Show Linggen", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Linggen", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            // Load tray icon (use the 32x32 icon for menu bar)
+            let icon = Image::from_path("icons/32x32.png")
+                .or_else(|_| Image::from_path("../icons/32x32.png"))
+                .unwrap_or_else(|_| {
+                    // Fallback: use embedded icon bytes
+                    Image::from_bytes(include_bytes!("../icons/32x32.png"))
+                        .expect("Failed to load embedded icon")
+                });
+
+            let app_handle_for_tray = app_handle.clone();
+            TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&tray_menu)
+                .tooltip("Linggen - Running")
+                .on_tray_icon_event(move |_tray, event| {
+                    // Left click on tray icon shows the window
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(window) = app_handle_for_tray.get_webview_window("main") {
+                            // Show in Dock again on macOS
+                            #[cfg(target_os = "macos")]
+                            let _ = app_handle_for_tray.set_activation_policy(ActivationPolicy::Regular);
+                            
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            #[cfg(target_os = "macos")]
+                            let _ = app.set_activation_policy(ActivationPolicy::Regular);
+                            
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        // This will trigger RunEvent::ExitRequested
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            println!("[Tauri] System tray icon created");
+
             // Wait for backend to be fully ready before showing window
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -140,6 +205,19 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             match event {
+                // macOS: clicking Dock icon when app is running but window is hidden
+                RunEvent::Reopen { .. } => {
+                    println!("[Tauri] Reopen event - showing main window");
+                    
+                    // Show in Dock again
+                    #[cfg(target_os = "macos")]
+                    let _ = app_handle.set_activation_policy(ActivationPolicy::Regular);
+                    
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
                 RunEvent::ExitRequested { .. } | RunEvent::Exit => {
                     // Only terminate backend if we started it
                     let backend_state = app_handle.state::<BackendProcess>();
@@ -155,18 +233,24 @@ fn main() {
                     }
                 }
                 RunEvent::WindowEvent {
-                    event: WindowEvent::CloseRequested { .. },
+                    label,
+                    event: WindowEvent::CloseRequested { api, .. },
                     ..
                 } => {
-                    // Only terminate backend if we started it
-                    let backend_state = app_handle.state::<BackendProcess>();
-                    let managed_by_us = *backend_state.managed_by_us.lock().unwrap();
+                    // Docker Desktop–style behavior:
+                    // - Prevent the window from actually closing
+                    // - Just hide it so the app (and backend) keep running
+                    // - Hide from Dock, show only in menu bar
+                    api.prevent_close();
 
-                    if managed_by_us {
-                        if let Some(child) = backend_state.child.lock().unwrap().take() {
-                            println!("[Tauri] Terminating backend on window close (we started it)...");
-                            let _ = child.kill();
-                        };
+                    if let Some(window) = app_handle.get_webview_window(&label) {
+                        let _ = window.hide();
+                        
+                        // Hide from Dock on macOS (app becomes menu bar only)
+                        #[cfg(target_os = "macos")]
+                        let _ = app_handle.set_activation_policy(ActivationPolicy::Accessory);
+                        
+                        println!("[Tauri] Window hidden - click menu bar icon to reopen");
                     }
                 }
                 _ => {}

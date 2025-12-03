@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tracing::info;
 
+mod analytics;
 mod handlers;
 use handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
@@ -52,6 +53,23 @@ async fn main() {
 
     let metadata_store =
         Arc::new(MetadataStore::new(&metadata_path).expect("Failed to initialize metadata store"));
+
+    // Initialize analytics (generates installation_id if needed)
+    info!("Initializing analytics...");
+    let first_launch = metadata_store.get_setting("installation_id").ok().flatten().is_none();
+    match analytics::AnalyticsClient::initialize(&metadata_store).await {
+        Ok(analytics_client) => {
+            info!("Analytics initialized (enabled: {})", analytics_client.is_enabled());
+            // Track app started in background
+            let analytics_client_clone = analytics_client.clone();
+            tokio::spawn(async move {
+                analytics_client_clone.track_app_started(first_launch).await;
+            });
+        }
+        Err(e) => {
+            info!("Failed to initialize analytics (non-fatal): {}", e);
+        }
+    }
 
     // Initialize embedding model in background
     info!("Loading embedding model (async)...");

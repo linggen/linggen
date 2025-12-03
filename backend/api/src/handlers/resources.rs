@@ -5,6 +5,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::index::AppState;
+use crate::analytics;
 
 #[derive(Deserialize)]
 pub struct AddResourceRequest {
@@ -151,6 +152,12 @@ pub async fn add_resource(
         .metadata_store
         .add_source(&source)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Track source_added analytics event (non-blocking)
+    let source_type_for_analytics = source.source_type.clone();
+    tokio::spawn(async move {
+        analytics::track_source_added(source_type_for_analytics, None).await;
+    });
 
     Ok(Json(AddResourceResponse {
         id: source.id,
