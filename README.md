@@ -117,4 +117,5 @@ See [Cursor MCP Setup](doc/cursor-mcp-setup.md) for detailed instructions and te
 
 ## License
 
-MIT
+MCP publish:
+https://modelcontextprotocol.info/tools/registry/cli/
