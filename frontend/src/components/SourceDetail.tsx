@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getProfile, updateProfile, generateProfile, listUploadedFiles, deleteUploadedFile, uploadFileWithProgress, renameResource, indexSource, updateResourcePatterns, getAppSettings, type SourceProfile as SourceProfileType, type Resource, type FileInfo, type UploadProgressInfo } from '../api';
+import { GraphView } from './GraphView';
 
 interface SourceDetailProps {
     sourceId: string;
@@ -806,6 +807,21 @@ export const SourceDetail: React.FC<SourceDetailProps> = ({ sourceId, onBack, on
                             </div>
                         </>
                     )}
+                </div>
+            )}
+
+            {/* File Dependency Graph (for local sources) */}
+            {source?.resource_type === 'local' && (
+                <div style={styles.card}>
+                    <div style={{ marginBottom: '0.75rem' }}>
+                        <div style={styles.sectionTitle}>File Dependency Graph</div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>
+                            Visualize import relationships between files
+                        </p>
+                    </div>
+                    <div style={{ height: '500px', marginTop: '1rem' }}>
+                        <GraphView sourceId={sourceId} />
+                    </div>
                 </div>
             )}
 

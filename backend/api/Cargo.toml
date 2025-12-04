@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 linggen-core = { path = "../core" }
+linggen-architect = { path = "../architect" }
 ingestion = { path = "../ingestion" }
 embeddings = { path = "../embeddings" }
 storage = { path = "../storage" }

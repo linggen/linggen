@@ -13,10 +13,11 @@ mod analytics;
 mod handlers;
 use handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
-    enhance_prompt, get_app_status, index_source, list_jobs, list_resources, list_uploaded_files,
+    enhance_prompt, get_app_status, get_graph, get_graph_status, index_source, list_jobs,
+    list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    remove_resource, rename_resource, retry_init, update_resource_patterns, upload_file,
-    upload_file_stream, AppState,
+    rebuild_graph, remove_resource, rename_resource, retry_init, update_resource_patterns,
+    upload_file, upload_file_stream, AppState,
 };
 mod job_manager;
 use job_manager::JobManager;
@@ -279,6 +280,14 @@ async fn main() {
 
     let job_manager = Arc::new(JobManager::new(1)); // Limit to 1 concurrent job
 
+    // Initialize graph cache for architect feature
+    let graph_cache_dir = base_data_dir.join("graph_cache");
+    info!("Using graph cache at {:?}", graph_cache_dir);
+    let graph_cache = Arc::new(
+        linggen_architect::GraphCache::new(&graph_cache_dir)
+            .expect("Failed to initialize graph cache"),
+    );
+
     let app_state = Arc::new(AppState {
         embedding_model,
         chunker,
@@ -286,6 +295,7 @@ async fn main() {
         metadata_store,
         cancellation_flags: DashMap::new(),
         job_manager,
+        graph_cache,
     });
 
     // Create MCP state (wraps app_state for MCP handlers)
@@ -348,6 +358,16 @@ async fn main() {
         .route(
             "/api/sources/:source_id/profile/generate",
             post(handlers::profile::generate_profile),
+        )
+        // Graph (Architect) routes
+        .route("/api/sources/:source_id/graph", get(get_graph))
+        .route(
+            "/api/sources/:source_id/graph/status",
+            get(get_graph_status),
+        )
+        .route(
+            "/api/sources/:source_id/graph/rebuild",
+            post(rebuild_graph),
         )
         .with_state(app_state);
 

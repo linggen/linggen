@@ -1,6 +1,7 @@
 use crate::job_manager::JobManager;
 use dashmap::DashMap;
 use embeddings::{EmbeddingModel, TextChunker};
+use linggen_architect::GraphCache;
 use std::sync::Arc;
 use storage::{MetadataStore, VectorStore};
 
@@ -11,4 +12,5 @@ pub struct AppState {
     pub metadata_store: Arc<MetadataStore>,
     pub cancellation_flags: DashMap<String, bool>, // job_id -> is_cancelled
     pub job_manager: Arc<JobManager>,
+    pub graph_cache: Arc<GraphCache>,
 }

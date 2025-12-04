@@ -494,6 +494,49 @@ async fn run_indexing_job(
             tracing::info!("✅ Stats saved to source config!");
         }
     }
+
+    // 6. Build file dependency graph (Architect feature)
+    // Only for Local sources where we have access to the actual source files
+    if matches!(initial_job.source_type, SourceType::Local) {
+        let source_path_for_graph = source_path.clone();
+        let graph_cache = state.graph_cache.clone();
+
+        tracing::info!(
+            "🏗️  Building file dependency graph for {}...",
+            source_path_for_graph
+        );
+
+        // Build graph in a blocking task since it involves file I/O and parsing
+        let graph_result = tokio::task::spawn_blocking(move || {
+            let project_path = std::path::Path::new(&source_path_for_graph);
+            linggen_architect::build_project_graph(project_path)
+        })
+        .await;
+
+        match graph_result {
+            Ok(Ok(mut graph)) => {
+                // Set build timestamp
+                graph.set_built_at(Utc::now().to_rfc3339());
+
+                // Save to cache
+                if let Err(e) = graph_cache.save(&graph) {
+                    tracing::error!("Failed to save graph to cache: {}", e);
+                } else {
+                    tracing::info!(
+                        "✅ Graph built and cached ({} nodes, {} edges)",
+                        graph.node_count(),
+                        graph.edge_count()
+                    );
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Failed to build file dependency graph: {}", e);
+            }
+            Err(e) => {
+                tracing::error!("Graph build task panicked: {}", e);
+            }
+        }
+    }
 }
 
 fn check_cancellation(

@@ -774,3 +774,69 @@ export async function generateProfile(sourceId: string, req: GenerateProfileRequ
     }
     return response.json();
 }
+
+// Graph (Architect) API
+export interface GraphNode {
+    id: string;
+    label: string;
+    language: string;
+    folder: string;
+}
+
+export interface GraphEdge {
+    source: string;
+    target: string;
+    kind: string;
+}
+
+export interface GraphResponse {
+    project_id: string;
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    built_at?: string;
+}
+
+export interface GraphStatusResponse {
+    status: 'missing' | 'stale' | 'ready' | 'building' | 'error';
+    node_count?: number;
+    edge_count?: number;
+    built_at?: string;
+}
+
+export interface GraphQuery {
+    folder?: string;
+    focus?: string;
+    hops?: number;
+}
+
+export async function getGraphStatus(sourceId: string): Promise<GraphStatusResponse> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/graph/status`);
+    if (!response.ok) {
+        throw new Error(`Failed to get graph status: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function getGraph(sourceId: string, query?: GraphQuery): Promise<GraphResponse> {
+    const params = new URLSearchParams();
+    if (query?.folder) params.set('folder', query.folder);
+    if (query?.focus) params.set('focus', query.focus);
+    if (query?.hops) params.set('hops', query.hops.toString());
+
+    const url = `${API_BASE}/api/sources/${sourceId}/graph${params.toString() ? '?' + params.toString() : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to get graph: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function rebuildGraph(sourceId: string): Promise<GraphStatusResponse> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/graph/rebuild`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to rebuild graph: ${response.statusText}`);
+    }
+    return response.json();
+}

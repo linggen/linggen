@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod clear_data;
 pub mod enhance;
+pub mod graph;
 pub mod index;
 pub mod index_source;
 pub mod intent;
@@ -17,6 +18,7 @@ pub mod upload;
 pub use chat::chat_stream;
 pub use clear_data::clear_all_data;
 pub use enhance::enhance_prompt;
+pub use graph::{get_graph, get_graph_status, rebuild_graph};
 pub use index::AppState;
 pub use index_source::index_source;
 pub use intent::classify_intent;
