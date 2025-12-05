@@ -10,6 +10,8 @@ interface MainLayoutProps {
     resources?: Resource[]
     selectedSourceId?: string | null
     onSelectSource?: (id: string | null) => void
+    selectedNotePath?: string | null
+    onSelectNote?: (sourceId: string, path: string) => void
     onAddSource?: () => void
 }
 
@@ -21,6 +23,8 @@ export function MainLayout({
     resources,
     selectedSourceId,
     onSelectSource,
+    selectedNotePath,
+    onSelectNote,
     onAddSource
 }: MainLayoutProps) {
     // We can add state for collapsing sidebar later if needed
@@ -40,6 +44,8 @@ export function MainLayout({
                     resources={resources}
                     selectedSourceId={selectedSourceId}
                     onSelectSource={onSelectSource}
+                    selectedNotePath={selectedNotePath}
+                    onSelectNote={onSelectNote}
                     onAddSource={onAddSource}
                 />
             </div>

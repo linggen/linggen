@@ -57,10 +57,17 @@ async fn main() {
 
     // Initialize analytics (generates installation_id if needed)
     info!("Initializing analytics...");
-    let first_launch = metadata_store.get_setting("installation_id").ok().flatten().is_none();
+    let first_launch = metadata_store
+        .get_setting("installation_id")
+        .ok()
+        .flatten()
+        .is_none();
     match analytics::AnalyticsClient::initialize(&metadata_store).await {
         Ok(analytics_client) => {
-            info!("Analytics initialized (enabled: {})", analytics_client.is_enabled());
+            info!(
+                "Analytics initialized (enabled: {})",
+                analytics_client.is_enabled()
+            );
             // Track app started in background
             let analytics_client_clone = analytics_client.clone();
             tokio::spawn(async move {
@@ -313,6 +320,7 @@ async fn main() {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
         .allow_headers(tower_http::cors::Any);
@@ -365,10 +373,7 @@ async fn main() {
             "/api/sources/:source_id/graph/status",
             get(get_graph_status),
         )
-        .route(
-            "/api/sources/:source_id/graph/rebuild",
-            post(rebuild_graph),
-        )
+        .route("/api/sources/:source_id/graph/rebuild", post(rebuild_graph))
         // Design Notes routes
         .route(
             "/api/sources/:source_id/notes",
@@ -379,6 +384,10 @@ async fn main() {
             get(handlers::notes::get_note)
                 .put(handlers::notes::save_note)
                 .delete(handlers::notes::delete_note),
+        )
+        .route(
+            "/api/sources/:source_id/notes/rename",
+            post(handlers::notes::rename_note),
         )
         .with_state(app_state);
 

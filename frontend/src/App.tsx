@@ -56,6 +56,18 @@ function App() {
 
   // Selection State
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [selectedNotePath, setSelectedNotePath] = useState<string | null>(null)
+
+  const handleSelectSource = (id: string | null) => {
+    setSelectedSourceId(id)
+    setSelectedNotePath(null)
+  }
+
+  const handleSelectNote = (sourceId: string, path: string) => {
+    setSelectedSourceId(sourceId)
+    setSelectedNotePath(path)
+  }
+
 
   // Indexing State
   const [indexingResourceId, setIndexingResourceId] = useState<string | null>(null)
@@ -533,7 +545,9 @@ function App() {
       onChangeView={setCurrentView}
       resources={resources}
       selectedSourceId={selectedSourceId}
-      onSelectSource={setSelectedSourceId}
+      onSelectSource={handleSelectSource}
+      selectedNotePath={selectedNotePath}
+      onSelectNote={handleSelectNote}
       onAddSource={() => setIsAddSourceModalOpen(true)}
       statusElement={renderStatusElement()}
     >
@@ -547,6 +561,7 @@ function App() {
             indexingResourceId={indexingResourceId}
             indexingProgress={indexingProgress}
             onUpdateSource={handleEditResource}
+            selectedNotePath={selectedNotePath}
           />
         ) : (
           <SourcesView

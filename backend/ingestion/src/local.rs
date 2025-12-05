@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use glob::Pattern;
 use ignore::WalkBuilder;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use linggen_core::{Document, SourceType};
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use uuid::Uuid;
@@ -87,10 +87,17 @@ impl Ingestor for LocalIngestor {
         let mut documents = Vec::new();
         let mut skipped_by_pattern = 0;
 
-        let walker = WalkBuilder::new(&self.path)
-            .hidden(true) // Ignore hidden files (like .git) by default
-            .git_ignore(true)
-            .build();
+        let mut builder = WalkBuilder::new(&self.path);
+        builder.hidden(true); // Ignore hidden files (like .git) by default
+        builder.git_ignore(true);
+
+        // Explicitly add .linggen/notes to be indexed
+        let notes_path = self.path.join(".linggen").join("notes");
+        if notes_path.exists() {
+            builder.add(notes_path);
+        }
+
+        let walker = builder.build();
 
         for result in walker {
             match result {

@@ -1,3 +1,4 @@
+
 // Determine the API base URL:
 // - In Tauri desktop app (any non-http/https protocol or Tauri UA), always use localhost:8787
 // - In browser on localhost:8787, use localhost:8787
@@ -64,7 +65,7 @@ export async function indexSource(sourceId: string): Promise<IndexSourceResponse
 
     if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Failed to index source: ${text}`);
+        throw new Error(`Failed to index source: ${text} `);
     }
 
     return response.json();
@@ -129,7 +130,7 @@ export async function addResource(req: AddResourceRequest): Promise<AddResourceR
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to add resource: ${response.statusText}`);
+        throw new Error(`Failed to add resource: ${response.statusText} `);
     }
 
     return response.json();
@@ -139,7 +140,7 @@ export async function listResources(): Promise<ListResourcesResponse> {
     const response = await fetch(`${API_BASE}/api/resources`);
 
     if (!response.ok) {
-        throw new Error(`Failed to list resources: ${response.statusText}`);
+        throw new Error(`Failed to list resources: ${response.statusText} `);
     }
 
     return response.json();
@@ -155,7 +156,7 @@ export async function removeResource(id: string): Promise<RemoveResourceResponse
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to remove resource: ${response.statusText}`);
+        throw new Error(`Failed to remove resource: ${response.statusText} `);
     }
 
     return response.json();
@@ -177,7 +178,7 @@ export async function renameResource(id: string, name: string): Promise<RenameRe
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to rename resource: ${response.statusText}`);
+        throw new Error(`Failed to rename resource: ${response.statusText} `);
     }
 
     return response.json();
@@ -204,7 +205,7 @@ export async function updateResourcePatterns(
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to update patterns: ${response.statusText}`);
+        throw new Error(`Failed to update patterns: ${response.statusText} `);
     }
 
     return response.json();
@@ -242,7 +243,7 @@ export async function uploadFileWithProgress(
     });
 
     if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
+        throw new Error(`Upload failed: ${response.statusText} `);
     }
 
     const reader = response.body?.getReader();
@@ -324,9 +325,9 @@ export async function uploadFile(
             } else {
                 try {
                     const errorData = JSON.parse(xhr.responseText);
-                    reject(new Error(errorData.error || `Upload failed: ${xhr.statusText}`));
+                    reject(new Error(errorData.error || `Upload failed: ${xhr.statusText} `));
                 } catch {
-                    reject(new Error(`Upload failed: ${xhr.statusText}`));
+                    reject(new Error(`Upload failed: ${xhr.statusText} `));
                 }
             }
         });
@@ -361,7 +362,7 @@ export async function listUploadedFiles(sourceId: string): Promise<ListFilesResp
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to list files: ${response.statusText}`);
+        throw new Error(`Failed to list files: ${response.statusText} `);
     }
 
     return response.json();
@@ -385,11 +386,89 @@ export async function deleteUploadedFile(sourceId: string, filename: string): Pr
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to delete file: ${response.statusText}`);
+        throw new Error(`Failed to delete file: ${response.statusText} `);
     }
 
     return response.json();
 }
+
+// Design Notes API
+export interface NoteContent {
+    path: string;
+    content: string;
+    linked_node?: string;
+}
+
+export interface Note {
+    name: string;
+    path: string; // Relative to .linggen/notes
+    modified_at?: string;
+}
+
+export interface ListNotesResponse {
+    notes: Note[];
+}
+
+export async function listNotes(sourceId: string): Promise<Note[]> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes`);
+    if (!response.ok) {
+        if (response.status === 404) {
+            return [];
+        }
+        throw new Error(`Failed to list notes: ${response.statusText}`);
+    }
+    const data: ListNotesResponse = await response.json();
+    return data.notes;
+}
+
+export async function getNote(sourceId: string, notePath: string): Promise<NoteContent> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`);
+    if (!response.ok) {
+        throw new Error(`Failed to get note: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function deleteNote(sourceId: string, notePath: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
+        method: 'DELETE',
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to delete note: ${response.statusText}`);
+    }
+}
+
+export interface SaveNoteRequest {
+    content: string;
+    linked_node?: string;
+}
+
+export async function saveNote(sourceId: string, notePath: string, content: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${notePath}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to save note: ${response.statusText}`);
+    }
+}
+
+export interface GraphStatusResponse {
+    status: 'missing' | 'stale' | 'ready' | 'building' | 'error';
+    node_count?: number;
+    edge_count?: number;
+    built_at?: string;
+}
+
+
+
+// Delete an uploaded file
+
 
 // Jobs
 export type JobStatus = 'Pending' | 'Running' | 'Completed' | 'Failed';
@@ -727,53 +806,7 @@ export async function clearAllData(): Promise<void> {
     }
 }
 
-// Source Profile
-export interface SourceProfile {
-    profile_name: string;
-    description: string;
-    tech_stack: string[];
-    architecture_notes: string[];
-    key_conventions: string[];
-}
 
-export async function getProfile(sourceId: string): Promise<SourceProfile> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/profile`);
-    if (!response.ok) {
-        throw new Error(`Failed to get profile: ${response.statusText}`);
-    }
-    return response.json();
-}
-
-export async function updateProfile(sourceId: string, profile: SourceProfile): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/profile`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(profile),
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to update profile: ${response.statusText}`);
-    }
-}
-
-export interface GenerateProfileRequest {
-    files?: string[];
-}
-
-export async function generateProfile(sourceId: string, req: GenerateProfileRequest = {}): Promise<SourceProfile> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/profile/generate`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(req),
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to generate profile: ${response.statusText}`);
-    }
-    return response.json();
-}
 
 // Graph (Architect) API
 export interface GraphNode {
@@ -843,60 +876,23 @@ export async function rebuildGraph(sourceId: string): Promise<GraphStatusRespons
     return response.json();
 }
 
-// Design Notes API
-export interface NoteInfo {
-    path: string;
-    name: string;
-    modified_at?: string;
+
+
+export interface RenameNoteRequest {
+    old_path: String;
+    new_path: String;
 }
 
-export interface ListNotesResponse {
-    notes: NoteInfo[];
-}
-
-export interface NoteContent {
-    path: string;
-    content: string;
-    linked_node?: string;
-}
-
-export async function listNotes(sourceId: string): Promise<ListNotesResponse> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes`);
-    if (!response.ok) {
-        if (response.status === 404) {
-            return { notes: [] };
-        }
-        throw new Error(`Failed to list notes: ${response.statusText}`);
-    }
-    return response.json();
-}
-
-export async function getNote(sourceId: string, notePath: string): Promise<NoteContent> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`);
-    if (!response.ok) {
-        throw new Error(`Failed to get note: ${response.statusText}`);
-    }
-    return response.json();
-}
-
-export async function saveNote(sourceId: string, notePath: string, content: string, linkedNode?: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
-        method: 'PUT',
+export async function renameNote(sourceId: string, oldPath: string, newPath: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/rename`, {
+        method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content, linked_node: linkedNode }),
+        body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
     });
-    if (!response.ok) {
-        throw new Error(`Failed to save note: ${response.statusText}`);
-    }
-}
 
-export async function deleteNote(sourceId: string, notePath: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
-        method: 'DELETE',
-    });
     if (!response.ok) {
-        throw new Error(`Failed to delete note: ${response.statusText}`);
+        throw new Error(`Failed to rename note: ${response.statusText}`);
     }
 }

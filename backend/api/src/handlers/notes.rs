@@ -257,7 +257,10 @@ pub async fn delete_note(
     State(state): State<Arc<AppState>>,
     Path((source_id, note_path)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    info!("Deleting note {} for source {}", note_path, source_id);
+    info!("========== DELETE NOTE REQUEST RECEIVED ==========");
+    info!("Source ID: {}", source_id);
+    info!("Note Path: {}", note_path);
+    info!("=================================================");
 
     // Get the source to find its path
     let source = state.metadata_store.get_source(&source_id).map_err(|e| {
@@ -325,4 +328,108 @@ fn extract_linked_node(content: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Request to rename a note
+#[derive(Debug, Deserialize)]
+pub struct RenameNoteRequest {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// Rename a note
+pub async fn rename_note(
+    State(state): State<Arc<AppState>>,
+    Path(source_id): Path<String>,
+    Json(req): Json<RenameNoteRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    info!(
+        "Renaming note from {} to {} for source {}",
+        req.old_path, req.new_path, source_id
+    );
+
+    // Get the source to find its path
+    let source = state.metadata_store.get_source(&source_id).map_err(|e| {
+        error!("Failed to get source {}: {}", source_id, e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to get source: {}", e),
+        )
+    })?;
+
+    let source = source.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Source {} not found", source_id),
+        )
+    })?;
+
+    let notes_dir = get_notes_dir(&source.path);
+    let old_file = notes_dir.join(&req.old_path);
+    let new_file = notes_dir.join(&req.new_path);
+
+    // Security check
+    let canonical_notes = notes_dir.canonicalize().unwrap_or(notes_dir.clone());
+
+    // Check old file
+    if let Ok(canonical_old) = old_file.canonicalize() {
+        if !canonical_old.starts_with(&canonical_notes) {
+            return Err((StatusCode::BAD_REQUEST, "Invalid old note path".to_string()));
+        }
+    }
+
+    // Check new file parent
+    if let Some(parent) = new_file.parent() {
+        // Create parent if needed
+        std::fs::create_dir_all(parent).map_err(|e| {
+            error!("Failed to create parent directory for new path: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create directory: {}", e),
+            )
+        })?;
+
+        let canonical_parent = parent.canonicalize().unwrap_or(parent.to_path_buf());
+        if !canonical_parent.starts_with(&canonical_notes) {
+            return Err((StatusCode::BAD_REQUEST, "Invalid new note path".to_string()));
+        }
+    }
+
+    if !old_file.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Old note {} not found", req.old_path),
+        ));
+    }
+
+    if new_file.exists() {
+        let is_same_file = if let (Ok(old_canon), Ok(new_canon)) =
+            (old_file.canonicalize(), new_file.canonicalize())
+        {
+            old_canon == new_canon
+        } else {
+            false
+        };
+
+        if !is_same_file {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("New note path {} already exists", req.new_path),
+            ));
+        }
+    }
+
+    std::fs::rename(&old_file, &new_file).map_err(|e| {
+        error!("Failed to rename note: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to rename note: {}", e),
+        )
+    })?;
+
+    info!(
+        "Note renamed successfully from {} to {}",
+        req.old_path, req.new_path
+    );
+    Ok(StatusCode::OK)
 }

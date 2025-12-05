@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { enhancePrompt, getProfile, listResources, getAppSettings, type EnhancedPromptResponse, type Resource, type IntentType, type SourceProfile as SourceProfileMeta, type AppSettings } from '../api'
+import { enhancePrompt, listResources, getAppSettings, type EnhancedPromptResponse, type Resource, type IntentType, type AppSettings } from '../api'
 import { Chat } from '../components/Chat'
 
-type ComposerBlockType = 'profile' | 'chunk' | 'question' | 'path'
+type ComposerBlockType = 'chunk' | 'question' | 'path'
 
 interface ComposerBlock {
     id: string
@@ -39,42 +39,19 @@ export function AssistantView() {
     const [chunkLimit, setChunkLimit] = useState<number>(3)
 
     // Sources & profiles state
+    // Sources state
     const [sources, setSources] = useState<Resource[]>([])
-    const [profilesBySource, setProfilesBySource] = useState<Record<string, SourceProfileMeta>>({})
-    const [includedProfileSourceIds, setIncludedProfileSourceIds] = useState<Set<string>>(new Set())
-    const [loadingProfiles, setLoadingProfiles] = useState(false)
 
     // App settings (for LLM enabled status)
     const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
 
     useEffect(() => {
-        const loadSourcesAndProfiles = async () => {
+        const loadSources = async () => {
             try {
-                setLoadingProfiles(true)
                 const res = await listResources()
                 setSources(res.resources)
-
-                const entries = await Promise.all(
-                    res.resources.map(async (src) => {
-                        try {
-                            const profile = await getProfile(src.id)
-                            return [src.id, profile] as const
-                        } catch {
-                            return null
-                        }
-                    }),
-                )
-
-                const map: Record<string, SourceProfileMeta> = {}
-                for (const entry of entries) {
-                    if (entry) {
-                        const [id, profile] = entry
-                        map[id] = profile
-                    }
-                }
-                setProfilesBySource(map)
-            } finally {
-                setLoadingProfiles(false)
+            } catch (err) {
+                console.error('Failed to load sources:', err)
             }
         }
 
@@ -87,9 +64,10 @@ export function AssistantView() {
             }
         }
 
-        loadSourcesAndProfiles()
+        loadSources()
         loadSettings()
     }, [])
+
 
     const handleEnhance = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -227,76 +205,30 @@ export function AssistantView() {
                     {/* Two-column composer layout */}
                     {result && (
                         <section className="section assistant-composer-two-col">
-                            {/* Left: Sources & Profiles + Context Chunks */}
+                            {/* Left: Sources + Context Chunks */}
                             <div className="assistant-col left-col">
-                                <h4>Sources & Profiles</h4>
+                                <h4>Sources</h4>
                                 <div className="small-text">
                                     Intent: {formatIntent(result.intent)}
                                 </div>
                                 <div className="small-text">
                                     Retrieved chunks: {availableChunks.length}
                                 </div>
-                                {loadingProfiles && (
-                                    <div className="small-text">Loading profiles…</div>
-                                )}
-                                <div className="sources-list">
-                                    {sources.map((src) => {
-                                        const profile = profilesBySource[src.id]
-                                        const included = includedProfileSourceIds.has(src.id)
-                                        const snippet =
-                                            profile?.description?.slice(0, 160) ||
-                                            'No profile yet. You can generate one from the Sources view.'
-                                        return (
-                                            <div key={src.id} className="source-card">
-                                                <div className="source-card-header">
-                                                    <span className="source-name">{src.name}</span>
-                                                    <span className="source-type-pill">
-                                                        {src.resource_type.toUpperCase()}
-                                                    </span>
-                                                </div>
-                                                <div className="source-path small-text">{src.path}</div>
-                                                <div className="source-snippet small-text">{snippet}</div>
-                                                <label className="source-include-toggle">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={included}
-                                                        onChange={() => {
-                                                            const next = new Set(includedProfileSourceIds)
-                                                            if (included) {
-                                                                next.delete(src.id)
-                                                                setIncludedProfileSourceIds(next)
-                                                                setComposerBlocks((prev) =>
-                                                                    prev.filter(
-                                                                        (b) =>
-                                                                            !(
-                                                                                b.type === 'profile' &&
-                                                                                b.sourceId === src.id
-                                                                            ),
-                                                                    ),
-                                                                )
-                                                            } else {
-                                                                next.add(src.id)
-                                                                setIncludedProfileSourceIds(next)
-                                                                const text = profile?.description || ''
-                                                                const block: ComposerBlock = {
-                                                                    id: `profile-${src.id}`,
-                                                                    type: 'profile',
-                                                                    sourceId: src.id,
-                                                                    label: `Profile: ${src.name}`,
-                                                                    text,
-                                                                }
-                                                                setComposerBlocks((prev) => [block, ...prev])
-                                                            }
-                                                        }}
-                                                    />
-                                                    <span>Include profile in prompt</span>
-                                                </label>
+                                <div className="sources-list" style={{ marginTop: '10px' }}>
+                                    {sources.map((src) => (
+                                        <div key={src.id} className="source-card">
+                                            <div className="source-card-header">
+                                                <span className="source-name">{src.name}</span>
+                                                <span className="source-type-pill">
+                                                    {src.resource_type.toUpperCase()}
+                                                </span>
                                             </div>
-                                        )
-                                    })}
-                                    {sources.length === 0 && !loadingProfiles && (
+                                            <div className="source-path small-text">{src.path}</div>
+                                        </div>
+                                    ))}
+                                    {sources.length === 0 && (
                                         <p className="muted small-text">
-                                            No sources yet. Add and index a source to generate profiles.
+                                            No sources yet.
                                         </p>
                                     )}
                                 </div>
@@ -452,7 +384,6 @@ export function AssistantView() {
                                         onClick={() => {
                                             setComposerBlocks([])
                                             setSelectedChunkIds(new Set())
-                                            setIncludedProfileSourceIds(new Set())
                                         }}
                                     >
                                         Reset selection
