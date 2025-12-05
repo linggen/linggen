@@ -199,7 +199,7 @@ export function ResourceManager({
 
   const handleUploadClick = (sourceId: string) => {
     setUploadingSourceId(sourceId)
-    
+
     // Listen for window focus to detect when file dialog is closed without selection
     // This handles the case where user cancels the file picker
     const handleWindowFocus = () => {
@@ -212,7 +212,7 @@ export function ResourceManager({
       window.removeEventListener('focus', handleWindowFocus)
     }
     window.addEventListener('focus', handleWindowFocus)
-    
+
     fileInputRef.current?.click()
   }
 

@@ -191,8 +191,8 @@ export interface UpdateResourcePatternsResponse {
 }
 
 export async function updateResourcePatterns(
-    id: string, 
-    include_patterns: string[], 
+    id: string,
+    include_patterns: string[],
     exclude_patterns: string[]
 ): Promise<UpdateResourcePatternsResponse> {
     const response = await fetch(`${API_BASE}/api/resources/patterns`, {
@@ -295,7 +295,7 @@ export async function uploadFileWithProgress(
 
 // Simple upload without detailed progress (legacy)
 export async function uploadFile(
-    sourceId: string, 
+    sourceId: string,
     file: File,
     onProgress?: (percent: number) => void
 ): Promise<UploadFileResponse> {
@@ -305,7 +305,7 @@ export async function uploadFile(
 
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        
+
         xhr.upload.addEventListener('progress', (event) => {
             if (event.lengthComputable && onProgress) {
                 const percent = Math.round((event.loaded / event.total) * 100);
@@ -803,6 +803,8 @@ export interface GraphStatusResponse {
     built_at?: string;
 }
 
+
+
 export interface GraphQuery {
     folder?: string;
     focus?: string;
@@ -839,4 +841,62 @@ export async function rebuildGraph(sourceId: string): Promise<GraphStatusRespons
         throw new Error(`Failed to rebuild graph: ${response.statusText}`);
     }
     return response.json();
+}
+
+// Design Notes API
+export interface NoteInfo {
+    path: string;
+    name: string;
+    modified_at?: string;
+}
+
+export interface ListNotesResponse {
+    notes: NoteInfo[];
+}
+
+export interface NoteContent {
+    path: string;
+    content: string;
+    linked_node?: string;
+}
+
+export async function listNotes(sourceId: string): Promise<ListNotesResponse> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes`);
+    if (!response.ok) {
+        if (response.status === 404) {
+            return { notes: [] };
+        }
+        throw new Error(`Failed to list notes: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function getNote(sourceId: string, notePath: string): Promise<NoteContent> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`);
+    if (!response.ok) {
+        throw new Error(`Failed to get note: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function saveNote(sourceId: string, notePath: string, content: string, linkedNode?: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content, linked_node: linkedNode }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to save note: ${response.statusText}`);
+    }
+}
+
+export async function deleteNote(sourceId: string, notePath: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to delete note: ${response.statusText}`);
+    }
 }

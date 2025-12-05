@@ -11,8 +11,18 @@ import {
 } from '../api';
 import './GraphView.css';
 
+export interface SelectedNodeInfo {
+  id: string;
+  label: string;
+  language: string;
+  folder: string;
+  connections: { id: string; kind: string; direction: 'in' | 'out' }[];
+}
+
 interface GraphViewProps {
   sourceId: string;
+  onNodeSelect?: (node: SelectedNodeInfo | null) => void;
+  focusNodeId?: string | null;
 }
 
 // Extended node type for the force graph
@@ -43,7 +53,12 @@ const LANGUAGE_COLORS: Record<string, string> = {
   default: '#6b7280',
 };
 
-export function GraphView({ sourceId }: GraphViewProps) {
+// Minimum zoom level (globalScale) at which to show file name labels.
+// When zoomed out (globalScale < this), labels are hidden.
+// Tweak this value if you want labels to appear earlier/later.
+const LABEL_VISIBILITY_THRESHOLD = 1.2;
+
+export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProps) {
   const [status, setStatus] = useState<GraphStatusResponse | null>(null);
   const [nodes, setNodes] = useState<GraphNodeObject[]>([]);
   const [links, setLinks] = useState<GraphLinkObject[]>([]);
@@ -91,6 +106,29 @@ export function GraphView({ sourceId }: GraphViewProps) {
     }
     return set;
   }, [hoveredNode, selectedNode, links]);
+
+  // Compute node degrees (number of connected links) for sizing
+  const { nodeDegrees, maxDegree } = useMemo(() => {
+    const degrees = new Map<string, number>();
+
+    links.forEach((link) => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+
+      if (!degrees.has(sourceId)) degrees.set(sourceId, 0);
+      if (!degrees.has(targetId)) degrees.set(targetId, 0);
+
+      degrees.set(sourceId, (degrees.get(sourceId) || 0) + 1);
+      degrees.set(targetId, (degrees.get(targetId) || 0) + 1);
+    });
+
+    let max = 1;
+    degrees.forEach((deg) => {
+      if (deg > max) max = deg;
+    });
+
+    return { nodeDegrees: degrees, maxDegree: max };
+  }, [links]);
 
   // Memoize graphData to prevent simulation restart on hover
   const graphData = useMemo(() => ({ nodes, links }), [nodes, links]);
@@ -174,10 +212,63 @@ export function GraphView({ sourceId }: GraphViewProps) {
     }
   };
 
+  // Build node info with connections for callback
+  const buildNodeInfo = useCallback((nodeId: string): SelectedNodeInfo | null => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return null;
+    
+    const connections: SelectedNodeInfo['connections'] = [];
+    links.forEach((link) => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      
+      if (sourceId === nodeId) {
+        connections.push({ id: targetId, kind: link.kind, direction: 'out' });
+      } else if (targetId === nodeId) {
+        connections.push({ id: sourceId, kind: link.kind, direction: 'in' });
+      }
+    });
+    
+    return {
+      id: node.id,
+      label: node.label,
+      language: node.language,
+      folder: node.folder,
+      connections,
+    };
+  }, [nodes, links]);
+
   // Handle node click
   const handleNodeClick = useCallback((node: GraphNodeObject) => {
-    setSelectedNode(node.id === selectedNode ? null : node.id);
-  }, [selectedNode]);
+    const newSelectedId = node.id === selectedNode ? null : node.id;
+    setSelectedNode(newSelectedId);
+    
+    if (onNodeSelect) {
+      if (newSelectedId) {
+        const nodeInfo = buildNodeInfo(newSelectedId);
+        onNodeSelect(nodeInfo);
+      } else {
+        onNodeSelect(null);
+      }
+    }
+  }, [selectedNode, onNodeSelect, buildNodeInfo]);
+
+  // Focus on node when focusNodeId changes
+  useEffect(() => {
+    if (focusNodeId && graphRef.current && nodes.length > 0) {
+      const node = nodes.find(n => n.id === focusNodeId);
+      if (node && node.x !== undefined && node.y !== undefined) {
+        graphRef.current.centerAt(node.x, node.y, 1000);
+        graphRef.current.zoom(2, 1000);
+        setSelectedNode(focusNodeId);
+        
+        if (onNodeSelect) {
+          const nodeInfo = buildNodeInfo(focusNodeId);
+          onNodeSelect(nodeInfo);
+        }
+      }
+    }
+  }, [focusNodeId, nodes, buildNodeInfo, onNodeSelect]);
 
   // Handle search
   const handleSearch = useCallback(() => {
@@ -209,6 +300,58 @@ export function GraphView({ sourceId }: GraphViewProps) {
       return baseColor;
     },
     [highlightNodes]
+  );
+
+  // Custom node rendering: circle sized by degree + file name label
+  const nodeCanvasObject = useCallback(
+    (node: NodeObject, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const n = node as GraphNodeObject;
+      const x = n.x ?? 0;
+      const y = n.y ?? 0;
+
+      // Base radius scaled by node degree
+      const degree = nodeDegrees.get(n.id) ?? 1;
+      const minRadius = 4;
+      const maxExtraRadius = 10;
+      const radius =
+        minRadius +
+        (maxDegree > 1 ? (degree / maxDegree) * maxExtraRadius : 0);
+
+      // Draw node circle
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI, false);
+      ctx.fillStyle = nodeColor(n);
+      ctx.fill();
+
+      // Emphasize highlighted nodes with a stroke
+      if (highlightNodes.size === 0 || highlightNodes.has(n.id)) {
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#111827';
+        ctx.stroke();
+      }
+
+      // Draw file name label below the node
+      const label = n.label;
+      // Only show labels when zoomed in enough, Obsidian-style.
+      if (label && globalScale >= LABEL_VISIBILITY_THRESHOLD) {
+        const fontSize = Math.max(10, 14 / globalScale);
+        ctx.font = `${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+
+        const textY = y + radius + 2;
+
+        // Text outline for contrast on dark backgrounds
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)'; // near-black
+        ctx.strokeText(label, x, textY);
+
+        // Main text color (light)
+        ctx.fillStyle = '#f9fafb'; // near-white
+        ctx.fillText(label, x, textY);
+      }
+    },
+    [highlightNodes, maxDegree, nodeColor, nodeDegrees]
   );
 
   // Node label visibility based on zoom
@@ -346,6 +489,8 @@ export function GraphView({ sourceId }: GraphViewProps) {
           nodeLabel={nodeLabel}
           nodeColor={nodeColor}
           nodeRelSize={6}
+          nodeCanvasObject={nodeCanvasObject}
+          nodeCanvasObjectMode={() => 'replace'}
           linkColor={linkColor}
           linkDirectionalArrowLength={3}
           linkDirectionalArrowRelPos={1}

@@ -3,25 +3,30 @@ import './App.css'
 import {
   indexSource,
   listJobs,
+  listResources,
+  addResource,
   cancelJob,
   getAppStatus,
   retryInit,
+  renameResource,
+  updateResourcePatterns,
   type Resource,
   type ResourceType,
 } from './api'
-import { SourceDetail } from './components/SourceDetail'
-import { AppHeader } from './components/AppHeader'
+import { WorkspaceView } from './views/WorkspaceView'
 import { SourcesView } from './views/SourcesView'
+import { AddSourceModal } from './components/AddSourceModal'
 import { ActivityView } from './views/ActivityView'
 import { AssistantView } from './views/AssistantView'
 import { SettingsView } from './views/SettingsView'
+import { ArchitectureView } from './views/ArchitectureView'
+import { MainLayout } from './components/MainLayout'
+import type { View } from './components/Sidebar'
 
 // Core flows:
-// 1) Manage sources (git/local/web) via Sources view
+// 1) Manage sources (git/local/web) via Sidebar
 // 2) Index content from sources (currently local folders) into LanceDB
 // 3) AI Assistant for intent classification and prompt enhancement
-
-type View = 'sources' | 'activity' | 'assistant' | 'settings'
 
 type JobStatus = 'pending' | 'running' | 'completed' | 'error'
 
@@ -44,17 +49,84 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('sources')
   const [status, setStatus] = useState<AppStatus>('initializing')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+
+  // Data State
+  const [resources, setResources] = useState<Resource[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
+
+  // Selection State
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+
+  // Indexing State
   const [indexingResourceId, setIndexingResourceId] = useState<string | null>(null)
   const [indexingProgress, setIndexingProgress] = useState<string | null>(null)
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+
+  // Utils
   const [resourcesVersion, setResourcesVersion] = useState(0) // bump to refresh sources list
+
+  // Modal State
+  const [isAddSourceModalOpen, setIsAddSourceModalOpen] = useState(false)
 
   // Use ref to track polling interval and cancelling state
   const pollingIntervalRef = useRef<number | null>(null)
   const pollingTimeoutRef = useRef<number | null>(null)
   const isCancellingRef = useRef<boolean>(false)
+
+  // --- Resource Management (Lifted from ResourceManager) ---
+
+  const loadResources = useCallback(async () => {
+    try {
+      const response = await listResources()
+      setResources(response.resources)
+    } catch (err) {
+      console.error('Failed to load resources:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadResources()
+  }, [loadResources, resourcesVersion])
+
+  const handleAddResource = async (name: string, type: ResourceType, path: string, include?: string[], exclude?: string[]) => {
+    try {
+      await addResource({
+        name,
+        resource_type: type,
+        path,
+        include_patterns: include,
+        exclude_patterns: exclude
+      })
+      // Refresh list
+      const res = await listResources()
+      setResources(res.resources)
+      setIsAddSourceModalOpen(false)
+    } catch (err) {
+      console.error('Failed to add resource:', err)
+      throw err // Re-throw to let modal handle error display
+    }
+  }
+
+  const handleEditResource = async (id: string, name: string, include: string[], exclude: string[]) => {
+    try {
+      // 1. Rename if changed (we don't have previous resource here easily, so just call rename. 
+      // Optimally we'd check, but calling rename with same name is likely fine or we can fetch resource first)
+
+      // Actually, we can just call the endpoints.
+      await renameResource(id, name);
+      // 2. Update patterns
+      await updateResourcePatterns(id, include, exclude);
+
+      // Refresh list
+      const res = await listResources()
+      setResources(res.resources)
+    } catch (err) {
+      console.error('Failed to edit resource:', err)
+      throw err
+    }
+  }
+
+  // --- Job Polling & Status ---
 
   // Shared function to update progress for a running job
   const updateJobProgress = useCallback(async (jobId: string) => {
@@ -189,7 +261,7 @@ function App() {
   // Start polling for a job
   const startPollingJob = useCallback((jobId: string) => {
     console.log('Starting polling for job:', jobId)
-    
+
     // Clear any existing polling
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current)
@@ -349,55 +421,35 @@ function App() {
   }
 
   const handleCancelJob = async () => {
+    // ... (same as before, snipped for brevity if unchanged logic is trusted, assuming copied correctly)
+    // Re-implementing logic to be safe since previous was read-only
     console.log('Cancel button clicked!')
-    console.log('  currentJobId:', currentJobId)
-    console.log('  indexingResourceId:', indexingResourceId)
-    console.log('  jobs:', jobs)
 
     let jobIdToCancel = currentJobId
-
-    // If no currentJobId but we have an indexing resource, find the running job
     if (!jobIdToCancel && indexingResourceId) {
-      console.log('No currentJobId, looking for running job with resourceId:', indexingResourceId)
-      console.log('  Available jobs:', jobs.map(j => ({ id: j.id, sourceId: j.sourceId, status: j.status })))
-
       const runningJob = jobs.find(
         (job) => job.sourceId === indexingResourceId && job.status === 'running'
       )
-
-      if (runningJob) {
-        jobIdToCancel = runningJob.id
-        console.log('Found running job:', jobIdToCancel)
-      } else {
-        console.warn('No running job found for resourceId:', indexingResourceId)
-        console.log('  Jobs with matching resourceId:', jobs.filter(j => j.sourceId === indexingResourceId))
-        console.log('  Running jobs:', jobs.filter(j => j.status === 'running'))
-      }
+      if (runningJob) jobIdToCancel = runningJob.id
     }
 
     if (!jobIdToCancel) {
-      console.warn('No job ID to cancel - cannot cancel')
       setIndexingProgress('✗ No active job found')
       return
     }
 
-    // Set cancelling flag immediately to prevent progress updates
     isCancellingRef.current = true
     setIndexingProgress('Cancelling...')
 
     try {
-      console.log('Calling cancelJob API for job:', jobIdToCancel)
       await cancelJob(jobIdToCancel)
-      console.log('Cancel request sent successfully')
 
-      // Check job status to see if it was actually cancelled
       setTimeout(async () => {
         try {
           const response = await listJobs()
           const job = response.jobs.find((j) => j.id === jobIdToCancel)
 
           if (job && job.status === 'Failed' && job.error?.includes('cancelled')) {
-            console.log('Job was successfully cancelled')
             setIndexingProgress('✓ Cancelled')
             setTimeout(() => {
               setIndexingResourceId(null)
@@ -406,7 +458,6 @@ function App() {
               setStatus('idle')
             }, 2000)
           } else if (job && job.status !== 'Running') {
-            console.log('Job already finished with status:', job.status)
             setIndexingProgress(`Job already ${job.status}`)
             setTimeout(() => {
               setIndexingResourceId(null)
@@ -414,15 +465,12 @@ function App() {
               setCurrentJobId(null)
               setStatus('idle')
             }, 2000)
-          } else {
-            console.log('Job still running, will be cancelled soon')
           }
         } catch (error) {
-          console.error('Failed to check job status after cancel:', error)
+          console.error(error)
         }
       }, 1000)
     } catch (error) {
-      console.error('Failed to cancel job:', error)
       setIndexingProgress(`✗ Failed to cancel: ${error}`)
     }
   }
@@ -437,72 +485,91 @@ function App() {
     }
   }
 
-  return (
-    <div className="app">
-      <AppHeader
-        status={status}
-        message={statusMessage}
-        onRetry={handleRetryInit}
-      />
+  // Define Status Bar Element
+  const renderStatusElement = () => {
+    let statusText = 'Idle'
+    let statusDotClass = 'status-dot idle'
 
-      <TopNav currentView={currentView} onChangeView={setCurrentView} />
+    if (status === 'initializing') {
+      statusText = statusMessage || 'Initializing...'
+      statusDotClass = 'status-dot initializing'
+    } else if (status === 'indexing') {
+      statusText = 'Indexing...'
+      statusDotClass = 'status-dot indexing'
+    } else if (status === 'error') {
+      statusText = 'Error'
+      statusDotClass = 'status-dot error'
+    }
 
-      <main className="main">
-        {currentView === 'sources' && (
-          selectedSourceId ? (
-            <SourceDetail 
-              sourceId={selectedSourceId} 
-              onBack={() => setSelectedSourceId(null)} 
-              onIndexComplete={() => setResourcesVersion(v => v + 1)}
-            />
-          ) : (
-            <SourcesView
-              onIndexResource={handleIndexResource}
-              indexingResourceId={indexingResourceId}
-              indexingProgress={indexingProgress}
-              onCancelJob={handleCancelJob}
-              onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
-              resourcesVersion={resourcesVersion}
-            />
-          )
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0 8px' }}>
+        <div className="status-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+          <span className={statusDotClass} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' }}></span>
+          <span>{statusText}</span>
+        </div>
+        {status === 'error' && (
+          <button
+            onClick={handleRetryInit}
+            style={{
+              padding: '2px 8px',
+              background: 'var(--error)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '10px',
+            }}
+          >
+            Retry
+          </button>
         )}
-        {currentView === 'activity' && <ActivityView jobs={jobs} />}
-        {currentView === 'assistant' && <AssistantView />}
-        {currentView === 'settings' && <SettingsView />}
-      </main>
-    </div>
-  )
-}
-
-interface TopNavProps {
-  currentView: View
-  onChangeView: (view: View) => void
-}
-
-function TopNav({ currentView, onChangeView }: TopNavProps) {
-  const items: { id: View; label: string }[] = [
-    { id: 'sources', label: 'Sources' },
-    { id: 'assistant', label: 'AI Assistant' },
-    { id: 'activity', label: 'Activity' },
-    { id: 'settings', label: 'Settings' },
-  ]
+      </div>
+    )
+  }
 
   return (
-    <nav className="top-nav">
-      <ul className="top-nav-list">
-        {items.map((item) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              className={`top-nav-item ${currentView === item.id ? 'active' : ''}`}
-              onClick={() => onChangeView(item.id)}
-            >
-              {item.label}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </nav>
+    <MainLayout
+      currentView={currentView}
+      onChangeView={setCurrentView}
+      resources={resources}
+      selectedSourceId={selectedSourceId}
+      onSelectSource={setSelectedSourceId}
+      onAddSource={() => setIsAddSourceModalOpen(true)}
+      statusElement={renderStatusElement()}
+    >
+      {currentView === 'sources' && (
+        selectedSourceId ? (
+          <WorkspaceView
+            sourceId={selectedSourceId}
+            source={resources.find(r => r.id === selectedSourceId)}
+            onIndexComplete={() => setResourcesVersion(v => v + 1)}
+            onIndexResource={handleIndexResource}
+            indexingResourceId={indexingResourceId}
+            indexingProgress={indexingProgress}
+            onUpdateSource={handleEditResource}
+          />
+        ) : (
+          <SourcesView
+            onIndexResource={handleIndexResource}
+            indexingResourceId={indexingResourceId}
+            indexingProgress={indexingProgress}
+            onCancelJob={handleCancelJob}
+            onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
+            resourcesVersion={resourcesVersion}
+          />
+        )
+      )}
+      {currentView === 'architecture' && <ArchitectureView />}
+      {currentView === 'activity' && <ActivityView jobs={jobs} />}
+      {currentView === 'assistant' && <AssistantView />}
+      {currentView === 'settings' && <SettingsView />}
+
+      <AddSourceModal
+        isOpen={isAddSourceModalOpen}
+        onClose={() => setIsAddSourceModalOpen(false)}
+        onAdd={handleAddResource}
+      />
+    </MainLayout>
   )
 }
 

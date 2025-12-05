@@ -369,6 +369,17 @@ async fn main() {
             "/api/sources/:source_id/graph/rebuild",
             post(rebuild_graph),
         )
+        // Design Notes routes
+        .route(
+            "/api/sources/:source_id/notes",
+            get(handlers::notes::list_notes),
+        )
+        .route(
+            "/api/sources/:source_id/notes/*note_path",
+            get(handlers::notes::get_note)
+                .put(handlers::notes::save_note)
+                .delete(handlers::notes::delete_note),
+        )
         .with_state(app_state);
 
     // MCP routes (for Cursor integration)

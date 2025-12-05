@@ -1,0 +1,257 @@
+.design-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.design-editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.design-editor-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.design-editor-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.design-editor-note-select {
+  min-width: 180px;
+  max-width: 280px;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.design-editor-note-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.design-editor-new-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.design-editor-new-note input {
+  width: 160px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--primary);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.design-editor-new-note input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
+}
+
+.btn-small {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  width: auto;
+}
+
+.btn-small:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--text-muted);
+}
+
+.btn-small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-small.btn-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+.btn-small.btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+
+.btn-small.btn-primary.saving {
+  opacity: 0.7;
+}
+
+.btn-small.btn-link {
+  background: rgba(100, 108, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.3);
+  color: var(--primary);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-small.btn-link:hover {
+  background: rgba(100, 108, 255, 0.2);
+}
+
+.unsaved-indicator {
+  font-size: 0.75rem;
+  color: #f59e0b;
+  padding: 0.25rem 0.5rem;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 4px;
+}
+
+.design-editor-error {
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  font-size: 0.85rem;
+}
+
+.design-editor-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.design-editor-content .w-md-editor {
+  height: 100% !important;
+  background: var(--bg) !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.design-editor-content .w-md-editor-toolbar {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 0.5rem !important;
+}
+
+.design-editor-content .w-md-editor-toolbar ul > li > button {
+  color: var(--text-muted) !important;
+}
+
+.design-editor-content .w-md-editor-toolbar ul > li > button:hover {
+  color: var(--text) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.design-editor-content .w-md-editor-text-pre,
+.design-editor-content .w-md-editor-text-input,
+.design-editor-content .w-md-editor-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 0.9rem !important;
+  line-height: 1.6 !important;
+}
+
+.design-editor-content .wmde-markdown {
+  background: transparent !important;
+  font-family: Inter, system-ui, sans-serif !important;
+  font-size: 0.95rem !important;
+  line-height: 1.7 !important;
+  padding: 1rem !important;
+}
+
+.design-editor-content .wmde-markdown h1,
+.design-editor-content .wmde-markdown h2,
+.design-editor-content .wmde-markdown h3 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.design-editor-content .wmde-markdown code {
+  background: rgba(100, 108, 255, 0.1) !important;
+  color: var(--primary) !important;
+  padding: 0.15rem 0.4rem !important;
+  border-radius: 4px !important;
+  font-size: 0.85em !important;
+}
+
+.design-editor-content .wmde-markdown pre {
+  background: rgba(0, 0, 0, 0.4) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  padding: 1rem !important;
+}
+
+.design-editor-content .wmde-markdown pre code {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.design-editor-loading,
+.design-editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 2rem;
+}
+
+.design-editor-empty .empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.design-editor-empty h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.design-editor-empty p {
+  margin: 0 0 1.5rem 0;
+  font-size: 0.9rem;
+}
+
+.design-editor-empty .btn-primary {
+  padding: 0.6rem 1.25rem;
+  font-size: 0.9rem;
+  border-radius: 8px;
+  background: var(--primary);
+  border: none;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: auto;
+}
+
+.design-editor-empty .btn-primary:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+}

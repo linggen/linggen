@@ -1,179 +1,96 @@
-## Files Graph View (Architect v1)
+## Linggen Architect – Short Product Definition
 
-### 1. Goal
+### 1. Product vision
 
-- **Goal**: Provide an Obsidian-like **file dependency graph** that helps developers understand how files relate to each other (imports/usages), without needing deep AI understanding in v1.
-- **Primary users**:
-  - **Newcomers** to a codebase (onboarding, "what talks to what?").
-  - **Maintainers** of medium/large projects (spot coupling, impact of changes).
-  - **Architects / refactorers** (see modules, boundaries, potential cycles).
-
-### 2. Scope for v1
-
-- **Nodes**: Source files/modules (e.g. `src/main.rs`, `src/lib.rs`, `src/frontend/App.tsx`).
-- **Edges**: Static "uses/imports" relations between files:
-  - Rust: `use`, `mod`, `extern crate`, etc.
-  - TS/JS: `import`, `require`, etc. (future).
-- **Data source**: Code parsed via **Tree-sitter**:
-
-  - Per language, define queries to extract imports.
-  - Simple path resolution from module names to file paths (best-effort; can be wrong sometimes).
-
-- **Frontend**: React web UI with Obsidian-like graph:
-  - Uses a **WebGL-based graph library** (e.g. `react-force-graph`, `sigma.js`, `cytoscape.js`).
-  - **Interactions**:
-    - Click node → open file (in IDE or built-in viewer).
-    - Hover → highlight neighbors (1-hop neighborhood).
-    - Search box → jump to a file and center it.
-    - Basic filters (by folder / crate / language).
-
-### 3. Large graph UX (hundreds of files)
-
-- **Focus + neighborhood view**:
-  - Always have a **selected node**.
-  - Show selected node + its **1–2 hop neighbors**; dim or hide the rest.
-- **Filtering**:
-  - Filter by directory/crate (`src/ingest/*`, `src/api/*`), language, degree (hide leaf nodes).
-- **Clustering / grouping**:
-  - Group nodes into **folders or components** as "super-nodes" that can be expanded.
-- **Level of detail (LOD)**:
-  - Zoomed out: only dots/clusters, no labels.
-  - Zoomed in: show labels and detailed edges.
-
-### 4. Data model and storage
-
-- **Core graph model (conceptual)**:
-  - **Node**: `{ id: "src/main.rs", label: "main.rs", language, folder, ... }`
-  - **Edge**: `{ source: "src/main.rs", target: "src/lib.rs", kind: "Import" }`
-- **Persistence strategy**:
-  - **V1**:
-    - Graph can be fully recomputed from source (Tree-sitter + filesystem).
-    - Optionally cache as a **JSON file** per project.
-  - **Later (using redb)**:
-    - Store **user overrides** (ignored edges, manual edges).
-    - Store **node/edge metadata** (tags like "service", "publisher", etc.).
-    - Store **saved layouts/views** (node positions, filters).
-    - Possibly store incremental analysis state for faster updates.
-
-### 5. Integration with Linggen pipeline
-
-- **Triggering graph build**:
-  - After a project is **indexed/ingested**, start a **background task**:
-    - Walk files → parse via Tree-sitter → extract imports → build graph.
-    - Save or cache the graph result (in memory / JSON / redb).
-  - This background task does **not block** normal query or embedding operations.
-- **Serving to UI**:
-  - Backend exposes a REST endpoint, e.g. `GET /projects/{id}/graph`.
-  - React frontend calls this endpoint and renders the graph.
-
-### 6. Future extensions (Architect v2+)
-
-- **Semantic roles and topology**:
-  - Tag nodes as **publishers / subscribers / services / handlers**, using:
-    - Simple heuristics (e.g. functions calling `publish`, `subscribe`, HTTP clients).
-    - Optional AI classification to suggest roles.
-  - Build a **higher-level topology graph** (components/services and their communication).
-- **AI-assisted understanding**:
-  - Suggest components, topics, and flows from the existing graph + code.
-  - Allow users to override and correct AI suggestions; never fully "authoritative".
-
-### 7. Non-goals for v1
-
-- No guaranteed **100% accurate import resolution**.
-- No full **"architect-level" semantic understanding** yet (only structural file graph).
-- No heavy requirement for users to configure tons of metadata before it's useful.
+- **Vision**: Become the **system-definition layer above LLMs** – the place where developers and architects define how a system should work, so tools like Cursor or Claude can reliably implement and evolve it.
+- **Role in the toolchain**: IDE/LLM (Cursor, Claude, Copilot) are where you **write and edit code**. Linggen is where you **understand the existing system and specify the next version** in a structured, machine-consumable way.
+- **Form factor**: A **local-first, code-aware architecture IDE** with Obsidian-like usability and exportable specs for LLMs.
 
 ---
 
-## Implementation Details
+### 2. Target users & core jobs
 
-### Backend: `linggen-architect` Crate
+- **New engineers on a large codebase**
+  - "Show me the shape of this system and where to start."
+- **Senior developers / maintainers**
+  - "Before I change this module, tell me what depends on it and what might break."
+- **Architects / tech leads / system designers**
+  - "I want a single workspace to design, document, and enforce architecture, and then drive LLMs from that spec."
 
-The graph analysis is implemented in the `backend/architect` crate with the following modules:
+Linggen should:
 
-- **`graph.rs`**: Core data structures (`FileNode`, `Edge`, `EdgeKind`, `ProjectGraph`)
-- **`parser.rs`**: Tree-sitter based import extraction for Rust
-- **`resolver.rs`**: Module path to file path resolution
-- **`walker.rs`**: Project directory walker with ignore support
-- **`cache.rs`**: JSON-based graph caching with staleness detection
-- **`overrides.rs`**: User override model (hidden edges, manual edges, tags)
+- Shorten **onboarding time**.
+- Reduce **risk of unintended side-effects** from changes.
+- Provide a **single, living specification** that connects docs, structure, and code.
 
-### API Endpoints
+---
 
-#### Get Graph Status
+### 3. Core concept – System definition layer for LLMs
 
-```
-GET /api/sources/:source_id/graph/status
-```
+- Linggen maintains a **code-backed model of the system**:
+  - File/module dependency graph.
+  - Components/services and their responsibilities.
+  - Interfaces (endpoints, events, data models) and key constraints.
+- On top of this, users create **human-readable design docs** (markdown) and **lightweight structured specs** (YAML/JSON-like definitions).
+- Linggen can then **export LLM-ready briefs**, e.g.:
+  - "Implement `UserService` according to this spec and these dependencies."
+  - "Apply this schema change through all layers described in the spec."
 
-Response:
+LLMs remain the code generator; Linggen becomes the **source of truth for what should exist and how it should fit together**.
 
-```json
-{
-  "status": "ready" | "missing" | "stale" | "building",
-  "node_count": 150,
-  "edge_count": 89,
-  "built_at": "2024-01-15T10:30:00Z"
-}
-```
+---
 
-#### Get Graph Data
+### 4. Current product (v1) – File dependency graph
 
-```
-GET /api/sources/:source_id/graph
-GET /api/sources/:source_id/graph?folder=src/handlers
-GET /api/sources/:source_id/graph?focus=src/main.rs&hops=2
-```
+**Goal**: Give developers a fast, accurate way to see **how files and modules depend on each other**, and use that as the foundation for system specs.
 
-Response:
+- **Analysis**
 
-```json
-{
-  "project_id": "/path/to/project",
-  "nodes": [
-    {
-      "id": "src/main.rs",
-      "label": "main.rs",
-      "language": "rust",
-      "folder": "src"
-    }
-  ],
-  "edges": [
-    { "source": "src/main.rs", "target": "src/lib.rs", "kind": "import" }
-  ],
-  "built_at": "2024-01-15T10:30:00Z"
-}
-```
+  - Use Tree-sitter to build a **file-level dependency graph** for supported languages (Rust today; TS/JS, Go, Python next).
+  - Nodes: files/modules with metadata (`id`, `label`, `language`, `folder`).
+  - Edges: static "uses/imports" relationships (`import`, `use`, `mod`, etc.).
+  - Graphs are cached per source and can be rebuilt on demand.
 
-#### Rebuild Graph
+- **API & UI**
+  - Backend endpoints to get **graph status**, **graph data**, and **trigger rebuilds**.
+  - Frontend `GraphView` renders an Obsidian-like, zoomable dependency graph with:
+    - Search by file name.
+    - Filtering by folder.
+    - Hover/selection to show local neighborhoods and connections.
 
-```
-POST /api/sources/:source_id/graph/rebuild
-```
+This gives users a **live system map** they can trust before any higher-level spec or design work.
 
-Triggers a background rebuild of the graph. Returns immediately with status "building".
+---
 
-### Frontend Component
+### 5. Next steps (v2) – Design workspace & specs
 
-The graph view is implemented in `frontend/src/components/GraphView.tsx` using `react-force-graph-2d`.
+- **Design notes (markdown)**
 
-Features:
+  - Built-in editor for system / component design docs.
+  - Notes can link to graph nodes (files, folders, components) and vice versa.
 
-- **Search**: Find files by name
-- **Filter**: Filter by folder
-- **Hover**: Highlight neighbors
-- **Click**: Select node and show connections
-- **Zoom/Pan**: Navigate large graphs
+- **Lightweight structured specs**
 
-### Usage
+  - Simple schemas for components, interfaces, data models, and constraints.
+  - Stored alongside notes and linked to real code via the graph.
 
-1. **Index a local source** in Linggen
-2. **Open source details** from the Sources view
-3. **View the File Dependency Graph** section
-4. Use search, filters, and click interactions to explore
+- **LLM exports**
+  - Generate **prompt bundles / briefs** for specific components or views:
+    - Include structured spec + selected code context + relevant design notes.
+  - Designed to be pasted into Cursor/Claude today; later, integrate via APIs.
 
-### Limitations
+---
 
-- Only Rust files are analyzed in v1 (TypeScript/JavaScript planned)
-- Import resolution is best-effort and may miss some edges
-- Very large projects (1000+ files) may need filtering for good performance
+### 6. Non-goals (for now)
+
+- Linggen is **not** a full UML / enterprise modeling suite.
+- Linggen is **not** a general-purpose wiki or note app.
+- Linggen does **not** replace the IDE; it **guides** IDE+LLM work by providing a shared, structured understanding of the system.
+
+---
+
+### 7. Success criteria
+
+- Developers and architects **keep Linggen open** while reading, designing, or reviewing systems.
+- Teams start **from Linggen specs** when asking LLMs to implement or refactor features.
+- New engineers report that the **graph + design workspace** helped them understand a service materially faster than reading code alone.
