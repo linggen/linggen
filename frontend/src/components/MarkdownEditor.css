@@ -1,0 +1,59 @@
+/* MarkdownEditor specific styles */
+
+/* Force light text in the editor textarea (left panel) */
+.markdown-editor-container .w-md-editor-text-pre,
+.markdown-editor-container .w-md-editor-text-input,
+.markdown-editor-container .w-md-editor-text-pre>code,
+.markdown-editor-container .w-md-editor-text>.w-md-editor-text-pre {
+    color: #e2e8f0 !important;
+    caret-color: #e2e8f0 !important;
+}
+
+/* Editor text area wrapper */
+.markdown-editor-container .w-md-editor-text {
+    color: #e2e8f0 !important;
+}
+
+/* Textarea itself */
+.markdown-editor-container .w-md-editor-text-input {
+    color: #e2e8f0 !important;
+    -webkit-text-fill-color: #e2e8f0 !important;
+}
+
+/* Code mirror styling within editor */
+.markdown-editor-container .w-md-editor-area .w-md-editor-text-pre {
+    color: #e2e8f0 !important;
+}
+
+/* Editor background */
+.markdown-editor-container .w-md-editor {
+    background: var(--bg-content, #1e2433) !important;
+    color: #e2e8f0 !important;
+}
+
+/* Editor content area */
+.markdown-editor-container .w-md-editor-content {
+    background: var(--bg-content, #1e2433) !important;
+}
+
+/* Editor toolbar */
+.markdown-editor-container .w-md-editor-toolbar {
+    background: rgba(0, 0, 0, 0.2) !important;
+    border-bottom: 1px solid var(--border-color, #333) !important;
+}
+
+/* Toolbar buttons */
+.markdown-editor-container .w-md-editor-toolbar li>button {
+    color: var(--text-secondary, #94a3b8) !important;
+}
+
+.markdown-editor-container .w-md-editor-toolbar li>button:hover {
+    color: var(--text-primary, #e2e8f0) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Preview panel */
+.markdown-editor-container .wmde-markdown {
+    background: transparent !important;
+    color: var(--text-primary, #e2e8f0) !important;
+}

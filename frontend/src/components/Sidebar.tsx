@@ -178,17 +178,12 @@ export function Sidebar({
     };
 
     const handleConfirmDelete = async () => {
-        alert('handleConfirmDelete CALLED');
-        console.log('handleConfirmDelete called', deleteConfirmation);
         if (!deleteConfirmation) return;
         const { sourceId, notePath } = deleteConfirmation;
 
         try {
-            console.log('Calling deleteNote API', sourceId, notePath);
             await deleteNote(sourceId, notePath);
-            console.log('deleteNote succeeded');
             await loadNotes(sourceId);
-            console.log('loadNotes completed');
 
             // Deselect if currently selected
             if (selectedNotePath === notePath && selectedSourceId === sourceId) {

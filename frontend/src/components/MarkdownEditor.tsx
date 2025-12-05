@@ -1,10 +1,103 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import MDEditor from '@uiw/react-md-editor';
+import mermaid from 'mermaid';
 import { getNote, saveNote } from '../api';
+import './MarkdownEditor.css';
+
+// Initialize mermaid with dark theme
+mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    securityLevel: 'loose',
+});
+
+// Mermaid renderer component
+const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
+    const [svg, setSvg] = useState<string>('');
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const renderMermaid = async () => {
+            try {
+                // Clean up the code - trim whitespace and normalize line endings
+                const cleanCode = code
+                    .trim()
+                    .replace(/\r\n/g, '\n')
+                    .replace(/^\s+/gm, (match) => match.replace(/\t/g, '  ')); // normalize tabs
+
+                const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
+                const { svg } = await mermaid.render(id, cleanCode);
+                setSvg(svg);
+                setError(null);
+            } catch (err) {
+                console.error('Mermaid render error:', err);
+                setError(err instanceof Error ? err.message : 'Failed to render diagram');
+            }
+        };
+
+        if (code && code.trim()) {
+            renderMermaid();
+        }
+    }, [code]);
+
+    if (error) {
+        return (
+            <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '4px',
+                padding: '8px 12px',
+                color: '#ef4444',
+                fontSize: '0.85rem'
+            }}>
+                Mermaid Error: {error}
+            </div>
+        );
+    }
+
+    return <div dangerouslySetInnerHTML={{ __html: svg }} style={{ display: 'flex', justifyContent: 'center' }} />;
+};
+
+// Helper function to extract text from React children
+const getTextFromChildren = (children: any): string => {
+    if (typeof children === 'string') {
+        return children;
+    }
+    if (Array.isArray(children)) {
+        return children.map(getTextFromChildren).join('');
+    }
+    if (children?.props?.children) {
+        return getTextFromChildren(children.props.children);
+    }
+    if (children?.props?.node?.value) {
+        return children.props.node.value;
+    }
+    return '';
+};
+
+// Custom code block renderer that handles mermaid
+const CodeBlock = ({ inline, children, className, node, ...props }: any) => {
+    // Try to get raw value from the AST node first, then fallback to extracting from children
+    const code = node?.children?.[0]?.value || getTextFromChildren(children);
+    const cleanCode = code.replace(/\n$/, '');
+
+    const match = /language-(\w+)/.exec(className || '');
+    const language = match ? match[1] : '';
+
+    if (!inline && language === 'mermaid' && cleanCode) {
+        return <MermaidBlock code={cleanCode} />;
+    }
+
+    return (
+        <code className={className} {...props}>
+            {children}
+        </code>
+    );
+};
 
 interface MarkdownEditorProps {
     sourceId: string;
-    notePath: string; // Relative path, e.g., "Note.md"
+    notePath: string;
     onClose?: () => void;
 }
 
@@ -34,7 +127,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ sourceId, notePa
     }, [sourceId, notePath]);
 
     // Save handler
-    const handleSave = async () => {
+    const handleSave = useCallback(async () => {
         if (!dirty) return;
         setSaving(true);
         try {
@@ -43,14 +136,23 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ sourceId, notePa
             setDirty(false);
         } catch (err) {
             console.error("Failed to save note:", err);
-            // Optionally show toast
         } finally {
             setSaving(false);
         }
-    };
+    }, [dirty, sourceId, notePath, value]);
 
-    // Auto-save debounce could go here, or manual save for now.
-    // Let's implement Cmd+S support
+    // Autosave with debounce (1.5 seconds after typing stops)
+    useEffect(() => {
+        if (!dirty) return;
+
+        const timer = setTimeout(() => {
+            handleSave();
+        }, 1500);
+
+        return () => clearTimeout(timer);
+    }, [value, dirty, handleSave]);
+
+    // Cmd+S support
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -60,14 +162,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ sourceId, notePa
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [value, dirty, sourceId, notePath]); // Dep list important for closure
+    }, [handleSave]);
 
     if (loading) {
         return <div className="editor-loading">Loading {notePath}...</div>;
     }
 
     return (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-content)', position: 'relative' }}>
+        <div className="markdown-editor-container" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-content)', position: 'relative' }}>
             {/* Header / Toolbar */}
             <div style={{
                 padding: '8px 16px',
@@ -85,7 +187,6 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ sourceId, notePa
                     ) : lastSaved ? (
                         <span>Saved {lastSaved.toLocaleTimeString()}</span>
                     ) : null}
-                    {/* Add more toolbar items if needed */}
                 </div>
             </div>
 
@@ -101,8 +202,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ sourceId, notePa
                     visibleDragbar={false}
                     preview="live"
                     style={{ background: 'var(--bg-content)', border: 'none', color: 'var(--text-primary)' }}
+                    previewOptions={{
+                        components: {
+                            code: CodeBlock
+                        }
+                    }}
                 />
             </div>
         </div>
     );
 };
+

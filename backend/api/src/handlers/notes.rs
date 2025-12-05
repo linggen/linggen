@@ -257,10 +257,7 @@ pub async fn delete_note(
     State(state): State<Arc<AppState>>,
     Path((source_id, note_path)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    info!("========== DELETE NOTE REQUEST RECEIVED ==========");
-    info!("Source ID: {}", source_id);
-    info!("Note Path: {}", note_path);
-    info!("=================================================");
+    info!("Deleting note {} for source {}", note_path, source_id);
 
     // Get the source to find its path
     let source = state.metadata_store.get_source(&source_id).map_err(|e| {
