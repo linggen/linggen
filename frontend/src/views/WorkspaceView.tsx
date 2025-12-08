@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { type Resource } from '../api';
 import { GraphView } from '../components/GraphView';
-import { MarkdownEditor } from '../components/MarkdownEditor';
+import { CM6Editor } from '../components/CM6Editor';
 
 interface WorkspaceViewProps {
     sourceId: string;
@@ -73,7 +73,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const isIndexing = indexingResourceId === currentSource.id;
 
     return (
-        <div className="workspace-view" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        // Root container for the right-hand panel. Let it scroll vertically
+        // so the workspace header stays attached to this panel while the
+        // editor/graph content can overflow.
+        <div className="workspace-view" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto' }}>
             {/* Header / Stats Strip */}
             <div className="workspace-header" style={{
                 padding: '12px 24px',
@@ -232,10 +235,11 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             </div>
 
             {/* Main Content Area: Conditional Render */}
+            {/* Right side handles its own vertical scroll; sidebar scrolls independently. */}
             <div className="workspace-body" style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
                 {selectedNotePath ? (
                     <div className="workspace-editor" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        <MarkdownEditor sourceId={sourceId} notePath={selectedNotePath} />
+                        <CM6Editor sourceId={sourceId} notePath={selectedNotePath} />
                     </div>
                 ) : (
                     <div className="workspace-graph" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
