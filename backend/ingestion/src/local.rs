@@ -124,6 +124,21 @@ impl Ingestor for LocalIngestor {
 
                         // Extract text from file (supports PDF, DOCX, and plain text)
                         if let Some(content) = extract_text(path) {
+                            // Get filesystem modification time for incremental indexing
+                            let fs_mtime = std::fs::metadata(path)
+                                .and_then(|m| m.modified())
+                                .ok()
+                                .and_then(|t| {
+                                    t.duration_since(std::time::UNIX_EPOCH)
+                                        .ok()
+                                        .map(|d| d.as_secs() as i64)
+                                })
+                                .unwrap_or(0);
+
+                            let file_size = std::fs::metadata(path)
+                                .map(|m| m.len() as usize)
+                                .unwrap_or(0);
+
                             let doc = Document {
                                 id: Uuid::new_v4().to_string(),
                                 source_type: SourceType::Local,
@@ -131,6 +146,8 @@ impl Ingestor for LocalIngestor {
                                 content,
                                 metadata: serde_json::json!({
                                     "file_path": relative_path,
+                                    "fs_mtime": fs_mtime,
+                                    "file_size": file_size,
                                 }),
                             };
                             documents.push(doc);

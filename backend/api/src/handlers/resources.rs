@@ -231,6 +231,11 @@ pub async fn remove_resource(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Delete file index metadata for this source
+    if let Err(e) = state.metadata_store.remove_all_file_index_infos(&req.id) {
+        tracing::warn!("Failed to remove file index metadata for source {}: {}", req.id, e);
+    }
+
     Ok(Json(RemoveResourceResponse {
         success: true,
         id: req.id,

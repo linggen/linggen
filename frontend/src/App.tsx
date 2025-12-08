@@ -12,6 +12,7 @@ import {
   updateResourcePatterns,
   type Resource,
   type ResourceType,
+  type IndexMode,
 } from './api'
 import { WorkspaceView } from './views/WorkspaceView'
 import { SourcesView } from './views/SourcesView'
@@ -410,14 +411,14 @@ function App() {
     }
   }, [currentJobId, status, startPollingJob])
 
-  const handleIndexResource = async (resource: Resource) => {
+  const handleIndexResource = async (resource: Resource, mode: IndexMode = 'incremental') => {
     setIndexingResourceId(resource.id)
-    setIndexingProgress('Indexing...')
+    setIndexingProgress(mode === 'full' ? 'Full reindex...' : 'Updating...')
     setStatus('indexing')
 
     try {
-      // Start indexing via new API
-      const result = await indexSource(resource.id)
+      // Start indexing via API with mode
+      const result = await indexSource(resource.id, mode)
       const jobId = result.job_id
       setCurrentJobId(jobId) // Track current job (this will trigger the polling useEffect)
 

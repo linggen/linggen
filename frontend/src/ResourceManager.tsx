@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { addResource, listResources, removeResource, renameResource, uploadFile, type Resource, type ResourceType } from './api'
+import { addResource, listResources, removeResource, renameResource, uploadFile, type Resource, type ResourceType, type IndexMode } from './api'
 
 interface ResourceManagerProps {
-  onIndexResource?: (resource: Resource) => void
+  onIndexResource?: (resource: Resource, mode?: IndexMode) => void
   indexingResourceId?: string | null
   indexingProgress?: string | null
   onCancelJob?: () => void
@@ -559,8 +559,15 @@ export function ResourceManager({
                             <button
                               type="button"
                               className="btn-action btn-index"
-                              onClick={() => onIndexResource?.(resource)}
+                              onClick={(e) => {
+                                // Shift+click for full reindex, normal click for incremental
+                                const mode = e.shiftKey ? 'full' : 'incremental';
+                                onIndexResource?.(resource, mode);
+                              }}
                               disabled={!onIndexResource || indexingResourceId === resource.id}
+                              title={resource.latest_job?.status === 'Completed' 
+                                ? 'Update changed files (Shift+Click for full reindex)' 
+                                : 'Index all files'}
                             >
                               {resource.latest_job?.status === 'Completed' ? 'Update' : 'Index'}
                             </button>

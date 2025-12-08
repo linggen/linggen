@@ -1,17 +1,32 @@
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
 use ingestion::{GitIngestor, Ingestor, LocalIngestor, WebIngestor};
-use linggen_core::{Chunk, IndexingJob, JobStatus, SourceConfig, SourceType};
+use linggen_core::{Chunk, FileIndexInfo, IndexingJob, JobStatus, SourceConfig, SourceType};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use super::index::AppState;
 
+/// Indexing mode: full rebuild or incremental update
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexMode {
+    /// Full reindex: delete all existing vectors for this source and reindex everything
+    Full,
+    /// Incremental: only reindex files that have changed since last index
+    #[default]
+    Incremental,
+}
+
 #[derive(Deserialize)]
 pub struct IndexSourceRequest {
     pub source_id: String,
+    /// Indexing mode: "full" or "incremental" (default: incremental)
+    #[serde(default)]
+    pub mode: IndexMode,
 }
 
 #[derive(Serialize)]
@@ -83,9 +98,10 @@ pub async fn index_source(
     let job_id_clone = job_id.clone();
     let source_clone = source.clone();
     let initial_job = job.clone();
+    let mode = req.mode;
 
     tokio::spawn(async move {
-        run_indexing_job(state_clone, job_id_clone, source_clone, initial_job).await;
+        run_indexing_job(state_clone, job_id_clone, source_clone, initial_job, mode).await;
     });
 
     Ok(Json(IndexSourceResponse {
@@ -100,6 +116,7 @@ async fn run_indexing_job(
     job_id: String,
     source: SourceConfig,
     initial_job: IndexingJob,
+    mode: IndexMode,
 ) {
     let mut running_job = initial_job.clone();
     let source_path = source.path.clone();
@@ -107,7 +124,11 @@ async fn run_indexing_job(
     // 0. Acquire permit from JobManager (this blocks if queue is full)
     tracing::info!("Job {} waiting for execution permit...", job_id);
     let _permit = state.job_manager.acquire().await;
-    tracing::info!("Job {} acquired permit, starting execution", job_id);
+    tracing::info!(
+        "Job {} acquired permit, starting execution (mode: {:?})",
+        job_id,
+        mode
+    );
 
     // Update status to Running
     running_job.status = JobStatus::Running;
@@ -187,19 +208,66 @@ async fn run_indexing_job(
     running_job.total_size_bytes = Some(total_size_bytes);
     let _ = state.metadata_store.update_job(&running_job);
 
+    // For incremental mode, load existing file index metadata
+    let existing_file_index: HashMap<String, FileIndexInfo> = if mode == IndexMode::Incremental {
+        match state
+            .metadata_store
+            .get_file_index_map(&initial_job.source_id)
+        {
+            Ok(map) => {
+                tracing::info!(
+                    "📋 Loaded {} existing file index entries for incremental update",
+                    map.len()
+                );
+                map
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to load file index map, falling back to full index: {}",
+                    e
+                );
+                HashMap::new()
+            }
+        }
+    } else {
+        // Full mode: delete all existing vectors for this source first
+        tracing::info!("🗑️  Full mode: deleting existing vectors for source...");
+        if let Err(e) = state
+            .vector_store
+            .delete_by_source(&initial_job.source_id)
+            .await
+        {
+            tracing::error!("Failed to delete existing vectors: {}", e);
+        }
+        // Also clear file index metadata
+        if let Err(e) = state
+            .metadata_store
+            .remove_all_file_index_infos(&initial_job.source_id)
+        {
+            tracing::error!("Failed to clear file index metadata: {}", e);
+        }
+        HashMap::new()
+    };
+
+    // Track which document_ids we see in current ingestion (for detecting deleted files)
+    let mut seen_document_ids: HashSet<String> = HashSet::new();
+
     let mut total_chunks = 0;
     let mut successful_files = 0;
+    let mut skipped_files = 0;
     let mut failed_files = 0;
 
     // Batch configuration
     const BATCH_SIZE: usize = 50;
     let mut chunk_buffer: Vec<Chunk> = Vec::new();
+    let mut file_index_updates: Vec<FileIndexInfo> = Vec::new();
     let mut last_write_time = std::time::Instant::now();
 
     tracing::info!(
-        "🔄 Starting to process {} files for job {}",
+        "🔄 Starting to process {} files for job {} (mode: {:?})",
         files_count,
-        job_id
+        job_id,
+        mode
     );
 
     // 2. Process documents
@@ -215,6 +283,53 @@ async fn run_indexing_job(
         .is_some()
         {
             return;
+        }
+
+        // Derive document_id from metadata
+        let document_id: String = doc
+            .metadata
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| doc.source_url.clone());
+
+        seen_document_ids.insert(document_id.clone());
+
+        // Get mtime and file_size from metadata
+        let fs_mtime = doc
+            .metadata
+            .get("fs_mtime")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let file_size = doc
+            .metadata
+            .get("file_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(doc.content.len() as u64) as usize;
+
+        // In incremental mode, check if file has changed
+        if mode == IndexMode::Incremental {
+            if let Some(existing_info) = existing_file_index.get(&document_id) {
+                if existing_info.last_indexed_mtime >= fs_mtime {
+                    // File hasn't changed, skip it
+                    skipped_files += 1;
+                    total_chunks += existing_info.chunk_count; // Count existing chunks in stats
+                    tracing::debug!(
+                        "⏭️  Skipping unchanged file: {} (mtime {} <= {})",
+                        document_id,
+                        fs_mtime,
+                        existing_info.last_indexed_mtime
+                    );
+                    continue;
+                } else {
+                    tracing::info!(
+                        "📝 File changed, will reindex: {} (mtime {} > {})",
+                        document_id,
+                        fs_mtime,
+                        existing_info.last_indexed_mtime
+                    );
+                }
+            }
         }
 
         let file_size_kb = doc.content.len() as f64 / 1024.0;
@@ -286,25 +401,26 @@ async fn run_indexing_job(
                 continue;
             }
         };
+        drop(model_guard); // Release the lock early
+
         let embed_time = embed_start.elapsed();
         tracing::debug!(
             "  Generated {} embeddings in {:.2}ms ({:.2}ms per chunk)",
             embeddings.len(),
             embed_time.as_secs_f64() * 1000.0,
-            embed_time.as_secs_f64() * 1000.0 / embeddings.len() as f64
+            embed_time.as_secs_f64() * 1000.0 / embeddings.len().max(1) as f64
         );
 
-        // Derive a stable document identifier for pattern matching.
-        // Prefer the logical file path from metadata (used for glob patterns),
-        // fall back to the source_url or the document's UUID if missing.
-        let document_id: String = doc
-            .metadata
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| doc.source_url.clone());
+        // In incremental mode, delete old chunks for this file before adding new ones
+        if mode == IndexMode::Incremental && existing_file_index.contains_key(&document_id) {
+            tracing::debug!("  🗑️  Deleting old chunks for: {}", document_id);
+            if let Err(e) = state.vector_store.delete_by_document(&document_id).await {
+                tracing::warn!("Failed to delete old chunks for {}: {}", document_id, e);
+            }
+        }
 
         // Create chunks – all chunks from the same file share the same document_id
+        let chunk_count = chunks_text.len();
         for (text, embedding) in chunks_text.iter().zip(embeddings.iter()) {
             chunk_buffer.push(Chunk {
                 id: Uuid::new_v4(),
@@ -316,7 +432,15 @@ async fn run_indexing_job(
             });
         }
 
-        total_chunks += chunks_text.len();
+        // Record file index info for later batch update
+        file_index_updates.push(FileIndexInfo {
+            document_id: document_id.clone(),
+            last_indexed_mtime: fs_mtime,
+            chunk_count,
+            file_size,
+        });
+
+        total_chunks += chunk_count;
         successful_files += 1;
 
         // Batch write
@@ -363,6 +487,17 @@ async fn run_indexing_job(
                     tracing::error!("LanceDB batch write error: {} - Continuing...", e);
                 }
             }
+
+            // Also batch update file index metadata
+            if !file_index_updates.is_empty() {
+                if let Err(e) = state
+                    .metadata_store
+                    .set_file_index_infos_batch(&initial_job.source_id, &file_index_updates)
+                {
+                    tracing::warn!("Failed to update file index metadata: {}", e);
+                }
+                file_index_updates.clear();
+            }
         }
 
         // Update progress
@@ -373,6 +508,67 @@ async fn run_indexing_job(
                 tracing::warn!("Failed to update job progress: {}", e);
             }
         }
+    }
+
+    // Handle remaining file index updates
+    if !file_index_updates.is_empty() {
+        if let Err(e) = state
+            .metadata_store
+            .set_file_index_infos_batch(&initial_job.source_id, &file_index_updates)
+        {
+            tracing::warn!("Failed to update remaining file index metadata: {}", e);
+        }
+    }
+
+    // In incremental mode, detect and remove deleted files
+    let mut deleted_files = 0;
+    let mut deleted_chunks = 0;
+    if mode == IndexMode::Incremental && !existing_file_index.is_empty() {
+        tracing::info!("🔍 Checking for deleted files...");
+        for (document_id, info) in &existing_file_index {
+            if !seen_document_ids.contains(document_id) {
+                tracing::info!("🗑️  File deleted, removing vectors: {}", document_id);
+
+                // Delete vectors for this file
+                if let Err(e) = state.vector_store.delete_by_document(document_id).await {
+                    tracing::warn!(
+                        "Failed to delete vectors for removed file {}: {}",
+                        document_id,
+                        e
+                    );
+                } else {
+                    deleted_chunks += info.chunk_count;
+                }
+
+                // Remove file index entry
+                if let Err(e) = state
+                    .metadata_store
+                    .remove_file_index_info(&initial_job.source_id, document_id)
+                {
+                    tracing::warn!("Failed to remove file index for {}: {}", document_id, e);
+                }
+
+                deleted_files += 1;
+            }
+        }
+        if deleted_files > 0 {
+            tracing::info!(
+                "✓ Removed {} deleted files ({} chunks)",
+                deleted_files,
+                deleted_chunks
+            );
+        }
+    }
+
+    // Log summary for incremental mode
+    if mode == IndexMode::Incremental {
+        tracing::info!(
+            "📊 Incremental summary: {} changed, {} skipped, {} deleted, {} failed",
+            successful_files,
+            skipped_files,
+            deleted_files,
+            failed_files
+        );
     }
 
     // 3. Complete job
@@ -484,9 +680,44 @@ async fn run_indexing_job(
     // 5. Save stats to source config in Redb
     tracing::info!("💾 Saving stats to source config...");
     if let Ok(Some(mut source)) = state.metadata_store.get_source(&initial_job.source_id) {
-        source.chunk_count = Some(total_chunks);
-        source.file_count = Some(successful_files);
-        source.total_size_bytes = completed_job.total_size_bytes;
+        // For incremental mode, compute totals from file index metadata for accuracy
+        if mode == IndexMode::Incremental {
+            match state
+                .metadata_store
+                .list_file_index_infos(&initial_job.source_id)
+            {
+                Ok(file_infos) => {
+                    let total_file_count = file_infos.len();
+                    let total_chunk_count: usize = file_infos.iter().map(|f| f.chunk_count).sum();
+                    let total_file_size: usize = file_infos.iter().map(|f| f.file_size).sum();
+
+                    source.file_count = Some(total_file_count);
+                    source.chunk_count = Some(total_chunk_count);
+                    source.total_size_bytes = Some(total_file_size);
+
+                    tracing::info!(
+                        "📊 Computed stats from file index: {} files, {} chunks, {} bytes",
+                        total_file_count,
+                        total_chunk_count,
+                        total_file_size
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to compute stats from file index, using job stats: {}",
+                        e
+                    );
+                    source.chunk_count = Some(total_chunks);
+                    source.file_count = Some(successful_files + skipped_files);
+                    source.total_size_bytes = completed_job.total_size_bytes;
+                }
+            }
+        } else {
+            // Full mode: use the job stats directly
+            source.chunk_count = Some(total_chunks);
+            source.file_count = Some(successful_files);
+            source.total_size_bytes = completed_job.total_size_bytes;
+        }
 
         if let Err(e) = state.metadata_store.update_source(&source) {
             tracing::error!("Failed to save stats to source: {}", e);

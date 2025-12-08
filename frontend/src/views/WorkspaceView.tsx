@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { type Resource } from '../api';
+import { type Resource, type IndexMode } from '../api';
 import { GraphView } from '../components/GraphView';
 import { CM6Editor } from '../components/CM6Editor';
 
@@ -8,7 +8,7 @@ interface WorkspaceViewProps {
     source?: Resource;
     onIndexComplete?: () => void;
     // New props for indexing
-    onIndexResource?: (resource: Resource) => void;
+    onIndexResource?: (resource: Resource, mode?: IndexMode) => void;
     indexingResourceId?: string | null;
     indexingProgress?: string | null;
     onUpdateSource?: (id: string, name: string, include: string[], exclude: string[]) => Promise<void>;
@@ -218,8 +218,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     {/* Actions */}
                     <button
                         className="btn-action"
-                        onClick={() => onIndexResource?.(currentSource)}
+                        onClick={(e) => {
+                            // Shift+click for full reindex, normal click for incremental
+                            const mode = e.shiftKey ? 'full' : 'incremental';
+                            onIndexResource?.(currentSource, mode);
+                        }}
                         disabled={isIndexing}
+                        title="Update Index (Shift+Click for full reindex)"
                         style={{
                             padding: '6px 12px',
                             background: isIndexing ? 'var(--bg-sidebar)' : 'var(--accent)',
@@ -229,7 +234,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             fontSize: '0.85rem'
                         }}
                     >
-                        {isIndexing ? 'Indexing...' : 'Update Index'}
+                        {isIndexing ? 'Indexing...' : 'Update'}
                     </button>
                 </div>
             </div>

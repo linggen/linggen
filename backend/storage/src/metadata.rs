@@ -1,5 +1,5 @@
 use anyhow::Result;
-use linggen_core::{IndexingJob, SourceConfig};
+use linggen_core::{FileIndexInfo, IndexingJob, SourceConfig};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +13,8 @@ const SOURCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sources
 const JOBS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("jobs");
 const PREFERENCES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("preferences");
 const PROFILE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("profile");
+/// Per-file index metadata table. Key format: "{source_id}:{document_id}"
+const FILE_INDEX_TABLE: TableDefinition<&str, &str> = TableDefinition::new("file_index");
 
 pub struct MetadataStore {
     db: Arc<Database>,
@@ -77,6 +79,7 @@ impl MetadataStore {
             let _ = write_txn.open_table(JOBS_TABLE)?;
             let _ = write_txn.open_table(PREFERENCES_TABLE)?;
             let _ = write_txn.open_table(PROFILE_TABLE)?;
+            let _ = write_txn.open_table(FILE_INDEX_TABLE)?;
         }
         write_txn.commit()?;
 
@@ -312,6 +315,140 @@ impl MetadataStore {
         Ok(())
     }
 
+    // Per-file Index Metadata
+
+    /// Build the composite key for file index table: "{source_id}:{document_id}"
+    fn file_index_key(source_id: &str, document_id: &str) -> String {
+        format!("{}:{}", source_id, document_id)
+    }
+
+    /// Get file index info for a specific file in a source
+    pub fn get_file_index_info(
+        &self,
+        source_id: &str,
+        document_id: &str,
+    ) -> Result<Option<FileIndexInfo>> {
+        let key = Self::file_index_key(source_id, document_id);
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(FILE_INDEX_TABLE)?;
+
+        if let Some(value) = table.get(key.as_str())? {
+            let info: FileIndexInfo = serde_json::from_str(value.value())?;
+            Ok(Some(info))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set/update file index info for a specific file
+    pub fn set_file_index_info(
+        &self,
+        source_id: &str,
+        info: &FileIndexInfo,
+    ) -> Result<()> {
+        let key = Self::file_index_key(source_id, &info.document_id);
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FILE_INDEX_TABLE)?;
+            let json = serde_json::to_string(info)?;
+            table.insert(key.as_str(), json.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Set multiple file index infos in a single transaction (more efficient for bulk updates)
+    pub fn set_file_index_infos_batch(
+        &self,
+        source_id: &str,
+        infos: &[FileIndexInfo],
+    ) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FILE_INDEX_TABLE)?;
+            for info in infos {
+                let key = Self::file_index_key(source_id, &info.document_id);
+                let json = serde_json::to_string(info)?;
+                table.insert(key.as_str(), json.as_str())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Remove file index info for a specific file
+    pub fn remove_file_index_info(&self, source_id: &str, document_id: &str) -> Result<()> {
+        let key = Self::file_index_key(source_id, document_id);
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FILE_INDEX_TABLE)?;
+            table.remove(key.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// List all file index infos for a source
+    pub fn list_file_index_infos(&self, source_id: &str) -> Result<Vec<FileIndexInfo>> {
+        let prefix = format!("{}:", source_id);
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(FILE_INDEX_TABLE)?;
+
+        let mut infos = Vec::new();
+        for result in table.iter()? {
+            let (key, value) = result?;
+            if key.value().starts_with(&prefix) {
+                let info: FileIndexInfo = serde_json::from_str(value.value())?;
+                infos.push(info);
+            }
+        }
+        Ok(infos)
+    }
+
+    /// Get a map of document_id -> FileIndexInfo for efficient lookup during incremental indexing
+    pub fn get_file_index_map(
+        &self,
+        source_id: &str,
+    ) -> Result<std::collections::HashMap<String, FileIndexInfo>> {
+        let infos = self.list_file_index_infos(source_id)?;
+        let map = infos
+            .into_iter()
+            .map(|info| (info.document_id.clone(), info))
+            .collect();
+        Ok(map)
+    }
+
+    /// Remove all file index infos for a source (e.g., when removing a source)
+    pub fn remove_all_file_index_infos(&self, source_id: &str) -> Result<()> {
+        let prefix = format!("{}:", source_id);
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FILE_INDEX_TABLE)?;
+            // Collect keys to remove (can't remove while iterating)
+            let keys: Vec<String> = {
+                let read_table = write_txn.open_table(FILE_INDEX_TABLE)?;
+                read_table
+                    .iter()?
+                    .filter_map(|r| {
+                        r.ok().and_then(|(k, _)| {
+                            let key = k.value().to_string();
+                            if key.starts_with(&prefix) {
+                                Some(key)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect()
+            };
+            for key in keys {
+                table.remove(key.as_str())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Clear all user data from all tables, but preserve model initialization state
     /// This keeps: model_initialized, init_progress, app_settings (llm_enabled, etc.)
     pub fn clear_all(&self) -> Result<()> {
@@ -376,6 +513,16 @@ impl MetadataStore {
                 .collect::<Result<Vec<_>, _>>()?;
             for key in keys {
                 profile_table.remove(key.as_str())?;
+            }
+
+            // Clear file_index table completely
+            let mut file_index_table = write_txn.open_table(FILE_INDEX_TABLE)?;
+            let keys: Vec<String> = file_index_table
+                .iter()?
+                .map(|r| r.map(|(k, _)| k.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for key in keys {
+                file_index_table.remove(key.as_str())?;
             }
         }
         write_txn.commit()?;

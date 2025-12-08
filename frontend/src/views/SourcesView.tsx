@@ -1,7 +1,7 @@
-import type { Resource } from '../api'
+import type { Resource, IndexMode } from '../api'
 
 interface SourcesViewProps {
-    onIndexResource?: (resource: Resource) => void
+    onIndexResource?: (resource: Resource, mode?: IndexMode) => void
     indexingResourceId?: string | null
     indexingProgress?: string | null
     onCancelJob?: () => void

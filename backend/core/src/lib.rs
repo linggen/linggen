@@ -80,3 +80,17 @@ pub struct IndexingJob {
     pub total_size_bytes: Option<usize>, // Total size in bytes
     pub error: Option<String>,
 }
+
+/// Per-file index metadata for incremental updates.
+/// Tracks when each file was last indexed so we can detect changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileIndexInfo {
+    /// The document_id (typically the relative file path within the source)
+    pub document_id: String,
+    /// Filesystem modification time at last indexing (Unix timestamp in seconds)
+    pub last_indexed_mtime: i64,
+    /// Number of chunks created for this file
+    pub chunk_count: usize,
+    /// File size in bytes at last indexing
+    pub file_size: usize,
+}

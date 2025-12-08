@@ -44,8 +44,12 @@ function getApiBase(): string {
 
 const API_BASE = getApiBase();
 
+/** Indexing mode: "full" rebuilds everything, "incremental" only updates changed files */
+export type IndexMode = 'full' | 'incremental';
+
 export interface IndexSourceRequest {
     source_id: string;
+    mode?: IndexMode;
 }
 
 export interface IndexSourceResponse {
@@ -54,13 +58,18 @@ export interface IndexSourceResponse {
     chunks_created: number;
 }
 
-export async function indexSource(sourceId: string): Promise<IndexSourceResponse> {
+/**
+ * Index a source with optional mode.
+ * @param sourceId The source ID to index
+ * @param mode "incremental" (default) only indexes changed files, "full" rebuilds everything
+ */
+export async function indexSource(sourceId: string, mode: IndexMode = 'incremental'): Promise<IndexSourceResponse> {
     const response = await fetch(`${API_BASE}/api/index_source`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ source_id: sourceId }),
+        body: JSON.stringify({ source_id: sourceId, mode }),
     });
 
     if (!response.ok) {
