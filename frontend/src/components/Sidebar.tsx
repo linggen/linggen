@@ -1,6 +1,5 @@
 import {
     FolderIcon,
-    ChatBubbleLeftRightIcon,
     ClockIcon,
     Cog6ToothIcon,
     FolderPlusIcon,
@@ -11,7 +10,7 @@ import {
     TrashIcon
 } from '@heroicons/react/24/outline'
 import { useState, useEffect } from 'react';
-import { type Resource, saveNote, listNotes, renameNote, deleteNote, type Note } from '../api'
+import { type Resource, saveNote, listNotes, renameNote, deleteNote, removeResource, type Note } from '../api'
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
 export type View = 'sources' | 'activity' | 'assistant' | 'settings'
@@ -34,6 +33,11 @@ interface ContextMenuState {
     notePath?: string;
 }
 
+interface DeleteSourceConfirmation {
+    sourceId: string;
+    sourceName: string;
+}
+
 export function Sidebar({
     currentView,
     onChangeView,
@@ -49,6 +53,7 @@ export function Sidebar({
     // renamingNote: { sourceId, oldPath }
     const [renamingNote, setRenamingNote] = useState<{ sourceId: string, oldPath: string } | null>(null);
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ sourceId: string, notePath: string } | null>(null);
+    const [deleteSourceConfirmation, setDeleteSourceConfirmation] = useState<DeleteSourceConfirmation | null>(null);
     const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
 
@@ -201,6 +206,48 @@ export function Sidebar({
         const { sourceId } = contextMenu;
         setContextMenu(null);
         startCreatingNote(sourceId);
+    };
+
+    const handleRemoveSource = () => {
+        if (!contextMenu || contextMenu.notePath) return; // Only for sources, not notes
+        const { sourceId } = contextMenu;
+        const resource = resources.find(r => r.id === sourceId);
+        setContextMenu(null);
+        
+        if (resource) {
+            setDeleteSourceConfirmation({
+                sourceId,
+                sourceName: resource.name
+            });
+        }
+    };
+
+    const handleConfirmRemoveSource = async () => {
+        if (!deleteSourceConfirmation) return;
+        const { sourceId } = deleteSourceConfirmation;
+
+        try {
+            await removeResource(sourceId);
+            
+            // Deselect if currently selected
+            if (selectedSourceId === sourceId) {
+                onSelectSource?.(null);
+            }
+            
+            // Collapse if expanded
+            if (expandedSources.has(sourceId)) {
+                const newExpanded = new Set(expandedSources);
+                newExpanded.delete(sourceId);
+                setExpandedSources(newExpanded);
+            }
+            
+            // Note: The parent App.tsx will re-fetch resources automatically
+        } catch (err) {
+            console.error("Failed to remove source:", err);
+            alert(`Failed to remove source: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setDeleteSourceConfirmation(null);
+        }
     };
 
     const handleHeaderAddMarkdown = () => {
@@ -527,7 +574,7 @@ export function Sidebar({
                         icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
                         onClick={handleAddMarkdown}
                     />
-                    {contextMenu.notePath && (
+                    {contextMenu.notePath ? (
                         <>
                             <ContextMenuItem
                                 label="Rename"
@@ -541,11 +588,18 @@ export function Sidebar({
                                 danger={true}
                             />
                         </>
+                    ) : (
+                        <ContextMenuItem
+                            label="Remove Source"
+                            icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                            onClick={handleRemoveSource}
+                            danger={true}
+                        />
                     )}
                 </ContextMenu>
             )}
 
-            {/* Delete Confirmation Modal */}
+            {/* Delete Note Confirmation Modal */}
             {deleteConfirmation && (
                 <div
                     style={{
@@ -626,6 +680,108 @@ export function Sidebar({
                                 }}
                             >
                                 Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Remove Source Confirmation Modal */}
+            {deleteSourceConfirmation && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        pointerEvents: 'auto'
+                    }}
+                    onClick={(e) => {
+                        // Close on backdrop click
+                        if (e.target === e.currentTarget) {
+                            setDeleteSourceConfirmation(null);
+                        }
+                    }}
+                >
+                    <div
+                        style={{
+                            backgroundColor: 'var(--bg-content)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '24px',
+                            width: '400px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '16px',
+                            pointerEvents: 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#ef4444' }}>⚠️ Remove Source?</h3>
+                        <div style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            <p style={{ margin: '0 0 12px 0' }}>
+                                Are you sure you want to remove <strong>{deleteSourceConfirmation.sourceName}</strong>?
+                            </p>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem' }}>
+                                This will permanently delete:
+                            </p>
+                            <ul style={{ margin: '0 0 12px 20px', fontSize: '0.85rem', lineHeight: '1.6' }}>
+                                <li>All indexed files and chunks</li>
+                                <li>All vector embeddings (LanceDB)</li>
+                                <li>All metadata (redb)</li>
+                                <li>All notes and documents</li>
+                                <li>Graph cache</li>
+                            </ul>
+                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#ef4444', fontWeight: 600 }}>
+                                ⚠️ This action cannot be undone!
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                            <button
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setDeleteSourceConfirmation(null);
+                                }}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '4px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'transparent',
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.9rem',
+                                    pointerEvents: 'auto'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleConfirmRemoveSource();
+                                }}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: '#ef4444',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '0.9rem',
+                                    fontWeight: 600,
+                                    pointerEvents: 'auto'
+                                }}
+                            >
+                                Remove Source
                             </button>
                         </div>
                     </div>

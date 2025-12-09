@@ -2,6 +2,15 @@ import type { ReactNode } from 'react'
 import { Sidebar, type View } from './Sidebar'
 import type { Resource } from '../api'
 
+// Helper function to format bytes into human-readable size
+function formatSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
 interface MainLayoutProps {
     currentView: View
     onChangeView: (view: View) => void
@@ -54,6 +63,26 @@ export function MainLayout({
                 <header className="content-header">
                     {/* Breadcrumbs or Title could go here */}
                     <div className="view-title">{currentView.charAt(0).toUpperCase() + currentView.slice(1)}</div>
+                    {currentView === 'sources' && resources && resources.length > 0 && (
+                        <div style={{
+                            fontSize: '0.85rem',
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            gap: '12px',
+                            alignItems: 'center',
+                            marginLeft: 'auto'
+                        }}>
+                            <span>{resources.length} {resources.length === 1 ? 'source' : 'sources'}</span>
+                            <span>•</span>
+                            <span>
+                                {formatSize(
+                                    resources.reduce((total, r) => 
+                                        total + (r.stats?.total_size_bytes || 0), 0
+                                    )
+                                )}
+                            </span>
+                        </div>
+                    )}
                 </header>
                 <main className="content-scroll">
                     {children}

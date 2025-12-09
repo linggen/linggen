@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { useState, useEffect, useRef } from 'react'
 import { getAppSettings, updateAppSettings, clearAllData, getAppStatus, retryInit, type AppSettings, type AppStatusResponse } from '../api'
 import { check } from '@tauri-apps/plugin-updater'
@@ -185,6 +186,7 @@ export function SettingsView() {
         }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const handleInstallUpdate = async () => {
         if (!updateInfo) return
         setDownloading(true)
@@ -300,7 +302,8 @@ export function SettingsView() {
                 </div>
             </section>
 
-            <section className="settings-card">
+            {/* Local LLM section - hidden until ready */}
+            {/* <section className="settings-card">
                 <div className="settings-card-header">
                     <span className="settings-icon">🤖</span>
                     <h3>Local LLM</h3>
@@ -341,7 +344,7 @@ export function SettingsView() {
                         The model (~3GB) will be downloaded on first enable.
                     </p>
                 </div>
-            </section>
+            </section> */}
 
             <section className="settings-card">
                 <div className="settings-card-header">

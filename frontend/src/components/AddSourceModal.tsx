@@ -9,7 +9,6 @@ interface AddSourceModalProps {
 
 export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose, onAdd }) => {
     const [name, setName] = useState('');
-    const [type, setType] = useState<ResourceType>('local');
     const [path, setPath] = useState('');
     const [includePatterns, setIncludePatterns] = useState('');
     const [excludePatterns, setExcludePatterns] = useState('');
@@ -26,8 +25,8 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
             setError('Name is required');
             return;
         }
-        if (!path.trim() && type !== 'uploads') {
-            setError(type === 'git' ? 'Git URL is required' : 'Path is required');
+        if (!path.trim()) {
+            setError('Path is required');
             return;
         }
 
@@ -37,10 +36,10 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
             const includes = includePatterns.split(',').map(s => s.trim()).filter(Boolean);
             const excludes = excludePatterns.split(',').map(s => s.trim()).filter(Boolean);
 
-            await onAdd(name, type, path, includes, excludes);
+            // Always use 'local' type for now
+            await onAdd(name, 'local', path, includes, excludes);
             // Reset and close on success
             setName('');
-            setType('local');
             setPath('');
             setIncludePatterns('');
             setExcludePatterns('');
@@ -82,7 +81,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                 <form onSubmit={handleSubmit}>
                     <div className="form-group" style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            Name
+                            NAME
                         </label>
                         <input
                             type="text"
@@ -104,11 +103,40 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
 
                     <div className="form-group" style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            Type
+                            TYPE
                         </label>
-                        <select
-                            value={type}
-                            onChange={e => setType(e.target.value as ResourceType)}
+                        <div style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-content)',
+                            color: 'var(--text-primary)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            fontSize: '0.9rem'
+                        }}>
+                            ✓ Local Folder
+                            <span style={{ 
+                                marginLeft: 'auto', 
+                                fontSize: '0.75rem', 
+                                color: 'var(--text-muted)',
+                                fontStyle: 'italic'
+                            }}>
+                                (Other types coming soon)
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: '24px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            LOCAL PATH
+                        </label>
+                        <input
+                            type="text"
+                            value={path}
+                            onChange={e => setPath(e.target.value)}
+                            placeholder="/absolute/path/to/project"
                             style={{
                                 width: '100%',
                                 padding: '8px 12px',
@@ -116,44 +144,16 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                                 border: '1px solid var(--border-color)',
                                 background: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
-                                outline: 'none'
+                                outline: 'none',
+                                fontFamily: 'monospace'
                             }}
-                        >
-                            <option value="local">Local Folder</option>
-                            <option value="git">Git Repository</option>
-                            <option value="uploads">Upload Files</option>
-                            <option value="web" disabled>Web Page (Coming Soon)</option>
-                        </select>
+                        />
                     </div>
-
-                    {type !== 'uploads' && (
-                        <div className="form-group" style={{ marginBottom: '24px' }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                {type === 'git' ? 'Git URL' : 'Local Path'}
-                            </label>
-                            <input
-                                type="text"
-                                value={path}
-                                onChange={e => setPath(e.target.value)}
-                                placeholder={type === 'git' ? 'https://github.com/user/repo' : '/absolute/path/to/project'}
-                                style={{
-                                    width: '100%',
-                                    padding: '8px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-app)',
-                                    color: 'var(--text-primary)',
-                                    outline: 'none',
-                                    fontFamily: 'monospace'
-                                }}
-                            />
-                        </div>
-                    )}
 
                     <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
                         <div className="form-group" style={{ flex: 1 }}>
                             <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Include Patterns (Optional)
+                                INCLUDE PATTERNS (OPTIONAL)
                             </label>
                             <input
                                 type="text"
@@ -179,7 +179,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
 
                         <div className="form-group" style={{ flex: 1 }}>
                             <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Exclude Patterns (Optional)
+                                EXCLUDE PATTERNS (OPTIONAL)
                             </label>
                             <input
                                 type="text"

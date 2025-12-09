@@ -59,8 +59,8 @@ enum Commands {
         #[arg(long = "exclude")]
         exclude_patterns: Vec<String>,
 
-        /// Wait for the indexing job to complete
-        #[arg(long)]
+        /// Wait for the indexing job to complete (default: true, use --no-wait to disable)
+        #[arg(long, default_value = "true")]
         wait: bool,
     },
 
@@ -136,11 +136,30 @@ async fn main() -> Result<()> {
     match cli_args.command {
         // Default: start server
         None => {
+            // Check if backend is already running
+            let api_client = cli::ApiClient::new(cli_args.api_url.clone());
+            if api_client.get_status().await.is_ok() {
+                println!(
+                    "✅ Linggen backend is already running at {}",
+                    cli_args.api_url
+                );
+                println!("   Use Ctrl+C to stop the existing instance first if you want to start a new one.");
+                return Ok(());
+            }
             server::start_server(8787).await?;
         }
 
         // Explicit serve command
         Some(Commands::Serve { port }) => {
+            // Check if backend is already running on this port
+            let check_url = format!("http://127.0.0.1:{}", port);
+            let api_client = cli::ApiClient::new(check_url.clone());
+            if api_client.get_status().await.is_ok() {
+                println!("✅ Linggen backend is already running on port {}", port);
+                println!("   The backend is accessible at {}", check_url);
+                println!("   Use Ctrl+C to stop the existing instance first if you want to start a new one.");
+                return Ok(());
+            }
             server::start_server(port).await?;
         }
 

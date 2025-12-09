@@ -3,6 +3,15 @@ import { type Resource, type IndexMode } from '../api';
 import { GraphView } from '../components/GraphView';
 import { CM6Editor } from '../components/CM6Editor';
 
+// Helper function to format bytes into human-readable size
+function formatSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
 interface WorkspaceViewProps {
     sourceId: string;
     source?: Resource;
@@ -214,6 +223,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             <>
                                 <span>{currentSource.stats.file_count} files</span>
                                 <span>{currentSource.stats.chunk_count} chunks</span>
+                                <span>{formatSize(currentSource.stats.total_size_bytes)}</span>
                             </>
                         )}
                     </div>

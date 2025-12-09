@@ -218,6 +218,14 @@ pub async fn remove_resource(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RemoveResourceRequest>,
 ) -> Result<Json<RemoveResourceResponse>, (StatusCode, String)> {
+    tracing::info!("Removing source {} and all associated data", req.id);
+
+    // Get the source before deleting to access its path
+    let source = state
+        .metadata_store
+        .get_source(&req.id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Delete from metadata store (redb)
     state
         .metadata_store
@@ -233,8 +241,41 @@ pub async fn remove_resource(
 
     // Delete file index metadata for this source
     if let Err(e) = state.metadata_store.remove_all_file_index_infos(&req.id) {
-        tracing::warn!("Failed to remove file index metadata for source {}: {}", req.id, e);
+        tracing::warn!(
+            "Failed to remove file index metadata for source {}: {}",
+            req.id,
+            e
+        );
     }
+
+    // Delete graph cache
+    if let Err(e) = state.graph_cache.delete(&req.id) {
+        tracing::warn!("Failed to remove graph cache for source {}: {}", req.id, e);
+    }
+
+    // Delete all notes in .linggen/notes directory (if source exists)
+    if let Some(source) = source {
+        let notes_dir = std::path::PathBuf::from(&source.path)
+            .join(".linggen")
+            .join("notes");
+
+        if notes_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&notes_dir) {
+                tracing::warn!(
+                    "Failed to remove notes directory for source {}: {}",
+                    req.id,
+                    e
+                );
+            } else {
+                tracing::info!("Removed notes directory for source {}", req.id);
+            }
+        }
+    }
+
+    tracing::info!(
+        "Successfully removed source {} and all associated data",
+        req.id
+    );
 
     Ok(Json(RemoveResourceResponse {
         success: true,
