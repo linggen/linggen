@@ -256,10 +256,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             {/* Right side handles its own vertical scroll; sidebar scrolls independently. */}
             <div
                 className="workspace-body"
-                style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative', minHeight: 0 }}
+                style={{ flex: 1, display: 'flex', overflowY: 'scroll', position: 'relative', minHeight: 0 }}
             >
                 {selectedNotePath ? (
-                    <div className="workspace-editor" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div className="workspace-editor" style={{ overflowY: 'scroll', flexDirection: 'column', minHeight: 0 }}>
                         <CM6Editor sourceId={sourceId} notePath={selectedNotePath} />
                     </div>
                 ) : (

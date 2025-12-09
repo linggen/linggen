@@ -184,7 +184,7 @@ body {
 
 .content-scroll {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: scroll;
   padding: 24px 24px 0 24px;
 }
 

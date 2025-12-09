@@ -97,8 +97,6 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
     const [dirty, setDirty] = useState(false);
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const editorRef = useRef<ReactCodeMirrorRef>(null);
-    const [editorView, setEditorView] = useState<EditorView | null>(null);
-    const [cursorPos, setCursorPos] = useState<number>(0);
 
     // Initial load
     useEffect(() => {
@@ -188,17 +186,8 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
                     value={value}
                     onChange={handleChange}
                     height="100%"
+                    
                     theme={oneDark}
-                    onCreateEditor={(view) => {
-                        console.log('[CM6] Editor created');
-                        setEditorView(view);
-                    }}
-                    onUpdate={(update) => {
-                        if (update.selectionSet) {
-                            const newPos = update.state.selection.main.from;
-                            setCursorPos(newPos);
-                        }
-                    }}
                     extensions={[
                         markdown({
                             base: markdownLanguage,

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { getAppSettings, updateAppSettings, clearAllData, getAppStatus, retryInit, type AppSettings, type AppStatusResponse } from '../api'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
+import { getVersion } from '@tauri-apps/api/app'
 
 export function SettingsView() {
     const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -16,7 +17,15 @@ export function SettingsView() {
     const [llmStatus, setLlmStatus] = useState<'disabled' | 'initializing' | 'ready' | 'error'>('disabled')
     const progressPollRef = useRef<number | null>(null)
     const isMountedRef = useRef(true)
-    
+
+    // App version (for Software Update section)
+    const [appVersion, setAppVersion] = useState<string | null>(null)
+
+    // Avoid TypeScript unused warnings while Local LLM UI is hidden.
+    // These values and helpers are kept for future Local LLM support.
+    void llmInitializing
+    void llmProgress
+
     // Update checker state
     const [checkingUpdate, setCheckingUpdate] = useState(false)
     const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -69,6 +78,15 @@ export function SettingsView() {
                 clearInterval(progressPollRef.current)
             }
         }
+    }, [])
+
+    // Load app version from Tauri at startup
+    useEffect(() => {
+        getVersion()
+            .then((ver) => setAppVersion(ver))
+            .catch(() => {
+                // Ignore errors; we simply won't show the version badge
+            })
     }, [])
 
     const updateLlmStatusFromAppStatus = (status: AppStatusResponse) => {
@@ -245,6 +263,10 @@ export function SettingsView() {
     }
 
     const getLlmStatusBadge = () => {
+
+    // Mark handlers as used to satisfy TypeScript while UI is commented out
+    void handleToggleLlm
+    void getLlmStatusBadge
         if (!settings?.llm_enabled) {
             return <span className="llm-status-badge disabled">Disabled</span>
         }
@@ -395,7 +417,9 @@ export function SettingsView() {
                 <div className="settings-card-header">
                     <span className="settings-icon">🔄</span>
                     <h3>Software Update</h3>
-                    <span className="settings-model-name">v0.5.0</span>
+                    {appVersion && (
+                        <span className="settings-model-name">v{appVersion}</span>
+                    )}
                 </div>
                 <div className="settings-card-body">
                     <div className="settings-row">
