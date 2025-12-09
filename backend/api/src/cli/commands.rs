@@ -57,13 +57,16 @@ pub async fn handle_start(api_client: &ApiClient) -> Result<()> {
 /// Handle the `index` command
 pub async fn handle_index(
     api_client: &ApiClient,
-    path: PathBuf,
+    path: Option<PathBuf>,
     mode: String,
     name: Option<String>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
     wait: bool,
 ) -> Result<()> {
+    // Default to current directory if no path provided
+    let path = path.unwrap_or_else(|| PathBuf::from("."));
+
     // Normalize path to absolute
     let abs_path = path
         .canonicalize()

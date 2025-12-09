@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import {
   indexSource,
@@ -87,18 +87,35 @@ function App() {
 
   // --- Resource Management (Lifted from ResourceManager) ---
 
-  const loadResources = useCallback(async () => {
-    try {
-      const response = await listResources()
-      setResources(response.resources)
-    } catch (err) {
-      console.error('Failed to load resources:', err)
+  // Load resources on mount and when resourcesVersion changes
+  useEffect(() => {
+    const fetchResources = async () => {
+      try {
+        const response = await listResources()
+        setResources(response.resources)
+      } catch (err) {
+        console.error('Failed to load resources:', err)
+      }
+    }
+    fetchResources()
+  }, [resourcesVersion])
+
+  // Periodically refresh resources so external changes (e.g. CLI / VS Code extension)
+  // are reflected in the UI without requiring a manual reload.
+  useEffect(() => {
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await listResources()
+        setResources(response.resources)
+      } catch (err) {
+        console.error('Failed to load resources:', err)
+      }
+    }, 10000) // every 10 seconds
+
+    return () => {
+      window.clearInterval(intervalId)
     }
   }, [])
-
-  useEffect(() => {
-    loadResources()
-  }, [loadResources, resourcesVersion])
 
   const handleAddResource = async (name: string, type: ResourceType, path: string, include?: string[], exclude?: string[]) => {
     try {
@@ -139,167 +156,7 @@ function App() {
   }
 
   // --- Job Polling & Status ---
-
-  // Shared function to update progress for a running job
-  const updateJobProgress = useCallback(async (jobId: string) => {
-    try {
-      const response = await listJobs()
-      const job = response.jobs.find((j) => j.id === jobId)
-
-      if (job) {
-        // Update progress based on job status
-        if (job.status === 'Pending') {
-          setIndexingProgress('⏳ Waiting in queue...')
-        } else if (job.status === 'Running') {
-          // Don't update progress if we're in the middle of cancelling
-          if (isCancellingRef.current) {
-            return
-          }
-
-          const filesIndexed = job.files_indexed || 0
-          const totalFiles = job.total_files || 0
-          const totalSizeBytes = job.total_size_bytes || 0
-          const chunksCreated = job.chunks_created || 0
-
-          // Format size in MB or GB
-          const formatSize = (bytes: number) => {
-            if (bytes >= 1_000_000_000) {
-              return `${(bytes / 1_000_000_000).toFixed(2)} GB`
-            } else if (bytes >= 1_000_000) {
-              return `${(bytes / 1_000_000).toFixed(2)} MB`
-            } else if (bytes >= 1_000) {
-              return `${(bytes / 1_000).toFixed(2)} KB`
-            } else {
-              return `${bytes} bytes`
-            }
-          }
-
-          if (totalFiles > 0 && filesIndexed > 0) {
-            const percentage = Math.round((filesIndexed / totalFiles) * 100)
-            const sizeStr = totalSizeBytes > 0 ? ` (${formatSize(totalSizeBytes)})` : ''
-            setIndexingProgress(`${percentage}% - ${filesIndexed}/${totalFiles} files${sizeStr}`)
-          } else if (filesIndexed > 0) {
-            setIndexingProgress(`Processing... ${filesIndexed} files, ${chunksCreated} chunks`)
-          } else {
-            setIndexingProgress('Reading files...')
-          }
-        } else if (job.status === 'Completed') {
-          // Stop polling
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current)
-            pollingIntervalRef.current = null
-          }
-          if (pollingTimeoutRef.current) {
-            clearTimeout(pollingTimeoutRef.current)
-            pollingTimeoutRef.current = null
-          }
-
-          setIndexingProgress(`✓ Indexed ${job.files_indexed} files, ${job.chunks_created} chunks`)
-
-          // Update jobs list
-          const frontendJob: Job = {
-            id: job.id,
-            sourceId: job.source_id,
-            sourceName: job.source_name,
-            sourceType: job.source_type,
-            startedAt: job.started_at,
-            finishedAt: job.finished_at,
-            status: 'completed',
-            filesIndexed: job.files_indexed,
-            chunksCreated: job.chunks_created,
-          }
-          setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
-
-          // Trigger a refresh of source stats/details (with delay to ensure backend saves stats)
-          setTimeout(() => {
-            console.log('Refreshing resources after job completion...')
-            setResourcesVersion((v) => v + 1)
-          }, 2000)
-
-          setTimeout(() => {
-            setIndexingResourceId(null)
-            setIndexingProgress(null)
-            setCurrentJobId(null)
-            setStatus('idle')
-          }, 3000)
-        } else if (job.status === 'Failed') {
-          // Stop polling
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current)
-            pollingIntervalRef.current = null
-          }
-          if (pollingTimeoutRef.current) {
-            clearTimeout(pollingTimeoutRef.current)
-            pollingTimeoutRef.current = null
-          }
-
-          const errorMsg = job.error || 'Unknown error'
-          const isCancelled = errorMsg.includes('cancelled')
-          setIndexingProgress(isCancelled ? '✓ Cancelled' : `✗ ${errorMsg}`)
-
-          // Update jobs list
-          const frontendJob: Job = {
-            id: job.id,
-            sourceId: job.source_id,
-            sourceName: job.source_name,
-            sourceType: job.source_type,
-            startedAt: job.started_at,
-            finishedAt: job.finished_at,
-            status: errorMsg.includes('cancelled') ? 'completed' : 'error',
-            error: job.error,
-          }
-          setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== jobId)])
-
-          // Trigger a refresh of source stats/details (with delay)
-          setTimeout(() => {
-            console.log('Refreshing resources after job failure...')
-            setResourcesVersion((v) => v + 1)
-          }, 2000)
-
-          setTimeout(() => {
-            setIndexingResourceId(null)
-            setIndexingProgress(null)
-            setCurrentJobId(null)
-            isCancellingRef.current = false
-            setStatus(errorMsg.includes('cancelled') ? 'idle' : 'error')
-          }, 3000)
-        }
-      }
-    } catch (error) {
-      console.error('Failed to poll job status:', error)
-    }
-  }, [])
-
-  // Start polling for a job
-  const startPollingJob = useCallback((jobId: string) => {
-    console.log('Starting polling for job:', jobId)
-
-    // Clear any existing polling
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-    }
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current)
-    }
-
-    // Call immediately, then poll every second
-    updateJobProgress(jobId)
-    pollingIntervalRef.current = setInterval(() => {
-      updateJobProgress(jobId)
-    }, 1000)
-
-    // Safety timeout after 10 minutes
-    pollingTimeoutRef.current = setTimeout(() => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-        pollingIntervalRef.current = null
-      }
-      setIndexingProgress('✗ Timeout')
-      setIndexingResourceId(null)
-      setCurrentJobId(null)
-      setStatus('error')
-    }, 600000)
-  }, [updateJobProgress])
+  // (updateJobProgress and startPollingJob logic inlined into effects to avoid cascading renders)
 
   // Check app initialization status on startup
   useEffect(() => {
@@ -374,9 +231,8 @@ function App() {
           const activeJob = backendJobs.find((job) => job.status === 'running' || job.status === 'pending')
           if (activeJob?.sourceId) {
             setIndexingResourceId(activeJob.sourceId)
-            setCurrentJobId(activeJob.id) // Set the job ID for cancellation
+            setCurrentJobId(activeJob.id) // Set the job ID - triggers polling via useEffect
             setIndexingProgress(activeJob.status === 'pending' ? '⏳ Waiting in queue...' : 'Indexing in progress...')
-            startPollingJob(activeJob.id)
           }
         } else {
           // No active jobs, ensure we're in idle state
@@ -395,9 +251,165 @@ function App() {
 
   // Start polling when we detect a running job (e.g., on page load)
   useEffect(() => {
-    if (currentJobId && status === 'indexing') {
-      startPollingJob(currentJobId)
+    if (!currentJobId || status !== 'indexing') {
+      return
     }
+
+    console.log('Starting polling for job:', currentJobId)
+
+    // Clear any existing polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+    }
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current)
+    }
+
+    // Poll job status
+    const pollJob = async () => {
+      try {
+        const response = await listJobs()
+        const job = response.jobs.find((j) => j.id === currentJobId)
+
+        if (job) {
+          // Update progress based on job status
+          if (job.status === 'Pending') {
+            setIndexingProgress('⏳ Waiting in queue...')
+          } else if (job.status === 'Running') {
+            // Don't update progress if we're in the middle of cancelling
+            if (isCancellingRef.current) {
+              return
+            }
+
+            const filesIndexed = job.files_indexed || 0
+            const totalFiles = job.total_files || 0
+            const totalSizeBytes = job.total_size_bytes || 0
+            const chunksCreated = job.chunks_created || 0
+
+            // Format size in MB or GB
+            const formatSize = (bytes: number) => {
+              if (bytes >= 1_000_000_000) {
+                return `${(bytes / 1_000_000_000).toFixed(2)} GB`
+              } else if (bytes >= 1_000_000) {
+                return `${(bytes / 1_000_000).toFixed(2)} MB`
+              } else if (bytes >= 1_000) {
+                return `${(bytes / 1_000).toFixed(2)} KB`
+              } else {
+                return `${bytes} bytes`
+              }
+            }
+
+            if (totalFiles > 0 && filesIndexed > 0) {
+              const percentage = Math.round((filesIndexed / totalFiles) * 100)
+              const sizeStr = totalSizeBytes > 0 ? ` (${formatSize(totalSizeBytes)})` : ''
+              setIndexingProgress(`${percentage}% - ${filesIndexed}/${totalFiles} files${sizeStr}`)
+            } else if (filesIndexed > 0) {
+              setIndexingProgress(`Processing... ${filesIndexed} files, ${chunksCreated} chunks`)
+            } else {
+              setIndexingProgress('Reading files...')
+            }
+          } else if (job.status === 'Completed') {
+            // Stop polling
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current)
+              pollingIntervalRef.current = null
+            }
+            if (pollingTimeoutRef.current) {
+              clearTimeout(pollingTimeoutRef.current)
+              pollingTimeoutRef.current = null
+            }
+
+            setIndexingProgress(`✓ Indexed ${job.files_indexed} files, ${job.chunks_created} chunks`)
+
+            // Update jobs list
+            const frontendJob: Job = {
+              id: job.id,
+              sourceId: job.source_id,
+              sourceName: job.source_name,
+              sourceType: job.source_type,
+              startedAt: job.started_at,
+              finishedAt: job.finished_at,
+              status: 'completed',
+              filesIndexed: job.files_indexed,
+              chunksCreated: job.chunks_created,
+            }
+            setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== currentJobId)])
+
+            // Trigger a refresh of source stats/details (with delay to ensure backend saves stats)
+            setTimeout(() => {
+              console.log('Refreshing resources after job completion...')
+              setResourcesVersion((v) => v + 1)
+            }, 2000)
+
+            setTimeout(() => {
+              setIndexingResourceId(null)
+              setIndexingProgress(null)
+              setCurrentJobId(null)
+              setStatus('idle')
+            }, 3000)
+          } else if (job.status === 'Failed') {
+            // Stop polling
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current)
+              pollingIntervalRef.current = null
+            }
+            if (pollingTimeoutRef.current) {
+              clearTimeout(pollingTimeoutRef.current)
+              pollingTimeoutRef.current = null
+            }
+
+            const errorMsg = job.error || 'Unknown error'
+            const isCancelled = errorMsg.includes('cancelled')
+            setIndexingProgress(isCancelled ? '✓ Cancelled' : `✗ ${errorMsg}`)
+
+            // Update jobs list
+            const frontendJob: Job = {
+              id: job.id,
+              sourceId: job.source_id,
+              sourceName: job.source_name,
+              sourceType: job.source_type,
+              startedAt: job.started_at,
+              finishedAt: job.finished_at,
+              status: errorMsg.includes('cancelled') ? 'completed' : 'error',
+              error: job.error,
+            }
+            setJobs((prev) => [frontendJob, ...prev.filter((j) => j.id !== currentJobId)])
+
+            // Trigger a refresh of source stats/details (with delay)
+            setTimeout(() => {
+              console.log('Refreshing resources after job failure...')
+              setResourcesVersion((v) => v + 1)
+            }, 2000)
+
+            setTimeout(() => {
+              setIndexingResourceId(null)
+              setIndexingProgress(null)
+              setCurrentJobId(null)
+              isCancellingRef.current = false
+              setStatus(errorMsg.includes('cancelled') ? 'idle' : 'error')
+            }, 3000)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to poll job status:', error)
+      }
+    }
+
+    // Call immediately, then poll every second
+    pollJob()
+    pollingIntervalRef.current = setInterval(pollJob, 1000)
+
+    // Safety timeout after 10 minutes
+    pollingTimeoutRef.current = setTimeout(() => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
+      }
+      setIndexingProgress('✗ Timeout')
+      setIndexingResourceId(null)
+      setCurrentJobId(null)
+      setStatus('error')
+    }, 600000)
 
     // Cleanup on unmount
     return () => {
@@ -408,7 +420,7 @@ function App() {
         clearTimeout(pollingTimeoutRef.current)
       }
     }
-  }, [currentJobId, status, startPollingJob])
+  }, [currentJobId, status])
 
   const handleIndexResource = async (resource: Resource, mode: IndexMode = 'incremental') => {
     setIndexingResourceId(resource.id)

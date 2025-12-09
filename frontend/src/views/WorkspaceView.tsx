@@ -73,10 +73,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     const isIndexing = indexingResourceId === currentSource.id;
 
     return (
-        // Root container for the right-hand panel. Let it scroll vertically
-        // so the workspace header stays attached to this panel while the
-        // editor/graph content can overflow.
-        <div className="workspace-view" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto' }}>
+        // Root container for the right-hand panel.
+        // Use flex + minHeight: 0 so inner panes (graph/editor) can fully
+        // consume the available vertical space without leaving gaps.
+        <div
+            className="workspace-view"
+            style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+        >
             {/* Header / Stats Strip */}
             <div className="workspace-header" style={{
                 padding: '12px 24px',
@@ -241,26 +244,20 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
             {/* Main Content Area: Conditional Render */}
             {/* Right side handles its own vertical scroll; sidebar scrolls independently. */}
-            <div className="workspace-body" style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+            <div
+                className="workspace-body"
+                style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative', minHeight: 0 }}
+            >
                 {selectedNotePath ? (
                     <div className="workspace-editor" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
                         <CM6Editor sourceId={sourceId} notePath={selectedNotePath} />
                     </div>
                 ) : (
-                    <div className="workspace-graph" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        <div style={{
-                            padding: '8px 12px',
-                            borderBottom: '1px solid var(--border-color)',
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            color: 'var(--text-secondary)',
-                            background: 'var(--bg-sidebar)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                        }}>
-                            <span>GRAPH VIEW</span>
-                        </div>
+                    <div
+                        className="workspace-graph"
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
+                    >
+                        
                         <GraphView sourceId={sourceId} />
                     </div>
                 )}

@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { NodeObject, LinkObject } from 'react-force-graph-2d';
 import {
-  getGraph,
-  getGraphStatus,
+  getGraphWithStatus,
   rebuildGraph,
   type GraphNode,
   type GraphEdge,
@@ -133,61 +132,175 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
   // Memoize graphData to prevent simulation restart on hover
   const graphData = useMemo(() => ({ nodes, links }), [nodes, links]);
 
-  // Resize observer
+  // Keep the graph canvas in sync with its container size.
+  // Use both ResizeObserver (for flex/layout changes) and a window
+  // resize fallback, since some environments (e.g. certain Tauri/
+  // WebView combinations) can be finicky about firing resize events
+  // through the observer alone.
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
+    const updateSize = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      
+      // Only update if dimensions are valid (not 0)
+      if (rect.width > 0 && rect.height > 0) {
         setDimensions({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
+          width: rect.width,
+          height: rect.height,
         });
       }
-    });
+    };
 
-    observer.observe(container);
-    return () => observer.disconnect();
+    // Initial measurement - delayed to let DOM settle
+    const initialTimeout = window.setTimeout(() => {
+      updateSize();
+    }, 10);
+
+    // Also measure again after a longer delay for safety
+    const fallbackTimeout = window.setTimeout(() => {
+      updateSize();
+    }, 100);
+
+    // Observe direct size changes on the container
+    const el = containerRef.current;
+    let observer: ResizeObserver | null = null;
+    if (el && 'ResizeObserver' in window) {
+      observer = new ResizeObserver(() => updateSize());
+      observer.observe(el);
+    }
+
+    // Fallback: also respond to window resize
+    window.addEventListener('resize', updateSize);
+
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearTimeout(fallbackTimeout);
+      window.removeEventListener('resize', updateSize);
+      if (observer && el) {
+        observer.unobserve(el);
+        observer.disconnect();
+      }
+    };
   }, []);
 
-  // Fetch graph status and data
+  // When the canvas size changes (e.g. window resized / fullscreen)
+  // or when we first load nodes, auto-fit the graph so it uses the
+  // available space instead of staying at the old zoom level.
+  useEffect(() => {
+    if (!graphRef.current) return;
+    if (!nodes.length) return;
+
+    // Small timeout lets ForceGraph2D apply the new width/height
+    // before we ask it to zoomToFit.
+    const id = window.setTimeout(() => {
+      try {
+        graphRef.current.zoomToFit(400, 50);
+      } catch {
+        // ignore if graphRef is not ready yet
+      }
+    }, 100);
+
+    return () => window.clearTimeout(id);
+  }, [dimensions.width, dimensions.height, nodes.length]);
+
+  // Fetch graph status and data using optimized single-request API
   const fetchGraph = useCallback(async () => {
     setLoading(true);
     setError(null);
 
+    // Remeasure container when starting to load (in case it wasn't sized correctly initially)
+    window.setTimeout(() => {
+      const el = containerRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setDimensions({
+            width: rect.width,
+            height: rect.height,
+          });
+        }
+      }
+    }, 10);
+
     try {
-      const statusRes = await getGraphStatus(sourceId);
-      setStatus(statusRes);
+      // Use new optimized API: single request with optional focus/folder filters
+      const graphWithStatus = await getGraphWithStatus(sourceId, {
+        focus: focusNodeId || undefined,  // Focus on specific node if provided
+        hops: focusNodeId ? 2 : undefined, // Include 2 hops when focused
+        folder: folderFilter || undefined,
+      });
 
-      if (statusRes.status === 'ready' || statusRes.status === 'stale') {
-        const graphRes = await getGraph(sourceId, {
-          folder: folderFilter || undefined,
-        });
+      // Update status
+      setStatus({
+        status: graphWithStatus.status as 'missing' | 'stale' | 'ready' | 'building' | 'error',
+        node_count: graphWithStatus.node_count,
+        edge_count: graphWithStatus.edge_count,
+        built_at: graphWithStatus.built_at || undefined,
+      });
 
-        // Transform to force graph format
-        const graphNodes: GraphNodeObject[] = graphRes.nodes.map((n: GraphNode) => ({
-          id: n.id,
-          label: n.label,
-          language: n.language,
-          folder: n.folder,
-        }));
+      // Only process graph if ready or stale
+      if (graphWithStatus.status === 'ready' || graphWithStatus.status === 'stale') {
+        // If focused/filtered query returned empty results, fetch full graph
+        if (graphWithStatus.nodes.length === 0 && (focusNodeId || folderFilter)) {
+          console.log('Focused/filtered graph returned 0 nodes, fetching full graph...');
+          const fullGraph = await getGraphWithStatus(sourceId, {});
+          
+          // Transform full graph to force graph format
+          const graphNodes: GraphNodeObject[] = fullGraph.nodes.map((n: GraphNode) => ({
+            id: n.id,
+            label: n.label,
+            language: n.language,
+            folder: n.folder,
+          }));
 
-        const graphLinks: GraphLinkObject[] = graphRes.edges.map((e: GraphEdge) => ({
-          source: e.source,
-          target: e.target,
-          kind: e.kind,
-        }));
+          const graphLinks: GraphLinkObject[] = fullGraph.edges.map((e: GraphEdge) => ({
+            source: e.source,
+            target: e.target,
+            kind: e.kind,
+          }));
 
-        setNodes(graphNodes);
-        setLinks(graphLinks);
+          setNodes(graphNodes);
+          setLinks(graphLinks);
+        } else {
+          // Transform focused/filtered graph to force graph format
+          const graphNodes: GraphNodeObject[] = graphWithStatus.nodes.map((n: GraphNode) => ({
+            id: n.id,
+            label: n.label,
+            language: n.language,
+            folder: n.folder,
+          }));
+
+          const graphLinks: GraphLinkObject[] = graphWithStatus.edges.map((e: GraphEdge) => ({
+            source: e.source,
+            target: e.target,
+            kind: e.kind,
+          }));
+
+          setNodes(graphNodes);
+          setLinks(graphLinks);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load graph');
     } finally {
       setLoading(false);
+      
+      // Remeasure one more time after loading completes
+      window.setTimeout(() => {
+        const el = containerRef.current;
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            setDimensions({
+              width: rect.width,
+              height: rect.height,
+            });
+          }
+        }
+      }, 50);
     }
-  }, [sourceId, folderFilter]);
+  }, [sourceId, focusNodeId, folderFilter]);
 
   useEffect(() => {
     fetchGraph();
@@ -198,13 +311,31 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
     try {
       await rebuildGraph(sourceId);
       setStatus({ status: 'building' });
-      // Poll for completion
+      // Poll for completion using optimized API
       const poll = setInterval(async () => {
-        const statusRes = await getGraphStatus(sourceId);
-        setStatus(statusRes);
-        if (statusRes.status === 'ready' || statusRes.status === 'error') {
-          clearInterval(poll);
-          fetchGraph();
+        try {
+          const graphWithStatus = await getGraphWithStatus(sourceId, {
+            focus: focusNodeId || undefined,
+            hops: focusNodeId ? 2 : undefined,
+            folder: folderFilter || undefined,
+          });
+          
+          setStatus({
+            status: graphWithStatus.status as 'missing' | 'stale' | 'ready' | 'building' | 'error',
+            node_count: graphWithStatus.node_count,
+            edge_count: graphWithStatus.edge_count,
+            built_at: graphWithStatus.built_at || undefined,
+          });
+          
+          if (graphWithStatus.status === 'ready' || graphWithStatus.status === 'error') {
+            clearInterval(poll);
+            if (graphWithStatus.status === 'ready') {
+              fetchGraph();
+            }
+          }
+        } catch (error) {
+          // Continue polling on errors
+          console.error('Poll error:', error);
         }
       }, 2000);
     } catch (err) {

@@ -25,6 +25,7 @@ struct BackendProcess {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(BackendProcess {
             child: Mutex::new(None),
             managed_by_us: Mutex::new(false),

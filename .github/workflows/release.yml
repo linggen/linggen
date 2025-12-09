@@ -1,0 +1,219 @@
+name: Release Build and Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v0.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin"
+            rust-target: "universal-apple-darwin"
+            sidecar-target: "universal-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+            rust-target: "x86_64-unknown-linux-gnu"
+            sidecar-target: "x86_64-unknown-linux-gnu"
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./backend -> target"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build backend (linggen binary)
+        working-directory: backend
+        run: cargo build --release --bin linggen
+
+      - name: Setup Tauri sidecar
+        shell: bash
+        run: |
+          SIDECAR_NAME="linggen-${{ matrix.sidecar-target }}"
+          cp "backend/target/release/linggen" "frontend/src-tauri/${SIDECAR_NAME}"
+          chmod +x "frontend/src-tauri/${SIDECAR_NAME}"
+          echo "Sidecar created: ${SIDECAR_NAME}"
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: frontend
+          args: ${{ matrix.args }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linggen-${{ matrix.platform }}
+          path: |
+            frontend/src-tauri/target/*/release/bundle/dmg/*.dmg
+            frontend/src-tauri/target/*/release/bundle/dmg/*.dmg.tar.gz
+            frontend/src-tauri/target/*/release/bundle/dmg/*.dmg.tar.gz.sig
+            frontend/src-tauri/target/release/bundle/deb/*.deb
+            frontend/src-tauri/target/release/bundle/deb/*.deb.tar.gz
+            frontend/src-tauri/target/release/bundle/deb/*.deb.tar.gz.sig
+            frontend/src-tauri/target/release/bundle/appimage/*.AppImage
+            frontend/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            frontend/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
+          if-no-files-found: ignore
+
+  publish-to-releases-repo:
+    needs: build-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout linggen repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f
+
+      - name: Generate updater manifest
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NUM="${VERSION#v}"
+
+          # Find the artifacts and their signatures
+          DMG_TAR=$(find artifacts -name "*.dmg.tar.gz" -not -name "*.sig" | head -n 1)
+          DEB_TAR=$(find artifacts -name "*.deb.tar.gz" -not -name "*.sig" | head -n 1)
+
+          DMG_SIG=""
+          DEB_SIG=""
+
+          if [ -f "${DMG_TAR}.sig" ]; then
+            DMG_SIG=$(cat "${DMG_TAR}.sig")
+          fi
+          if [ -f "${DEB_TAR}.sig" ]; then
+            DEB_SIG=$(cat "${DEB_TAR}.sig")
+          fi
+
+          DMG_BASENAME=$(basename "$DMG_TAR")
+          DEB_BASENAME=$(basename "$DEB_TAR")
+
+          # Create updater manifest
+          cat > latest.json << EOF
+          {
+            "version": "${VERSION_NUM}",
+            "notes": "See release notes at https://github.com/huangyingting/linggen-releases/releases/tag/${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-universal": {
+                "signature": "${DMG_SIG}",
+                "url": "https://github.com/huangyingting/linggen-releases/releases/download/${VERSION}/${DMG_BASENAME}"
+              },
+              "linux-x86_64": {
+                "signature": "${DEB_SIG}",
+                "url": "https://github.com/huangyingting/linggen-releases/releases/download/${VERSION}/${DEB_BASENAME}"
+              }
+            }
+          }
+          EOF
+
+          echo "Generated latest.json:"
+          cat latest.json
+
+      - name: Checkout linggen-releases repository
+        uses: actions/checkout@v4
+        with:
+          repository: huangyingting/linggen-releases
+          token: ${{ secrets.RELEASES_PAT }}
+          path: linggen-releases
+
+      - name: Create release in linggen-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          cd linggen-releases
+
+          # Create release
+          gh release create "${VERSION}" \
+            --title "Linggen ${VERSION}" \
+            --notes "Release ${VERSION} - See main repository for details" \
+            --draft
+
+          # Upload all artifacts
+          find ../artifacts -name "*.dmg" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.dmg.tar.gz" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.dmg.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.deb" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.deb.tar.gz" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.deb.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.AppImage" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.AppImage.tar.gz" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "*.AppImage.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
+
+          # Upload latest.json
+          gh release upload "${VERSION}" ../latest.json
+
+          # Publish the release
+          gh release edit "${VERSION}" --draft=false
+
+          echo "Release ${VERSION} published successfully!"

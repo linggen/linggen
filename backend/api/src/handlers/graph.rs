@@ -29,6 +29,18 @@ pub struct GraphResponse {
     pub built_at: Option<String>,
 }
 
+/// Combined response with status and graph data (optimized for single request)
+#[derive(Serialize)]
+pub struct GraphWithStatusResponse {
+    pub status: String,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub built_at: Option<String>,
+    pub project_id: String,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
 /// Node in the graph response (simplified for frontend)
 #[derive(Serialize)]
 pub struct GraphNode {
@@ -181,6 +193,117 @@ pub async fn get_graph(
     Ok(Json(GraphResponse::from(&filtered_graph)))
 }
 
+/// Get graph with status in a single request (optimized endpoint)
+///
+/// GET /api/sources/:source_id/graph/with_status?focus=lib.rs&hops=2
+///
+/// This endpoint combines status and graph data to reduce round trips.
+/// Supports same query parameters as /graph endpoint:
+/// - focus: Return only nodes connected to this node
+/// - hops: Number of hops from focus node (default: 1)
+/// - folder: Filter by folder prefix
+pub async fn get_graph_with_status(
+    State(state): State<Arc<AppState>>,
+    Path(source_id): Path<String>,
+    Query(query): Query<GraphQuery>,
+) -> Result<Json<GraphWithStatusResponse>, (StatusCode, String)> {
+    // Get source config to find the path
+    let source = state
+        .metadata_store
+        .get_source(&source_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!("Source not found: {}", source_id),
+        ))?;
+
+    // Check cache status
+    let cache_status = state.graph_cache.status(&source.path);
+
+    match cache_status {
+        CacheStatus::Missing => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                "Graph not built yet. Please wait for indexing.".to_string(),
+            ))
+        }
+        CacheStatus::Building => {
+            return Err((
+                StatusCode::ACCEPTED,
+                "Graph is currently building.".to_string(),
+            ))
+        }
+        CacheStatus::Error(e) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
+        }
+        CacheStatus::Fresh | CacheStatus::Stale => {
+            // Load graph from cache
+            let graph = state
+                .graph_cache
+                .load(&source.path)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+                .ok_or((
+                    StatusCode::NOT_FOUND,
+                    "Graph not found in cache.".to_string(),
+                ))?;
+
+            // Apply filters
+            let filtered_graph = if let Some(focus_node) = &query.focus {
+                // Return neighborhood around the focus node
+                let hops = query.hops.unwrap_or(1);
+                graph.get_neighborhood(focus_node, hops)
+            } else if let Some(folder) = &query.folder {
+                // Filter by folder
+                graph.filter_by_folder(folder)
+            } else {
+                // Return full graph
+                graph
+            };
+
+            // Get metadata for built_at timestamp
+            let built_at = state
+                .graph_cache
+                .load_metadata(&source.path)
+                .ok()
+                .flatten()
+                .map(|meta| meta.created_at);
+
+            let response = GraphWithStatusResponse {
+                status: if matches!(cache_status, CacheStatus::Stale) {
+                    "stale".to_string()
+                } else {
+                    "ready".to_string()
+                },
+                node_count: filtered_graph.nodes.len(),
+                edge_count: filtered_graph.edges.len(),
+                built_at,
+                project_id: filtered_graph.project_id.clone(),
+                nodes: filtered_graph
+                    .nodes
+                    .iter()
+                    .map(|n| GraphNode {
+                        id: n.id.clone(),
+                        label: n.label.clone(),
+                        language: n.language.to_string(),
+                        folder: n.folder.clone(),
+                    })
+                    .collect(),
+                edges: filtered_graph
+                    .edges
+                    .iter()
+                    .map(|e| GraphEdge {
+                        source: e.source.clone(),
+                        target: e.target.clone(),
+                        kind: e.kind.to_string(),
+                    })
+                    .collect(),
+            };
+
+            Ok(Json(response))
+        }
+    }
+}
+
 /// Rebuild the graph for a source (force refresh)
 ///
 /// POST /api/sources/:source_id/graph/rebuild
@@ -203,7 +326,10 @@ pub async fn rebuild_graph(
 
     // Spawn background task to rebuild
     tokio::spawn(async move {
-        tracing::info!("🏗️  Rebuilding file dependency graph for {}...", source_path);
+        tracing::info!(
+            "🏗️  Rebuilding file dependency graph for {}...",
+            source_path
+        );
 
         let source_path_clone = source_path.clone();
         let graph_result = tokio::task::spawn_blocking(move || {

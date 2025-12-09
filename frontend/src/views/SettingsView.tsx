@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { getAppSettings, updateAppSettings, clearAllData, getAppStatus, retryInit, type AppSettings, type AppStatusResponse } from '../api'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 
 export function SettingsView() {
     const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -13,6 +15,13 @@ export function SettingsView() {
     const [llmStatus, setLlmStatus] = useState<'disabled' | 'initializing' | 'ready' | 'error'>('disabled')
     const progressPollRef = useRef<number | null>(null)
     const isMountedRef = useRef(true)
+    
+    // Update checker state
+    const [checkingUpdate, setCheckingUpdate] = useState(false)
+    const [updateAvailable, setUpdateAvailable] = useState(false)
+    const [updateInfo, setUpdateInfo] = useState<{version?: string, date?: string, body?: string} | null>(null)
+    const [downloading, setDownloading] = useState(false)
+    const [downloadProgress, setDownloadProgress] = useState(0)
 
     useEffect(() => {
         isMountedRef.current = true
@@ -119,7 +128,7 @@ export function SettingsView() {
                     try {
                         const status = await getAppStatus()
                         updateLlmStatusFromAppStatus(status)
-                    } catch (e) {
+                    } catch {
                         // Ignore, polling will catch up
                     }
                     startProgressPolling()
@@ -146,6 +155,68 @@ export function SettingsView() {
         } finally {
             setSaving(false)
             setTimeout(() => setMessage(null), 3000)
+        }
+    }
+
+    const handleCheckForUpdates = async () => {
+        setCheckingUpdate(true)
+        setMessage(null)
+        try {
+            const update = await check()
+            if (update) {
+                setUpdateAvailable(true)
+                setUpdateInfo({
+                    version: update.version,
+                    date: update.date,
+                    body: update.body
+                })
+                setMessage(`✓ Update available: v${update.version}`)
+            } else {
+                setUpdateAvailable(false)
+                setUpdateInfo(null)
+                setMessage('✓ You are running the latest version')
+            }
+        } catch (err) {
+            console.error('Update check failed:', err)
+            setMessage(`✗ Failed to check for updates: ${err}`)
+        } finally {
+            setCheckingUpdate(false)
+            setTimeout(() => setMessage(null), 5000)
+        }
+    }
+
+    const handleInstallUpdate = async () => {
+        if (!updateInfo) return
+        setDownloading(true)
+        setMessage(null)
+        try {
+            const update = await check()
+            if (update) {
+                // Download and install
+                await update.downloadAndInstall((event) => {
+                    switch (event.event) {
+                        case 'Started':
+                            setDownloadProgress(0)
+                            setMessage('Downloading update...')
+                            break
+                        case 'Progress':
+                            // Increment progress (indeterminate since we don't have total size)
+                            setDownloadProgress((prev) => Math.min(prev + 5, 95))
+                            break
+                        case 'Finished':
+                            setDownloadProgress(100)
+                            setMessage('✓ Update installed! Restarting...')
+                            break
+                    }
+                })
+                
+                // Relaunch the app
+                await relaunch()
+            }
+        } catch (err) {
+            console.error('Update installation failed:', err)
+            setMessage(`✗ Failed to install update: ${err}`)
+            setDownloading(false)
         }
     }
 
@@ -313,6 +384,109 @@ export function SettingsView() {
                     <p className="settings-description">
                         Send anonymous usage statistics to help improve Linggen. 
                         We only collect basic usage data (app launches, sources added) — <strong>no code content, file paths, or personal information is ever sent</strong>.
+                    </p>
+                </div>
+            </section>
+
+            <section className="settings-card">
+                <div className="settings-card-header">
+                    <span className="settings-icon">🔄</span>
+                    <h3>Software Update</h3>
+                    <span className="settings-model-name">v0.5.0</span>
+                </div>
+                <div className="settings-card-body">
+                    <div className="settings-row">
+                        <div className="danger-action-info" style={{ flex: 1 }}>
+                            <strong>Application Updates</strong>
+                            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                Check for new versions and install updates automatically.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn-action"
+                            onClick={handleCheckForUpdates}
+                            disabled={checkingUpdate || downloading}
+                            style={{ whiteSpace: 'nowrap' }}
+                        >
+                            {checkingUpdate ? 'Checking...' : 'Check for Updates'}
+                        </button>
+                    </div>
+
+                    {updateAvailable && updateInfo && (
+                        <div style={{
+                            marginTop: '12px',
+                            padding: '12px 14px',
+                            background: 'rgba(96, 165, 250, 0.1)',
+                            border: '1px solid rgba(96, 165, 250, 0.2)',
+                            borderRadius: '6px'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <div>
+                                    <strong style={{ color: '#60a5fa', fontSize: '13px' }}>
+                                        Version {updateInfo.version} Available
+                                    </strong>
+                                    {updateInfo.date && (
+                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                            Released: {new Date(updateInfo.date).toLocaleDateString()}
+                                        </div>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn-action"
+                                    onClick={handleInstallUpdate}
+                                    disabled={downloading}
+                                    style={{ background: '#60a5fa', borderColor: '#60a5fa' }}
+                                >
+                                    {downloading ? 'Installing...' : 'Install Update'}
+                                </button>
+                            </div>
+                            {updateInfo.body && (
+                                <div style={{
+                                    fontSize: '12px',
+                                    color: 'var(--text-secondary)',
+                                    marginTop: '8px',
+                                    paddingTop: '8px',
+                                    borderTop: '1px solid rgba(96, 165, 250, 0.2)',
+                                    maxHeight: '150px',
+                                    overflowY: 'auto'
+                                }}>
+                                    <strong>What's New:</strong>
+                                    <pre style={{ 
+                                        whiteSpace: 'pre-wrap', 
+                                        fontFamily: 'inherit',
+                                        margin: '4px 0 0 0'
+                                    }}>{updateInfo.body}</pre>
+                                </div>
+                            )}
+                            {downloading && downloadProgress > 0 && (
+                                <div style={{ marginTop: '8px' }}>
+                                    <div style={{
+                                        width: '100%',
+                                        height: '4px',
+                                        background: 'rgba(96, 165, 250, 0.2)',
+                                        borderRadius: '2px',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <div style={{
+                                            width: `${downloadProgress}%`,
+                                            height: '100%',
+                                            background: '#60a5fa',
+                                            transition: 'width 0.3s ease'
+                                        }} />
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                        Downloading... {downloadProgress}%
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <p className="settings-description" style={{ marginTop: '12px' }}>
+                        Updates are downloaded from the official Linggen releases repository. 
+                        The app will restart automatically after installation.
                     </p>
                 </div>
             </section>

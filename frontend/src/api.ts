@@ -15,7 +15,7 @@ function getApiBase(): string {
     const isTauriProtocol =
         protocol !== 'http:' && protocol !== 'https:'; // e.g. app://, tauri://, file://
 
-    // @ts-ignore - __TAURI__ is injected by Tauri
+    // @ts-expect-error - __TAURI__ is injected by Tauri
     const hasTauriGlobal = typeof window.__TAURI__ !== 'undefined';
 
     const ua = navigator.userAgent.toLowerCase();
@@ -885,11 +885,44 @@ export async function rebuildGraph(sourceId: string): Promise<GraphStatusRespons
     return response.json();
 }
 
+// Combined graph + status response (optimized single request)
+export interface GraphWithStatusResponse {
+    status: string;
+    node_count: number;
+    edge_count: number;
+    built_at: string | null;
+    project_id: string;
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+}
+
+// Get graph with status in a single request (optimized endpoint)
+// Use focus parameter to get only nodes related to a specific file
+// Use hops parameter to control how many relationship levels to include
+export async function getGraphWithStatus(
+    sourceId: string,
+    query?: GraphQuery
+): Promise<GraphWithStatusResponse> {
+    const params = new URLSearchParams();
+    if (query?.folder) params.set('folder', query.folder);
+    if (query?.focus) params.set('focus', query.focus);
+    if (query?.hops) params.set('hops', query.hops.toString());
+
+    const url = `${API_BASE}/api/sources/${sourceId}/graph/with_status${
+        params.toString() ? '?' + params.toString() : ''
+    }`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to get graph with status: ${response.statusText}`);
+    }
+    return response.json();
+}
+
 
 
 export interface RenameNoteRequest {
-    old_path: String;
-    new_path: String;
+    old_path: string;
+    new_path: string;
 }
 
 export async function renameNote(sourceId: string, oldPath: string, newPath: string): Promise<void> {

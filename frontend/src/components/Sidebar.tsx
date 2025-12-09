@@ -489,13 +489,14 @@ export function Sidebar({
 
             <div className="sidebar-section">
                 <div className="sidebar-section-header">TOOLS</div>
-                <button
+                {/* Assistant view is hidden until it's complete */}
+                {/* <button
                     className={`sidebar-item ${currentView === 'assistant' ? 'active' : ''}`}
                     onClick={() => onChangeView('assistant')}
                 >
                     <ChatBubbleLeftRightIcon className="sidebar-icon" />
                     <span>Assistant</span>
-                </button>
+                </button> */}
                 <button
                     className={`sidebar-item ${currentView === 'activity' ? 'active' : ''}`}
                     onClick={() => onChangeView('activity')}

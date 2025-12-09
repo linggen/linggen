@@ -1,8 +1,9 @@
 .graph-view {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  /* Fill available height inside workspace-graph */
   height: 100%;
-  min-height: 400px;
   background: #1a1a2e;
   border-radius: 8px;
   overflow: hidden;
@@ -152,7 +153,8 @@
 /* Graph container */
 .graph-container {
   flex: 1;
-  min-height: 300px;
+  /* Let the graph fully expand in the available space */
+  min-height: 0;
   position: relative;
 }
 

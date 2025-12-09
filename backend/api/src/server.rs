@@ -12,8 +12,8 @@ use tracing::info;
 use crate::analytics;
 use crate::handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
-    enhance_prompt, get_app_status, get_graph, get_graph_status, index_source, list_jobs,
-    list_resources, list_uploaded_files,
+    enhance_prompt, get_app_status, get_graph, get_graph_status, get_graph_with_status,
+    index_source, list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
     rebuild_graph, remove_resource, rename_resource, retry_init, update_resource_patterns,
     upload_file, upload_file_stream, AppState,
@@ -366,6 +366,10 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .route(
             "/api/sources/:source_id/graph/status",
             get(get_graph_status),
+        )
+        .route(
+            "/api/sources/:source_id/graph/with_status",
+            get(get_graph_with_status),
         )
         .route("/api/sources/:source_id/graph/rebuild", post(rebuild_graph))
         // Design Notes routes

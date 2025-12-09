@@ -185,7 +185,18 @@ body {
 .content-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 24px 24px 0 24px;
+}
+
+/* Ensure the workspace (graph/editor area) always tracks the viewport
+   height so that the graph can resize when the window is resized or
+   full-screened. We subtract:
+   - 48px content header
+   - 22px status bar
+   - 24px top padding of .content-scroll */
+.workspace-view {
+  height: calc(100vh - 48px - 22px - 24px);
+  min-height: 0;
 }
 
 /* Custom Scrollbar */
@@ -479,19 +490,6 @@ h2 {
 /* Source View Specifics */
 .resource-row:hover {
   background-color: var(--item-hover) !important;
-}
-
-/* Graph Container Placeholder */
-.graph-container {
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: #111;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
 }
 
 /* --- Activity View --- */
