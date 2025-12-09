@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::AppState;
+use super::AppState;
 
 /// Information about a design note
 #[derive(Debug, Serialize)]

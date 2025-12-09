@@ -8,6 +8,156 @@
 - **[Framework Architecture](doc/framework.md)**: System design and architecture diagram.
 - **[Cursor MCP Setup](doc/cursor-mcp-setup.md)**: How to integrate Linggen with Cursor IDE.
 
+## CLI Tool
+
+Linggen provides a unified binary that acts as both the server and CLI tool:
+
+### Installation
+
+#### Option 1: From DMG/App Bundle (Recommended for macOS)
+
+If you've installed Linggen.app from the DMG, the binary is already bundled:
+
+```bash
+# Run the installation helper script
+./install-cli-from-app.sh
+```
+
+This creates a symlink from the bundled binary to `/usr/local/bin/linggen`.
+
+#### Option 2: Build from Source
+
+Build from source:
+
+```bash
+cd backend
+cargo build --release --bin linggen
+```
+
+Add the binary to your PATH:
+
+```bash
+# macOS/Linux
+cp target/release/linggen /usr/local/bin/
+
+# Or add the target/release directory to your PATH
+export PATH="$PWD/target/release:$PATH"
+```
+
+Alternatively, use the installation script:
+
+```bash
+./install-cli.sh
+```
+
+### Usage
+
+#### Start Server
+
+```bash
+# Start the server (foreground)
+linggen serve
+# Or just:
+linggen
+
+# With custom port
+linggen serve --port 9000
+```
+
+#### Check Backend Status
+
+```bash
+linggen start
+```
+
+Checks if the Linggen backend is running and displays its current status.
+
+#### Index a Directory
+
+```bash
+# Auto mode (default) - automatically chooses incremental or full
+# Uses incremental if source was previously indexed, full otherwise
+linggen index /path/to/your/project
+
+# Explicit incremental indexing
+linggen index /path/to/your/project --mode incremental
+
+# Full reindex (rebuild from scratch)
+linggen index /path/to/your/project --mode full
+
+# Index with custom name
+linggen index /path/to/your/project --name "My Project"
+
+# Index with file patterns
+linggen index /path/to/your/project --include "*.rs" --include "*.md" --exclude "target/**"
+
+# Wait for indexing to complete
+linggen index /path/to/your/project --wait
+```
+
+#### Check Status and View Jobs
+
+```bash
+linggen status
+
+# Show more recent jobs
+linggen status --limit 20
+```
+
+### Configuration
+
+The CLI can be configured via command-line flags or environment variables:
+
+- `--api-url <URL>` or `LINGGEN_API_URL`: Base URL of the Linggen backend (default: `http://127.0.0.1:8787`)
+
+Example:
+
+```bash
+export LINGGEN_API_URL=http://localhost:8787
+linggen status
+```
+
+## VS Code Extension
+
+The Linggen VS Code extension provides seamless integration with your editor.
+
+### Installation
+
+1. Open VS Code
+2. Navigate to the `vscode-extension` directory
+3. Install dependencies: `npm install`
+4. Press F5 to launch the extension in development mode
+
+For production use, package the extension:
+
+```bash
+cd vscode-extension
+npm install -g @vscode/vsce
+vsce package
+code --install-extension linggen-0.1.0.vsix
+```
+
+### Commands
+
+Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P) and type "Linggen":
+
+- **Linggen: Index Current Workspace** - Incrementally index your workspace
+- **Linggen: Full Reindex Current Workspace** - Perform a full reindex
+- **Linggen: Check Backend Status** - Check if the backend is running
+- **Linggen: Open in Linggen** - Open Linggen in your browser
+
+### Settings
+
+Configure the extension in VS Code settings:
+
+- `linggen.cliPath`: Path to the linggen CLI binary (default: "linggen")
+- `linggen.indexModeDefault`: Default indexing mode - "incremental" or "full" (default: "incremental")
+- `linggen.apiUrl`: Base URL of the Linggen backend API (default: "http://127.0.0.1:8787")
+
+### Requirements
+
+The VS Code extension requires the Linggen CLI to be installed and available on your PATH (see CLI installation above).
+
 ## Current Status
 
 - **Frontend**: React + Vite setup, connected to backend.
@@ -38,7 +188,9 @@ open frontend/src-tauri/target/release/bundle/macos/Linggen.app
 1. **Start the Backend Server**:
 
    ```bash
-   cd backend && cargo run -p api --release
+   cd backend && cargo run --bin linggen --release
+   # Or explicitly:
+   cd backend && cargo run --bin linggen --release -- serve
    ```
 
    This starts:
@@ -59,7 +211,7 @@ open frontend/src-tauri/target/release/bundle/macos/Linggen.app
 
    ```bash
    # Terminal 1: Start backend
-   cd backend && cargo run -p api --release
+   cd backend && cargo run --bin linggen --release
 
    # Terminal 2: Start Tauri dev
    cd frontend && npm run tauri:dev

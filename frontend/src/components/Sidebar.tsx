@@ -1,6 +1,5 @@
 import {
     FolderIcon,
-    Square3Stack3DIcon,
     ChatBubbleLeftRightIcon,
     ClockIcon,
     Cog6ToothIcon,
@@ -15,7 +14,7 @@ import { useState, useEffect } from 'react';
 import { type Resource, saveNote, listNotes, renameNote, deleteNote, type Note } from '../api'
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
-export type View = 'sources' | 'architecture' | 'activity' | 'assistant' | 'settings'
+export type View = 'sources' | 'activity' | 'assistant' | 'settings'
 
 interface SidebarProps {
     currentView: View
@@ -490,13 +489,6 @@ export function Sidebar({
 
             <div className="sidebar-section">
                 <div className="sidebar-section-header">TOOLS</div>
-                <button
-                    className={`sidebar-item ${currentView === 'architecture' ? 'active' : ''}`}
-                    onClick={() => onChangeView('architecture')}
-                >
-                    <Square3Stack3DIcon className="sidebar-icon" />
-                    <span>Architecture</span>
-                </button>
                 <button
                     className={`sidebar-item ${currentView === 'assistant' ? 'active' : ''}`}
                     onClick={() => onChangeView('assistant')}

@@ -63,34 +63,35 @@ fi
 echo -e "${BLUE}Architecture: $ARCH ($TARGET_TRIPLE)${NC}"
 echo ""
 
-# Step 1: Build the backend API binary
+# Step 1: Build the unified linggen binary (includes both server and CLI)
 if [ "$SKIP_BACKEND" = false ]; then
-    echo -e "${BLUE}🦀 Building backend (release mode)...${NC}"
+    echo -e "${BLUE}🦀 Building linggen (release mode)...${NC}"
     cd backend
-    cargo build --release --package api
+    cargo build --release --bin linggen
     cd ..
+    echo "  ✓ Built linggen binary (server + CLI)"
     echo ""
 else
     echo -e "${YELLOW}⏭️  Skipping backend build (--skip-backend flag)${NC}"
     echo ""
 fi
 
-# Step 2: Copy backend binary as Tauri sidecar
+# Step 2: Copy linggen binary as Tauri sidecar
 # Tauri expects sidecars to be named: <sidecar-name>-<target-triple>
 SIDECAR_DIR="frontend/src-tauri"
-SIDECAR_NAME="linggen-backend-${TARGET_TRIPLE}"
-BACKEND_BINARY="backend/target/release/api"
+SIDECAR_NAME="linggen-${TARGET_TRIPLE}"
+LINGGEN_BINARY="backend/target/release/linggen"
 
-if [ ! -f "$BACKEND_BINARY" ]; then
-    echo "Error: Backend binary not found at $BACKEND_BINARY"
+if [ ! -f "$LINGGEN_BINARY" ]; then
+    echo "Error: Linggen binary not found at $LINGGEN_BINARY"
     echo "Run without --skip-backend flag to build it first"
     exit 1
 fi
 
 echo -e "${BLUE}📦 Setting up sidecar binary...${NC}"
-cp "$BACKEND_BINARY" "${SIDECAR_DIR}/${SIDECAR_NAME}"
+cp "$LINGGEN_BINARY" "${SIDECAR_DIR}/${SIDECAR_NAME}"
 chmod +x "${SIDECAR_DIR}/${SIDECAR_NAME}"
-echo "  ✓ Copied backend binary to ${SIDECAR_DIR}/${SIDECAR_NAME}"
+echo "  ✓ Copied linggen binary to ${SIDECAR_DIR}/${SIDECAR_NAME}"
 echo ""
 
 # Step 3: Install frontend dependencies if needed
@@ -152,6 +153,9 @@ echo "📋 Quick Actions:"
 echo ""
 echo "  Test the app:"
 echo "    open \"dist/macos/${APP_NAME}.app\""
+echo ""
+echo "  Install CLI to PATH (after installing the app):"
+echo "    ./install-cli-from-app.sh"
 echo ""
 echo "  Code sign (optional):"
 echo "    codesign --deep --force --sign \"Developer ID Application: Your Name\" \"dist/macos/${APP_NAME}.app\""

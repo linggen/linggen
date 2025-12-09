@@ -10,7 +10,7 @@ use std::sync::Arc;
 use storage::SourceProfile;
 use tracing::{error, info, warn};
 
-use crate::AppState;
+use super::AppState;
 
 /// Get the profile for a specific source
 pub async fn get_profile(

@@ -52,8 +52,11 @@ fn main() {
                 // Backend not running, spawn the sidecar
                 println!("[Tauri] Starting backend sidecar...");
 
-                match app_handle.shell().sidecar("linggen-backend") {
-                    Ok(sidecar_cmd) => match sidecar_cmd.spawn() {
+                match app_handle.shell().sidecar("linggen") {
+                    Ok(sidecar_cmd) => {
+                        // Run in server mode
+                        let sidecar_with_args = sidecar_cmd.args(&["serve"]);
+                        match sidecar_with_args.spawn() {
                         Ok((mut rx, child)) => {
                             // Store the child process handle for cleanup
                             let backend_state = app_handle.state::<BackendProcess>();
@@ -84,11 +87,12 @@ fn main() {
                                 }
                             });
                         }
-                        Err(e) => {
-                            eprintln!("[Tauri] Warning: Failed to spawn backend sidecar: {}", e);
-                            eprintln!("[Tauri] Assuming backend is running separately...");
+                            Err(e) => {
+                                eprintln!("[Tauri] Warning: Failed to spawn backend sidecar: {}", e);
+                                eprintln!("[Tauri] Assuming backend is running separately...");
+                            }
                         }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("[Tauri] Warning: Failed to setup backend sidecar: {}", e);
                         eprintln!("[Tauri] Assuming backend is running separately...");

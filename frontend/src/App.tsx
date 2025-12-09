@@ -20,7 +20,6 @@ import { AddSourceModal } from './components/AddSourceModal'
 import { ActivityView } from './views/ActivityView'
 import { AssistantView } from './views/AssistantView'
 import { SettingsView } from './views/SettingsView'
-import { ArchitectureView } from './views/ArchitectureView'
 import { MainLayout } from './components/MainLayout'
 import type { View } from './components/Sidebar'
 
@@ -575,7 +574,6 @@ function App() {
           />
         )
       )}
-      {currentView === 'architecture' && <ArchitectureView />}
       {currentView === 'activity' && <ActivityView jobs={jobs} />}
       {currentView === 'assistant' && <AssistantView />}
       {currentView === 'settings' && <SettingsView />}

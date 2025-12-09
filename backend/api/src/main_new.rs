@@ -16,7 +16,12 @@ struct Cli {
     command: Option<Commands>,
 
     /// API URL for CLI commands
-    #[arg(long, env = "LINGGEN_API_URL", default_value = "http://127.0.0.1:8787", global = true)]
+    #[arg(
+        long,
+        env = "LINGGEN_API_URL",
+        default_value = "http://127.0.0.1:8787",
+        global = true
+    )]
     api_url: String,
 }
 

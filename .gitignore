@@ -15,6 +15,11 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
+# Tauri sidecar binaries (build artifacts)
+frontend/src-tauri/linggen-*-apple-darwin
+frontend/src-tauri/linggen-*-pc-windows-*
+frontend/src-tauri/linggen-*-unknown-linux-*
+
 linggensite/node_modules/
 linggensite/dist/
 linggensite/.env

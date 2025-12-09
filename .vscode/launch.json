@@ -5,9 +5,9 @@
             "name": "Backend",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/backend/target/debug/api",
+            "program": "${workspaceFolder}/backend/target/debug/linggen",
             "preLaunchTask": "cargo build",
-            "args": [],
+            "args": ["serve"],
             "cwd": "${workspaceFolder}/backend",
             "env": {
                 "RUST_LOG": "debug",
