@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use colored::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use tabled::{Table, Tabled};
-use tempfile::NamedTempFile;
+use tempfile::{tempdir, NamedTempFile};
 
 use super::client::{ApiClient, CreateSourceRequest};
 use crate::manifest::{current_platform, fetch_manifest, select_artifact, ArtifactKind, Platform};
@@ -41,8 +41,7 @@ pub async fn handle_update() -> Result<()> {
         Platform::Other => {
             println!(
                 "{}",
-                "⚠️ Unsupported platform for automated update. Please update manually."
-                    .yellow()
+                "⚠️ Unsupported platform for automated update. Please update manually.".yellow()
             );
             Ok(())
         }
@@ -77,7 +76,10 @@ pub async fn handle_check() -> Result<()> {
 }
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
-    let status = Command::new(cmd).args(args).status().with_context(|| format!("Failed to run {} {:?}", cmd, args))?;
+    let status = Command::new(cmd)
+        .args(args)
+        .status()
+        .with_context(|| format!("Failed to run {} {:?}", cmd, args))?;
     if !status.success() {
         anyhow::bail!("Command failed: {} {:?}", cmd, args);
     }
@@ -89,7 +91,9 @@ fn run_and_capture_version(cmd: &str, args: &[&str]) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn command_exists(cmd: &str) -> bool {
@@ -104,62 +108,18 @@ fn command_exists(cmd: &str) -> bool {
 /// ----- platform-specific installers -----
 
 async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
-    // Prefer package manager if available
-    if command_exists("brew") {
-        run_cmd("brew", &["install", "linggen"])?;
-        println!("{}", "✅ Installed/updated linggen CLI via Homebrew".green());
-    }
-
-    // Install/update app via DMG from manifest
-    if let Some(artifact) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
-        println!(
-            "{}",
-            format!("⬇️  Downloading Linggen.app from {}", artifact.url).cyan()
-        );
-        let dmg_path = download_to_temp(&artifact.url).await?;
-        let mount = tempfile::tempdir()?;
-        let mount_point = mount.path().to_path_buf();
-        run_cmd(
-            "hdiutil",
-            &[
-                "attach",
-                dmg_path.to_str().unwrap(),
-                "-mountpoint",
-                mount_point.to_str().unwrap(),
-                "-nobrowse",
-            ],
-        )?;
-        let app_src = mount_point.join("Linggen.app");
-        let app_dst = PathBuf::from("/Applications/Linggen.app");
-        if app_dst.exists() {
-            fs::remove_dir_all(&app_dst).ok();
-        }
-        run_cmd(
-            "cp",
-            &[
-                "-R",
-                app_src.to_str().unwrap(),
-                app_dst.to_str().unwrap(),
-            ],
-        )?;
-        run_cmd("hdiutil", &["detach", mount_point.to_str().unwrap()])?;
-        println!("{}", "✅ Installed/updated Linggen.app".green());
+    // Install/update app bundle to /Applications from tarball
+    // (CLI is installed separately via install-cli.sh, server is bundled in the app)
+    if let Some(app_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
+        println!("{}", "⬇️  Downloading Linggen app tarball...".cyan());
+        let tar = download_to_temp(&app_art.url).await?;
+        install_app_bundle(&tar)?;
     } else {
         println!(
             "{}",
-            "⚠️ No macOS app artifact in manifest; skipped app install."
-                .yellow()
+            "⚠️ No macOS app artifact in manifest; cannot install.".yellow()
         );
-    }
-
-    // Fallback CLI install from manifest if Homebrew was unavailable
-    if !command_exists("brew") {
-        if let Some(cli_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::Cli) {
-            println!("{}", "⬇️  Downloading CLI tarball...".cyan());
-            let tar = download_to_temp(&cli_art.url).await?;
-            extract_tarball(&tar, "/usr/local/bin")?;
-            println!("{}", "✅ Installed/updated CLI from tarball".green());
-        }
+        anyhow::bail!("No macOS app artifact found in manifest");
     }
 
     Ok(())
@@ -201,9 +161,8 @@ async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
 }
 
 async fn download_to_temp(url: &str) -> Result<PathBuf> {
-    let tmp = tempfile::NamedTempFile::new()?.into_temp_path();
-    let tmp_path = tmp.to_path_buf();
-
+    let tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
+    let tmp_path = tmp.path().to_path_buf();
     let resp = reqwest::get(url)
         .await
         .with_context(|| format!("Failed to download {}", url))?;
@@ -215,6 +174,7 @@ async fn download_to_temp(url: &str) -> Result<PathBuf> {
         .await
         .with_context(|| format!("Failed to read body for {}", url))?;
     fs::write(&tmp_path, &bytes)?;
+    tmp.keep().ok(); // ensure file is not deleted on drop
     Ok(tmp_path)
 }
 
@@ -229,6 +189,69 @@ fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
     if !status.success() {
         anyhow::bail!("tar failed for {:?}", tar_path);
     }
+    Ok(())
+}
+
+fn install_app_bundle(tar_path: &PathBuf) -> Result<()> {
+    let tmp_dir = tempdir().context("Failed to create temp dir for app extraction")?;
+    let tmp_path = tmp_dir.path();
+
+    let dest_str = tmp_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid temp dir path"))?;
+    extract_tarball(tar_path, dest_str)?;
+
+    // Locate the .app bundle (expecting Linggen.app at the tar root)
+    let mut app_bundle = tmp_path.join("Linggen.app");
+    if !app_bundle.exists() {
+        app_bundle = std::fs::read_dir(tmp_path)
+            .context("Failed to read extracted app directory")?
+            .filter_map(|e| e.ok().map(|entry| entry.path()))
+            .find(|p| p.is_dir() && p.extension().map(|ext| ext == "app").unwrap_or(false))
+            .ok_or_else(|| anyhow::anyhow!("No .app bundle found in extracted tarball"))?;
+    }
+
+    let app_src = app_bundle
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid app bundle path"))?;
+
+    let applications_dir = Path::new("/Applications");
+    if !applications_dir.exists() {
+        fs::create_dir_all(applications_dir).context("Failed to create /Applications")?;
+    }
+
+    let dest_app = applications_dir.join("Linggen.app");
+    if dest_app.exists() {
+        fs::remove_dir_all(&dest_app)
+            .context("Failed to remove existing /Applications/Linggen.app")?;
+    }
+
+    // Copy the bundle; retry with sudo if permissions fail
+    let copy_result = Command::new("cp")
+        .args(["-R", app_src, "/Applications/"])
+        .status();
+
+    let mut success = copy_result.as_ref().map(|s| s.success()).unwrap_or(false);
+    if !success {
+        println!(
+            "{}",
+            "⚠️ Copy to /Applications failed; retrying with sudo (may prompt for password)..."
+                .yellow()
+        );
+        let sudo_result = Command::new("sudo")
+            .args(["cp", "-R", app_src, "/Applications/"])
+            .status();
+        success = sudo_result.as_ref().map(|s| s.success()).unwrap_or(false);
+    }
+
+    if !success {
+        anyhow::bail!("Failed to copy app bundle to /Applications");
+    }
+
+    println!(
+        "{}",
+        "✅ Installed/updated Linggen.app to /Applications".green()
+    );
     Ok(())
 }
 
@@ -253,10 +276,16 @@ WantedBy=multi-user.target
         .ok_or_else(|| anyhow::anyhow!("invalid temp path"))?
         .to_string();
 
-    run_cmd("sudo", &["cp", &tmp_str, "/etc/systemd/system/linggen-server.service"])?;
+    run_cmd(
+        "sudo",
+        &["cp", &tmp_str, "/etc/systemd/system/linggen-server.service"],
+    )?;
     run_cmd("sudo", &["systemctl", "daemon-reload"])?;
     run_cmd("sudo", &["systemctl", "enable", "--now", "linggen-server"])?;
-    println!("{}", "✅ systemd unit installed/enabled (linggen-server)".green());
+    println!(
+        "{}",
+        "✅ systemd unit installed/enabled (linggen-server)".green()
+    );
     Ok(())
 }
 
@@ -548,9 +577,7 @@ pub async fn handle_status(api_client: &ApiClient, limit: usize) -> Result<()> {
             println!("Error: {e}");
             println!();
             println!("{}", "Install or ensure Linggen is running:".yellow());
-            println!(
-                "  curl -fsSL https://linggen.dev/install-cli.sh | bash"
-            );
+            println!("  curl -fsSL https://linggen.dev/install-cli.sh | bash");
             println!("  linggen install");
             return Ok(());
         }

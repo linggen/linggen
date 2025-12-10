@@ -24,11 +24,12 @@ jobs:
             rust-target: "aarch64-apple-darwin"
             sidecar-target: "aarch64-apple-darwin"
             slug: "macos-aarch64"
-          - platform: "ubuntu-22.04"
-            args: ""
-            rust-target: "x86_64-unknown-linux-gnu"
-            sidecar-target: "x86_64-unknown-linux-gnu"
-            slug: "linux-x86_64"
+          # Temporarily disabled - Ubuntu build
+          # - platform: "ubuntu-22.04"
+          #   args: ""
+          #   rust-target: "x86_64-unknown-linux-gnu"
+          #   sidecar-target: "x86_64-unknown-linux-gnu"
+          #   slug: "linux-x86_64"
 
     runs-on: ${{ matrix.platform }}
 
@@ -44,9 +45,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
-        with:
-          channel: stable
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustc --version
+          cache: false
 
       - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
@@ -169,25 +172,24 @@ jobs:
             echo "Error: CLI macOS ARM64 artifact not found" >&2
             exit 1
           fi
-          if [ -z "$CLI_LINUX_X64" ]; then
-            echo "Error: CLI Linux x86_64 artifact not found" >&2
-            exit 1
-          fi
           if [ -z "$SRV_MAC_ARM64" ]; then
             echo "Error: Server macOS ARM64 artifact not found" >&2
             exit 1
           fi
+          # Linux artifacts are optional (temporarily disabled)
+          if [ -z "$CLI_LINUX_X64" ]; then
+            echo "Warning: CLI Linux x86_64 artifact not found (Ubuntu build may be disabled)" >&2
+          fi
           if [ -z "$SRV_LINUX_X64" ]; then
-            echo "Error: Server Linux x86_64 artifact not found" >&2
-            exit 1
+            echo "Warning: Server Linux x86_64 artifact not found (Ubuntu build may be disabled)" >&2
           fi
 
           DMG_BASENAME=$(basename "$DMG" 2>/dev/null || echo "")
           DEB_BASENAME=$(basename "$DEB" 2>/dev/null || echo "")
           CLI_MAC_ARM64_BASENAME=$(basename "$CLI_MAC_ARM64")
-          CLI_LINUX_X64_BASENAME=$(basename "$CLI_LINUX_X64")
+          CLI_LINUX_X64_BASENAME=$(basename "$CLI_LINUX_X64" 2>/dev/null || echo "")
           SRV_MAC_ARM64_BASENAME=$(basename "$SRV_MAC_ARM64")
-          SRV_LINUX_X64_BASENAME=$(basename "$SRV_LINUX_X64")
+          SRV_LINUX_X64_BASENAME=$(basename "$SRV_LINUX_X64" 2>/dev/null || echo "")
 
           # Generate latest.json only if DMG and DEB exist
           if [ -n "$DMG_BASENAME" ] && [ -n "$DEB_BASENAME" ]; then
@@ -213,29 +215,36 @@ jobs:
             touch latest.json
           fi
 
-          # Generate manifest.json with all artifacts
+          # Generate manifest.json with all artifacts (Linux artifacts optional)
+          # Note: Include both specific (aarch64) and universal keys for CLI compatibility
           {
             echo "{"
             echo "  \"version\": \"${VERSION_NUM}\","
             echo "  \"artifacts\": {"
-            echo "    \"cli-macos-aarch64\": {\"url\": \"${BASE_URL}/${CLI_MAC_ARM64_BASENAME}\"},"
-            echo "    \"cli-linux-x86_64\": {\"url\": \"${BASE_URL}/${CLI_LINUX_X64_BASENAME}\"},"
-            echo "    \"server-macos-aarch64\": {\"url\": \"${BASE_URL}/${SRV_MAC_ARM64_BASENAME}\"},"
-            if [ -n "$DMG_BASENAME" ] || [ -n "$DEB_BASENAME" ]; then
-              echo "    \"server-linux-x86_64\": {\"url\": \"${BASE_URL}/${SRV_LINUX_X64_BASENAME}\"},"
-            else
+            # macOS CLI - include both specific and universal keys
+            echo -n "    \"cli-macos-universal\": {\"url\": \"${BASE_URL}/${CLI_MAC_ARM64_BASENAME}\"},"
+            echo "    \"cli-macos-aarch64\": {\"url\": \"${BASE_URL}/${CLI_MAC_ARM64_BASENAME}\"}"
+            if [ -n "$CLI_LINUX_X64_BASENAME" ]; then
+              echo ","
+              echo "    \"cli-linux-x86_64\": {\"url\": \"${BASE_URL}/${CLI_LINUX_X64_BASENAME}\"}"
+            fi
+            echo ","
+            # macOS Server - include both specific and universal keys
+            echo -n "    \"server-macos-universal\": {\"url\": \"${BASE_URL}/${SRV_MAC_ARM64_BASENAME}\"},"
+            echo "    \"server-macos-aarch64\": {\"url\": \"${BASE_URL}/${SRV_MAC_ARM64_BASENAME}\"}"
+            if [ -n "$SRV_LINUX_X64_BASENAME" ]; then
+              echo ","
               echo "    \"server-linux-x86_64\": {\"url\": \"${BASE_URL}/${SRV_LINUX_X64_BASENAME}\"}"
             fi
             if [ -n "$DMG_BASENAME" ]; then
-              if [ -n "$DEB_BASENAME" ]; then
-                echo "    \"app-macos-dmg\": {\"url\": \"${BASE_URL}/${DMG_BASENAME}\"},"
-              else
-                echo "    \"app-macos-dmg\": {\"url\": \"${BASE_URL}/${DMG_BASENAME}\"}"
-              fi
+              echo ","
+              echo "    \"app-macos-dmg\": {\"url\": \"${BASE_URL}/${DMG_BASENAME}\"}"
             fi
             if [ -n "$DEB_BASENAME" ]; then
+              echo ","
               echo "    \"app-linux-deb\": {\"url\": \"${BASE_URL}/${DEB_BASENAME}\"}"
             fi
+            echo ""
             echo "  }"
             echo "}"
           } > manifest.json

@@ -116,9 +116,10 @@ main() {
       url="file://$LOCAL_PATH"
     fi
   elif [ "$version" = "latest" ]; then
-    url="https://github.com/linggen/linggen-releases/releases/latest/download/linggen-cli-${slug}-latest.tar.gz"
+    url="https://github.com/linggen/linggen-releases/releases/latest/download/linggen-cli-${slug}.tar.gz"
   else
-    url="https://github.com/linggen/linggen-releases/releases/download/v${version}/linggen-cli-${slug}-v${version}.tar.gz"
+    # Use versioned release tag but base filename (single asset naming)
+    url="https://github.com/linggen/linggen-releases/releases/download/v${version}/linggen-cli-${slug}.tar.gz"
   fi
 
   echo "➡️  Downloading $url"

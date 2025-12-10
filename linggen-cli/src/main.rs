@@ -14,6 +14,7 @@ use cli::{
 #[derive(Parser)]
 #[command(name = "linggen")]
 #[command(about = "Linggen - AI-powered code intelligence CLI", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

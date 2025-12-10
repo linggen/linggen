@@ -51,7 +51,10 @@ pub async fn fetch_manifest() -> Result<Manifest> {
         anyhow::bail!("Manifest request failed: {} {}", resp.status(), url);
     }
 
-    let manifest = resp.json::<Manifest>().await.context("Failed to parse manifest JSON")?;
+    let manifest = resp
+        .json::<Manifest>()
+        .await
+        .context("Failed to parse manifest JSON")?;
     Ok(manifest)
 }
 
@@ -65,14 +68,15 @@ pub fn current_platform() -> Platform {
     }
 }
 
-pub fn select_artifact(manifest: &Manifest, platform: Platform, kind: ArtifactKind) -> Option<Artifact> {
+pub fn select_artifact(
+    manifest: &Manifest,
+    platform: Platform,
+    kind: ArtifactKind,
+) -> Option<Artifact> {
     let key = match (platform, kind) {
         (Platform::Mac, ArtifactKind::Cli) => "cli-macos-universal",
-        (Platform::Mac, ArtifactKind::App) => "app-macos-dmg",
-        (Platform::Mac, ArtifactKind::Server) => "server-macos-universal",
+        (Platform::Mac, ArtifactKind::App) => "app-macos-tarball",
         (Platform::Linux, ArtifactKind::Cli) => "cli-linux-x86_64",
-        (Platform::Linux, ArtifactKind::Server) => "server-linux-x86_64",
-        (Platform::Linux, ArtifactKind::App) => "app-linux",
         _ => "",
     };
     manifest.artifacts.get(key).cloned()
