@@ -156,11 +156,8 @@ pub struct ResourceInfo {
     pub resource_type: String,
     pub path: String,
     pub enabled: bool,
-    #[allow(dead_code)]
     pub include_patterns: Vec<String>,
-    #[allow(dead_code)]
     pub exclude_patterns: Vec<String>,
-    #[allow(dead_code)]
     pub latest_job: Option<IndexingJob>,
     pub stats: Option<SourceStats>,
 }
@@ -169,7 +166,6 @@ pub struct ResourceInfo {
 pub struct SourceStats {
     pub chunk_count: usize,
     pub file_count: usize,
-    #[allow(dead_code)]
     pub total_size_bytes: usize,
 }
 

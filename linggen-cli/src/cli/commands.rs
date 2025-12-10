@@ -1,10 +1,264 @@
 use anyhow::{Context, Result};
 use colored::*;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 use tabled::{Table, Tabled};
+use tempfile::NamedTempFile;
 
 use super::client::{ApiClient, CreateSourceRequest};
+use crate::manifest::{current_platform, fetch_manifest, select_artifact, ArtifactKind, Platform};
+
+/// Install using manifest (preferred); fall back to package manager when available.
+pub async fn handle_install() -> Result<()> {
+    println!("{}", "🔧 Installing Linggen...".cyan());
+    let platform = current_platform();
+    let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+
+    match platform {
+        Platform::Mac => install_macos(&manifest).await,
+        Platform::Linux => install_linux(&manifest).await,
+        Platform::Other => {
+            println!(
+                "{}",
+                "⚠️ Unsupported platform for automated install. Please install manually from releases."
+                    .yellow()
+            );
+            Ok(())
+        }
+    }
+}
+
+pub async fn handle_update() -> Result<()> {
+    println!("{}", "⬆️  Updating Linggen...".cyan());
+    let platform = current_platform();
+    let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+
+    match platform {
+        Platform::Mac => install_macos(&manifest).await,
+        Platform::Linux => install_linux(&manifest).await,
+        Platform::Other => {
+            println!(
+                "{}",
+                "⚠️ Unsupported platform for automated update. Please update manually."
+                    .yellow()
+            );
+            Ok(())
+        }
+    }
+}
+
+pub async fn handle_check() -> Result<()> {
+    println!("{}", "🔎 Checking versions...".cyan());
+    let manifest = fetch_manifest().await?;
+    let platform = current_platform();
+
+    let cli_version_local =
+        run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
+    let server_version_local = run_and_capture_version("linggen-server", &["--version"])
+        .unwrap_or_else(|| "unknown".into());
+
+    let cli_remote = select_artifact(&manifest, platform, ArtifactKind::Cli)
+        .map(|a| a.url)
+        .unwrap_or_else(|| "n/a".into());
+    let server_remote = select_artifact(&manifest, platform, ArtifactKind::Server)
+        .map(|a| a.url)
+        .unwrap_or_else(|| "n/a".into());
+
+    println!("Local CLI:    {}", cli_version_local);
+    println!("Local server: {}", server_version_local);
+    println!("Remote CLI:   {}", cli_remote);
+    println!("Remote server: {}", server_remote);
+    if let Some(ver) = manifest.version {
+        println!("Manifest version: {}", ver);
+    }
+    Ok(())
+}
+
+fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new(cmd).args(args).status().with_context(|| format!("Failed to run {} {:?}", cmd, args))?;
+    if !status.success() {
+        anyhow::bail!("Command failed: {} {:?}", cmd, args);
+    }
+    Ok(())
+}
+
+fn run_and_capture_version(cmd: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(cmd).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+}
+
+fn command_exists(cmd: &str) -> bool {
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {}", cmd))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// ----- platform-specific installers -----
+
+async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
+    // Prefer package manager if available
+    if command_exists("brew") {
+        run_cmd("brew", &["install", "linggen"])?;
+        println!("{}", "✅ Installed/updated linggen CLI via Homebrew".green());
+    }
+
+    // Install/update app via DMG from manifest
+    if let Some(artifact) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
+        println!(
+            "{}",
+            format!("⬇️  Downloading Linggen.app from {}", artifact.url).cyan()
+        );
+        let dmg_path = download_to_temp(&artifact.url).await?;
+        let mount = tempfile::tempdir()?;
+        let mount_point = mount.path().to_path_buf();
+        run_cmd(
+            "hdiutil",
+            &[
+                "attach",
+                dmg_path.to_str().unwrap(),
+                "-mountpoint",
+                mount_point.to_str().unwrap(),
+                "-nobrowse",
+            ],
+        )?;
+        let app_src = mount_point.join("Linggen.app");
+        let app_dst = PathBuf::from("/Applications/Linggen.app");
+        if app_dst.exists() {
+            fs::remove_dir_all(&app_dst).ok();
+        }
+        run_cmd(
+            "cp",
+            &[
+                "-R",
+                app_src.to_str().unwrap(),
+                app_dst.to_str().unwrap(),
+            ],
+        )?;
+        run_cmd("hdiutil", &["detach", mount_point.to_str().unwrap()])?;
+        println!("{}", "✅ Installed/updated Linggen.app".green());
+    } else {
+        println!(
+            "{}",
+            "⚠️ No macOS app artifact in manifest; skipped app install."
+                .yellow()
+        );
+    }
+
+    // Fallback CLI install from manifest if Homebrew was unavailable
+    if !command_exists("brew") {
+        if let Some(cli_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::Cli) {
+            println!("{}", "⬇️  Downloading CLI tarball...".cyan());
+            let tar = download_to_temp(&cli_art.url).await?;
+            extract_tarball(&tar, "/usr/local/bin")?;
+            println!("{}", "✅ Installed/updated CLI from tarball".green());
+        }
+    }
+
+    Ok(())
+}
+
+async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
+    if command_exists("apt") {
+        run_cmd("sudo", &["apt", "update"])?;
+        run_cmd("sudo", &["apt", "install", "-y", "linggen"])?;
+        run_cmd("sudo", &["apt", "install", "-y", "linggen-server"])?;
+        println!(
+            "{}",
+            "✅ Installed/updated linggen CLI and linggen-server via APT".green()
+        );
+        return Ok(());
+    }
+
+    // Fallback: tarball install from manifest
+    if let Some(cli_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Cli) {
+        println!("{}", "⬇️  Downloading CLI tarball...".cyan());
+        let tar = download_to_temp(&cli_art.url).await?;
+        extract_tarball(&tar, "/usr/local/bin")?;
+        println!("{}", "✅ Installed/updated CLI from tarball".green());
+    } else {
+        println!("{}", "⚠️ No CLI tarball found in manifest".yellow());
+    }
+
+    if let Some(srv_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Server) {
+        println!("{}", "⬇️  Downloading server tarball...".cyan());
+        let tar = download_to_temp(&srv_art.url).await?;
+        extract_tarball(&tar, "/usr/local/bin")?;
+        install_systemd_unit()?;
+        println!("{}", "✅ Installed/updated server from tarball".green());
+    } else {
+        println!("{}", "⚠️ No server tarball found in manifest".yellow());
+    }
+
+    Ok(())
+}
+
+async fn download_to_temp(url: &str) -> Result<PathBuf> {
+    let tmp = tempfile::NamedTempFile::new()?.into_temp_path();
+    let tmp_path = tmp.to_path_buf();
+
+    let resp = reqwest::get(url)
+        .await
+        .with_context(|| format!("Failed to download {}", url))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("Download failed: {} {}", resp.status(), url);
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .with_context(|| format!("Failed to read body for {}", url))?;
+    fs::write(&tmp_path, &bytes)?;
+    Ok(tmp_path)
+}
+
+fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
+    let status = Command::new("tar")
+        .arg("-xzf")
+        .arg(tar_path)
+        .arg("-C")
+        .arg(dest_dir)
+        .status()
+        .with_context(|| format!("Failed to run tar on {:?}", tar_path))?;
+    if !status.success() {
+        anyhow::bail!("tar failed for {:?}", tar_path);
+    }
+    Ok(())
+}
+
+fn install_systemd_unit() -> Result<()> {
+    let unit = r#"[Unit]
+Description=Linggen Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/linggen-server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"#;
+    let tmp = NamedTempFile::new().context("Failed to create temp file for unit")?;
+    fs::write(tmp.path(), unit)?;
+
+    let tmp_str = tmp
+        .path()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid temp path"))?
+        .to_string();
+
+    run_cmd("sudo", &["cp", &tmp_str, "/etc/systemd/system/linggen-server.service"])?;
+    run_cmd("sudo", &["systemctl", "daemon-reload"])?;
+    run_cmd("sudo", &["systemctl", "enable", "--now", "linggen-server"])?;
+    println!("{}", "✅ systemd unit installed/enabled (linggen-server)".green());
+    Ok(())
+}
 
 /// Handle the `start` command
 pub async fn handle_start(api_client: &ApiClient) -> Result<()> {
@@ -41,13 +295,9 @@ pub async fn handle_start(api_client: &ApiClient) -> Result<()> {
         }
         Err(e) => {
             println!("{}", "❌ Linggen backend is not running".red().bold());
-            println!("\n{}", "To start Linggen:".yellow());
-            println!("  1. Navigate to the frontend directory");
-            println!("  2. Run: npm run tauri dev");
-            println!("     OR");
-            println!("     Start the backend and frontend separately:");
-            println!("     - Backend: cargo run --bin linggen-api");
-            println!("     - Frontend: npm run dev");
+            println!("\n{}", "To start Linggen backend:".yellow());
+            println!("  - If you installed the desktop app, open Linggen.app");
+            println!("  - Or run: linggen serve");
             println!("\nError details: {}", e);
             anyhow::bail!("Backend not reachable");
         }
@@ -291,7 +541,20 @@ pub async fn handle_status(api_client: &ApiClient, limit: usize) -> Result<()> {
     println!();
 
     // Get backend status
-    let status = api_client.get_status().await?;
+    let status = match api_client.get_status().await {
+        Ok(s) => s,
+        Err(e) => {
+            println!("{}", "❌ Linggen backend not reachable.".red().bold());
+            println!("Error: {e}");
+            println!();
+            println!("{}", "Install or ensure Linggen is running:".yellow());
+            println!(
+                "  curl -fsSL https://linggen.dev/install-cli.sh | bash"
+            );
+            println!("  linggen install");
+            return Ok(());
+        }
+    };
     println!("{}", "Backend Status:".bold());
     match status.status.as_str() {
         "ready" => println!("  Status: {}", "Ready ✅".green()),

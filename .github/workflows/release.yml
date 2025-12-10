@@ -69,15 +69,25 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Build backend (linggen binary)
+      - name: Build backend (linggen-server)
         working-directory: backend
-        run: cargo build --release --bin linggen
+        run: cargo build --release --bin linggen-server
+
+      - name: Build CLI (linggen)
+        working-directory: linggen-cli
+        run: cargo build --release
+
+      - name: Package CLI and server tarballs
+        run: |
+          mkdir -p dist
+          tar -C linggen-cli/target/release -czf dist/linggen-cli-${{ matrix.rust-target }}.tar.gz linggen
+          tar -C backend/target/release -czf dist/linggen-server-${{ matrix.rust-target }}.tar.gz linggen-server
 
       - name: Setup Tauri sidecar
         shell: bash
         run: |
-          SIDECAR_NAME="linggen-${{ matrix.sidecar-target }}"
-          cp "backend/target/release/linggen" "frontend/src-tauri/${SIDECAR_NAME}"
+          SIDECAR_NAME="linggen-server-${{ matrix.sidecar-target }}"
+          cp "backend/target/release/linggen-server" "frontend/src-tauri/${SIDECAR_NAME}"
           chmod +x "frontend/src-tauri/${SIDECAR_NAME}"
           echo "Sidecar created: ${SIDECAR_NAME}"
 
@@ -105,6 +115,7 @@ jobs:
             frontend/src-tauri/target/release/bundle/appimage/*.AppImage
             frontend/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             frontend/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
+            dist/*.tar.gz
           if-no-files-found: ignore
 
   publish-to-releases-repo:
@@ -134,54 +145,68 @@ jobs:
           echo "Downloaded artifacts:"
           find artifacts -type f
 
-      - name: Generate updater manifest
+      - name: Generate manifests
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           VERSION_NUM="${VERSION#v}"
 
-          # Find the artifacts and their signatures
-          DMG_TAR=$(find artifacts -name "*.dmg.tar.gz" -not -name "*.sig" | head -n 1)
-          DEB_TAR=$(find artifacts -name "*.deb.tar.gz" -not -name "*.sig" | head -n 1)
+          BASE_URL="https://github.com/linggen/linggen-releases/releases/download/${VERSION}"
 
-          DMG_SIG=""
-          DEB_SIG=""
+          DMG=$(find artifacts -name "*.dmg" | head -n 1)
+          DEB=$(find artifacts -name "*.deb" | head -n 1)
+          CLI_MAC=$(find artifacts -name "linggen-cli-universal-apple-darwin.tar.gz" | head -n 1)
+          CLI_LINUX=$(find artifacts -name "linggen-cli-x86_64-unknown-linux-gnu.tar.gz" | head -n 1)
+          SRV_MAC=$(find artifacts -name "linggen-server-universal-apple-darwin.tar.gz" | head -n 1)
+          SRV_LINUX=$(find artifacts -name "linggen-server-x86_64-unknown-linux-gnu.tar.gz" | head -n 1)
 
-          if [ -f "${DMG_TAR}.sig" ]; then
-            DMG_SIG=$(cat "${DMG_TAR}.sig")
-          fi
-          if [ -f "${DEB_TAR}.sig" ]; then
-            DEB_SIG=$(cat "${DEB_TAR}.sig")
-          fi
+          DMG_BASENAME=$(basename "$DMG")
+          DEB_BASENAME=$(basename "$DEB")
+          CLI_MAC_BASENAME=$(basename "$CLI_MAC")
+          CLI_LINUX_BASENAME=$(basename "$CLI_LINUX")
+          SRV_MAC_BASENAME=$(basename "$SRV_MAC")
+          SRV_LINUX_BASENAME=$(basename "$SRV_LINUX")
 
-          DMG_BASENAME=$(basename "$DMG_TAR")
-          DEB_BASENAME=$(basename "$DEB_TAR")
-
-          # Create updater manifest
           cat > latest.json << EOF
           {
             "version": "${VERSION_NUM}",
-            "notes": "See release notes at https://github.com/huangyingting/linggen-releases/releases/tag/${VERSION}",
+            "notes": "See release notes at https://github.com/linggen/linggen-releases/releases/tag/${VERSION}",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
               "darwin-universal": {
-                "signature": "${DMG_SIG}",
-                "url": "https://github.com/huangyingting/linggen-releases/releases/download/${VERSION}/${DMG_BASENAME}"
+                "signature": "",
+                "url": "${BASE_URL}/${DMG_BASENAME}"
               },
               "linux-x86_64": {
-                "signature": "${DEB_SIG}",
-                "url": "https://github.com/huangyingting/linggen-releases/releases/download/${VERSION}/${DEB_BASENAME}"
+                "signature": "",
+                "url": "${BASE_URL}/${DEB_BASENAME}"
               }
+            }
+          }
+          EOF
+
+          cat > manifest.json << EOF
+          {
+            "version": "${VERSION_NUM}",
+            "artifacts": {
+              "cli-macos-universal": {"url": "${BASE_URL}/${CLI_MAC_BASENAME}"},
+              "cli-linux-x86_64": {"url": "${BASE_URL}/${CLI_LINUX_BASENAME}"},
+              "server-macos-universal": {"url": "${BASE_URL}/${SRV_MAC_BASENAME}"},
+              "server-linux-x86_64": {"url": "${BASE_URL}/${SRV_LINUX_BASENAME}"},
+              "app-macos-dmg": {"url": "${BASE_URL}/${DMG_BASENAME}"},
+              "app-linux": {"url": "${BASE_URL}/${DEB_BASENAME}"}
             }
           }
           EOF
 
           echo "Generated latest.json:"
           cat latest.json
+          echo "Generated manifest.json:"
+          cat manifest.json
 
       - name: Checkout linggen-releases repository
         uses: actions/checkout@v4
         with:
-          repository: huangyingting/linggen-releases
+          repository: linggen/linggen-releases
           token: ${{ secrets.RELEASES_PAT }}
           path: linggen-releases
 
@@ -193,27 +218,20 @@ jobs:
 
           cd linggen-releases
 
-          # Create release
           gh release create "${VERSION}" \
             --title "Linggen ${VERSION}" \
             --notes "Release ${VERSION} - See main repository for details" \
             --draft
 
-          # Upload all artifacts
           find ../artifacts -name "*.dmg" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.dmg.tar.gz" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.dmg.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
           find ../artifacts -name "*.deb" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.deb.tar.gz" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.deb.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "linggen-cli-*.tar.gz" -exec gh release upload "${VERSION}" {} \;
+          find ../artifacts -name "linggen-server-*.tar.gz" -exec gh release upload "${VERSION}" {} \;
           find ../artifacts -name "*.AppImage" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.AppImage.tar.gz" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "*.AppImage.tar.gz.sig" -exec gh release upload "${VERSION}" {} \;
 
-          # Upload latest.json
-          gh release upload "${VERSION}" ../latest.json
+          # Upload manifests
+          gh release upload "${VERSION}" ../latest.json ../manifest.json
 
-          # Publish the release
           gh release edit "${VERSION}" --draft=false
 
           echo "Release ${VERSION} published successfully!"

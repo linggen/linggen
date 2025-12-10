@@ -53,10 +53,10 @@ fn main() {
                 // Backend not running, spawn the sidecar
                 println!("[Tauri] Starting backend sidecar...");
 
-                match app_handle.shell().sidecar("linggen") {
+                match app_handle.shell().sidecar("linggen-server") {
                     Ok(sidecar_cmd) => {
                         // Run in server mode
-                        let sidecar_with_args = sidecar_cmd.args(&["serve"]);
+                        let sidecar_with_args = sidecar_cmd.args(&["--port", "8787"]);
                         match sidecar_with_args.spawn() {
                         Ok((mut rx, child)) => {
                             // Store the child process handle for cleanup

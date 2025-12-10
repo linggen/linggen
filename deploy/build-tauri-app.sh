@@ -63,27 +63,27 @@ fi
 echo -e "${BLUE}Architecture: $ARCH ($TARGET_TRIPLE)${NC}"
 echo ""
 
-# Step 1: Build the unified linggen binary (includes both server and CLI)
+# Step 1: Build the backend server binary (now `linggen-server`; CLI is separate)
 if [ "$SKIP_BACKEND" = false ]; then
-    echo -e "${BLUE}🦀 Building linggen (release mode)...${NC}"
+    echo -e "${BLUE}🦀 Building linggen-server (release mode)...${NC}"
     cd backend
-    cargo build --release --bin linggen
+    cargo build --release --bin linggen-server
     cd ..
-    echo "  ✓ Built linggen binary (server + CLI)"
+    echo "  ✓ Built linggen-server binary"
     echo ""
 else
     echo -e "${YELLOW}⏭️  Skipping backend build (--skip-backend flag)${NC}"
     echo ""
 fi
 
-# Step 2: Copy linggen binary as Tauri sidecar
+# Step 2: Copy linggen-server binary as Tauri sidecar
 # Tauri expects sidecars to be named: <sidecar-name>-<target-triple>
 SIDECAR_DIR="frontend/src-tauri"
-SIDECAR_NAME="linggen-${TARGET_TRIPLE}"
-LINGGEN_BINARY="backend/target/release/linggen"
+SIDECAR_NAME="linggen-server-${TARGET_TRIPLE}"
+LINGGEN_BINARY="backend/target/release/linggen-server"
 
 if [ ! -f "$LINGGEN_BINARY" ]; then
-    echo "Error: Linggen binary not found at $LINGGEN_BINARY"
+    echo "Error: linggen-server binary not found at $LINGGEN_BINARY"
     echo "Run without --skip-backend flag to build it first"
     exit 1
 fi
@@ -91,7 +91,7 @@ fi
 echo -e "${BLUE}📦 Setting up sidecar binary...${NC}"
 cp "$LINGGEN_BINARY" "${SIDECAR_DIR}/${SIDECAR_NAME}"
 chmod +x "${SIDECAR_DIR}/${SIDECAR_NAME}"
-echo "  ✓ Copied linggen binary to ${SIDECAR_DIR}/${SIDECAR_NAME}"
+echo "  ✓ Copied linggen-server binary to ${SIDECAR_DIR}/${SIDECAR_NAME}"
 echo ""
 
 # Step 3: Install frontend dependencies if needed
@@ -130,8 +130,51 @@ fi
 
 if [ -n "$DMG_SRC" ] && [ -f "$DMG_SRC" ]; then
     DMG_NAME=$(basename "$DMG_SRC")
-    cp "$DMG_SRC" "dist/macos/$DMG_NAME"
-    echo "  ✓ Copied $DMG_NAME"
+    
+    # Create Install CLI.app
+    echo -e "${BLUE}🔧 Creating CLI installer app...${NC}"
+    bash deploy/create-cli-installer-app.sh "dist/macos"
+    
+    # Repackage DMG with Install CLI.app included
+    echo -e "${BLUE}📦 Repackaging DMG with CLI installer...${NC}"
+    DMG_TEMP="dist/macos/dmg_repack"
+    rm -rf "$DMG_TEMP"
+    mkdir -p "$DMG_TEMP"
+    
+    # Mount original DMG and copy contents (without pulling in /Applications)
+    MOUNT_POINT="/Volumes/${APP_NAME}"
+    hdiutil attach "$DMG_SRC" -mountpoint "$MOUNT_POINT" -nobrowse -readonly
+
+    # Copy everything except the Applications alias, which would otherwise
+    # expand to the entire /Applications folder on your Mac.
+    for item in "$MOUNT_POINT"/*; do
+        name="$(basename "$item")"
+        if [ "$name" = "Applications" ]; then
+            # Recreate the standard /Applications link without expanding it
+            ln -s /Applications "$DMG_TEMP/Applications"
+        else
+            cp -R "$item" "$DMG_TEMP/"
+        fi
+    done
+
+    hdiutil detach "$MOUNT_POINT"
+    
+    # Add Install CLI.app to DMG contents
+    cp -r "dist/macos/Install CLI.app" "$DMG_TEMP/"
+    
+    # Create new DMG
+    DMG_FINAL="dist/macos/$DMG_NAME"
+    rm -f "$DMG_FINAL"
+    hdiutil create -volname "${APP_NAME}" \
+        -srcfolder "$DMG_TEMP" \
+        -ov -format UDZO \
+        "$DMG_FINAL"
+    
+    # Clean up
+    rm -rf "$DMG_TEMP"
+    rm -rf "dist/macos/Install CLI.app"
+    
+    echo "  ✓ Created enhanced DMG: $DMG_NAME (with CLI installer)"
 fi
 
 echo ""
@@ -154,7 +197,10 @@ echo ""
 echo "  Test the app:"
 echo "    open \"dist/macos/${APP_NAME}.app\""
 echo ""
-echo "  Install CLI to PATH (after installing the app):"
+echo "  Open DMG (includes 'Install CLI' app):"
+echo "    open \"$DMG_PATH\""
+echo ""
+echo "  Install CLI manually (alternative):"
 echo "    ./install-cli-from-app.sh"
 echo ""
 echo "  Code sign (optional):"

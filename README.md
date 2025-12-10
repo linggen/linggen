@@ -10,45 +10,34 @@
 
 ## CLI Tool
 
-Linggen provides a unified binary that acts as both the server and CLI tool:
+Linggen now ships as:
 
-### Installation
+- **`linggen`**: standalone CLI (new repo/binary).
+- **`linggen-server`**: backend server/runtime (used by CLI, Tauri sidecar, and Linux service).
 
-#### Option 1: From DMG/App Bundle (Recommended for macOS)
+### Installation (CLI)
 
-If you've installed Linggen.app from the DMG, the binary is already bundled:
+- **One-liner (manifest-driven)**:
+  ```bash
+  curl -fsSL https://linggen.dev/install-cli.sh | bash
+  ```
+- **Build from source**:
+  ```bash
+  ./scripts/build-cli.sh
+  # tarball emitted to dist/linggen-cli-<arch>-<os>.tar.gz
+  tar -xzf dist/linggen-cli-*.tar.gz -C /usr/local/bin
+  ```
 
-```bash
-# Run the installation helper script
-./install-cli-from-app.sh
-```
+### Installation (Desktop / Server)
 
-This creates a symlink from the bundled binary to `/usr/local/bin/linggen`.
+- **macOS desktop app**: download the DMG from releases and copy `Linggen.app` to `/Applications`. The Tauri app bundles the `linggen-server` sidecar.
+- **Linux server**: download the server tarball from releases and install manually. The CLI can also attempt to install/update via `linggen install` / `linggen update` using the manifest.
 
-#### Option 2: Build from Source
+### New management commands (rustup-style)
 
-Build from source:
-
-```bash
-cd backend
-cargo build --release --bin linggen
-```
-
-Add the binary to your PATH:
-
-```bash
-# macOS/Linux
-cp target/release/linggen /usr/local/bin/
-
-# Or add the target/release directory to your PATH
-export PATH="$PWD/target/release:$PATH"
-```
-
-Alternatively, use the installation script:
-
-```bash
-./install-cli.sh
-```
+- `linggen install` – platform-aware install/update of the runtime (macOS app or Linux server) using the manifest.
+- `linggen update` – update CLI + runtime for the current platform.
+- `linggen check` – show installed vs detected versions (uses manifest).
 
 ### Usage
 
@@ -188,9 +177,9 @@ open frontend/src-tauri/target/release/bundle/macos/Linggen.app
 1. **Start the Backend Server**:
 
    ```bash
-   cd backend && cargo run --bin linggen --release
-   # Or explicitly:
-   cd backend && cargo run --bin linggen --release -- serve
+   cd backend && cargo run --bin linggen-server --release
+   # Custom port:
+   LINGGEN_PORT=9000 cargo run --bin linggen-server --release
    ```
 
    This starts:
@@ -211,7 +200,7 @@ open frontend/src-tauri/target/release/bundle/macos/Linggen.app
 
    ```bash
    # Terminal 1: Start backend
-   cd backend && cargo run --bin linggen --release
+   cd backend && cargo run --bin linggen-server --release
 
    # Terminal 2: Start Tauri dev
    cd frontend && npm run tauri:dev

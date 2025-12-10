@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/backend/target/debug/linggen",
             "preLaunchTask": "cargo build",
-            "args": ["serve"],
+            "args": ["serve", "--foreground"],
             "cwd": "${workspaceFolder}/backend",
             "env": {
                 "RUST_LOG": "debug",
