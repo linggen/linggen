@@ -20,13 +20,15 @@ jobs:
       matrix:
         include:
           - platform: "macos-latest"
-            args: "--target universal-apple-darwin"
-            rust-target: "universal-apple-darwin"
-            sidecar-target: "universal-apple-darwin"
+            args: ""
+            rust-target: "aarch64-apple-darwin"
+            sidecar-target: "aarch64-apple-darwin"
+            slug: "macos-aarch64"
           - platform: "ubuntu-22.04"
             args: ""
             rust-target: "x86_64-unknown-linux-gnu"
             sidecar-target: "x86_64-unknown-linux-gnu"
+            slug: "linux-x86_64"
 
     runs-on: ${{ matrix.platform }}
 
@@ -80,8 +82,8 @@ jobs:
       - name: Package CLI and server tarballs
         run: |
           mkdir -p dist
-          tar -C linggen-cli/target/release -czf dist/linggen-cli-${{ matrix.rust-target }}.tar.gz linggen
-          tar -C backend/target/release -czf dist/linggen-server-${{ matrix.rust-target }}.tar.gz linggen-server
+          tar -C linggen-cli/target/release -czf dist/linggen-cli-${{ matrix.slug }}.tar.gz linggen
+          tar -C backend/target/release -czf dist/linggen-server-${{ matrix.slug }}.tar.gz linggen-server
 
       - name: Setup Tauri sidecar
         shell: bash
@@ -147,26 +149,49 @@ jobs:
 
       - name: Generate manifests
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           VERSION_NUM="${VERSION#v}"
 
           BASE_URL="https://github.com/linggen/linggen-releases/releases/download/${VERSION}"
 
-          DMG=$(find artifacts -name "*.dmg" | head -n 1)
-          DEB=$(find artifacts -name "*.deb" | head -n 1)
-          CLI_MAC=$(find artifacts -name "linggen-cli-universal-apple-darwin.tar.gz" | head -n 1)
-          CLI_LINUX=$(find artifacts -name "linggen-cli-x86_64-unknown-linux-gnu.tar.gz" | head -n 1)
-          SRV_MAC=$(find artifacts -name "linggen-server-universal-apple-darwin.tar.gz" | head -n 1)
-          SRV_LINUX=$(find artifacts -name "linggen-server-x86_64-unknown-linux-gnu.tar.gz" | head -n 1)
+          DMG=$(find artifacts -name "*.dmg" | head -n 1 || true)
+          DEB=$(find artifacts -name "*.deb" | head -n 1 || true)
 
-          DMG_BASENAME=$(basename "$DMG")
-          DEB_BASENAME=$(basename "$DEB")
-          CLI_MAC_BASENAME=$(basename "$CLI_MAC")
-          CLI_LINUX_BASENAME=$(basename "$CLI_LINUX")
-          SRV_MAC_BASENAME=$(basename "$SRV_MAC")
-          SRV_LINUX_BASENAME=$(basename "$SRV_LINUX")
+          CLI_MAC_ARM64=$(find artifacts -name "linggen-cli-macos-aarch64.tar.gz" | head -n 1 || true)
+          CLI_LINUX_X64=$(find artifacts -name "linggen-cli-linux-x86_64.tar.gz" | head -n 1 || true)
 
-          cat > latest.json << EOF
+          SRV_MAC_ARM64=$(find artifacts -name "linggen-server-macos-aarch64.tar.gz" | head -n 1 || true)
+          SRV_LINUX_X64=$(find artifacts -name "linggen-server-linux-x86_64.tar.gz" | head -n 1 || true)
+
+          # Validate required artifacts exist
+          if [ -z "$CLI_MAC_ARM64" ]; then
+            echo "Error: CLI macOS ARM64 artifact not found" >&2
+            exit 1
+          fi
+          if [ -z "$CLI_LINUX_X64" ]; then
+            echo "Error: CLI Linux x86_64 artifact not found" >&2
+            exit 1
+          fi
+          if [ -z "$SRV_MAC_ARM64" ]; then
+            echo "Error: Server macOS ARM64 artifact not found" >&2
+            exit 1
+          fi
+          if [ -z "$SRV_LINUX_X64" ]; then
+            echo "Error: Server Linux x86_64 artifact not found" >&2
+            exit 1
+          fi
+
+          DMG_BASENAME=$(basename "$DMG" 2>/dev/null || echo "")
+          DEB_BASENAME=$(basename "$DEB" 2>/dev/null || echo "")
+          CLI_MAC_ARM64_BASENAME=$(basename "$CLI_MAC_ARM64")
+          CLI_LINUX_X64_BASENAME=$(basename "$CLI_LINUX_X64")
+          SRV_MAC_ARM64_BASENAME=$(basename "$SRV_MAC_ARM64")
+          SRV_LINUX_X64_BASENAME=$(basename "$SRV_LINUX_X64")
+
+          # Generate latest.json only if DMG and DEB exist
+          if [ -n "$DMG_BASENAME" ] && [ -n "$DEB_BASENAME" ]; then
+            cat > latest.json << EOF
           {
             "version": "${VERSION_NUM}",
             "notes": "See release notes at https://github.com/linggen/linggen-releases/releases/tag/${VERSION}",
@@ -183,20 +208,37 @@ jobs:
             }
           }
           EOF
+          else
+            echo "Warning: DMG or DEB not found, skipping latest.json generation"
+            touch latest.json
+          fi
 
-          cat > manifest.json << EOF
+          # Generate manifest.json with all artifacts
           {
-            "version": "${VERSION_NUM}",
-            "artifacts": {
-              "cli-macos-universal": {"url": "${BASE_URL}/${CLI_MAC_BASENAME}"},
-              "cli-linux-x86_64": {"url": "${BASE_URL}/${CLI_LINUX_BASENAME}"},
-              "server-macos-universal": {"url": "${BASE_URL}/${SRV_MAC_BASENAME}"},
-              "server-linux-x86_64": {"url": "${BASE_URL}/${SRV_LINUX_BASENAME}"},
-              "app-macos-dmg": {"url": "${BASE_URL}/${DMG_BASENAME}"},
-              "app-linux": {"url": "${BASE_URL}/${DEB_BASENAME}"}
-            }
-          }
-          EOF
+            echo "{"
+            echo "  \"version\": \"${VERSION_NUM}\","
+            echo "  \"artifacts\": {"
+            echo "    \"cli-macos-aarch64\": {\"url\": \"${BASE_URL}/${CLI_MAC_ARM64_BASENAME}\"},"
+            echo "    \"cli-linux-x86_64\": {\"url\": \"${BASE_URL}/${CLI_LINUX_X64_BASENAME}\"},"
+            echo "    \"server-macos-aarch64\": {\"url\": \"${BASE_URL}/${SRV_MAC_ARM64_BASENAME}\"},"
+            if [ -n "$DMG_BASENAME" ] || [ -n "$DEB_BASENAME" ]; then
+              echo "    \"server-linux-x86_64\": {\"url\": \"${BASE_URL}/${SRV_LINUX_X64_BASENAME}\"},"
+            else
+              echo "    \"server-linux-x86_64\": {\"url\": \"${BASE_URL}/${SRV_LINUX_X64_BASENAME}\"}"
+            fi
+            if [ -n "$DMG_BASENAME" ]; then
+              if [ -n "$DEB_BASENAME" ]; then
+                echo "    \"app-macos-dmg\": {\"url\": \"${BASE_URL}/${DMG_BASENAME}\"},"
+              else
+                echo "    \"app-macos-dmg\": {\"url\": \"${BASE_URL}/${DMG_BASENAME}\"}"
+              fi
+            fi
+            if [ -n "$DEB_BASENAME" ]; then
+              echo "    \"app-linux-deb\": {\"url\": \"${BASE_URL}/${DEB_BASENAME}\"}"
+            fi
+            echo "  }"
+            echo "}"
+          } > manifest.json
 
           echo "Generated latest.json:"
           cat latest.json
@@ -214,7 +256,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NUM="${VERSION#v}"
 
           cd linggen-releases
 
@@ -223,11 +267,36 @@ jobs:
             --notes "Release ${VERSION} - See main repository for details" \
             --draft
 
+          # Upload DMG, DEB, AppImage
           find ../artifacts -name "*.dmg" -exec gh release upload "${VERSION}" {} \;
           find ../artifacts -name "*.deb" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "linggen-cli-*.tar.gz" -exec gh release upload "${VERSION}" {} \;
-          find ../artifacts -name "linggen-server-*.tar.gz" -exec gh release upload "${VERSION}" {} \;
           find ../artifacts -name "*.AppImage" -exec gh release upload "${VERSION}" {} \;
+
+          # Upload server tarballs
+          find ../artifacts -name "linggen-server-*.tar.gz" -exec gh release upload "${VERSION}" {} \;
+
+          # Upload CLI tarballs with base names, versioned names, and latest names
+          for cli_tarball in ../artifacts/linggen-cli-*.tar.gz; do
+            if [ -f "$cli_tarball" ]; then
+              basename_file=$(basename "$cli_tarball")
+              slug="${basename_file#linggen-cli-}"
+              slug="${slug%.tar.gz}"
+              
+              # Upload with base name (linggen-cli-<slug>.tar.gz)
+              gh release upload "${VERSION}" "$cli_tarball"
+              
+              # Create and upload versioned name (linggen-cli-<slug>-v<version>.tar.gz)
+              versioned_name="linggen-cli-${slug}-v${VERSION_NUM}.tar.gz"
+              cp "$cli_tarball" "/tmp/${versioned_name}"
+              gh release upload "${VERSION}" "/tmp/${versioned_name}"
+              
+              # Create and upload latest name (linggen-cli-<slug>-latest.tar.gz)
+              # The latest release will serve these when using /releases/latest/download/
+              latest_name="linggen-cli-${slug}-latest.tar.gz"
+              cp "$cli_tarball" "/tmp/${latest_name}"
+              gh release upload "${VERSION}" "/tmp/${latest_name}"
+            fi
+          done
 
           # Upload manifests
           gh release upload "${VERSION}" ../latest.json ../manifest.json

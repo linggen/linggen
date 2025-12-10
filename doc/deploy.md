@@ -44,15 +44,15 @@ bash ./install-cli.sh --local-path /path/to/dist/linggen-cli-<slug>.tar.gz
 - Workflow: `.github/workflows/release.yml`
 - On tag push (v\*):
   - Build `linggen-server`, `linggen` CLI, package tarballs.
-  - Build Tauri app (sidecar name: `linggen-server-<triple>`).
+  - Build Tauri app (sidecar name: `linggen-server-<target-triple>`).
   - Upload artifacts to `linggen-releases` GitHub release.
   - Upload “latest” CLI tarballs expected by installer:
-    - `linggen-cli-macos-aarch64-latest.tar.gz`
-    - `linggen-cli-macos-x86_64-latest.tar.gz`
-    - `linggen-cli-linux-arm64-latest.tar.gz`
-    - `linggen-cli-linux-x86_64-latest.tar.gz`
-  - Optionally also upload versioned CLI tarballs: `linggen-cli-<slug>-v<version>.tar.gz`
-  - (Optional) Emit manifest.json for app/server if needed.
+    - Base name: `linggen-cli-<slug>.tar.gz` (e.g., `linggen-cli-macos-aarch64.tar.gz`)
+    - Versioned: `linggen-cli-<slug>-v<version>.tar.gz` (e.g., `linggen-cli-macos-aarch64-v0.5.0.tar.gz`)
+    - Latest: `linggen-cli-<slug>-latest.tar.gz` (e.g., `linggen-cli-macos-aarch64-latest.tar.gz`)
+  - Supported slugs: `macos-aarch64`, `linux-x86_64` (matches build matrix)
+  - Server tarballs: `linggen-server-<slug>.tar.gz`
+  - Emit `manifest.json` and `latest.json` for app/server updates.
 
 ### Install paths (current)
 
