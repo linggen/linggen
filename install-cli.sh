@@ -127,7 +127,11 @@ main() {
   if [[ "$url" == file://* ]]; then
     cp "${url#file://}" "$tarball"
   else
-    curl -fsSL "$url" -o "$tarball"
+    if ! curl -fsSL "$url" -o "$tarball"; then
+      echo "❌ Failed to download from $url" >&2
+      echo "   This may be a temporary GitHub CDN issue. Please try again in a few moments." >&2
+      exit 1
+    fi
   fi
 
   if ! ensure_dir "$dest"; then

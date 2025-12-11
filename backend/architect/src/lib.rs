@@ -83,9 +83,21 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
         let content = std::fs::read_to_string(path)?;
         let imports = extractor.extract_imports(&content, extension)?;
 
+        tracing::debug!(
+            "File {}: extracted {} imports",
+            relative_path,
+            imports.len()
+        );
+
         // Resolve imports to file paths and add edges
         for import in imports {
+            tracing::debug!(
+                "Resolving import '{}' from {}",
+                import.module_path,
+                relative_path
+            );
             if let Some(target) = resolver.resolve(project_root, path, &import, extension) {
+                tracing::debug!("  ✓ Resolved to: {}", target);
                 graph.add_edge(Edge {
                     source: relative_path.clone(),
                     target,
@@ -95,6 +107,8 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
                         EdgeKind::Import
                     },
                 });
+            } else {
+                tracing::debug!("  ✗ Could not resolve (external or not found)");
             }
         }
     }

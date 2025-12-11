@@ -73,3 +73,6 @@ coverage/
 backend/assets/
 frontend/assets/
 dist/
+
+# Signing configuration (contains sensitive passwords)
+.tauri-signing.conf

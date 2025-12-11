@@ -81,6 +81,7 @@ enum Commands {
     Update,
 
     /// Check for updates (CLI + runtime/app)
+    #[command(alias = "version")]
     Check,
 }
 

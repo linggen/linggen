@@ -41,6 +41,7 @@ pub async fn fetch_manifest() -> Result<Manifest> {
         .build()
         .context("Failed to build HTTP client")?;
 
+    // Try the primary URL
     let resp = client
         .get(&url)
         .send()
@@ -48,7 +49,12 @@ pub async fn fetch_manifest() -> Result<Manifest> {
         .with_context(|| format!("Failed to GET manifest from {url}"))?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Manifest request failed: {} {}", resp.status(), url);
+        anyhow::bail!(
+            "Manifest request failed: {} {}\n\
+            This may be a temporary GitHub CDN issue. Please try again in a few moments.",
+            resp.status(),
+            url
+        );
     }
 
     let manifest = resp

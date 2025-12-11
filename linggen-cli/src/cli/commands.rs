@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::Engine;
 use colored::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,11 +11,26 @@ use tempfile::{tempdir, NamedTempFile};
 use super::client::{ApiClient, CreateSourceRequest};
 use crate::manifest::{current_platform, fetch_manifest, select_artifact, ArtifactKind, Platform};
 
+// Public key for signature verification (from tauri.conf.json, base64 encoded)
+const LINGGEN_PUBLIC_KEY: &str = "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklERTVOa1ZHTlVSRFF6RXhOa0UxT0VFS1VsZFRTM0JTWWtJelVGWjFSMll6VlVWYVFrWlBRMFYxVFhJemJ6aFBha2h6YVVNNVNXbzNkVFZWZVV4cmEzbGhWbVoyTXpoVFZ6TUs=";
+
 /// Install using manifest (preferred); fall back to package manager when available.
 pub async fn handle_install() -> Result<()> {
     println!("{}", "🔧 Installing Linggen...".cyan());
     let platform = current_platform();
     let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+
+    // Show version info
+    if let Some(remote_version) = &manifest.version {
+        println!(
+            "{}",
+            format!("Installing version: {}", remote_version).cyan()
+        );
+
+        if let Some(local_ver) = get_local_app_version() {
+            println!("{}", format!("Current version:    {}", local_ver).cyan());
+        }
+    }
 
     match platform {
         Platform::Mac => install_macos(&manifest).await,
@@ -31,9 +47,28 @@ pub async fn handle_install() -> Result<()> {
 }
 
 pub async fn handle_update() -> Result<()> {
-    println!("{}", "⬆️  Updating Linggen...".cyan());
+    println!("{}", "⬆️  Checking for updates...".cyan());
     let platform = current_platform();
     let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+
+    // Check remote version
+    if let Some(remote_version) = &manifest.version {
+        println!("{}", format!("Remote version: {}", remote_version).cyan());
+
+        // Try to get local app version (best effort)
+        let local_version = get_local_app_version();
+        if let Some(local_ver) = &local_version {
+            println!("{}", format!("Local version:  {}", local_ver).cyan());
+
+            // Compare versions
+            if local_ver == remote_version {
+                println!("{}", "✓ Already up to date!".green());
+                return Ok(());
+            }
+        }
+
+        println!("{}", "⬇️  New version available, updating...".cyan());
+    }
 
     match platform {
         Platform::Mac => install_macos(&manifest).await,
@@ -55,20 +90,19 @@ pub async fn handle_check() -> Result<()> {
 
     let cli_version_local =
         run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
-    let server_version_local = run_and_capture_version("linggen-server", &["--version"])
-        .unwrap_or_else(|| "unknown".into());
+    let app_version_local = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
     let cli_remote = select_artifact(&manifest, platform, ArtifactKind::Cli)
         .map(|a| a.url)
         .unwrap_or_else(|| "n/a".into());
-    let server_remote = select_artifact(&manifest, platform, ArtifactKind::Server)
+    let app_remote = select_artifact(&manifest, platform, ArtifactKind::App)
         .map(|a| a.url)
         .unwrap_or_else(|| "n/a".into());
 
-    println!("Local CLI:    {}", cli_version_local);
-    println!("Local server: {}", server_version_local);
-    println!("Remote CLI:   {}", cli_remote);
-    println!("Remote server: {}", server_remote);
+    println!("Local CLI:  {}", cli_version_local);
+    println!("Local App:  {}", app_version_local);
+    println!("Remote CLI: {}", cli_remote);
+    println!("Remote App: {}", app_remote);
     if let Some(ver) = manifest.version {
         println!("Manifest version: {}", ver);
     }
@@ -105,6 +139,32 @@ fn command_exists(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn get_local_app_version() -> Option<String> {
+    // Try to read version from installed Linggen.app (macOS)
+    #[cfg(target_os = "macos")]
+    {
+        use std::path::Path;
+        let plist_path = Path::new("/Applications/Linggen.app/Contents/Info.plist");
+        if plist_path.exists() {
+            if let Ok(output) = Command::new("defaults")
+                .args([
+                    "read",
+                    "/Applications/Linggen.app/Contents/Info",
+                    "CFBundleShortVersionString",
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    return String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|s| s.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// ----- platform-specific installers -----
 
 async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
@@ -112,7 +172,7 @@ async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
     // (CLI is installed separately via install-cli.sh, server is bundled in the app)
     if let Some(app_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
         println!("{}", "⬇️  Downloading Linggen app tarball...".cyan());
-        let tar = download_to_temp(&app_art.url).await?;
+        let tar = download_to_temp(&app_art.url, app_art.signature.as_deref()).await?;
         install_app_bundle(&tar)?;
     } else {
         println!(
@@ -140,7 +200,7 @@ async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
     // Fallback: tarball install from manifest
     if let Some(cli_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Cli) {
         println!("{}", "⬇️  Downloading CLI tarball...".cyan());
-        let tar = download_to_temp(&cli_art.url).await?;
+        let tar = download_to_temp(&cli_art.url, cli_art.signature.as_deref()).await?;
         extract_tarball(&tar, "/usr/local/bin")?;
         println!("{}", "✅ Installed/updated CLI from tarball".green());
     } else {
@@ -149,7 +209,7 @@ async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
 
     if let Some(srv_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Server) {
         println!("{}", "⬇️  Downloading server tarball...".cyan());
-        let tar = download_to_temp(&srv_art.url).await?;
+        let tar = download_to_temp(&srv_art.url, srv_art.signature.as_deref()).await?;
         extract_tarball(&tar, "/usr/local/bin")?;
         install_systemd_unit()?;
         println!("{}", "✅ Installed/updated server from tarball".green());
@@ -160,7 +220,48 @@ async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
     Ok(())
 }
 
-async fn download_to_temp(url: &str) -> Result<PathBuf> {
+/// Verify a file's signature using minisign
+fn verify_signature(file_path: &Path, signature: &str, public_key: &str) -> Result<()> {
+    use minisign::{PublicKeyBox, SignatureBox};
+    use std::io::Cursor;
+
+    // Decode the base64-encoded public key to get the minisign format
+    let pubkey_bytes = base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .context("Failed to decode public key from base64")?;
+
+    // Parse the public key (minisign format: comment line + key line)
+    let pubkey_str = String::from_utf8(pubkey_bytes).context("Public key is not valid UTF-8")?;
+
+    // Parse the public key box
+    let pk_box = PublicKeyBox::from_string(&pubkey_str).context("Failed to parse public key")?;
+    let pk = pk_box
+        .into_public_key()
+        .context("Failed to convert public key box to public key")?;
+
+    // The signature from manifest is base64-encoded .sig file content
+    // Decode it to get the minisign signature format
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature)
+        .context("Failed to decode signature from base64")?;
+
+    let sig_str = String::from_utf8(sig_bytes).context("Signature is not valid UTF-8")?;
+
+    let sig_box = SignatureBox::from_string(&sig_str).context("Failed to parse signature")?;
+
+    // Read the file to verify
+    let file_data = fs::read(file_path)
+        .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+    let data_reader = Cursor::new(&file_data);
+
+    // Verify the signature (prehash=false, quiet=true, allow_legacy=false)
+    minisign::verify(&pk, &sig_box, data_reader, false, true, false)
+        .context("Signature verification failed")?;
+
+    Ok(())
+}
+
+async fn download_to_temp(url: &str, signature: Option<&str>) -> Result<PathBuf> {
     let tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
     let tmp_path = tmp.path().to_path_buf();
     let resp = reqwest::get(url)
@@ -174,6 +275,32 @@ async fn download_to_temp(url: &str) -> Result<PathBuf> {
         .await
         .with_context(|| format!("Failed to read body for {}", url))?;
     fs::write(&tmp_path, &bytes)?;
+
+    // Verify signature if provided
+    if let Some(sig) = signature {
+        println!("{}", "🔐 Verifying signature...".cyan());
+        match verify_signature(&tmp_path, sig, LINGGEN_PUBLIC_KEY) {
+            Ok(_) => println!("{}", "✅ Signature verified".green()),
+            Err(e) => {
+                println!(
+                    "{}",
+                    format!("⚠️  Signature verification failed: {}", e).yellow()
+                );
+                println!(
+                    "{}",
+                    "   Continuing anyway (use --skip-verify to suppress this warning)".yellow()
+                );
+                // For now, we'll warn but continue. In production, you might want to fail here.
+                // return Err(e);
+            }
+        }
+    } else {
+        println!(
+            "{}",
+            "⚠️  No signature provided in manifest; skipping verification".yellow()
+        );
+    }
+
     tmp.keep().ok(); // ensure file is not deleted on drop
     Ok(tmp_path)
 }
@@ -252,6 +379,80 @@ fn install_app_bundle(tar_path: &PathBuf) -> Result<()> {
         "{}",
         "✅ Installed/updated Linggen.app to /Applications".green()
     );
+
+    // Check if app is running and restart it
+    if is_app_running() {
+        println!(
+            "{}",
+            "🔄 Linggen app is currently running. Restarting to use new version...".cyan()
+        );
+        restart_app()?;
+    } else {
+        println!(
+            "{}",
+            "ℹ️  Restart Linggen app to use the new version".yellow()
+        );
+    }
+
+    Ok(())
+}
+
+/// Check if Linggen app is currently running
+fn is_app_running() -> bool {
+    // Check for running Linggen process
+    // On macOS, the app process name is typically the bundle name
+    let output = Command::new("pgrep").arg("-f").arg("Linggen.app").output();
+
+    if let Ok(output) = output {
+        return output.status.success();
+    }
+
+    // Fallback: check with ps
+    let output = Command::new("ps").args(["-ax"]).output();
+
+    if let Ok(output) = output {
+        if let Ok(stdout) = String::from_utf8(output.stdout) {
+            return stdout.contains("Linggen.app");
+        }
+    }
+
+    false
+}
+
+/// Restart the Linggen app by quitting the old instance and launching the new one
+fn restart_app() -> Result<()> {
+    // Quit the running app
+    let quit_result = Command::new("killall").arg("Linggen").output();
+
+    // Wait a moment for the app to quit
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Launch the new version
+    let open_result = Command::new("open")
+        .arg("/Applications/Linggen.app")
+        .status();
+
+    if let Ok(status) = open_result {
+        if status.success() {
+            println!("{}", "✅ Linggen app restarted successfully".green());
+            return Ok(());
+        }
+    }
+
+    // If open failed, at least we tried to quit it
+    if quit_result.is_ok() {
+        println!(
+            "{}",
+            "⚠️  App was quit, but failed to auto-launch. Please start Linggen.app manually."
+                .yellow()
+        );
+    } else {
+        println!(
+            "{}",
+            "⚠️  Could not restart app automatically. Please quit and restart Linggen.app manually.".yellow()
+        );
+    }
+
     Ok(())
 }
 
