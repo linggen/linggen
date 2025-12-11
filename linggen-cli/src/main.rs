@@ -75,7 +75,10 @@ enum Commands {
     },
 
     /// Install Linggen components for this platform
-    Install,
+    Install {
+        /// Specific version to install (e.g., "0.2.1"). If not provided, installs latest.
+        version: Option<String>,
+    },
 
     /// Update Linggen components for this platform
     Update,
@@ -223,8 +226,8 @@ async fn main() -> Result<()> {
             handle_status(&api_client, limit).await?;
         }
 
-        Some(Commands::Install) => {
-            handle_install().await?;
+        Some(Commands::Install { version }) => {
+            handle_install(version.as_deref()).await?;
         }
 
         Some(Commands::Update) => {

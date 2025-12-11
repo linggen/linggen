@@ -4,7 +4,7 @@
         {
             "label": "cargo build",
             "type": "shell",
-            "command": "cargo build --bin linggen && sudo ln -sf ${workspaceFolder}/backend/target/debug/linggen /usr/local/bin/linggen",
+            "command": "cargo build --bin linggen-server",
             "options": {
                 "cwd": "${workspaceFolder}/backend",
                 "env": {

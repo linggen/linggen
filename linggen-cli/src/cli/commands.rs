@@ -15,10 +15,19 @@ use crate::manifest::{current_platform, fetch_manifest, select_artifact, Artifac
 const LINGGEN_PUBLIC_KEY: &str = "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklERTVOa1ZHTlVSRFF6RXhOa0UxT0VFS1VsZFRTM0JTWWtJelVGWjFSMll6VlVWYVFrWlBRMFYxVFhJemJ6aFBha2h6YVVNNVNXbzNkVFZWZVV4cmEzbGhWbVoyTXpoVFZ6TUs=";
 
 /// Install using manifest (preferred); fall back to package manager when available.
-pub async fn handle_install() -> Result<()> {
-    println!("{}", "🔧 Installing Linggen...".cyan());
+pub async fn handle_install(version: Option<&str>) -> Result<()> {
+    if let Some(ver) = version {
+        println!(
+            "{}",
+            format!("🔧 Installing Linggen version {}...", ver).cyan()
+        );
+    } else {
+        println!("{}", "🔧 Installing Linggen (latest version)...".cyan());
+    }
     let platform = current_platform();
-    let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+    let manifest = fetch_manifest(version)
+        .await
+        .context("Failed to fetch manifest")?;
 
     // Show version info
     if let Some(remote_version) = &manifest.version {
@@ -49,7 +58,9 @@ pub async fn handle_install() -> Result<()> {
 pub async fn handle_update() -> Result<()> {
     println!("{}", "⬆️  Checking for updates...".cyan());
     let platform = current_platform();
-    let manifest = fetch_manifest().await.context("Failed to fetch manifest")?;
+    let manifest = fetch_manifest(None)
+        .await
+        .context("Failed to fetch manifest")?;
 
     // Check remote version
     if let Some(remote_version) = &manifest.version {
@@ -85,7 +96,7 @@ pub async fn handle_update() -> Result<()> {
 
 pub async fn handle_check() -> Result<()> {
     println!("{}", "🔎 Checking versions...".cyan());
-    let manifest = fetch_manifest().await?;
+    let manifest = fetch_manifest(None).await?;
     let platform = current_platform();
 
     let cli_version_local =
@@ -222,7 +233,7 @@ async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
 
 /// Verify a file's signature using minisign
 fn verify_signature(file_path: &Path, signature: &str, public_key: &str) -> Result<()> {
-    use minisign::{PublicKeyBox, SignatureBox};
+    use minisign::{PublicKey, PublicKeyBox, SignatureBox};
     use std::io::Cursor;
 
     // Decode the base64-encoded public key to get the minisign format
@@ -233,11 +244,20 @@ fn verify_signature(file_path: &Path, signature: &str, public_key: &str) -> Resu
     // Parse the public key (minisign format: comment line + key line)
     let pubkey_str = String::from_utf8(pubkey_bytes).context("Public key is not valid UTF-8")?;
 
-    // Parse the public key box
-    let pk_box = PublicKeyBox::from_string(&pubkey_str).context("Failed to parse public key")?;
-    let pk = pk_box
-        .into_public_key()
-        .context("Failed to convert public key box to public key")?;
+    // Parse the public key box and convert to public key
+    let pk_box = PublicKeyBox::from_string(&pubkey_str)
+        .context("Failed to parse public key - ensure it's in minisign format")?;
+
+    // Convert PublicKeyBox to PublicKey
+    // Try from_box first (for trusted keys), fallback to into_public_key (for untrusted)
+    let pk = match PublicKey::from_box(pk_box.clone()) {
+        Ok(pk) => pk,
+        Err(_) => {
+            // If from_box fails, try into_public_key (for untrusted keys)
+            pk_box.into_public_key()
+                .context("Failed to convert public key box to public key - key may be invalid or in wrong format")?
+        }
+    };
 
     // The signature from manifest is base64-encoded .sig file content
     // Decode it to get the minisign signature format
@@ -264,12 +284,96 @@ fn verify_signature(file_path: &Path, signature: &str, public_key: &str) -> Resu
 async fn download_to_temp(url: &str, signature: Option<&str>) -> Result<PathBuf> {
     let tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
     let tmp_path = tmp.path().to_path_buf();
-    let resp = reqwest::get(url)
-        .await
-        .with_context(|| format!("Failed to download {}", url))?;
-    if !resp.status().is_success() {
-        anyhow::bail!("Download failed: {} {}", resp.status(), url);
+
+    // Retry logic for 503 errors (GitHub CDN issues)
+    // Try up to 5 times with exponential backoff: 1s, 2s, 4s, 8s
+    let max_attempts = 5;
+    let mut resp = None;
+    let mut last_error = None;
+
+    for attempt in 0..max_attempts {
+        match reqwest::get(url).await {
+            Ok(r) => {
+                if r.status().is_success() {
+                    resp = Some(r);
+                    break;
+                } else if r.status() == 503 && attempt < max_attempts - 1 {
+                    // Wait before retry with exponential backoff: 1s, 2s, 4s, 8s
+                    let delay = Duration::from_secs(1 << attempt);
+                    println!(
+                        "{}",
+                        format!(
+                            "⚠️  Download returned 503 (attempt {}/{}), retrying in {}s...",
+                            attempt + 1,
+                            max_attempts,
+                            delay.as_secs()
+                        )
+                        .yellow()
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                } else {
+                    last_error = Some(format!(
+                        "HTTP {} {}",
+                        r.status(),
+                        r.status().canonical_reason().unwrap_or("Unknown")
+                    ));
+                    if attempt < max_attempts - 1 && (r.status() == 503 || r.status() == 429) {
+                        // Retry for 503 or 429 (rate limit)
+                        let delay = Duration::from_secs(1 << attempt);
+                        println!(
+                            "{}",
+                            format!(
+                                "⚠️  Download returned {} (attempt {}/{}), retrying in {}s...",
+                                r.status(),
+                                attempt + 1,
+                                max_attempts,
+                                delay.as_secs()
+                            )
+                            .yellow()
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    anyhow::bail!("Download failed: {} {}", r.status(), url);
+                }
+            }
+            Err(e) => {
+                last_error = Some(format!("Network error: {}", e));
+                if attempt < max_attempts - 1 {
+                    let delay = Duration::from_secs(1 << attempt);
+                    println!(
+                        "{}",
+                        format!(
+                            "⚠️  Network error (attempt {}/{}), retrying in {}s...",
+                            attempt + 1,
+                            max_attempts,
+                            delay.as_secs()
+                        )
+                        .yellow()
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                } else {
+                    anyhow::bail!(
+                        "Download failed after {} attempts: {} - {}",
+                        max_attempts,
+                        url,
+                        e
+                    );
+                }
+            }
+        }
     }
+
+    let resp = resp.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to download after {} attempts: {} - {}",
+            max_attempts,
+            url,
+            last_error.unwrap_or_else(|| "Unknown error".to_string())
+        )
+    })?;
     let bytes = resp
         .bytes()
         .await
@@ -421,11 +525,39 @@ fn is_app_running() -> bool {
 
 /// Restart the Linggen app by quitting the old instance and launching the new one
 fn restart_app() -> Result<()> {
-    // Quit the running app
-    let quit_result = Command::new("killall").arg("Linggen").output();
+    // Quit the running app - try multiple process names
+    // The actual process name is "linggen-desktop" but killall might need "Linggen"
+    let mut quit_success = false;
 
-    // Wait a moment for the app to quit
-    std::thread::sleep(Duration::from_millis(500));
+    // Try killing by bundle name first (most reliable on macOS)
+    let killall_result = Command::new("killall").arg("Linggen").output();
+
+    if killall_result.is_ok() && killall_result.as_ref().unwrap().status.success() {
+        quit_success = true;
+    } else {
+        // Try killing by actual process name
+        let killall_desktop = Command::new("killall").arg("linggen-desktop").output();
+
+        if killall_desktop.is_ok() && killall_desktop.as_ref().unwrap().status.success() {
+            quit_success = true;
+        }
+    }
+
+    // Wait longer for the app to fully quit (especially if it needs to save state)
+    // Check if process is still running and wait up to 3 seconds
+    for _ in 0..6 {
+        std::thread::sleep(Duration::from_millis(500));
+
+        // Check if app is still running
+        let check_result = Command::new("pgrep").arg("-f").arg("Linggen.app").output();
+
+        if let Ok(output) = check_result {
+            if !output.status.success() {
+                // Process is gone, we can proceed
+                break;
+            }
+        }
+    }
 
     // Launch the new version
     let open_result = Command::new("open")
@@ -440,7 +572,7 @@ fn restart_app() -> Result<()> {
     }
 
     // If open failed, at least we tried to quit it
-    if quit_result.is_ok() {
+    if quit_success {
         println!(
             "{}",
             "⚠️  App was quit, but failed to auto-launch. Please start Linggen.app manually."

@@ -14,12 +14,17 @@
         "core:window:allow-set-title",
         "shell:default",
         "shell:allow-open",
+        "shell:allow-execute",
         {
             "identifier": "shell:allow-spawn",
             "allow": [
                 {
                     "name": "linggen-backend",
                     "sidecar": true,
+                    "args": true
+                },
+                {
+                    "name": "linggen",
                     "args": true
                 }
             ]

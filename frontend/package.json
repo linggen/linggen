@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,7 +29,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-force-graph-2d": "^1.26.2",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "chevrotain": "~11.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -37,6 +38,7 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.0.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",

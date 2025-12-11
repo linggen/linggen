@@ -97,14 +97,53 @@ echo ""
 # Step 3: Install frontend dependencies if needed
 echo -e "${BLUE}📦 Installing frontend dependencies...${NC}"
 cd frontend
-npm ci
+if [ -f "package-lock.json" ]; then
+    npm ci
+else
+    echo -e "${YELLOW}⚠️  package-lock.json not found, using npm install${NC}"
+    npm install
+fi
 echo ""
 
 # Step 4: Build the Tauri app
 echo -e "${BLUE}🏗️  Building Tauri app...${NC}"
 echo "  This may take a few minutes..."
+# Tauri updater artifacts require signing keys at build time to generate *.sig.
+# Read key content from ~/.tauri/linggen.key (or env) and password from .tauri-signing.conf (or env).
+SIGNING_CONF="$(pwd)/../.tauri-signing.conf"
+TAURI_BUILD_PASSWORD=""
+if [ -f "$SIGNING_CONF" ]; then
+    # Strip surrounding quotes and whitespace
+    TAURI_BUILD_PASSWORD=$(
+        grep -E "^TAURI_PRIVATE_KEY_PASSWORD=" "$SIGNING_CONF" \
+            | grep -v "^#" \
+            | cut -d'=' -f2- \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | tr -d '"' \
+            | tr -d "'"
+    )
+fi
+TAURI_BUILD_PASSWORD="${TAURI_BUILD_PASSWORD:-${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-${TAURI_PRIVATE_KEY_PASSWORD:-}}}"
+
+TAURI_BUILD_KEY_CONTENT=""
+if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+    TAURI_BUILD_KEY_CONTENT="$TAURI_SIGNING_PRIVATE_KEY"
+elif [ -n "${TAURI_PRIVATE_KEY:-}" ]; then
+    TAURI_BUILD_KEY_CONTENT="$TAURI_PRIVATE_KEY"
+elif [ -f "$HOME/.tauri/linggen.key" ]; then
+    # Read key content (strip newlines)
+    TAURI_BUILD_KEY_CONTENT="$(tr -d '\n' < "$HOME/.tauri/linggen.key")"
+fi
+
 # Note: Tauri 2 CLI requires CI=false (not CI=1) if set in the environment
-CI=false npm run tauri:build
+if [ -n "$TAURI_BUILD_KEY_CONTENT" ]; then
+    TAURI_SIGNING_PRIVATE_KEY="$TAURI_BUILD_KEY_CONTENT" \
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_BUILD_PASSWORD" \
+      CI=false npm run tauri:build
+else
+    echo -e "${YELLOW}⚠️  No private key found at ~/.tauri/linggen.key; build may fail to sign updater artifacts.${NC}"
+    CI=false npm run tauri:build
+fi
 
 cd ..
 
@@ -185,7 +224,12 @@ if [ -d "dist/macos/${APP_NAME}.app" ]; then
     echo "  📱 macOS App: dist/macos/${APP_NAME}.app ($APP_SIZE)"
 fi
 
-DMG_PATH=$(find dist/macos -name "*.dmg" 2>/dev/null | head -n 1)
+# Prefer the DMG we just created; otherwise pick the newest DMG in dist/macos.
+if [ -n "${DMG_FINAL:-}" ] && [ -f "${DMG_FINAL:-}" ]; then
+    DMG_PATH="$DMG_FINAL"
+else
+    DMG_PATH=$(ls -t dist/macos/*.dmg 2>/dev/null | head -n 1)
+fi
 if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
     DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
     echo "  💿 DMG: $DMG_PATH ($DMG_SIZE)"
