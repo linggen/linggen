@@ -1,35 +1,162 @@
-### case
+# Linggen: Project Memory & Long-Term Context for AI
 
-"how does camera stream sent out?"
+This document describes the **core use cases, concepts, and workflows** behind Linggen.
 
---
+Linggen is **not another AI agent**.
+It is a **long-term project memory layer** that sits _before_ Cursor / LLMs, ensuring they do not lose historical context, decisions, and constraints.
 
-"User is working on  building a FSD perception node, which is inside  a FSD system structure, camera stream is sent out from a Unity Simulation for dev. On real product is will be by a usb camera hardware.   
-Relating camera streaming code is in Project Sailsim, relating files:
-1. /path/to/camera.cs
-2. /pat/to/rtps_steam.cs
-As a system design and architect, please Explan:
-How does camera stream send out from simulator and stream to rtsp Server."
+---
 
+## One-Sentence Positioning
 
-### case
+**Linggen helps AI remember _why_ your project is the way it is —  
+so it doesn’t undo past decisions when you come back later.**
 
-“我这个无人车系统的 camera 推 RTSP 流到 Unity 里总是卡顿，是为什么？”
+---
 
---
+## Core Problem Linggen Solves
 
-你是一个熟悉 Unity、无人驾驶仿真、RTSP 流媒体的资深工程师。
+Modern LLM-based tools (Cursor, Copilot, ChatGPT):
 
-当前背景：
-	•	我在做一个无人驾驶系统仿真。
-	•	作者用 Unity 模拟车和传感器，用 Unity 的游戏视角模拟摄像头。
-	•	通过 RTSP 推流到地址 rtsp://127.0.0.1:8554/front。
+- Are very good at reasoning **within the current session**
+- Are very bad at remembering **across time, projects, and decisions**
 
-现在的问题：
-	•	我在 Unity 中接收这个 RTSP 视频流时，经常出现明显卡顿和延迟。
-	•	希望分析可能原因，并给出排查步骤。
+As a result:
 
-请按照以下结构回答：
-	1.	可能原因列表（网络、编码、Unity 设置、RTSP 服务器等）
-	2.	每个原因对应的排查步骤
-	3.	如果要减小延迟，推荐的配置（编码参数、分辨率、帧率等）
+- Old projects feel like new ones
+- Past tradeoffs are forgotten
+- AI repeatedly suggests changes that were already rejected
+
+Linggen fills this gap by providing **persistent, project-scoped and cross-project memory**.
+
+---
+
+## Killer Primary Use Case (Main Scenario)
+
+### Returning to an Old Project (or New Project Onboarding)
+
+**Situation**
+
+- You reopen a repository after weeks or months
+- Cursor is smart, but:
+  - It doesn’t know _why_ the architecture is like this
+  - It doesn’t know which approaches were already tried and rejected
+  - It doesn’t know which changes are dangerous
+
+**Without Linggen**
+
+- You (and the AI) re-learn everything from scratch
+- AI proposes “reasonable” but historically wrong refactors
+- You waste time rediscovering old constraints
+
+**With Linggen**
+
+- Project memory is automatically injected via MCP
+- Cursor sees:
+  - Hard rules (Do / Don’t)
+  - Past decisions with reasons
+  - Known gotchas and pitfalls
+- AI behaves like a teammate who has worked on this project before
+
+> This is Linggen’s **single most important scenario**.
+
+---
+
+## Supporting Use Cases (Compressed)
+
+### 1. AI Safety Brake for Refactors and Big Changes
+
+**Problem**
+
+- LLMs often suggest:
+  - Large refactors
+  - Replacing core dependencies
+  - Breaking public APIs
+
+**Linggen’s Role**
+
+- Surface historical decisions and constraints _before execution_
+- Prevent AI from repeating rejected approaches
+- Act as a “memory-based guardrail”
+
+---
+
+### 2. Multi-Project Switching (Cross-Project Memory)
+
+**Problem**
+
+- Developers maintain multiple repositories
+- Each project has different:
+  - Tech stacks
+  - Rules
+  - Risk tolerance
+- AI treats every project the same
+
+**Linggen’s Role**
+
+- Maintain **separate project memories per workspace**
+- Automatically switch context when you switch projects
+- (Optionally) reuse personal patterns across projects
+
+> Cross-project memory is **structurally missing** from Cursor and LLMs.
+
+---
+
+### 3. Capturing “Why” Without Writing Documentation
+
+**Problem**
+
+- Developers know _why_ something is written a certain way
+- But don’t want to write long docs
+
+**Linggen’s Role**
+
+- Allow one-line notes to be pinned directly from code
+- Preserve intent, tradeoffs, and rationale
+- Make “future you” and AI aware of past reasoning
+
+---
+
+### 4. Making AI Ask the Right Clarifying Questions
+
+**Problem**
+
+- AI often guesses intent:
+  - quick fix vs long-term
+  - allow breaking changes or not
+
+**Linggen’s Role**
+
+- Provide suggested clarification questions
+- Encourage AI to pause before acting
+- Improve plan quality without extra prompting
+
+## VSCode extension
+
+select code, right click, linggen: pin to memory
+or linggen: add good case
+linggen: add bad case
+these could be saved in file and RAG like :
+.linggen/cases.jsonl
+
+```json
+{
+  "id": "uuid",
+  "ts": "2025-12-12T12:00:00Z",
+  "case_type": "good|bad",
+  "title": "Prefer explicit Result handling",
+  "note": "Avoid unwrap in auth path; map errors to HTTP responses",
+  "tags": ["#auth", "#reliability"],
+  "source": {
+    "path": "src/auth/jwt.rs",
+    "range": { "startLine": 12, "endLine": 40 },
+    "snippet": "..."
+  }
+}
+```
+
+---
+
+## Project Memory File (`LINGGEN_MEMORY.md`)
+
+Each project has a **single, short, human-editable memory file**:

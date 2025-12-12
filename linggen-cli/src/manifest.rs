@@ -48,7 +48,11 @@ pub async fn fetch_manifest(version: Option<&str>) -> Result<Manifest> {
     } else {
         std::env::var("LINGGEN_MANIFEST_URL").unwrap_or_else(|_| DEFAULT_MANIFEST_URL.into())
     };
+    // On macOS, reqwest may consult system proxy settings via `system-configuration`.
+    // In some environments this can fail (NULL dynamic store). Disable proxy lookup.
     let client = reqwest::Client::builder()
+        .no_proxy()
+        .user_agent("linggen-cli")
         .timeout(Duration::from_secs(30)) // Increased timeout for slow CDN
         .build()
         .context("Failed to build HTTP client")?;

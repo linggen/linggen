@@ -6,6 +6,10 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import { getVersion } from '@tauri-apps/api/app'
 import { Command } from '@tauri-apps/plugin-shell'
 
+type UpdaterDownloadEvent = {
+    event: 'Started' | 'Progress' | 'Finished'
+}
+
 export function SettingsView() {
     const [settings, setSettings] = useState<AppSettings | null>(null)
     const [loading, setLoading] = useState(false)
@@ -39,6 +43,8 @@ export function SettingsView() {
     const [updateInfo, setUpdateInfo] = useState<{version?: string, date?: string, body?: string} | null>(null)
     const [downloading, setDownloading] = useState(false)
     const [downloadProgress, setDownloadProgress] = useState(0)
+    const [restartReady, setRestartReady] = useState(false)
+    const [restarting, setRestarting] = useState(false)
 
     useEffect(() => {
         isMountedRef.current = true
@@ -91,7 +97,7 @@ export function SettingsView() {
     useEffect(() => {
         if (!isTauriApp) return
         getVersion()
-            .then((ver) => setAppVersion(ver))
+            .then((ver: string) => setAppVersion(ver))
             .catch(() => {
                 // Ignore errors; we simply won't show the version badge
             })
@@ -244,6 +250,8 @@ export function SettingsView() {
             setTimeout(() => setMessage(null), 5000)
             return
         }
+        setRestartReady(false)
+        setRestarting(false)
         setDownloading(true)
         setMessage(null)
         setDownloadProgress(0)
@@ -265,7 +273,7 @@ export function SettingsView() {
             
             for (let attempt = 0; attempt < maxRetries; attempt++) {
                 try {
-                    await update.downloadAndInstall((event) => {
+                    await update.downloadAndInstall((event: UpdaterDownloadEvent) => {
                         switch (event.event) {
                             case 'Started':
                                 setDownloadProgress(0)
@@ -422,18 +430,11 @@ export function SettingsView() {
             
             setDownloadProgress(100)
             
-            // Small delay to show final message
-            await new Promise(resolve => setTimeout(resolve, 1000))
-            
-            // Relaunch the app
-            try {
-                await relaunch()
-            } catch (relaunchErr) {
-                console.error('Failed to relaunch app:', relaunchErr)
-                setMessage('✓ Update installed! Please restart the app manually.')
-                setDownloading(false)
-                // Don't reset progress here - show success
-            }
+            // Installation finished. Ask the user to restart.
+            setDownloadProgress(100)
+            setDownloading(false)
+            setRestartReady(true)
+            setMessage('✓ Update installed! Restart to finish applying it.')
         } catch (err: unknown) {
             console.error('Update installation failed:', err)
             const { msg: errorMsg, lower: errorStr } = extractErrorText(err)
@@ -453,6 +454,19 @@ export function SettingsView() {
             
             setDownloading(false)
             setDownloadProgress(0)
+        }
+    }
+
+    const handleRestartNow = async () => {
+        if (!isTauriApp) return
+        setRestarting(true)
+        setMessage('Restarting...')
+        try {
+            await relaunch()
+        } catch (relaunchErr) {
+            console.error('Failed to relaunch app:', relaunchErr)
+            setMessage('✓ Update installed! Please restart the app manually. (Restart failed)')
+            setRestarting(false)
         }
     }
 
@@ -680,7 +694,7 @@ export function SettingsView() {
                                         type="button"
                                         className="btn-action"
                                         onClick={handleInstallUpdate}
-                                        disabled={downloading}
+                                        disabled={downloading || restarting}
                                         style={{ background: '#60a5fa', borderColor: '#60a5fa' }}
                                     >
                                         {downloading ? 'Installing...' : 'Install Update'}
@@ -725,12 +739,26 @@ export function SettingsView() {
                                         </div>
                                     </div>
                                 )}
+
+                                {restartReady && (
+                                    <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                                        <button
+                                            type="button"
+                                            className="btn-action"
+                                            onClick={handleRestartNow}
+                                            disabled={restarting}
+                                            style={{ background: '#22c55e', borderColor: '#22c55e' }}
+                                        >
+                                            {restarting ? 'Restarting...' : 'Restart Now'}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
                         <p className="settings-description" style={{ marginTop: '12px' }}>
                             Updates are downloaded from the official Linggen releases repository. 
-                            The app will restart automatically after installation.
+                            After installation, click “Restart Now” to finish applying the update.
                         </p>
                     </div>
                 </section>

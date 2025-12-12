@@ -78,10 +78,37 @@ cd "$ROOT_DIR/backend"
 cargo build --release --bin linggen-server
 echo "✅ Server built (for Tauri sidecar)"
 
+# Sanity check: ensure the sidecar we ship supports WebUI discovery via env vars.
+# If this fails, the release app will fall back to API-only ("Hello from Linggen Backend!").
+#
+# We intentionally use `grep -a` (treat binary as text) instead of `strings` to avoid
+# brittle exit-code behavior under `set -euo pipefail`.
+if ! LC_ALL=C grep -a -q "LINGGEN_FRONTEND_DIR" "$ROOT_DIR/backend/target/release/linggen-server"; then
+  if [ "${FORCE_CLEAN:-}" = "1" ]; then
+    echo "⚠️  Built linggen-server is missing LINGGEN_FRONTEND_DIR support; running cargo clean as requested (FORCE_CLEAN=1)..." >&2
+    cargo clean -p api || true
+    cargo build --release --bin linggen-server
+  fi
+
+  if ! LC_ALL=C grep -a -q "LINGGEN_FRONTEND_DIR" "$ROOT_DIR/backend/target/release/linggen-server"; then
+    echo "❌ Built linggen-server is missing LINGGEN_FRONTEND_DIR support." >&2
+    echo "   If you recently changed backend code or suspect stale artifacts, run:" >&2
+    echo "     (cd \"$ROOT_DIR/backend\" && cargo clean -p api && cargo build --release --bin linggen-server)" >&2
+    echo "   Or rerun this script with FORCE_CLEAN=1." >&2
+    exit 1
+  fi
+fi
+
+# Optional: print what we will bundle (useful for debugging target/copy mismatches).
+if command -v shasum >/dev/null 2>&1; then
+  if [ -f "$ROOT_DIR/backend/target/release/linggen-server" ]; then
+    echo "ℹ️  linggen-server (release) sha256: $(shasum -a 256 "$ROOT_DIR/backend/target/release/linggen-server" | awk '{print $1}')"
+  else
+    echo "ℹ️  linggen-server (release) sha256: (missing file at $ROOT_DIR/backend/target/release/linggen-server)" >&2
+  fi
+fi
+
 # Step 3: Build Tauri App (macOS only)
-DMG_PATH=""
-DMG_NAME=""
-DMG_SIG=""
 APP_PATH=""
 APP_TARBALL_NAME=""
 UPDATER_TARBALL_NAME=""
@@ -99,9 +126,31 @@ if [ "$OS" = "darwin" ]; then
   cd "$ROOT_DIR/frontend/src-tauri"
   
   # Copy server as sidecar
-  SIDECAR_NAME="linggen-server-${ARCH}-apple-darwin"
-  cp "$ROOT_DIR/backend/target/release/linggen-server" "$SIDECAR_NAME"
-  chmod +x "$SIDECAR_NAME"
+  # IMPORTANT: Tauri bundles external binaries from `src-tauri/binaries/<name>-<target-triple>`.
+  # If we only copy to an ad-hoc filename, Tauri may pick up an older cached sidecar and you
+  # end up with a released app that serves API-only at :8787.
+  # If you build with a custom target (CARGO_BUILD_TARGET), match that. Otherwise use host triple.
+  TARGET_TRIPLE="${CARGO_BUILD_TARGET:-$(rustc -Vv | awk '/^host: /{print $2}')}"
+  BIN_DIR="$ROOT_DIR/frontend/src-tauri/binaries"
+  mkdir -p "$BIN_DIR"
+  SIDECAR_NAME="linggen-server-${TARGET_TRIPLE}"
+  # Remove any stale sidecars so Tauri cannot pick the wrong one.
+  rm -f "$BIN_DIR/linggen-server-"* 2>/dev/null || true
+  rm -f "$BIN_DIR/$SIDECAR_NAME" 2>/dev/null || true
+
+  BACKEND_BIN="$ROOT_DIR/backend/target/release/linggen-server"
+  if [ ! -f "$BACKEND_BIN" ]; then
+    echo "❌ Backend binary not found at $BACKEND_BIN" >&2
+    exit 1
+  fi
+
+  cp "$BACKEND_BIN" "$BIN_DIR/$SIDECAR_NAME"
+  chmod +x "$BIN_DIR/$SIDECAR_NAME"
+
+  # Back-compat: also place a copy next to tauri.conf.json (older layouts sometimes used this).
+  rm -f "linggen-server-${ARCH}-apple-darwin" "linggen-server-${TARGET_TRIPLE}"
+  cp "$BACKEND_BIN" "linggen-server-${TARGET_TRIPLE}"
+  chmod +x "linggen-server-${TARGET_TRIPLE}"
   
   cd "$ROOT_DIR/frontend"
   # Use npm install if package-lock.json doesn't exist, otherwise use npm ci
@@ -112,6 +161,23 @@ if [ "$OS" = "darwin" ]; then
     npm install
   fi
   npm run build
+
+  # Make the release app also serve a browser WebUI at http://127.0.0.1:8787/
+  # The backend looks for ../Resources/frontend/index.html relative to the sidecar binary.
+  # So we must bundle frontend assets into Linggen.app/Contents/Resources/frontend/.
+  FRONTEND_DIST_DIR="$ROOT_DIR/frontend/dist"
+  FRONTEND_RESOURCE_DIR="$ROOT_DIR/frontend/src-tauri/resources/frontend"
+  if [ -d "$FRONTEND_DIST_DIR" ]; then
+    rm -rf "$FRONTEND_RESOURCE_DIR"
+    mkdir -p "$FRONTEND_RESOURCE_DIR"
+    cp -R "$FRONTEND_DIST_DIR/." "$FRONTEND_RESOURCE_DIR/"
+    echo "✅ Bundled frontend into resources/frontend (for backend static hosting)"
+  else
+    echo "⚠️  Frontend dist not found at $FRONTEND_DIST_DIR (skipping resources copy)"
+  fi
+
+  # Ensure we run the Tauri build from the Tauri project directory so path resolution is deterministic.
+  cd "$ROOT_DIR/frontend/src-tauri"
   
   # Build Tauri app and DMG (keep both)
   # Tauri updater artifacts require the private key at build time to generate *.sig.
@@ -135,18 +201,40 @@ if [ "$OS" = "darwin" ]; then
   if [ -n "$TAURI_BUILD_KEY_CONTENT" ]; then
     TAURI_SIGNING_PRIVATE_KEY="$TAURI_BUILD_KEY_CONTENT" \
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_BUILD_PASSWORD" \
-      cargo tauri build --bundles app,dmg
+      CI=false cargo tauri build --bundles app
   else
     echo "⚠️  No private key found for updater signing (expected at ~/.tauri/linggen.key)."
     echo "   Tauri may fail to generate updater signatures; install-update may not work."
-    cargo tauri build --bundles app,dmg
+    CI=false cargo tauri build --bundles app
   fi
 
-  # Prefer Tauri-generated updater artifact (.app.tar.gz) if present.
+  # Verify the built app contains the frontend and the *new* sidecar backend.
+  # This prevents publishing an app where :8787 falls back to API-only.
+  BUILT_APP_PATH="$ROOT_DIR/frontend/src-tauri/target/release/bundle/macos/Linggen.app"
+  if [ -d "$BUILT_APP_PATH" ]; then
+    if [ ! -f "$BUILT_APP_PATH/Contents/Resources/resources/frontend/index.html" ]; then
+      echo "❌ Built app is missing Resources/resources/frontend/index.html" >&2
+      echo "   Expected: $BUILT_APP_PATH/Contents/Resources/resources/frontend/index.html" >&2
+      exit 1
+    fi
+    if ! LC_ALL=C grep -a -q "LINGGEN_FRONTEND_DIR" "$BUILT_APP_PATH/Contents/MacOS/linggen-server"; then
+      echo "❌ Built app contains an old linggen-server (missing LINGGEN_FRONTEND_DIR support)" >&2
+      echo "   Expected: $BUILT_APP_PATH/Contents/MacOS/linggen-server" >&2
+      exit 1
+    fi
+  else
+    echo "⚠️  Built app not found at $BUILT_APP_PATH (skipping app-content verification)" >&2
+  fi
+
+  # Prefer Tauri-generated updater artifact (*.app.tar.gz) if present.
   # This is the canonical format used by the Tauri updater on macOS.
-  UPDATER_BUNDLE_PATH=$(find src-tauri/target -name "*.app.tar.gz" -path "*/bundle/macos/*" | head -n 1)
-  if [ -z "${UPDATER_BUNDLE_PATH:-}" ]; then
-    UPDATER_BUNDLE_PATH=$(find src-tauri/target/release/bundle/macos -name "*.app.tar.gz" 2>/dev/null | head -n 1)
+  # Prefer the deterministic path first to avoid accidentally picking an older artifact.
+  UPDATER_BUNDLE_PATH="$ROOT_DIR/frontend/src-tauri/target/release/bundle/macos/Linggen.app.tar.gz"
+  if [ ! -f "$UPDATER_BUNDLE_PATH" ]; then
+    UPDATER_BUNDLE_PATH=$(find "$ROOT_DIR/frontend/src-tauri/target" -name "*.app.tar.gz" -path "*/bundle/macos/*" 2>/dev/null | head -n 1)
+    if [ -z "${UPDATER_BUNDLE_PATH:-}" ]; then
+      UPDATER_BUNDLE_PATH=$(find "$ROOT_DIR/frontend/src-tauri/target/release/bundle/macos" -name "*.app.tar.gz" 2>/dev/null | head -n 1)
+    fi
   fi
 
   if [ -n "${UPDATER_BUNDLE_PATH:-}" ] && [ -f "$UPDATER_BUNDLE_PATH" ]; then
@@ -173,74 +261,24 @@ if [ "$OS" = "darwin" ]; then
     echo "⚠️  Updater artifact (*.app.tar.gz) not found; will fall back to a manually-created .app tarball."
   fi
   
-  # Find DMG - check both possible paths
-  DMG_PATH=$(find src-tauri/target -name "*.dmg" -path "*/bundle/dmg/*" | head -n 1)
-  if [ -z "$DMG_PATH" ]; then
-    # Try alternative path structure
-    DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
-  fi
-  
-  if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
-    cp "$DMG_PATH" "$DIST_DIR/"
-    DMG_NAME=$(basename "$DMG_PATH")
-    echo "✅ DMG built: dist/${DMG_NAME}"
-    
-    # Sign the DMG
-    echo "🔐 Signing DMG..."
-    
-    # Read password from config file or environment variable
-    DMG_PASSWORD=""
-    CONFIG_FILE="$ROOT_DIR/.tauri-signing.conf"
-    if [ -f "$CONFIG_FILE" ]; then
-      DMG_PASSWORD=$(grep -E "^TAURI_PRIVATE_KEY_PASSWORD=" "$CONFIG_FILE" | grep -v "^#" | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '"' | tr -d "'")
-    fi
-    DMG_PASSWORD="${DMG_PASSWORD:-${TAURI_PRIVATE_KEY_PASSWORD:-}}"
-    
-    # Read key content
-    DMG_KEY_CONTENT=""
-    if [ -n "${TAURI_PRIVATE_KEY:-}" ]; then
-      DMG_KEY_CONTENT="$TAURI_PRIVATE_KEY"
-    elif [ -f "$HOME/.tauri/linggen.key" ]; then
-      DMG_KEY_CONTENT="$(cat "$HOME/.tauri/linggen.key")"
-    else
-      echo "⚠️  No signing key found. Set TAURI_PRIVATE_KEY or create ~/.tauri/linggen.key"
-      echo "   Generate key with: tauri signer generate --write-keys"
-      echo "   DMG will be unsigned (updater may reject it)"
-    fi
-    
-    # Sign using key content as string (not file path)
-    if [ -n "$DMG_KEY_CONTENT" ]; then
-      if npx tauri signer sign -k "$DMG_KEY_CONTENT" -p "$DMG_PASSWORD" "$DIST_DIR/$DMG_NAME" >/dev/null 2>&1; then
-        echo "✅ DMG signed"
-      else
-        echo "⚠️  Signing failed, continuing without signature"
-      fi
-    fi
-    
-    # Note: Tauri updater does NOT use DMG for updates (it uses .app.tar.gz artifacts).
-    # We may still sign the DMG for manual distribution, but it won't be referenced by latest.json.
-    if [ -f "$DIST_DIR/${DMG_NAME}.sig" ]; then
-      echo "✅ DMG signature generated"
-    fi
-  else
-    echo "⚠️  DMG not found. Searched in:"
-    echo "   - src-tauri/target/*/release/bundle/dmg"
-    echo "   - src-tauri/target/release/bundle/dmg"
-    ls -la src-tauri/target/release/bundle/dmg/ 2>/dev/null || echo "   Directory does not exist"
-  fi
-
   # Find .app bundle and package tarball for CLI install
-  APP_PATH=$(find src-tauri/target -name "Linggen.app" -path "*/bundle/macos/*" | head -n 1)
+  APP_PATH=$(find "$ROOT_DIR/frontend/src-tauri/target" -name "Linggen.app" -path "*/bundle/macos/*" 2>/dev/null | head -n 1)
   if [ -z "$APP_PATH" ]; then
-    APP_PATH=$(find src-tauri/target/release/bundle/macos -name "Linggen.app" 2>/dev/null | head -n 1)
+    APP_PATH=$(find "$ROOT_DIR/frontend/src-tauri/target/release/bundle/macos" -name "Linggen.app" 2>/dev/null | head -n 1)
   fi
 
-  if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
+  # Only build a separate app tarball for the CLI if the updater bundle wasn't produced.
+  # When the updater bundle exists, the CLI should reuse the same file as Tauri updater.
+  if [ -z "${UPDATER_TARBALL_NAME:-}" ] && [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
     APP_TARBALL_NAME="linggen-${SLUG}.tar.gz"
     tar -C "$(dirname "$APP_PATH")" -czf "$DIST_DIR/$APP_TARBALL_NAME" "$(basename "$APP_PATH")"
     echo "✅ App tarball built: dist/${APP_TARBALL_NAME}"
   else
-    echo "⚠️  Linggen.app not found; skipping app tarball."
+    if [ -n "${UPDATER_TARBALL_NAME:-}" ]; then
+      echo "ℹ️  Skipping separate app tarball (CLI will reuse updater artifact)"
+    else
+      echo "⚠️  Linggen.app not found; skipping app tarball."
+    fi
   fi
 fi
 
@@ -344,14 +382,8 @@ if [ -f "$CLI_TARBALL" ]; then
   fi
 fi
 
-# Upload DMG (if exists)
-if [ -n "$DMG_PATH" ] && [ -f "$DIST_DIR/$DMG_NAME" ]; then
-  echo "  📤 Uploading DMG..."
-  delete_asset "$DMG_NAME"
-  gh release upload "$VERSION" "$DIST_DIR/$DMG_NAME" --repo "$REPO"
-fi
-
-# Upload app tarball (if exists) - useful for CLI-driven install
+# Upload app tarball (if exists) - legacy path for CLI-driven install.
+# Prefer using the updater artifact for both CLI and Tauri when available.
 APP_SIG=""
 if [ -n "$APP_TARBALL_NAME" ] && [ -f "$DIST_DIR/$APP_TARBALL_NAME" ]; then
   echo "  📤 Uploading app tarball..."
@@ -383,7 +415,6 @@ BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 
 # Generate manifest.json (valid JSON; include universal keys for CLI compatibility)
 if [ "$OS" = "darwin" ]; then
-  optional_app_dmg=""
   optional_app_tarball=""
   
   # Build CLI entry with signature if available
@@ -392,7 +423,15 @@ if [ "$OS" = "darwin" ]; then
     CLI_SIG_JSON=", \"signature\": \"${CLI_SIG}\""
   fi
 
-  if [ -n "$APP_TARBALL_NAME" ] && [ -f "$DIST_DIR/$APP_TARBALL_NAME" ]; then
+  # App artifact for macOS:
+  # Prefer the updater artifact (same as Tauri uses), otherwise fall back to a manually-created tarball.
+  if [ -n "$UPDATER_TARBALL_NAME" ] && [ -n "$UPDATER_SIG_B64" ]; then
+    optional_app_tarball=$(cat <<EOF_APP
+,
+    "app-macos-tarball": {"url": "${BASE_URL}/${UPDATER_TARBALL_NAME}", "signature": "${UPDATER_SIG_B64}"}
+EOF_APP
+)
+  elif [ -n "$APP_TARBALL_NAME" ] && [ -f "$DIST_DIR/$APP_TARBALL_NAME" ]; then
     APP_SIG_JSON=""
     if [ -n "$APP_SIG" ]; then
       APP_SIG_JSON=", \"signature\": \"${APP_SIG}\""
@@ -404,43 +443,26 @@ EOF_APP
 )
   fi
 
-  if [ -n "$DMG_NAME" ]; then
-    optional_app_dmg=$(cat <<EOF_APP
-,
-    "app-macos-dmg": {"url": "${BASE_URL}/${DMG_NAME}"}
-EOF_APP
-)
-  fi
-
   cat > "$DIST_DIR/manifest.json" << EOF
 {
   "version": "${VERSION_NUM}",
   "artifacts": {
     "cli-macos-universal": {"url": "${BASE_URL}/linggen-cli-${SLUG}.tar.gz"${CLI_SIG_JSON}},
-    "cli-${SLUG}": {"url": "${BASE_URL}/linggen-cli-${SLUG}.tar.gz"${CLI_SIG_JSON}}${optional_app_tarball}${optional_app_dmg}
+    "cli-${SLUG}": {"url": "${BASE_URL}/linggen-cli-${SLUG}.tar.gz"${CLI_SIG_JSON}}${optional_app_tarball}
   }
 }
 EOF
 else
-  optional_app_dmg=""
   CLI_SIG_JSON=""
   if [ -n "$CLI_SIG" ]; then
     CLI_SIG_JSON=", \"signature\": \"${CLI_SIG}\""
-  fi
-  
-  if [ -n "$DMG_NAME" ]; then
-    optional_app_dmg=$(cat <<EOF_APP
-,
-    "app-macos-dmg": {"url": "${BASE_URL}/${DMG_NAME}"}
-EOF_APP
-)
   fi
 
   cat > "$DIST_DIR/manifest.json" << EOF
 {
   "version": "${VERSION_NUM}",
   "artifacts": {
-    "cli-${SLUG}": {"url": "${BASE_URL}/linggen-cli-${SLUG}.tar.gz"${CLI_SIG_JSON}}${optional_app_dmg}
+    "cli-${SLUG}": {"url": "${BASE_URL}/linggen-cli-${SLUG}.tar.gz"${CLI_SIG_JSON}}
   }
 }
 EOF
@@ -547,8 +569,8 @@ fi
 echo ""
 echo "📋 Uploaded artifacts:"
 echo "  - linggen-cli-${SLUG}.tar.gz"
-[ -n "$APP_TARBALL_NAME" ] && echo "  - ${APP_TARBALL_NAME}"
-[ -n "$DMG_NAME" ] && echo "  - ${DMG_NAME}"
+[ -n "$APP_TARBALL_NAME" ] && echo "  - ${APP_TARBALL_NAME} (legacy; CLI app install only)"
+[ -n "${UPDATER_TARBALL_NAME:-}" ] && echo "  - ${UPDATER_TARBALL_NAME} (updater; used by Tauri + CLI)"
 echo "  - manifest.json"
 [ -n "${UPDATER_TARBALL_NAME:-}" ] && echo "  - latest.json (contains embedded signature)"
 echo ""

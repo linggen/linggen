@@ -1,6 +1,6 @@
 [package]
 name = "linggen-desktop"
-version = "0.2.2"
+version = "0.2.0"
 description = "Linggen Desktop App"
 authors = ["Liang Huang"]
 edition = "2021"
@@ -11,6 +11,7 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 tauri = { version = "2.9", features = ["tray-icon", "image-png"] }
+tauri-plugin-process = "2.3"
 tauri-plugin-shell = "2.3"
 tauri-plugin-updater = "2.9"
 serde = { version = "1", features = ["derive"] }

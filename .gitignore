@@ -19,6 +19,7 @@ frontend/.env.*.local
 frontend/src-tauri/linggen-*-apple-darwin
 frontend/src-tauri/linggen-*-pc-windows-*
 frontend/src-tauri/linggen-*-unknown-linux-*
+frontend/src-tauri/binaries/
 
 linggensite/node_modules/
 linggensite/dist/
@@ -76,3 +77,4 @@ dist/
 
 # Signing configuration (contains sensitive passwords)
 .tauri-signing.conf
+frontend/src-tauri/resources/

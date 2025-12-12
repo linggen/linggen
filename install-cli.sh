@@ -86,7 +86,9 @@ install_binary() {
   local tarball="$1" dest_dir="$2"
   local tmpdir binpath
   tmpdir="$(mktemp -d)"
-  tar -xzf "$tarball" -C "$tmpdir"
+  # Prevent environment overrides (e.g. TAR_OPTIONS='-O') from dumping binary contents to stdout.
+  # Also suppress stdout to avoid any binary garbage in terminals.
+  env -u TAR_OPTIONS tar -xzf "$tarball" -C "$tmpdir" >/dev/null
   binpath="$tmpdir/linggen"
   if [ ! -f "$binpath" ]; then
     echo "linggen binary not found in tarball" >&2
@@ -95,10 +97,11 @@ install_binary() {
 
   if [ -w "$dest_dir" ]; then
     cp "$binpath" "$dest_dir/"
+    chmod +x "$dest_dir/linggen"
   else
     sudo cp "$binpath" "$dest_dir/"
+    sudo chmod +x "$dest_dir/linggen"
   fi
-  chmod +x "$dest_dir/linggen"
 }
 
 main() {

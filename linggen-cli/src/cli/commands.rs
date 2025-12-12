@@ -1,18 +1,26 @@
 use anyhow::{Context, Result};
 use base64::Engine;
 use colored::*;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::path::PathBuf;
 use tabled::{Table, Tabled};
-use tempfile::{tempdir, NamedTempFile};
 
 use super::client::{ApiClient, CreateSourceRequest};
-use crate::manifest::{current_platform, fetch_manifest, select_artifact, ArtifactKind, Platform};
+use super::installer::{install_linux, install_macos};
+use super::jobs::wait_for_job;
+use super::signature::LINGGEN_PUBLIC_KEY;
+use super::util::{format_timestamp, get_local_app_version, run_and_capture_version};
+use crate::manifest::{current_platform, fetch_manifest, Platform};
 
-// Public key for signature verification (from tauri.conf.json, base64 encoded)
-const LINGGEN_PUBLIC_KEY: &str = "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklERTVOa1ZHTlVSRFF6RXhOa0UxT0VFS1VsZFRTM0JTWWtJelVGWjFSMll6VlVWYVFrWlBRMFYxVFhJemJ6aFBha2h6YVVNNVNXbzNkVFZWZVV4cmEzbGhWbVoyTXpoVFZ6TUs=";
+fn parse_cli_version(raw: &str) -> Option<String> {
+    // Expected output is typically "linggen X.Y.Z" but keep it resilient.
+    for token in raw.split_whitespace() {
+        let t = token.trim_start_matches('v');
+        if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '.') && t.contains('.') {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
 
 /// Install using manifest (preferred); fall back to package manager when available.
 pub async fn handle_install(version: Option<&str>) -> Result<()> {
@@ -24,6 +32,7 @@ pub async fn handle_install(version: Option<&str>) -> Result<()> {
     } else {
         println!("{}", "🔧 Installing Linggen (latest version)...".cyan());
     }
+
     let platform = current_platform();
     let manifest = fetch_manifest(version)
         .await
@@ -62,24 +71,23 @@ pub async fn handle_update() -> Result<()> {
         .await
         .context("Failed to fetch manifest")?;
 
-    // Check remote version
-    if let Some(remote_version) = &manifest.version {
-        println!("{}", format!("Remote version: {}", remote_version).cyan());
+    let latest = manifest.version.clone().unwrap_or_else(|| "unknown".into());
+    let local_cli_raw =
+        run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
+    let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
+    let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-        // Try to get local app version (best effort)
-        let local_version = get_local_app_version();
-        if let Some(local_ver) = &local_version {
-            println!("{}", format!("Local version:  {}", local_ver).cyan());
+    println!("Local CLI: {}", local_cli);
+    println!("Latest CLI: {}", latest);
+    println!("Local App: {}", local_app);
+    println!("Latest App: {}", latest);
 
-            // Compare versions
-            if local_ver == remote_version {
-                println!("{}", "✓ Already up to date!".green());
-                return Ok(());
-            }
-        }
-
-        println!("{}", "⬇️  New version available, updating...".cyan());
+    if local_cli == latest && local_app == latest {
+        println!("{}", "✓ Already up to date!".green());
+        return Ok(());
     }
+
+    println!("{}", "⬇️  New version available, updating...".cyan());
 
     match platform {
         Platform::Mac => install_macos(&manifest).await,
@@ -97,528 +105,87 @@ pub async fn handle_update() -> Result<()> {
 pub async fn handle_check() -> Result<()> {
     println!("{}", "🔎 Checking versions...".cyan());
     let manifest = fetch_manifest(None).await?;
-    let platform = current_platform();
-
-    let cli_version_local =
+    let latest = manifest.version.clone().unwrap_or_else(|| "unknown".into());
+    let local_cli_raw =
         run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
-    let app_version_local = get_local_app_version().unwrap_or_else(|| "not installed".into());
+    let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
+    let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-    let cli_remote = select_artifact(&manifest, platform, ArtifactKind::Cli)
-        .map(|a| a.url)
-        .unwrap_or_else(|| "n/a".into());
-    let app_remote = select_artifact(&manifest, platform, ArtifactKind::App)
-        .map(|a| a.url)
-        .unwrap_or_else(|| "n/a".into());
-
-    println!("Local CLI:  {}", cli_version_local);
-    println!("Local App:  {}", app_version_local);
-    println!("Remote CLI: {}", cli_remote);
-    println!("Remote App: {}", app_remote);
-    if let Some(ver) = manifest.version {
-        println!("Manifest version: {}", ver);
-    }
+    println!("Local CLI: {}", local_cli);
+    println!("Latest CLI: {}", latest);
+    println!("Local App: {}", local_app);
+    println!("Latest App: {}", latest);
     Ok(())
 }
 
-fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
-    let status = Command::new(cmd)
-        .args(args)
-        .status()
-        .with_context(|| format!("Failed to run {} {:?}", cmd, args))?;
-    if !status.success() {
-        anyhow::bail!("Command failed: {} {:?}", cmd, args);
+pub async fn handle_doctor(api_url: &str) -> Result<()> {
+    println!("{}", "🩺 Linggen Doctor".cyan().bold());
+
+    // CLI
+    let exe = std::env::current_exe().ok();
+    let cli_version = env!("CARGO_PKG_VERSION");
+    println!("CLI version: {}", cli_version);
+    if let Some(p) = exe {
+        println!("CLI path:    {}", p.display());
     }
-    Ok(())
-}
 
-fn run_and_capture_version(cmd: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(cmd).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout)
-        .ok()
-        .map(|s| s.trim().to_string())
-}
-
-fn command_exists(cmd: &str) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {}", cmd))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn get_local_app_version() -> Option<String> {
-    // Try to read version from installed Linggen.app (macOS)
+    // Desktop app install + version (macOS best effort)
     #[cfg(target_os = "macos")]
     {
-        use std::path::Path;
-        let plist_path = Path::new("/Applications/Linggen.app/Contents/Info.plist");
-        if plist_path.exists() {
-            if let Ok(output) = Command::new("defaults")
-                .args([
-                    "read",
-                    "/Applications/Linggen.app/Contents/Info",
-                    "CFBundleShortVersionString",
-                ])
-                .output()
-            {
-                if output.status.success() {
-                    return String::from_utf8(output.stdout)
-                        .ok()
-                        .map(|s| s.trim().to_string());
-                }
+        let app_path = std::path::Path::new("/Applications/Linggen.app");
+        println!(
+            "Linggen.app: {}",
+            if app_path.exists() {
+                "installed".green().to_string()
+            } else {
+                "not found".yellow().to_string()
             }
-        }
-    }
-    None
-}
-
-/// ----- platform-specific installers -----
-
-async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
-    // Install/update app bundle to /Applications from tarball
-    // (CLI is installed separately via install-cli.sh, server is bundled in the app)
-    if let Some(app_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
-        println!("{}", "⬇️  Downloading Linggen app tarball...".cyan());
-        let tar = download_to_temp(&app_art.url, app_art.signature.as_deref()).await?;
-        install_app_bundle(&tar)?;
-    } else {
-        println!(
-            "{}",
-            "⚠️ No macOS app artifact in manifest; cannot install.".yellow()
-        );
-        anyhow::bail!("No macOS app artifact found in manifest");
-    }
-
-    Ok(())
-}
-
-async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
-    if command_exists("apt") {
-        run_cmd("sudo", &["apt", "update"])?;
-        run_cmd("sudo", &["apt", "install", "-y", "linggen"])?;
-        run_cmd("sudo", &["apt", "install", "-y", "linggen-server"])?;
-        println!(
-            "{}",
-            "✅ Installed/updated linggen CLI and linggen-server via APT".green()
-        );
-        return Ok(());
-    }
-
-    // Fallback: tarball install from manifest
-    if let Some(cli_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Cli) {
-        println!("{}", "⬇️  Downloading CLI tarball...".cyan());
-        let tar = download_to_temp(&cli_art.url, cli_art.signature.as_deref()).await?;
-        extract_tarball(&tar, "/usr/local/bin")?;
-        println!("{}", "✅ Installed/updated CLI from tarball".green());
-    } else {
-        println!("{}", "⚠️ No CLI tarball found in manifest".yellow());
-    }
-
-    if let Some(srv_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Server) {
-        println!("{}", "⬇️  Downloading server tarball...".cyan());
-        let tar = download_to_temp(&srv_art.url, srv_art.signature.as_deref()).await?;
-        extract_tarball(&tar, "/usr/local/bin")?;
-        install_systemd_unit()?;
-        println!("{}", "✅ Installed/updated server from tarball".green());
-    } else {
-        println!("{}", "⚠️ No server tarball found in manifest".yellow());
-    }
-
-    Ok(())
-}
-
-/// Verify a file's signature using minisign
-fn verify_signature(file_path: &Path, signature: &str, public_key: &str) -> Result<()> {
-    use minisign::{PublicKey, PublicKeyBox, SignatureBox};
-    use std::io::Cursor;
-
-    // Decode the base64-encoded public key to get the minisign format
-    let pubkey_bytes = base64::engine::general_purpose::STANDARD
-        .decode(public_key)
-        .context("Failed to decode public key from base64")?;
-
-    // Parse the public key (minisign format: comment line + key line)
-    let pubkey_str = String::from_utf8(pubkey_bytes).context("Public key is not valid UTF-8")?;
-
-    // Parse the public key box and convert to public key
-    let pk_box = PublicKeyBox::from_string(&pubkey_str)
-        .context("Failed to parse public key - ensure it's in minisign format")?;
-
-    // Convert PublicKeyBox to PublicKey
-    // Try from_box first (for trusted keys), fallback to into_public_key (for untrusted)
-    let pk = match PublicKey::from_box(pk_box.clone()) {
-        Ok(pk) => pk,
-        Err(_) => {
-            // If from_box fails, try into_public_key (for untrusted keys)
-            pk_box.into_public_key()
-                .context("Failed to convert public key box to public key - key may be invalid or in wrong format")?
-        }
-    };
-
-    // The signature from manifest is base64-encoded .sig file content
-    // Decode it to get the minisign signature format
-    let sig_bytes = base64::engine::general_purpose::STANDARD
-        .decode(signature)
-        .context("Failed to decode signature from base64")?;
-
-    let sig_str = String::from_utf8(sig_bytes).context("Signature is not valid UTF-8")?;
-
-    let sig_box = SignatureBox::from_string(&sig_str).context("Failed to parse signature")?;
-
-    // Read the file to verify
-    let file_data = fs::read(file_path)
-        .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-    let data_reader = Cursor::new(&file_data);
-
-    // Verify the signature (prehash=false, quiet=true, allow_legacy=false)
-    minisign::verify(&pk, &sig_box, data_reader, false, true, false)
-        .context("Signature verification failed")?;
-
-    Ok(())
-}
-
-async fn download_to_temp(url: &str, signature: Option<&str>) -> Result<PathBuf> {
-    let tmp = tempfile::NamedTempFile::new().context("Failed to create temp file")?;
-    let tmp_path = tmp.path().to_path_buf();
-
-    // Retry logic for 503 errors (GitHub CDN issues)
-    // Try up to 5 times with exponential backoff: 1s, 2s, 4s, 8s
-    let max_attempts = 5;
-    let mut resp = None;
-    let mut last_error = None;
-
-    for attempt in 0..max_attempts {
-        match reqwest::get(url).await {
-            Ok(r) => {
-                if r.status().is_success() {
-                    resp = Some(r);
-                    break;
-                } else if r.status() == 503 && attempt < max_attempts - 1 {
-                    // Wait before retry with exponential backoff: 1s, 2s, 4s, 8s
-                    let delay = Duration::from_secs(1 << attempt);
-                    println!(
-                        "{}",
-                        format!(
-                            "⚠️  Download returned 503 (attempt {}/{}), retrying in {}s...",
-                            attempt + 1,
-                            max_attempts,
-                            delay.as_secs()
-                        )
-                        .yellow()
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                } else {
-                    last_error = Some(format!(
-                        "HTTP {} {}",
-                        r.status(),
-                        r.status().canonical_reason().unwrap_or("Unknown")
-                    ));
-                    if attempt < max_attempts - 1 && (r.status() == 503 || r.status() == 429) {
-                        // Retry for 503 or 429 (rate limit)
-                        let delay = Duration::from_secs(1 << attempt);
-                        println!(
-                            "{}",
-                            format!(
-                                "⚠️  Download returned {} (attempt {}/{}), retrying in {}s...",
-                                r.status(),
-                                attempt + 1,
-                                max_attempts,
-                                delay.as_secs()
-                            )
-                            .yellow()
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    anyhow::bail!("Download failed: {} {}", r.status(), url);
-                }
-            }
-            Err(e) => {
-                last_error = Some(format!("Network error: {}", e));
-                if attempt < max_attempts - 1 {
-                    let delay = Duration::from_secs(1 << attempt);
-                    println!(
-                        "{}",
-                        format!(
-                            "⚠️  Network error (attempt {}/{}), retrying in {}s...",
-                            attempt + 1,
-                            max_attempts,
-                            delay.as_secs()
-                        )
-                        .yellow()
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                } else {
-                    anyhow::bail!(
-                        "Download failed after {} attempts: {} - {}",
-                        max_attempts,
-                        url,
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    let resp = resp.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Failed to download after {} attempts: {} - {}",
-            max_attempts,
-            url,
-            last_error.unwrap_or_else(|| "Unknown error".to_string())
-        )
-    })?;
-    let bytes = resp
-        .bytes()
-        .await
-        .with_context(|| format!("Failed to read body for {}", url))?;
-    fs::write(&tmp_path, &bytes)?;
-
-    // Verify signature if provided
-    if let Some(sig) = signature {
-        println!("{}", "🔐 Verifying signature...".cyan());
-        match verify_signature(&tmp_path, sig, LINGGEN_PUBLIC_KEY) {
-            Ok(_) => println!("{}", "✅ Signature verified".green()),
-            Err(e) => {
-                println!(
-                    "{}",
-                    format!("⚠️  Signature verification failed: {}", e).yellow()
-                );
-                println!(
-                    "{}",
-                    "   Continuing anyway (use --skip-verify to suppress this warning)".yellow()
-                );
-                // For now, we'll warn but continue. In production, you might want to fail here.
-                // return Err(e);
-            }
-        }
-    } else {
-        println!(
-            "{}",
-            "⚠️  No signature provided in manifest; skipping verification".yellow()
         );
     }
 
-    tmp.keep().ok(); // ensure file is not deleted on drop
-    Ok(tmp_path)
-}
+    let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
+    println!("App version: {}", local_app);
 
-fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
-    let status = Command::new("tar")
-        .arg("-xzf")
-        .arg(tar_path)
-        .arg("-C")
-        .arg(dest_dir)
-        .status()
-        .with_context(|| format!("Failed to run tar on {:?}", tar_path))?;
-    if !status.success() {
-        anyhow::bail!("tar failed for {:?}", tar_path);
-    }
-    Ok(())
-}
-
-fn install_app_bundle(tar_path: &PathBuf) -> Result<()> {
-    let tmp_dir = tempdir().context("Failed to create temp dir for app extraction")?;
-    let tmp_path = tmp_dir.path();
-
-    let dest_str = tmp_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid temp dir path"))?;
-    extract_tarball(tar_path, dest_str)?;
-
-    // Locate the .app bundle (expecting Linggen.app at the tar root)
-    let mut app_bundle = tmp_path.join("Linggen.app");
-    if !app_bundle.exists() {
-        app_bundle = std::fs::read_dir(tmp_path)
-            .context("Failed to read extracted app directory")?
-            .filter_map(|e| e.ok().map(|entry| entry.path()))
-            .find(|p| p.is_dir() && p.extension().map(|ext| ext == "app").unwrap_or(false))
-            .ok_or_else(|| anyhow::anyhow!("No .app bundle found in extracted tarball"))?;
-    }
-
-    let app_src = app_bundle
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid app bundle path"))?;
-
-    let applications_dir = Path::new("/Applications");
-    if !applications_dir.exists() {
-        fs::create_dir_all(applications_dir).context("Failed to create /Applications")?;
-    }
-
-    let dest_app = applications_dir.join("Linggen.app");
-    if dest_app.exists() {
-        fs::remove_dir_all(&dest_app)
-            .context("Failed to remove existing /Applications/Linggen.app")?;
-    }
-
-    // Copy the bundle; retry with sudo if permissions fail
-    let copy_result = Command::new("cp")
-        .args(["-R", app_src, "/Applications/"])
-        .status();
-
-    let mut success = copy_result.as_ref().map(|s| s.success()).unwrap_or(false);
-    if !success {
-        println!(
-            "{}",
-            "⚠️ Copy to /Applications failed; retrying with sudo (may prompt for password)..."
-                .yellow()
-        );
-        let sudo_result = Command::new("sudo")
-            .args(["cp", "-R", app_src, "/Applications/"])
-            .status();
-        success = sudo_result.as_ref().map(|s| s.success()).unwrap_or(false);
-    }
-
-    if !success {
-        anyhow::bail!("Failed to copy app bundle to /Applications");
-    }
-
-    println!(
-        "{}",
-        "✅ Installed/updated Linggen.app to /Applications".green()
-    );
-
-    // Check if app is running and restart it
-    if is_app_running() {
-        println!(
-            "{}",
-            "🔄 Linggen app is currently running. Restarting to use new version...".cyan()
-        );
-        restart_app()?;
-    } else {
-        println!(
-            "{}",
-            "ℹ️  Restart Linggen app to use the new version".yellow()
-        );
-    }
-
-    Ok(())
-}
-
-/// Check if Linggen app is currently running
-fn is_app_running() -> bool {
-    // Check for running Linggen process
-    // On macOS, the app process name is typically the bundle name
-    let output = Command::new("pgrep").arg("-f").arg("Linggen.app").output();
-
-    if let Ok(output) = output {
-        return output.status.success();
-    }
-
-    // Fallback: check with ps
-    let output = Command::new("ps").args(["-ax"]).output();
-
-    if let Ok(output) = output {
-        if let Ok(stdout) = String::from_utf8(output.stdout) {
-            return stdout.contains("Linggen.app");
+    // Backend reachability
+    println!("API URL:     {}", api_url);
+    let api_client = ApiClient::new(api_url.to_string());
+    match api_client.get_status().await {
+        Ok(s) => {
+            println!("Backend:     {}", "reachable".green());
+            println!("Status:      {}", s.status);
+        }
+        Err(e) => {
+            println!("Backend:     {}", "not reachable".red());
+            println!("Error:       {}", e);
+            println!("Tip:         run `linggen start` (will launch Linggen.app on macOS)");
         }
     }
 
-    false
-}
-
-/// Restart the Linggen app by quitting the old instance and launching the new one
-fn restart_app() -> Result<()> {
-    // Quit the running app - try multiple process names
-    // The actual process name is "linggen-desktop" but killall might need "Linggen"
-    let mut quit_success = false;
-
-    // Try killing by bundle name first (most reliable on macOS)
-    let killall_result = Command::new("killall").arg("Linggen").output();
-
-    if killall_result.is_ok() && killall_result.as_ref().unwrap().status.success() {
-        quit_success = true;
-    } else {
-        // Try killing by actual process name
-        let killall_desktop = Command::new("killall").arg("linggen-desktop").output();
-
-        if killall_desktop.is_ok() && killall_desktop.as_ref().unwrap().status.success() {
-            quit_success = true;
+    // Manifest fetch
+    match fetch_manifest(None).await {
+        Ok(m) => {
+            let latest = m.version.unwrap_or_else(|| "unknown".into());
+            println!("Latest:      {}", latest);
+        }
+        Err(e) => {
+            println!("Latest:      {}", "unknown".yellow());
+            println!("Manifest:    {}", "failed to fetch".red());
+            println!("Error:       {}", e);
         }
     }
 
-    // Wait longer for the app to fully quit (especially if it needs to save state)
-    // Check if process is still running and wait up to 3 seconds
-    for _ in 0..6 {
-        std::thread::sleep(Duration::from_millis(500));
-
-        // Check if app is still running
-        let check_result = Command::new("pgrep").arg("-f").arg("Linggen.app").output();
-
-        if let Ok(output) = check_result {
-            if !output.status.success() {
-                // Process is gone, we can proceed
-                break;
-            }
-        }
+    // Public key sanity check
+    match base64::engine::general_purpose::STANDARD.decode(LINGGEN_PUBLIC_KEY) {
+        Ok(pubkey_bytes) => match String::from_utf8(pubkey_bytes) {
+            Ok(pubkey_str) => match minisign::PublicKeyBox::from_string(&pubkey_str) {
+                Ok(_) => println!("Pubkey:      {}", "ok".green()),
+                Err(e) => println!("Pubkey:      {} ({})", "invalid".red(), e),
+            },
+            Err(e) => println!("Pubkey:      {} ({})", "invalid".red(), e),
+        },
+        Err(e) => println!("Pubkey:      {} ({})", "invalid".red(), e),
     }
 
-    // Launch the new version
-    let open_result = Command::new("open")
-        .arg("/Applications/Linggen.app")
-        .status();
-
-    if let Ok(status) = open_result {
-        if status.success() {
-            println!("{}", "✅ Linggen app restarted successfully".green());
-            return Ok(());
-        }
-    }
-
-    // If open failed, at least we tried to quit it
-    if quit_success {
-        println!(
-            "{}",
-            "⚠️  App was quit, but failed to auto-launch. Please start Linggen.app manually."
-                .yellow()
-        );
-    } else {
-        println!(
-            "{}",
-            "⚠️  Could not restart app automatically. Please quit and restart Linggen.app manually.".yellow()
-        );
-    }
-
-    Ok(())
-}
-
-fn install_systemd_unit() -> Result<()> {
-    let unit = r#"[Unit]
-Description=Linggen Server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/linggen-server
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-"#;
-    let tmp = NamedTempFile::new().context("Failed to create temp file for unit")?;
-    fs::write(tmp.path(), unit)?;
-
-    let tmp_str = tmp
-        .path()
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("invalid temp path"))?
-        .to_string();
-
-    run_cmd(
-        "sudo",
-        &["cp", &tmp_str, "/etc/systemd/system/linggen-server.service"],
-    )?;
-    run_cmd("sudo", &["systemctl", "daemon-reload"])?;
-    run_cmd("sudo", &["systemctl", "enable", "--now", "linggen-server"])?;
-    println!(
-        "{}",
-        "✅ systemd unit installed/enabled (linggen-server)".green()
-    );
     Ok(())
 }
 
@@ -813,90 +380,6 @@ pub async fn handle_index(
     Ok(())
 }
 
-/// Wait for a job to complete by polling
-async fn wait_for_job(api_client: &ApiClient, job_id: &str) -> Result<()> {
-    let mut last_status = String::new();
-    let mut last_progress = (0, 0); // (files_indexed, total_files)
-    let poll_interval = Duration::from_secs(1); // Poll more frequently for better UX
-
-    loop {
-        tokio::time::sleep(poll_interval).await;
-
-        let jobs = api_client.list_jobs().await?;
-        let job = jobs.jobs.iter().find(|j| j.id == job_id);
-
-        match job {
-            Some(job) => {
-                let current_progress =
-                    (job.files_indexed.unwrap_or(0), job.total_files.unwrap_or(0));
-                let status_changed = job.status != last_status;
-                let progress_changed = current_progress != last_progress;
-
-                match job.status.as_str() {
-                    "Pending" => {
-                        if status_changed {
-                            println!("   Status: {}", "Pending...".yellow());
-                        }
-                    }
-                    "Running" => {
-                        // Show progress whenever it changes OR on status change
-                        if status_changed || progress_changed {
-                            let (indexed, total) = current_progress;
-                            if total > 0 {
-                                let percentage = (indexed as f64 / total as f64 * 100.0) as u32;
-                                println!(
-                                    "   Progress: {}/{} files ({}%) - {} chunks created",
-                                    indexed.to_string().cyan(),
-                                    total,
-                                    percentage.to_string().cyan(),
-                                    job.chunks_created.unwrap_or(0).to_string().cyan()
-                                );
-                            } else {
-                                println!("   Status: {} - processing...", "Running".cyan());
-                            }
-                        }
-                    }
-                    "Completed" => {
-                        if status_changed {
-                            println!("\n{}", "✅ Job completed successfully!".green().bold());
-                            if let Some(files) = job.files_indexed {
-                                println!("   Files indexed: {}", files);
-                            }
-                            if let Some(chunks) = job.chunks_created {
-                                println!("   Chunks created: {}", chunks);
-                            }
-                        }
-                        return Ok(());
-                    }
-                    "Failed" => {
-                        if status_changed {
-                            println!("\n{}", "❌ Job failed".red().bold());
-                            if let Some(error) = &job.error {
-                                println!("   Error: {}", error.red());
-                            }
-                        }
-                        anyhow::bail!("Indexing job failed");
-                    }
-                    _ => {
-                        if status_changed {
-                            println!("   Status: {}", job.status);
-                        }
-                    }
-                }
-
-                last_status = job.status.clone();
-                last_progress = current_progress;
-            }
-            None => {
-                println!("{}", "⚠️  Job not found".yellow());
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Handle the `status` command
 pub async fn handle_status(api_client: &ApiClient, limit: usize) -> Result<()> {
     println!("{}", "📊 Fetching system status...".cyan().bold());
@@ -915,6 +398,7 @@ pub async fn handle_status(api_client: &ApiClient, limit: usize) -> Result<()> {
             return Ok(());
         }
     };
+
     println!("{}", "Backend Status:".bold());
     match status.status.as_str() {
         "ready" => println!("  Status: {}", "Ready ✅".green()),
@@ -998,16 +482,4 @@ struct JobTableRow {
     files_chunks: String,
     #[tabled(rename = "Started")]
     started: String,
-}
-
-fn format_timestamp(ts: &str) -> String {
-    // Simple formatting - just show date and time without seconds
-    if let Some(pos) = ts.find('T') {
-        let date = &ts[..pos];
-        let time = &ts[pos + 1..];
-        if let Some(time_end) = time.find('.') {
-            return format!("{} {}", date, &time[..time_end]);
-        }
-    }
-    ts.to_string()
 }

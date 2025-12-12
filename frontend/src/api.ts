@@ -5,7 +5,7 @@
 // - In browser on remote IP (http://linggen-ip:8787), use that IP
 function getApiBase(): string {
     if (typeof window === 'undefined') {
-        return 'http://localhost:8787';
+        return 'http://127.0.0.1:8787';
     }
 
     const origin = window.location.origin;
@@ -30,12 +30,13 @@ function getApiBase(): string {
         origin === 'null';
 
     if (isTauriEnv) {
-        return 'http://localhost:8787';
+        // Prefer IPv4 loopback to avoid WebView/OS choosing ::1 while backend listens on IPv4.
+        return 'http://127.0.0.1:8787';
     }
 
     // In Vite dev server (localhost:5173), point to backend
     if (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173')) {
-        return 'http://localhost:8787';
+        return 'http://127.0.0.1:8787';
     }
 
     // For browser access (local or remote), use the current origin

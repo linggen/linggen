@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,6 +25,10 @@
     "@heroicons/react": "^2.2.0",
     "@uiw/react-codemirror": "^4.25.3",
     "@uiw/react-md-editor": "^4.0.11",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
     "mermaid": "^11.12.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -35,11 +39,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@tailwindcss/postcss": "^4.1.17",
-    "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/cli": "^2.0.0",
-    "@tauri-apps/plugin-process": "^2.0.0",
-    "@tauri-apps/plugin-shell": "^2.0.0",
-    "@tauri-apps/plugin-updater": "^2.0.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

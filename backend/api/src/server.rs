@@ -1,12 +1,14 @@
+use anyhow::Context;
 use axum::{extract::DefaultBodyLimit, routing::get, routing::post, Router};
 use dashmap::DashMap;
 use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
 use std::net::SocketAddr;
+use std::time::Duration;
 use std::{path::PathBuf, sync::Arc};
 use storage::{MetadataStore, VectorStore};
 use tokio::sync::RwLock;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 use crate::analytics;
@@ -20,7 +22,28 @@ use crate::handlers::{
 };
 use crate::job_manager::JobManager;
 
-pub async fn start_server(port: u16) -> anyhow::Result<()> {
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> bool {
+    // On Unix, `kill(pid, 0)` checks for existence without sending a signal.
+    // If the PID doesn't exist, errno = ESRCH.
+    unsafe {
+        let res = libc::kill(pid as i32, 0);
+        if res == 0 {
+            return true;
+        }
+        // If we don't have permission, the process still exists.
+        std::io::Error::last_os_error()
+            .raw_os_error()
+            .is_some_and(|e| e == libc::EPERM)
+    }
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(_pid: u32) -> bool {
+    true
+}
+
+pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<()> {
     // Initialize logging with custom format
     tracing_subscriber::fmt()
         .with_target(false) // Remove module path
@@ -34,14 +57,41 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
 
     info!("Linggen Backend API starting on port {}...", port);
 
+    // If a parent PID is provided (desktop sidecar mode), exit automatically when parent exits.
+    if let Some(ppid) = parent_pid {
+        info!(
+            "Parent PID set to {} (will auto-exit when parent exits)",
+            ppid
+        );
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if !pid_is_alive(ppid) {
+                    eprintln!(
+                        "[linggen-server] Parent PID {} exited; shutting down backend sidecar",
+                        ppid
+                    );
+                    std::process::exit(0);
+                }
+            }
+        });
+    }
+
     // Initialize embedding model and vector store
     // Use a stable application data directory so the app works
     // regardless of where it's launched from (Finder, CLI, DMG-installed, etc.)
     info!("Initializing metadata store...");
 
-    let base_data_dir = data_dir()
-        .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"))
-        .join("Linggen");
+    // Allow overriding the data directory to run multiple instances (e.g. dev server alongside app).
+    // Example:
+    //   LINGGEN_DATA_DIR="$HOME/Library/Application Support/Linggen-dev" linggen-server --port 8788
+    let base_data_dir = if let Ok(dir) = std::env::var("LINGGEN_DATA_DIR") {
+        PathBuf::from(dir)
+    } else {
+        data_dir()
+            .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"))
+            .join("Linggen")
+    };
 
     let metadata_path = base_data_dir.join("metadata.redb");
     let lancedb_path = base_data_dir.join("lancedb");
@@ -49,8 +99,30 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     info!("Using metadata store at {:?}", metadata_path);
     info!("Using LanceDB store at {:?}", lancedb_path);
 
-    let metadata_store =
-        Arc::new(MetadataStore::new(&metadata_path).expect("Failed to initialize metadata store"));
+    let metadata_store = match MetadataStore::new(&metadata_path) {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            // redb returns "Database already open. Cannot acquire lock." when another instance is running.
+            let msg = e.to_string();
+            if msg.contains("Database already open") || msg.contains("Cannot acquire lock") {
+                return Err(anyhow::anyhow!(
+                    "Linggen metadata database is already in use.\n\
+                     - Another Linggen backend is likely running (e.g. Linggen.app sidecar).\n\
+                     - Stop the other backend OR run this instance with a separate data dir via LINGGEN_DATA_DIR.\n\
+                     - Example: LINGGEN_DATA_DIR=\"$HOME/Library/Application Support/Linggen-dev\" linggen-server --port 8788\n\
+                     \n\
+                     DB path: {}",
+                    metadata_path.display()
+                ));
+            }
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to initialize metadata store at {}",
+                    metadata_path.display()
+                )
+            });
+        }
+    };
 
     // Initialize analytics (generates installation_id if needed)
     info!("Initializing analytics...");
@@ -256,27 +328,46 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         info!("LLM is disabled in settings, skipping model initialization");
     }
 
-    // Clean up stale jobs that were running when server stopped
+    // Clean up stale jobs that were pending/running when server stopped.
+    //
+    // `Pending` jobs are "waiting in queue" (JobManager permit). If the server restarts,
+    // they will never run, so leaving them as Pending makes the UI look stuck forever.
     info!("Checking for interrupted jobs...");
     if let Ok(jobs) = metadata_store.get_jobs(None) {
-        let running_jobs: Vec<_> = jobs
+        let interrupted_jobs: Vec<_> = jobs
             .iter()
-            .filter(|j| matches!(j.status, linggen_core::JobStatus::Running))
+            .filter(|j| {
+                matches!(
+                    j.status,
+                    linggen_core::JobStatus::Pending | linggen_core::JobStatus::Running
+                )
+            })
             .collect();
-        if !running_jobs.is_empty() {
+
+        if !interrupted_jobs.is_empty() {
             info!(
-                "Found {} running jobs that were interrupted by server restart",
-                running_jobs.len()
+                "Found {} interrupted jobs (Pending/Running) from previous server instance",
+                interrupted_jobs.len()
             );
-            for job in running_jobs {
+            for job in interrupted_jobs {
+                let reason = match job.status {
+                    linggen_core::JobStatus::Pending => {
+                        "Server was restarted before job started (was waiting in queue)"
+                    }
+                    linggen_core::JobStatus::Running => {
+                        "Server was restarted while job was running"
+                    }
+                    _ => "Server was restarted",
+                };
+
                 let mut failed_job = job.clone();
                 failed_job.status = linggen_core::JobStatus::Failed;
                 failed_job.finished_at = Some(chrono::Utc::now().to_rfc3339());
-                failed_job.error = Some("Server was restarted".to_string());
+                failed_job.error = Some(reason.to_string());
                 if let Err(e) = metadata_store.update_job(&failed_job) {
                     info!("Failed to update interrupted job {}: {}", job.id, e);
                 } else {
-                    info!("Marked job {} as failed (was interrupted)", job.id);
+                    info!("Marked job {} as failed (was {:?})", job.id, job.status);
                 }
             }
         }
@@ -403,15 +494,17 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)); // 10MB default for other routes
 
-    // Serve static frontend files (if they exist)
-    let frontend_dir: Option<PathBuf> = ["../Resources/frontend", "./frontend", "../frontend/dist"]
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists());
+    // Serve static frontend files (if they exist).
+    // IMPORTANT: Finder/launched apps often have a surprising cwd, so prefer resolving relative to
+    // the executable location (e.g. Linggen.app/Contents/MacOS -> ../Resources/frontend).
+    let frontend_dir: Option<PathBuf> = find_frontend_dir();
 
     let app = if let Some(frontend_dir) = frontend_dir {
         info!("Serving frontend from: {:?}", frontend_dir);
-        combined_routes.fallback_service(ServeDir::new(frontend_dir))
+        // SPA fallback: unknown paths should return index.html (so refresh/deep links work).
+        let index = frontend_dir.join("index.html");
+        combined_routes
+            .fallback_service(ServeDir::new(frontend_dir).not_found_service(ServeFile::new(index)))
     } else {
         info!("Frontend assets not found, serving API only");
         combined_routes.route("/", get(root_handler))
@@ -430,4 +523,43 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
 
 async fn root_handler() -> &'static str {
     "Hello from Linggen Backend!"
+}
+
+fn find_frontend_dir() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 0) Explicit override (useful for debugging / custom packaging).
+    if let Ok(dir) = std::env::var("LINGGEN_FRONTEND_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+
+    // 0.5) Tauri provides the resources directory at runtime in some environments.
+    // Prefer it if available.
+    if let Ok(dir) = std::env::var("TAURI_RESOURCE_DIR") {
+        let base = PathBuf::from(dir);
+        candidates.push(base.join("frontend"));
+        candidates.push(base.join("resources/frontend"));
+    }
+
+    // 1) Resolve relative to the server executable (best for release apps / Finder launches).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("../Resources/frontend"));
+            // Tauri bundles `bundle.resources` under `Contents/Resources/resources/...` by default.
+            candidates.push(exe_dir.join("../Resources/resources/frontend"));
+            candidates.push(exe_dir.join("../../Resources/frontend")); // extra safety for odd layouts
+            candidates.push(exe_dir.join("../../Resources/resources/frontend"));
+        }
+    }
+
+    // 2) Resolve relative to this crate (useful for local dev builds).
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../frontend/dist"));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../frontend/dist"));
+
+    // 3) Legacy relative paths (kept for compatibility).
+    candidates.push(PathBuf::from("../Resources/frontend"));
+    candidates.push(PathBuf::from("./frontend"));
+    candidates.push(PathBuf::from("../frontend/dist"));
+
+    candidates.into_iter().find(|p| p.exists())
 }

@@ -41,13 +41,5 @@
             "preLaunchTask": "npm: dev - linggensite"
         }
     ],
-    "compounds": [
-        {
-            "name": "Full Stack",
-            "configurations": [
-                "Backend",
-                "Frontend"
-            ]
-        }
-    ]
+    
 }

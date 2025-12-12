@@ -7,8 +7,8 @@ mod cli;
 mod manifest;
 
 use cli::{
-    handle_check, handle_index, handle_install, handle_start, handle_status, handle_update,
-    ApiClient,
+    handle_check, handle_doctor, handle_index, handle_install, handle_start, handle_status,
+    handle_update, ApiClient,
 };
 
 #[derive(Parser)]
@@ -86,6 +86,9 @@ enum Commands {
     /// Check for updates (CLI + runtime/app)
     #[command(alias = "version")]
     Check,
+
+    /// Diagnose installation, backend connectivity, and update configuration
+    Doctor,
 }
 
 /// Ensure the Linggen backend is running at the given API URL.
@@ -98,6 +101,28 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
     if api_client.get_status().await.is_ok() {
         println!("✅ Connected to existing backend at {}", api_url);
         return Ok(());
+    }
+
+    // On macOS, prefer launching the desktop app (Tauri) which bundles the backend.
+    // This makes `linggen start` feel natural: it starts the app, not just a headless server.
+    #[cfg(target_os = "macos")]
+    {
+        if try_launch_desktop_app().is_ok() {
+            let max_attempts = 30;
+            for _ in 0..max_attempts {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if api_client.get_status().await.is_ok() {
+                    println!(
+                        "✅ Backend is ready (started via Linggen.app) at {}",
+                        api_url
+                    );
+                    return Ok(());
+                }
+            }
+            eprintln!(
+                "⚠️  Linggen.app did not bring up the backend in time; falling back to linggen-server..."
+            );
+        }
     }
 
     // Try to derive the port from the URL, fall back to default 8787
@@ -118,6 +143,45 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
         "Timed out waiting for Linggen backend to start at {}",
         api_url
     )))
+}
+
+#[cfg(target_os = "macos")]
+fn try_launch_desktop_app() -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    eprintln!("🚀 Launching Linggen desktop app (Linggen.app)...");
+
+    // Prefer app name lookup first (works if installed normally).
+    let ok = Command::new("open")
+        .args(["-a", "Linggen"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if ok {
+        return Ok(());
+    }
+
+    // Fallback to explicit path.
+    let ok = Command::new("open")
+        .arg("/Applications/Linggen.app")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if ok {
+        return Ok(());
+    }
+
+    Err(anyhow::anyhow!(
+        "Failed to launch Linggen.app (is it installed in /Applications?)"
+    ))
 }
 
 /// Start the Linggen backend as a separate background process.
@@ -236,6 +300,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Check) => {
             handle_check().await?;
+        }
+
+        Some(Commands::Doctor) => {
+            handle_doctor(&cli_args.api_url).await?;
         }
     }
 

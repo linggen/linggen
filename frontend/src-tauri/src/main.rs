@@ -14,6 +14,26 @@ use tauri_plugin_shell::ShellExt;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
 
+#[cfg(target_os = "macos")]
+fn kill_linggen_server_by_bundle_path() {
+    use std::process::{Command, Stdio};
+    // Try to kill any lingering linggen-server that lives inside this app bundle.
+    // This protects against orphaned sidecars from previous force-kills.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let server_path = dir.join("linggen-server");
+            if let Some(p) = server_path.to_str() {
+                let _ = Command::new("pkill")
+                    .args(["-f", p])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
 /// Global state to hold the backend child process and whether we started it
 struct BackendProcess {
     child: Mutex<Option<CommandChild>>,
@@ -24,6 +44,7 @@ struct BackendProcess {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(BackendProcess {
@@ -56,7 +77,28 @@ fn main() {
                 match app_handle.shell().sidecar("linggen-server") {
                     Ok(sidecar_cmd) => {
                         // Run in server mode
-                        let sidecar_with_args = sidecar_cmd.args(&["--port", "8787"]);
+                        let parent_pid = std::process::id().to_string();
+                        // Provide an explicit frontend dir for the backend to serve over http://127.0.0.1:8787/.
+                        // This avoids fragile relative-path guessing (App Translocation / temp execution, etc.).
+                        let resource_dir = app_handle
+                            .path()
+                            .resource_dir()
+                            .ok()
+                            .and_then(|p| p.to_str().map(|s| s.to_string()));
+                        let frontend_dir = resource_dir
+                            .as_deref()
+                            .map(|rd| format!("{}/resources/frontend", rd))
+                            .filter(|p| std::path::Path::new(p).exists());
+
+                        let mut sidecar_with_args =
+                            sidecar_cmd.args(&["--port", "8787", "--parent-pid", &parent_pid]);
+                        if let Some(fd) = frontend_dir.as_deref() {
+                            sidecar_with_args =
+                                sidecar_with_args.env("LINGGEN_FRONTEND_DIR", fd.to_string());
+                        } else if let Some(rd) = resource_dir.as_deref() {
+                            sidecar_with_args =
+                                sidecar_with_args.env("TAURI_RESOURCE_DIR", rd.to_string());
+                        }
                         match sidecar_with_args.spawn() {
                         Ok((mut rx, child)) => {
                             // Store the child process handle for cleanup
@@ -231,11 +273,17 @@ fn main() {
                     if managed_by_us {
                         if let Some(child) = backend_state.child.lock().unwrap().take() {
                             println!("[Tauri] Terminating backend process (we started it)...");
-                            let _ = child.kill();
+                            if let Err(e) = child.kill() {
+                                eprintln!("[Tauri] Failed to kill backend child: {}", e);
+                            }
                         };
                     } else {
                         println!("[Tauri] Leaving backend running (started externally)");
                     }
+
+                    // Always do a best-effort cleanup of lingering sidecar processes from this bundle.
+                    #[cfg(target_os = "macos")]
+                    kill_linggen_server_by_bundle_path();
                 }
                 RunEvent::WindowEvent {
                     label,

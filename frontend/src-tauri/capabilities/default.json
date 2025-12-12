@@ -12,6 +12,8 @@
         "core:window:allow-hide",
         "core:window:allow-close",
         "core:window:allow-set-title",
+        "process:default",
+        "process:allow-restart",
         "shell:default",
         "shell:allow-open",
         "shell:allow-execute",

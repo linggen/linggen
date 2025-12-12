@@ -2,6 +2,13 @@
 
 Standalone `linggen` binary that provides developer CLI commands and platform-aware install/update flows.
 
+## TEST RUN
+
+```bash
+cargo run -p linggen-cli -- --version
+cargo run -p linggen-cli -- install
+```
+
 ## Build from source
 
 ```bash

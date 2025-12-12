@@ -15,6 +15,10 @@ async fn main() -> Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8787);
 
+    // If provided, the server will automatically exit when the parent PID disappears.
+    // This is used by the desktop app to prevent orphaned sidecar backends.
+    let mut parent_pid: Option<u32> = None;
+
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--port" || arg == "-p" {
@@ -23,8 +27,14 @@ async fn main() -> Result<()> {
                     port = parsed;
                 }
             }
+        } else if arg == "--parent-pid" {
+            if let Some(val) = args.next() {
+                if let Ok(parsed) = val.parse() {
+                    parent_pid = Some(parsed);
+                }
+            }
         }
     }
 
-    server::start_server(port).await
+    server::start_server(port, parent_pid).await
 }
