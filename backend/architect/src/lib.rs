@@ -33,22 +33,34 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
     let extractor = MultiLanguageExtractor::new();
     let resolver = MultiLanguageResolver::new();
 
-    // Walk all source files
-    for entry in walker.walk()? {
-        let path = entry.path();
+    // Walk all source files once, then build the graph in 2 passes:
+    // - Pass 1: add all nodes
+    // - Pass 2: resolve imports and add edges
+    //
+    // This avoids dropping edges when the imported file hasn't been seen yet.
+    let entries = walker.walk()?;
+
+    struct FileEntry {
+        abs_path: std::path::PathBuf,
+        rel_path: String,
+        extension: String,
+        language: Language,
+        folder: String,
+        label: String,
+    }
+
+    let mut files: Vec<FileEntry> = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let path = entry.path().to_path_buf();
         let extension = path
             .extension()
             .and_then(|e| e.to_str())
-            .unwrap_or_default();
-
-        let relative_path = path
-            .strip_prefix(project_root)
-            .unwrap_or(path)
-            .to_string_lossy()
+            .unwrap_or_default()
             .to_string();
 
         // Detect language from extension
-        let language = match extension {
+        let language = match extension.as_str() {
             "rs" => Language::Rust,
             "ts" | "tsx" => Language::TypeScript,
             "js" | "jsx" | "mjs" | "cjs" => Language::JavaScript,
@@ -57,49 +69,66 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
             _ => continue, // Skip unsupported files
         };
 
-        // Add node for this file
+        let rel_path = path
+            .strip_prefix(project_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+
         let folder = path
             .parent()
             .and_then(|p| p.strip_prefix(project_root).ok())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        graph.add_node(FileNode {
-            id: relative_path.clone(),
-            label: path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            language: language.clone(),
-            folder,
-        });
+        let label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
 
+        files.push(FileEntry {
+            abs_path: path,
+            rel_path,
+            extension,
+            language,
+            folder,
+            label,
+        });
+    }
+
+    // Pass 1: add all nodes
+    for f in &files {
+        graph.add_node(FileNode {
+            id: f.rel_path.clone(),
+            label: f.label.clone(),
+            language: f.language.clone(),
+            folder: f.folder.clone(),
+        });
+    }
+
+    // Pass 2: parse, resolve and add edges
+    for f in &files {
         // Skip if no parser for this extension
-        if extractor.parser_for_extension(extension).is_none() {
+        if extractor.parser_for_extension(&f.extension).is_none() {
             continue;
         }
 
-        // Parse and extract imports
-        let content = std::fs::read_to_string(path)?;
-        let imports = extractor.extract_imports(&content, extension)?;
+        let content = std::fs::read_to_string(&f.abs_path)?;
+        let imports = extractor.extract_imports(&content, &f.extension)?;
 
-        tracing::debug!(
-            "File {}: extracted {} imports",
-            relative_path,
-            imports.len()
-        );
+        tracing::debug!("File {}: extracted {} imports", f.rel_path, imports.len());
 
-        // Resolve imports to file paths and add edges
         for import in imports {
             tracing::debug!(
                 "Resolving import '{}' from {}",
                 import.module_path,
-                relative_path
+                f.rel_path
             );
-            if let Some(target) = resolver.resolve(project_root, path, &import, extension) {
+            if let Some(target) = resolver.resolve(project_root, &f.abs_path, &import, &f.extension)
+            {
                 tracing::debug!("  ✓ Resolved to: {}", target);
                 graph.add_edge(Edge {
-                    source: relative_path.clone(),
+                    source: f.rel_path.clone(),
                     target,
                     kind: if import.is_reexport {
                         EdgeKind::ReExport
@@ -135,5 +164,41 @@ impl std::fmt::Display for Language {
             Language::Go => write!(f, "go"),
             Language::Python => write!(f, "python"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn typescript_edges_are_not_dropped_due_to_walk_order() {
+        let temp = TempDir::new().unwrap();
+        let src = temp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+
+        // Ensure the importer file name sorts before the imported file name in most directory walks.
+        fs::write(
+            src.join("a.ts"),
+            "import { b } from './b';\nexport const a = b;\n",
+        )
+        .unwrap();
+        fs::write(src.join("b.ts"), "export const b = 1;\n").unwrap();
+
+        let graph = build_project_graph(temp.path()).unwrap();
+
+        assert!(graph.get_node("src/a.ts").is_some());
+        assert!(graph.get_node("src/b.ts").is_some());
+
+        // We should have an edge from a.ts -> b.ts.
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|e| e.source == "src/a.ts" && e.target == "src/b.ts"),
+            "expected an import edge from src/a.ts to src/b.ts"
+        );
     }
 }

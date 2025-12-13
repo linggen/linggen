@@ -43,7 +43,7 @@
             "icons/icon.icns"
         ],
         "externalBin": [
-            "linggen-server"
+            "binaries/linggen-server"
         ],
         "macOS": {
             "entitlements": null,

@@ -2,7 +2,7 @@
 
 use super::ImportResolver;
 use crate::parser::ImportInfo;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// TypeScript/JavaScript import resolver
 pub struct TypeScriptResolver;
@@ -61,7 +61,7 @@ impl TypeScriptResolver {
                 return candidate
                     .strip_prefix(project_root)
                     .ok()
-                    .map(|p| p.to_string_lossy().to_string());
+                    .map(|p| normalize_relative_path(p).to_string_lossy().to_string());
             }
         }
 
@@ -70,11 +70,29 @@ impl TypeScriptResolver {
             return target
                 .strip_prefix(project_root)
                 .ok()
-                .map(|p| p.to_string_lossy().to_string());
+                .map(|p| normalize_relative_path(p).to_string_lossy().to_string());
         }
 
         None
     }
+}
+
+fn normalize_relative_path(path: &Path) -> PathBuf {
+    // Ensure we don't return paths like `src/./foo.ts` which won't match
+    // the node ids produced by the walker (which are typically normalized).
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(p) => out.push(p),
+            // Ignore prefixes/root components in this context (we only call this with a relative path)
+            _ => {}
+        }
+    }
+    out
 }
 
 impl Default for TypeScriptResolver {

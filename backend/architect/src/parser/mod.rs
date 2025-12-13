@@ -77,7 +77,17 @@ impl MultiLanguageExtractor {
 
     /// Extract imports from a file, auto-detecting language from extension
     pub fn extract_imports(&self, source: &str, extension: &str) -> Result<Vec<ImportInfo>> {
-        match self.parser_for_extension(extension) {
+        // TypeScript has two parsers (TS / TSX) and we must pick the right one based on extension.
+        // Otherwise `.tsx`/`.jsx` files may parse but imports won't be captured correctly.
+        let ext_lower = extension.to_lowercase();
+        let ext_str = ext_lower.as_str();
+        if self.typescript.extensions().contains(&ext_str) {
+            return self
+                .typescript
+                .extract_imports_for_extension(source, ext_str);
+        }
+
+        match self.parser_for_extension(ext_str) {
             Some(parser) => parser.extract_imports(source),
             None => Ok(Vec::new()), // Unknown language, no imports
         }
