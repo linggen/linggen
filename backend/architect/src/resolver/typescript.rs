@@ -1,7 +1,8 @@
 //! TypeScript/JavaScript import resolution
 
-use super::ImportResolver;
+use super::{ImportResolver, ResolvedImport};
 use crate::parser::ImportInfo;
+use crate::EdgeKind;
 use std::path::{Component, Path, PathBuf};
 
 /// TypeScript/JavaScript import resolver
@@ -107,7 +108,7 @@ impl ImportResolver for TypeScriptResolver {
         project_root: &Path,
         current_file: &Path,
         import: &ImportInfo,
-    ) -> Option<String> {
+    ) -> Option<ResolvedImport> {
         let import_path = &import.module_path;
 
         // Only resolve relative imports (starting with . or ..)
@@ -117,6 +118,14 @@ impl ImportResolver for TypeScriptResolver {
 
         let current_dir = current_file.parent()?;
         self.resolve_relative_import(project_root, current_dir, import_path)
+            .map(|target| ResolvedImport {
+                target,
+                kind: if import.is_reexport {
+                    EdgeKind::ReExport
+                } else {
+                    EdgeKind::Import
+                },
+            })
     }
 
     fn language(&self) -> &'static str {
@@ -166,9 +175,11 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("App.tsx"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("App.tsx"));
+        assert_eq!(resolved.kind, EdgeKind::Import);
     }
 
     #[test]
@@ -184,9 +195,11 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("index.ts"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("index.ts"));
+        assert_eq!(resolved.kind, EdgeKind::Import);
     }
 
     #[test]

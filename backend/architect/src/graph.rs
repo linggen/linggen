@@ -22,6 +22,8 @@ pub struct FileNode {
 pub enum EdgeKind {
     /// Direct import/use statement
     Import,
+    /// Import from a workspace member crate (e.g. `use my_workspace_crate::...`)
+    WorkspaceCrateImport,
     /// Module declaration (mod foo;)
     ModuleDecl,
     /// Re-export (pub use)
@@ -34,6 +36,7 @@ impl std::fmt::Display for EdgeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EdgeKind::Import => write!(f, "import"),
+            EdgeKind::WorkspaceCrateImport => write!(f, "workspace_crate"),
             EdgeKind::ModuleDecl => write!(f, "mod"),
             EdgeKind::ReExport => write!(f, "reexport"),
             EdgeKind::Manual => write!(f, "manual"),

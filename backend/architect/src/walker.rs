@@ -102,16 +102,17 @@ impl ProjectWalker {
 /// Check if a file is analyzable (supported source file)
 fn is_analyzable_file(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("rs") => true,  // Rust
-        Some("ts") => true,  // TypeScript
-        Some("tsx") => true, // TypeScript JSX
-        Some("js") => true,  // JavaScript
-        Some("jsx") => true, // JavaScript JSX
-        Some("mjs") => true, // ES modules
-        Some("cjs") => true, // CommonJS
-        Some("go") => true,  // Go
-        Some("py") => true,  // Python
-        Some("pyi") => true, // Python stubs
+        Some("rs") => true,   // Rust
+        Some("ts") => true,   // TypeScript
+        Some("tsx") => true,  // TypeScript JSX
+        Some("js") => true,   // JavaScript
+        Some("jsx") => true,  // JavaScript JSX
+        Some("mjs") => true,  // ES modules
+        Some("cjs") => true,  // CommonJS
+        Some("java") => true, // Java
+        Some("go") => true,   // Go
+        Some("py") => true,   // Python
+        Some("pyi") => true,  // Python stubs
         _ => false,
     }
 }

@@ -4,11 +4,13 @@
 //! import/dependency information from source files.
 
 mod go;
+mod java;
 mod python;
 mod rust;
 mod typescript;
 
 pub use go::GoParser;
+pub use java::JavaParser;
 pub use python::PythonParser;
 pub use rust::RustParser;
 pub use typescript::TypeScriptParser;
@@ -43,6 +45,7 @@ pub struct MultiLanguageExtractor {
     rust: RustParser,
     typescript: TypeScriptParser,
     go: GoParser,
+    java: JavaParser,
     python: PythonParser,
 }
 
@@ -53,6 +56,7 @@ impl MultiLanguageExtractor {
             rust: RustParser::new(),
             typescript: TypeScriptParser::new(),
             go: GoParser::new(),
+            java: JavaParser::new(),
             python: PythonParser::new(),
         }
     }
@@ -68,6 +72,8 @@ impl MultiLanguageExtractor {
             Some(&self.typescript)
         } else if self.go.extensions().contains(&ext_str) {
             Some(&self.go)
+        } else if self.java.extensions().contains(&ext_str) {
+            Some(&self.java)
         } else if self.python.extensions().contains(&ext_str) {
             Some(&self.python)
         } else {
@@ -99,6 +105,7 @@ impl MultiLanguageExtractor {
         exts.extend_from_slice(self.rust.extensions());
         exts.extend_from_slice(self.typescript.extensions());
         exts.extend_from_slice(self.go.extensions());
+        exts.extend_from_slice(self.java.extensions());
         exts.extend_from_slice(self.python.extensions());
         exts
     }

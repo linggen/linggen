@@ -1,7 +1,8 @@
 //! Go import resolution
 
-use super::ImportResolver;
+use super::{ImportResolver, ResolvedImport};
 use crate::parser::ImportInfo;
+use crate::EdgeKind;
 use std::path::Path;
 
 /// Go import resolver
@@ -116,17 +117,26 @@ impl ImportResolver for GoResolver {
         project_root: &Path,
         current_file: &Path,
         import: &ImportInfo,
-    ) -> Option<String> {
+    ) -> Option<ResolvedImport> {
         let import_path = &import.module_path;
 
         // Handle relative imports (./pkg or ../pkg)
         if import_path.starts_with("./") || import_path.starts_with("../") {
             let current_dir = current_file.parent()?;
-            return self.resolve_relative_import(project_root, current_dir, import_path);
+            return self
+                .resolve_relative_import(project_root, current_dir, import_path)
+                .map(|target| ResolvedImport {
+                    target,
+                    kind: EdgeKind::Import,
+                });
         }
 
         // Try to resolve as module path (e.g., github.com/user/project/pkg)
         self.resolve_module_path(project_root, import_path)
+            .map(|target| ResolvedImport {
+                target,
+                kind: EdgeKind::Import,
+            })
     }
 
     fn language(&self) -> &'static str {
@@ -177,9 +187,10 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("utils.go"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("utils.go"));
     }
 
     #[test]

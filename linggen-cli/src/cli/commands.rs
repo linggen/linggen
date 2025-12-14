@@ -11,6 +11,59 @@ use super::signature::LINGGEN_PUBLIC_KEY;
 use super::util::{format_timestamp, get_local_app_version, run_and_capture_version};
 use crate::manifest::{current_platform, fetch_manifest, Platform};
 
+/// Returns the user-facing current directory when possible.
+///
+/// On macOS `/tmp` is a symlink to `/private/tmp`, and `std::env::current_dir()`
+/// may resolve to the physical path. If `$PWD` is set and points to the same
+/// directory, prefer it for display / UX.
+fn logical_current_dir() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let Some(pwd_os) = std::env::var_os("PWD") else {
+        return cwd;
+    };
+
+    let pwd = PathBuf::from(pwd_os);
+    if !pwd.is_absolute() {
+        return cwd;
+    }
+
+    match (cwd.canonicalize(), pwd.canonicalize()) {
+        (Ok(cwd_can), Ok(pwd_can)) if cwd_can == pwd_can => pwd,
+        _ => cwd,
+    }
+}
+
+/// Compute an absolute path without resolving symlinks.
+///
+/// This keeps "logical" segments (e.g. `/tmp`) while still removing `.` / `..`.
+fn logical_absolute(path: &PathBuf) -> PathBuf {
+    let p = if path.is_absolute() {
+        path.clone()
+    } else {
+        logical_current_dir().join(path)
+    };
+
+    // Normalize `.` and `..` without hitting the filesystem (no symlink resolution).
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                let _ = out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+
+    // Ensure we don't end up empty (e.g. path was ".")
+    if out.as_os_str().is_empty() {
+        logical_current_dir()
+    } else {
+        out
+    }
+}
+
 fn parse_cli_version(raw: &str) -> Option<String> {
     // Expected output is typically "linggen X.Y.Z" but keep it resilient.
     for token in raw.split_whitespace() {
@@ -246,24 +299,47 @@ pub async fn handle_index(
     // Default to current directory if no path provided
     let path = path.unwrap_or_else(|| PathBuf::from("."));
 
-    // Normalize path to absolute
-    let abs_path = path
-        .canonicalize()
-        .with_context(|| format!("Invalid path: {}", path.display()))?;
+    // Keep a logical absolute path for UX (preserve `/tmp` on macOS).
+    let display_abs_path = logical_absolute(&path);
 
-    let path_str = abs_path
+    // Canonicalize for internal identity / safety.
+    let abs_path = display_abs_path
+        .canonicalize()
+        .with_context(|| format!("Invalid path: {}", display_abs_path.display()))?;
+
+    let abs_path_str = abs_path
         .to_str()
         .context("Path contains invalid UTF-8")?
         .to_string();
 
-    println!("{}", format!("📂 Indexing: {}", abs_path.display()).cyan());
+    let display_path_str = display_abs_path
+        .to_str()
+        .context("Path contains invalid UTF-8")?
+        .to_string();
+
+    println!(
+        "{}",
+        format!("📂 Indexing: {}", display_abs_path.display()).cyan()
+    );
 
     // Check if source already exists
     let sources = api_client.list_sources().await?;
-    let existing_source = sources
-        .resources
-        .iter()
-        .find(|s| s.path == path_str && s.resource_type == "local");
+    let existing_source = sources.resources.iter().find(|s| {
+        if s.resource_type != "local" {
+            return false;
+        }
+
+        // Fast path: exact matches
+        if s.path == display_path_str || s.path == abs_path_str {
+            return true;
+        }
+
+        // Fallback: treat symlinked paths as the same source (e.g. `/tmp` vs `/private/tmp`).
+        PathBuf::from(&s.path)
+            .canonicalize()
+            .map(|p| p == abs_path)
+            .unwrap_or(false)
+    });
 
     let (source_id, is_previously_indexed) = if let Some(source) = existing_source {
         println!(
@@ -309,7 +385,8 @@ pub async fn handle_index(
         let req = CreateSourceRequest {
             name: source_name,
             resource_type: "local".to_string(),
-            path: path_str,
+            // Persist the logical path for user-facing display (e.g. keep `/tmp` on macOS).
+            path: display_path_str,
             include_patterns: include_patterns.clone(),
             exclude_patterns: exclude_patterns.clone(),
         };

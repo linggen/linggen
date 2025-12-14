@@ -19,7 +19,12 @@ tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.23"
 tree-sitter-python = "0.23"
+tree-sitter-java = "0.23"
 streaming-iterator = "0.1"
+
+# Cargo workspace parsing (Rust workspace heuristic)
+toml = "0.8"
+glob = "0.3"
 
 # File system
 walkdir = "2.5"

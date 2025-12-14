@@ -1,7 +1,8 @@
 //! Python import resolution
 
-use super::ImportResolver;
+use super::{ImportResolver, ResolvedImport};
 use crate::parser::ImportInfo;
+use crate::EdgeKind;
 use std::path::Path;
 
 /// Python import resolver
@@ -80,11 +81,7 @@ impl PythonResolver {
     }
 
     /// Resolve an absolute import (local module)
-    fn resolve_absolute_import(
-        &self,
-        project_root: &Path,
-        import_path: &str,
-    ) -> Option<String> {
+    fn resolve_absolute_import(&self, project_root: &Path, import_path: &str) -> Option<String> {
         let module_path = import_path.replace('.', "/");
         let target = project_root.join(&module_path);
 
@@ -142,7 +139,7 @@ impl ImportResolver for PythonResolver {
         project_root: &Path,
         current_file: &Path,
         import: &ImportInfo,
-    ) -> Option<String> {
+    ) -> Option<ResolvedImport> {
         let import_path = &import.module_path;
 
         if import_path.starts_with('.') {
@@ -152,6 +149,10 @@ impl ImportResolver for PythonResolver {
             // Absolute import - try to resolve locally
             self.resolve_absolute_import(project_root, import_path)
         }
+        .map(|target| ResolvedImport {
+            target,
+            kind: EdgeKind::Import,
+        })
     }
 
     fn language(&self) -> &'static str {
@@ -188,7 +189,10 @@ mod tests {
     fn test_resolve_relative_import() {
         let temp = setup_test_project();
         let project_root = temp.path();
-        let current_file = project_root.join("mypackage").join("submodule").join("handler.py");
+        let current_file = project_root
+            .join("mypackage")
+            .join("submodule")
+            .join("handler.py");
         let resolver = PythonResolver::new();
 
         let import = ImportInfo {
@@ -197,9 +201,10 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("utils.py"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("utils.py"));
     }
 
     #[test]
@@ -218,9 +223,10 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("utils.py"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("utils.py"));
     }
 
     #[test]
@@ -238,9 +244,10 @@ mod tests {
             is_reexport: false,
         };
 
-        let resolved = resolver.resolve(project_root, &current_file, &import);
-        assert!(resolved.is_some());
-        assert!(resolved.unwrap().contains("__init__.py"));
+        let resolved = resolver
+            .resolve(project_root, &current_file, &import)
+            .unwrap();
+        assert!(resolved.target.contains("__init__.py"));
     }
 
     #[test]

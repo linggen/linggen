@@ -504,7 +504,12 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
         }
       }
 
-      return link.kind === 'import' ? '#94a3b8' : '#64748b';
+      // Style edge types:
+      // - import: normal file import
+      // - workspace_crate: cross-crate edge (workspace member)
+      if (link.kind === 'workspace_crate') return '#a78bfa'; // purple
+      if (link.kind === 'import') return '#94a3b8'; // gray-blue
+      return '#64748b';
     },
     [highlightNodes, hoveredNode, selectedNode]
   );

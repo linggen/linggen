@@ -64,6 +64,7 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
             "rs" => Language::Rust,
             "ts" | "tsx" => Language::TypeScript,
             "js" | "jsx" | "mjs" | "cjs" => Language::JavaScript,
+            "java" => Language::Java,
             "go" => Language::Go,
             "py" | "pyi" => Language::Python,
             _ => continue, // Skip unsupported files
@@ -124,17 +125,14 @@ pub fn build_project_graph(project_root: &Path) -> Result<ProjectGraph> {
                 import.module_path,
                 f.rel_path
             );
-            if let Some(target) = resolver.resolve(project_root, &f.abs_path, &import, &f.extension)
+            if let Some(resolved) =
+                resolver.resolve(project_root, &f.abs_path, &import, &f.extension)
             {
-                tracing::debug!("  ✓ Resolved to: {}", target);
+                tracing::debug!("  ✓ Resolved to: {}", resolved.target);
                 graph.add_edge(Edge {
                     source: f.rel_path.clone(),
-                    target,
-                    kind: if import.is_reexport {
-                        EdgeKind::ReExport
-                    } else {
-                        EdgeKind::Import
-                    },
+                    target: resolved.target,
+                    kind: resolved.kind,
                 });
             } else {
                 tracing::debug!("  ✗ Could not resolve (external or not found)");
@@ -151,6 +149,7 @@ pub enum Language {
     Rust,
     TypeScript,
     JavaScript,
+    Java,
     Go,
     Python,
 }
@@ -161,6 +160,7 @@ impl std::fmt::Display for Language {
             Language::Rust => write!(f, "rust"),
             Language::TypeScript => write!(f, "typescript"),
             Language::JavaScript => write!(f, "javascript"),
+            Language::Java => write!(f, "java"),
             Language::Go => write!(f, "go"),
             Language::Python => write!(f, "python"),
         }
