@@ -5,11 +5,14 @@ use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
 use std::net::SocketAddr;
 use std::time::Duration;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use storage::{MetadataStore, VectorStore};
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::analytics;
 use crate::handlers::{
@@ -383,11 +386,35 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             .expect("Failed to initialize graph cache"),
     );
 
+    // Memory store: prefer the workspace root `.linggen/` if present.
+    // This avoids writing memories under `backend/.linggen/` when the server is started from `backend/`.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let linggen_dir = find_workspace_linggen_dir(&cwd);
+    let memory_dir = linggen_dir.join("memory");
+
+    // Best-effort migration: move any nested `.linggen/memory/*.md` into the repo-root memory dir.
+    for nested in find_all_linggen_dirs(&cwd) {
+        let nested_memory = nested.join("memory");
+        if nested_memory.exists() && nested_memory != memory_dir {
+            if let Err(e) = migrate_memory_files(&nested_memory, &memory_dir) {
+                warn!(
+                    "Failed to migrate nested memory files from {:?} to {:?}: {}",
+                    nested_memory, memory_dir, e
+                );
+            }
+        }
+    }
+    info!("Using memory store at {:?}", memory_dir);
+    let memory_store = Arc::new(
+        crate::memory::MemoryStore::new(memory_dir).expect("Failed to initialize memory store"),
+    );
+
     let app_state = Arc::new(AppState {
         embedding_model,
         chunker,
         vector_store,
         metadata_store,
+        memory_store,
         cancellation_flags: DashMap::new(),
         job_manager,
         graph_cache,
@@ -429,6 +456,30 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         .route("/api/index_source", post(index_source))
         .route("/api/classify", post(classify_intent))
         .route("/api/enhance", post(enhance_prompt))
+        // Vector search/query (useful for VS Code extensions)
+        .route("/api/query", post(crate::handlers::search::search))
+        .route("/api/search", post(crate::handlers::search::search))
+        // Memories
+        .route(
+            "/api/memory/search",
+            post(crate::handlers::memory::list_memories),
+        )
+        .route(
+            "/api/memory/read",
+            get(crate::handlers::memory::read_memory),
+        )
+        .route(
+            "/api/memory/create",
+            post(crate::handlers::memory::create_memory),
+        )
+        .route(
+            "/api/memory/update",
+            post(crate::handlers::memory::update_memory),
+        )
+        .route(
+            "/api/memory/delete",
+            post(crate::handlers::memory::delete_memory),
+        )
         .route("/api/chat/stream", post(chat_stream))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/cancel", post(cancel_job))
@@ -478,6 +529,21 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             "/api/sources/:source_id/notes/rename",
             post(crate::handlers::notes::rename_note),
         )
+        // Source Memories (markdown files under source/.linggen/memory)
+        .route(
+            "/api/sources/:source_id/memory",
+            get(crate::handlers::list_memory_files),
+        )
+        .route(
+            "/api/sources/:source_id/memory/*file_path",
+            get(crate::handlers::get_memory_file)
+                .put(crate::handlers::save_memory_file)
+                .delete(crate::handlers::delete_memory_file),
+        )
+        .route(
+            "/api/sources/:source_id/memory/rename",
+            post(crate::handlers::rename_memory_file),
+        )
         .with_state(app_state);
 
     // MCP routes (for Cursor integration)
@@ -523,6 +589,104 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
 
 async fn root_handler() -> &'static str {
     "Hello from Linggen Backend!"
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = start;
+    loop {
+        if cur.join(".git").is_dir() {
+            return Some(cur.to_path_buf());
+        }
+        match cur.parent() {
+            Some(parent) => cur = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Find the workspace `.linggen/` directory to use for memory.
+///
+/// Priority:
+/// 1) Git repo root (if any): `<git_root>/.linggen` (created if missing)
+/// 2) Nearest `.linggen` under `start` ancestry, but **do not** pick `$HOME/.linggen` as the project store.
+fn find_workspace_linggen_dir(start: &Path) -> PathBuf {
+    if let Some(git_root) = find_git_root(start) {
+        return git_root.join(".linggen");
+    }
+
+    // Fall back to nearest `.linggen` but stop before reaching HOME.
+    let home = dirs::home_dir();
+    let mut cur = start;
+    loop {
+        let candidate = cur.join(".linggen");
+        if candidate.is_dir() {
+            return candidate;
+        }
+        match cur.parent() {
+            Some(parent) => {
+                if let Some(ref h) = home {
+                    if parent == h.as_path() {
+                        break;
+                    }
+                }
+                cur = parent;
+            }
+            None => break,
+        }
+    }
+
+    // Default: `.linggen` in current working directory
+    start.join(".linggen")
+}
+
+fn find_all_linggen_dirs(start: &Path) -> Vec<PathBuf> {
+    let mut cur = start;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    // Stop at git root if present (to avoid pulling in $HOME/.linggen)
+    let stop_at = find_git_root(start);
+    loop {
+        let candidate = cur.join(".linggen");
+        if candidate.is_dir() {
+            dirs.push(candidate);
+        }
+        if let Some(ref stop) = stop_at {
+            if cur == stop.as_path() {
+                break;
+            }
+        }
+        match cur.parent() {
+            Some(parent) => cur = parent,
+            None => break,
+        }
+    }
+    dirs
+}
+
+fn migrate_memory_files(from_dir: &Path, to_dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(to_dir)?;
+    for entry in std::fs::read_dir(from_dir)? {
+        let entry = entry?;
+        let src = entry.path();
+        if src.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let file_name = match src.file_name() {
+            Some(f) => f,
+            None => continue,
+        };
+        let mut dst = to_dir.join(file_name);
+        if dst.exists() {
+            // Avoid overwriting: prefix with "migrated_"
+            dst = to_dir.join(format!("migrated_{}", file_name.to_string_lossy()));
+        }
+        std::fs::rename(&src, &dst)?;
+    }
+    // Try to clean up empty legacy dirs (best effort).
+    let _ = std::fs::remove_dir(from_dir);
+    if let Some(parent) = from_dir.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 fn find_frontend_dir() -> Option<PathBuf> {

@@ -3,6 +3,7 @@ use anyhow::Result;
 mod analytics;
 mod handlers;
 mod job_manager;
+mod memory;
 mod server;
 
 /// Entry point for the Linggen backend server binary (`linggen-server`).

@@ -5,6 +5,7 @@
 //! - `GET /mcp/sse` for Server-Sent Events (server -> client streaming)
 //! - `POST /mcp/message` for client -> server MCP messages
 
+use crate::memory::{MemoryCitation, MemoryScope};
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -460,6 +461,10 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
                     "source_id": {
                         "type": "string",
                         "description": "Filter results to a specific source/project ID"
+                    },
+                    "exclude_source_id": {
+                        "type": "string",
+                        "description": "Exclude results from a specific source/project ID"
                     }
                 },
                 "required": ["query"]
@@ -482,6 +487,10 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
                     "source_id": {
                         "type": "string",
                         "description": "Filter context to a specific source/project ID"
+                    },
+                    "exclude_source_id": {
+                        "type": "string",
+                        "description": "Exclude results from a specific source/project ID"
                     }
                 },
                 "required": ["query"]
@@ -505,6 +514,120 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
                 "required": []
             }
         }),
+        serde_json::json!({
+            "name": "memory.search",
+            "description": "Search saved memories (Markdown under .linggen/memory). Returns headers/snippets for matching memories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Full-text query (optional)" },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter by tags (all must match)"
+                    },
+                    "source_id": { "type": "string", "description": "Filter by source_id scope" },
+                    "limit": { "type": "integer", "description": "Max results (default 10, max 50)" }
+                },
+                "required": []
+            }
+        }),
+        serde_json::json!({
+            "name": "memory.create",
+            "description": "Create a new memory (Markdown with frontmatter) under .linggen/memory.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "body": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "scope_source_ids": { "type": "array", "items": { "type": "string" } },
+                    "citations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_id": { "type": "string" },
+                                "file_path": { "type": "string" },
+                                "line_range": {
+                                    "type": "array",
+                                    "items": { "type": "integer" },
+                                    "description": "Two-element array [start, end]"
+                                }
+                            },
+                            "required": ["source_id", "file_path"]
+                        }
+                    },
+                    "confidence": { "type": "number" }
+                },
+                "required": ["title", "body"]
+            }
+        }),
+        serde_json::json!({
+            "name": "memory.update",
+            "description": "Update an existing memory by id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "body": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "scope_source_ids": { "type": "array", "items": { "type": "string" } },
+                    "citations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_id": { "type": "string" },
+                                "file_path": { "type": "string" },
+                                "line_range": {
+                                    "type": "array",
+                                    "items": { "type": "integer" },
+                                    "description": "Two-element array [start, end]"
+                                }
+                            },
+                            "required": ["source_id", "file_path"]
+                        }
+                    },
+                    "confidence": { "type": "number" }
+                },
+                "required": ["id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "memory.delete",
+            "description": "Delete a memory by id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" }
+                },
+                "required": ["id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "query_codebase",
+            "description": "Query the Linggen vector database and return matching chunks with source_id and file/document identifiers (useful for extensions and manual workflows).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The query text to search for"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of chunks to return (default: 3, max: 20)"
+                    },
+                    "exclude_source_id": {
+                        "type": "string",
+                        "description": "Exclude results from a specific source/project ID"
+                    }
+                },
+                "required": ["query"]
+            }
+        }),
     ]
 }
 
@@ -518,6 +641,7 @@ struct SearchParams {
     limit: Option<i64>,
     strategy: Option<String>,
     source_id: Option<String>,
+    exclude_source_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -525,6 +649,56 @@ struct EnhanceParams {
     query: String,
     strategy: Option<String>,
     source_id: Option<String>,
+    exclude_source_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct QueryParams {
+    query: String,
+    limit: Option<i64>,
+    exclude_source_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MemorySearchParams {
+    query: Option<String>,
+    tags: Option<Vec<String>>,
+    source_id: Option<String>,
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct MemoryCitationParam {
+    source_id: String,
+    file_path: String,
+    #[serde(default)]
+    line_range: Option<Vec<i64>>, // [start, end]
+}
+
+#[derive(Deserialize)]
+struct MemoryCreateParams {
+    title: String,
+    body: String,
+    tags: Option<Vec<String>>,
+    scope_source_ids: Option<Vec<String>>,
+    citations: Option<Vec<MemoryCitationParam>>,
+    confidence: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct MemoryUpdateParams {
+    id: String,
+    title: Option<String>,
+    body: Option<String>,
+    tags: Option<Vec<String>>,
+    scope_source_ids: Option<Vec<String>>,
+    citations: Option<Vec<MemoryCitationParam>>,
+    confidence: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct MemoryDeleteParams {
+    id: String,
 }
 
 /// Execute a tool by name with given arguments
@@ -538,8 +712,199 @@ async fn execute_tool(
         "enhance_prompt" => execute_enhance_prompt(args, app_state).await,
         "list_sources" => execute_list_sources(app_state).await,
         "get_status" => execute_get_status(app_state).await,
+        "query_codebase" => execute_query_codebase(args, app_state).await,
+        "memory.search" => execute_memory_search(args, app_state).await,
+        "memory.create" => execute_memory_create(args, app_state).await,
+        "memory.update" => execute_memory_update(args, app_state).await,
+        "memory.delete" => execute_memory_delete(args, app_state).await,
         _ => anyhow::bail!("Unknown tool: {}", name),
     }
+}
+
+async fn execute_query_codebase(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: QueryParams = serde_json::from_value(args)?;
+
+    // Clamp limit
+    let limit = params
+        .limit
+        .map(|l| if l <= 0 { 3usize } else { (l.min(20)) as usize })
+        .unwrap_or(3usize);
+
+    // Embed query
+    let model_guard = app_state.embedding_model.read().await;
+    let model = model_guard
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Embedding model is initializing"))?;
+    let embedding = model.embed(&params.query)?;
+
+    // Retrieve more than needed, then filter, then take top N
+    let mut chunks = app_state
+        .vector_store
+        .search(embedding, Some(&params.query), limit.max(10))
+        .await?;
+
+    if let Some(excluded) = params.exclude_source_id.as_deref() {
+        chunks.retain(|c| c.source_id != excluded);
+    }
+
+    let chunks = chunks.into_iter().take(limit).collect::<Vec<_>>();
+
+    if chunks.is_empty() {
+        return Ok("No relevant chunks found for your query.".to_string());
+    }
+
+    // Format as readable text with source + file/document id
+    let mut output = String::new();
+    output.push_str(&format!("Found {} matching chunks:\n\n", chunks.len()));
+    for (i, c) in chunks.iter().enumerate() {
+        output.push_str(&format!(
+            "--- Chunk {} [{}] ---\nFile: {}\n\n{}\n\n",
+            i + 1,
+            c.source_id,
+            c.document_id,
+            c.content
+        ));
+    }
+
+    Ok(output)
+}
+
+async fn execute_memory_search(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: MemorySearchParams = serde_json::from_value(args)?;
+    let limit = params
+        .limit
+        .map(|l| {
+            if l <= 0 {
+                10usize
+            } else {
+                (l.min(50)) as usize
+            }
+        })
+        .unwrap_or(10usize);
+
+    let results = app_state.memory_store.search(
+        params.query.as_deref(),
+        params.tags.as_ref().map(|v| v.as_slice()),
+        params.source_id.as_deref(),
+        Some(limit),
+    )?;
+
+    if results.is_empty() {
+        return Ok("No matching memories found.".to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("Found {} memories:\n\n", results.len()));
+    for (i, m) in results.iter().enumerate() {
+        out.push_str(&format!(
+            "{}. {} [tags: {}] (updated: {})\n{}\n\n",
+            i + 1,
+            m.meta.title,
+            if m.meta.tags.is_empty() {
+                "none".to_string()
+            } else {
+                m.meta.tags.join(", ")
+            },
+            m.meta.updated_at.to_rfc3339(),
+            m.body.lines().take(3).collect::<Vec<_>>().join("\n")
+        ));
+    }
+    Ok(out)
+}
+
+async fn execute_memory_create(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: MemoryCreateParams = serde_json::from_value(args)?;
+
+    let citations = params
+        .citations
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| MemoryCitation {
+            source_id: c.source_id,
+            file_path: c.file_path,
+            line_range: c.line_range.and_then(|v| {
+                if v.len() == 2 {
+                    Some((v[0], v[1]))
+                } else {
+                    None
+                }
+            }),
+        })
+        .collect();
+
+    let mem = app_state.memory_store.create(
+        &params.title,
+        &params.body,
+        params.tags.unwrap_or_default(),
+        MemoryScope {
+            source_ids: params.scope_source_ids.unwrap_or_default(),
+        },
+        citations,
+        params.confidence,
+    )?;
+
+    Ok(format!(
+        "Memory created: id={} | title=\"{}\"",
+        mem.meta.id, mem.meta.title
+    ))
+}
+
+async fn execute_memory_update(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: MemoryUpdateParams = serde_json::from_value(args)?;
+
+    let citations = params.citations.map(|vec| {
+        vec.into_iter()
+            .map(|c| MemoryCitation {
+                source_id: c.source_id,
+                file_path: c.file_path,
+                line_range: c.line_range.and_then(|v| {
+                    if v.len() == 2 {
+                        Some((v[0], v[1]))
+                    } else {
+                        None
+                    }
+                }),
+            })
+            .collect()
+    });
+
+    let mem = app_state.memory_store.update(
+        &params.id,
+        params.title.as_deref(),
+        params.body.as_deref(),
+        params.tags,
+        params
+            .scope_source_ids
+            .map(|ids| MemoryScope { source_ids: ids }),
+        citations,
+        Some(params.confidence),
+    )?;
+
+    Ok(format!(
+        "Memory updated: id={} | title=\"{}\"",
+        mem.meta.id, mem.meta.title
+    ))
+}
+
+async fn execute_memory_delete(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: MemoryDeleteParams = serde_json::from_value(args)?;
+    app_state.memory_store.delete(&params.id)?;
+    Ok(format!("Memory deleted: id={}", params.id))
 }
 
 async fn execute_search_codebase(
@@ -565,8 +930,14 @@ async fn execute_search_codebase(
         params.query, limit, params.strategy, params.source_id
     );
 
-    let response =
-        call_enhance_internal(app_state, &params.query, params.strategy, params.source_id).await?;
+    let response = call_enhance_internal(
+        app_state,
+        &params.query,
+        params.strategy,
+        params.source_id,
+        params.exclude_source_id,
+    )
+    .await?;
 
     // Build output with just the raw context chunks
     let mut output = String::new();
@@ -617,8 +988,14 @@ async fn execute_enhance_prompt(
         params.query, params.strategy, params.source_id
     );
 
-    let response =
-        call_enhance_internal(app_state, &params.query, params.strategy, params.source_id).await?;
+    let response = call_enhance_internal(
+        app_state,
+        &params.query,
+        params.strategy,
+        params.source_id,
+        params.exclude_source_id,
+    )
+    .await?;
 
     // Build rich output with all enhancement details
     let mut output = String::new();
@@ -786,6 +1163,7 @@ async fn call_enhance_internal(
     query: &str,
     strategy: Option<String>,
     source_id: Option<String>,
+    exclude_source_id: Option<String>,
 ) -> anyhow::Result<EnhancedPrompt> {
     // Get user preferences
     let preferences = app_state
@@ -822,7 +1200,13 @@ async fn call_enhance_internal(
 
     // Run enhancement pipeline
     let result = enhancer
-        .enhance(query, &preferences, &profile, strategy)
+        .enhance(
+            query,
+            &preferences,
+            &profile,
+            strategy,
+            exclude_source_id.as_deref(),
+        )
         .await
         .map_err(|e| anyhow::anyhow!("Enhancement failed: {}", e))?;
 

@@ -57,15 +57,24 @@ function App() {
   // Selection State
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [selectedNotePath, setSelectedNotePath] = useState<string | null>(null)
+  const [selectedMemoryPath, setSelectedMemoryPath] = useState<string | null>(null)
 
   const handleSelectSource = (id: string | null) => {
     setSelectedSourceId(id)
     setSelectedNotePath(null)
+    setSelectedMemoryPath(null)
   }
 
   const handleSelectNote = (sourceId: string, path: string) => {
     setSelectedSourceId(sourceId)
     setSelectedNotePath(path)
+    setSelectedMemoryPath(null)
+  }
+
+  const handleSelectMemory = (sourceId: string, path: string) => {
+    setSelectedSourceId(sourceId)
+    setSelectedMemoryPath(path)
+    setSelectedNotePath(null)
   }
 
 
@@ -560,6 +569,8 @@ function App() {
       onSelectSource={handleSelectSource}
       selectedNotePath={selectedNotePath}
       onSelectNote={handleSelectNote}
+      selectedMemoryPath={selectedMemoryPath}
+      onSelectMemory={handleSelectMemory}
       onAddSource={() => setIsAddSourceModalOpen(true)}
       statusElement={renderStatusElement()}
     >
@@ -574,6 +585,7 @@ function App() {
             indexingProgress={indexingProgress}
             onUpdateSource={handleEditResource}
             selectedNotePath={selectedNotePath}
+            selectedMemoryPath={selectedMemoryPath}
           />
         ) : (
           <SourcesView

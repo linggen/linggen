@@ -7,12 +7,14 @@ pub mod index_source;
 pub mod intent;
 pub mod jobs;
 pub mod mcp;
+pub mod memory;
 pub mod notes;
 pub mod preferences;
 pub mod profile;
 pub mod resources;
 pub mod retry_init;
 pub mod settings;
+pub mod source_memory;
 pub mod status;
 pub mod upload;
 
@@ -26,10 +28,14 @@ pub use intent::classify_intent;
 pub use jobs::{cancel_job, list_jobs};
 // pub use preferences::{get_preferences, update_preferences};
 
+pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
 pub use resources::{
     add_resource, list_resources, remove_resource, rename_resource, update_resource_patterns,
 };
 pub use retry_init::retry_init;
+pub use source_memory::{
+    delete_memory_file, get_memory_file, list_memory_files, rename_memory_file, save_memory_file,
+};
 pub mod search;
 pub use search::search;
 pub use status::get_app_status;

@@ -14,6 +14,7 @@ cargo run -p api --release
 ```
 
 This starts:
+
 - **API server** on `http://localhost:7000/api/*`
 - **MCP endpoint** on `http://localhost:7000/mcp/*`
 - **Frontend** (if built) on `http://localhost:7000/`

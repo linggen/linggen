@@ -21,6 +21,8 @@ interface MainLayoutProps {
     onSelectSource?: (id: string | null) => void
     selectedNotePath?: string | null
     onSelectNote?: (sourceId: string, path: string) => void
+    selectedMemoryPath?: string | null
+    onSelectMemory?: (sourceId: string, path: string) => void
     onAddSource?: () => void
 }
 
@@ -34,6 +36,8 @@ export function MainLayout({
     onSelectSource,
     selectedNotePath,
     onSelectNote,
+    selectedMemoryPath,
+    onSelectMemory,
     onAddSource
 }: MainLayoutProps) {
     // We can add state for collapsing sidebar later if needed
@@ -55,6 +59,8 @@ export function MainLayout({
                     onSelectSource={onSelectSource}
                     selectedNotePath={selectedNotePath}
                     onSelectNote={onSelectNote}
+                    selectedMemoryPath={selectedMemoryPath}
+                    onSelectMemory={onSelectMemory}
                     onAddSource={onAddSource}
                 />
             </div>

@@ -10,6 +10,8 @@ pub struct EnhanceRequest {
     pub query: String,
     pub strategy: Option<PromptStrategy>,
     pub source_id: Option<String>,
+    /// Optional: exclude results from a specific source (project)
+    pub exclude_source_id: Option<String>,
 }
 
 /// Enhance a user prompt through the full 5-stage pipeline
@@ -56,7 +58,13 @@ pub async fn enhance_prompt(
 
     // Run enhancement pipeline (intent detection is now handled by MCP)
     let result = enhancer
-        .enhance(&req.query, &preferences, &profile, strategy)
+        .enhance(
+            &req.query,
+            &preferences,
+            &profile,
+            strategy,
+            req.exclude_source_id.as_deref(),
+        )
         .await
         .map_err(|e| {
             (

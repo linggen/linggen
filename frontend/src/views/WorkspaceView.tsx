@@ -22,6 +22,7 @@ interface WorkspaceViewProps {
     indexingProgress?: string | null;
     onUpdateSource?: (id: string, name: string, include: string[], exclude: string[]) => Promise<void>;
     selectedNotePath?: string | null;
+    selectedMemoryPath?: string | null;
 }
 
 export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
@@ -31,7 +32,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     indexingResourceId,
     indexingProgress,
     onUpdateSource,
-    selectedNotePath
+    selectedNotePath,
+    selectedMemoryPath
 }) => {
     // We don't need local state for source if it's passed as prop. 
     // If we were fetching it ourselves, we might need it, but typically we rely on the prop.
@@ -260,7 +262,11 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             >
                 {selectedNotePath ? (
                     <div className="workspace-editor" style={{ overflowY: 'scroll', flexDirection: 'column', minHeight: 0 }}>
-                        <CM6Editor sourceId={sourceId} notePath={selectedNotePath} />
+                        <CM6Editor sourceId={sourceId} docPath={selectedNotePath} docType="notes" />
+                    </div>
+                ) : selectedMemoryPath ? (
+                    <div className="workspace-editor" style={{ overflowY: 'scroll', flexDirection: 'column', minHeight: 0 }}>
+                        <CM6Editor sourceId={sourceId} docPath={selectedMemoryPath} docType="memory" />
                     </div>
                 ) : (
                     <div

@@ -468,6 +468,57 @@ export async function saveNote(sourceId: string, notePath: string, content: stri
     }
 }
 
+// Source Memory Files API (markdown under source/.linggen/memory)
+export interface MemoryFile {
+    name: string;
+    path: string; // Relative to .linggen/memory
+    modified_at?: string;
+}
+
+export interface ListMemoryFilesResponse {
+    files: MemoryFile[];
+}
+
+export interface MemoryFileContent {
+    path: string;
+    content: string;
+}
+
+export async function listMemoryFiles(sourceId: string): Promise<MemoryFile[]> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/memory`);
+    if (!response.ok) {
+        if (response.status === 404) {
+            return [];
+        }
+        throw new Error(`Failed to list memory files: ${response.statusText}`);
+    }
+    const data: ListMemoryFilesResponse = await response.json();
+    return data.files || [];
+}
+
+export async function getMemoryFile(sourceId: string, filePath: string): Promise<MemoryFileContent> {
+    const response = await fetch(
+        `${API_BASE}/api/sources/${sourceId}/memory/${encodeURIComponent(filePath)}`,
+    );
+    if (!response.ok) {
+        throw new Error(`Failed to get memory file: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function saveMemoryFile(sourceId: string, filePath: string, content: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/memory/${encodeURIComponent(filePath)}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to save memory file: ${response.statusText}`);
+    }
+}
+
 export interface GraphStatusResponse {
     status: 'missing' | 'stale' | 'ready' | 'building' | 'error';
     node_count?: number;

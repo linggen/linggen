@@ -10,7 +10,17 @@ import {
     TrashIcon
 } from '@heroicons/react/24/outline'
 import { useState, useEffect } from 'react';
-import { type Resource, saveNote, listNotes, renameNote, deleteNote, removeResource, type Note } from '../api'
+import {
+    type Resource,
+    saveNote,
+    listNotes,
+    renameNote,
+    deleteNote,
+    removeResource,
+    type Note,
+    listMemoryFiles,
+    type MemoryFile,
+} from '../api'
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
 export type View = 'sources' | 'activity' | 'assistant' | 'settings'
@@ -23,6 +33,8 @@ interface SidebarProps {
     onSelectSource?: (id: string | null) => void
     selectedNotePath?: string | null
     onSelectNote?: (sourceId: string, path: string) => void
+    selectedMemoryPath?: string | null
+    onSelectMemory?: (sourceId: string, path: string) => void
     onAddSource?: () => void
 }
 
@@ -46,6 +58,8 @@ export function Sidebar({
     onSelectSource,
     selectedNotePath,
     onSelectNote,
+    selectedMemoryPath,
+    onSelectMemory,
     onAddSource
 }: SidebarProps) {
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -55,13 +69,16 @@ export function Sidebar({
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ sourceId: string, notePath: string } | null>(null);
     const [deleteSourceConfirmation, setDeleteSourceConfirmation] = useState<DeleteSourceConfirmation | null>(null);
     const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
+    const [expandedMemories, setExpandedMemories] = useState<Set<string>>(new Set());
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
+    const [sourceMemories, setSourceMemories] = useState<Record<string, MemoryFile[]>>({});
 
     // Refresh notes for expanded sources periodically or when resources change
     useEffect(() => {
         resources.forEach(resource => {
             if (expandedSources.has(resource.id)) {
                 loadNotes(resource.id);
+                loadMemories(resource.id);
             }
         });
     }, [expandedSources]);
@@ -78,6 +95,27 @@ export function Sidebar({
         }
     };
 
+    const loadMemories = async (sourceId: string) => {
+        try {
+            const files = await listMemoryFiles(sourceId);
+            setSourceMemories(prev => ({
+                ...prev,
+                [sourceId]: files
+            }));
+            // Auto-expand memories on first load if there are files and the user hasn't toggled yet.
+            if (files.length > 0) {
+                setExpandedMemories(prev => {
+                    if (prev.has(sourceId)) return prev;
+                    const next = new Set(prev);
+                    next.add(sourceId);
+                    return next;
+                });
+            }
+        } catch (error) {
+            console.error(`Failed to load memories for source ${sourceId}`, error);
+        }
+    };
+
     const toggleSourceExpansion = async (e: React.MouseEvent, sourceId: string) => {
         e.stopPropagation();
         const isExpanded = expandedSources.has(sourceId);
@@ -87,6 +125,7 @@ export function Sidebar({
         } else {
             newExpanded.add(sourceId);
             loadNotes(sourceId);
+            loadMemories(sourceId);
         }
         setExpandedSources(newExpanded);
     };
@@ -96,6 +135,28 @@ export function Sidebar({
         onChangeView('sources')
         onSelectSource?.(id)
     }
+
+    const handleMemoryClick = (e: React.MouseEvent, sourceId: string, path: string) => {
+        e.stopPropagation();
+        onChangeView('sources');
+        if (selectedSourceId !== sourceId) {
+            onSelectSource?.(sourceId);
+        }
+        onSelectMemory?.(sourceId, path);
+    }
+
+    const toggleMemoriesExpansion = (e: React.MouseEvent, sourceId: string) => {
+        e.stopPropagation();
+        setExpandedMemories(prev => {
+            const next = new Set(prev);
+            if (next.has(sourceId)) {
+                next.delete(sourceId);
+            } else {
+                next.add(sourceId);
+            }
+            return next;
+        });
+    };
 
     const handleContextMenu = (e: React.MouseEvent, sourceId: string, notePath?: string) => {
         e.preventDefault();
@@ -341,7 +402,7 @@ export function Sidebar({
                             style={{ cursor: 'context-menu' }}
                         >
                             <div
-                                className={`sidebar-item ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath ? 'active' : ''}`}
+                                className={`sidebar-item ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath && !selectedMemoryPath ? 'active' : ''}`}
                                 onClick={() => handleSourceClick(resource.id)}
                                 style={{
                                     paddingLeft: '8px',
@@ -525,6 +586,89 @@ export function Sidebar({
                                             </button>
                                         )
                                     ))}
+
+                                    {/* Memories */}
+                                    {sourceMemories[resource.id]?.length ? (
+                                        <>
+                                            <button
+                                                className="sidebar-item note-item"
+                                                onClick={(e) => toggleMemoriesExpansion(e, resource.id)}
+                                                style={{
+                                                    paddingLeft: '32px',
+                                                    marginTop: '6px',
+                                                    marginBottom: '4px',
+                                                    fontSize: '0.7rem',
+                                                    width: '100%',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '6px',
+                                                    color: 'var(--text-muted)',
+                                                    background: 'transparent',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.06em',
+                                                    opacity: 0.9,
+                                                }}
+                                                title={expandedMemories.has(resource.id) ? 'Collapse memories' : 'Expand memories'}
+                                            >
+                                                {expandedMemories.has(resource.id) ? (
+                                                    <ChevronDownIcon className="sidebar-icon" style={{ width: '14px', height: '14px' }} />
+                                                ) : (
+                                                    <ChevronRightIcon className="sidebar-icon" style={{ width: '14px', height: '14px' }} />
+                                                )}
+                                                <span style={{ flex: 1, textAlign: 'left' }}>Memories</span>
+                                                <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
+                                                    {sourceMemories[resource.id]?.length || 0}
+                                                </span>
+                                            </button>
+
+                                            {expandedMemories.has(resource.id) &&
+                                                sourceMemories[resource.id]?.map((mem) => (
+                                                    <button
+                                                        key={mem.path}
+                                                        className={`sidebar-item note-item ${selectedMemoryPath === mem.path && selectedSourceId === resource.id ? 'active' : ''}`}
+                                                        onClick={(e) => handleMemoryClick(e, resource.id, mem.path)}
+                                                        style={{
+                                                            paddingLeft: '48px',
+                                                            fontSize: '0.85rem',
+                                                            width: '100%',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            color:
+                                                                selectedMemoryPath === mem.path && selectedSourceId === resource.id
+                                                                    ? 'var(--text-active)'
+                                                                    : 'var(--text-secondary)',
+                                                            backgroundColor:
+                                                                selectedMemoryPath === mem.path && selectedSourceId === resource.id
+                                                                    ? 'var(--bg-active)'
+                                                                    : 'transparent',
+                                                            opacity: 0.9,
+                                                        }}
+                                                    >
+                                                        <div
+                                                            style={{
+                                                                fontSize: '10px',
+                                                                fontWeight: 'bold',
+                                                                color: '#A78BFA',
+                                                                border: '1px solid #A78BFA',
+                                                                borderRadius: '2px',
+                                                                width: '14px',
+                                                                height: '14px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                lineHeight: 1,
+                                                            }}
+                                                        >
+                                                            M
+                                                        </div>
+                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                            {mem.name}
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                        </>
+                                    ) : null}
                                 </>
                             )}
                         </div>

@@ -61,7 +61,8 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Prompt enhancer - orchestrates all stages
 pub struct PromptEnhancer {
-    intent_classifier: IntentClassifier,
+    #[allow(dead_code)]
+    _intent_classifier: IntentClassifier,
     embedding_model: Arc<RwLock<Option<EmbeddingModel>>>,
     vector_store: Arc<VectorStore>,
 }
@@ -75,7 +76,7 @@ impl PromptEnhancer {
         let intent_classifier = IntentClassifier::new(llm);
 
         Self {
-            intent_classifier,
+            _intent_classifier: intent_classifier,
             embedding_model,
             vector_store,
         }
@@ -90,6 +91,7 @@ impl PromptEnhancer {
         preferences: &UserPreferences,
         profile: &SourceProfile,
         strategy: PromptStrategy,
+        exclude_source_id: Option<&str>,
     ) -> Result<EnhancedPrompt> {
         // Stage 1: Intent Classification - always use default (intent now comes from MCP)
         info!("Stage 1: Using default intent (AskQuestion). Intent detection is provided by MCP.");
@@ -108,6 +110,16 @@ impl PromptEnhancer {
             .vector_store
             .search(query_embedding, Some(query), 5)
             .await?;
+
+        // Optional filtering: exclude chunks from a specific source (useful for "across projects")
+        let rag_chunks: Vec<Chunk> = if let Some(excluded) = exclude_source_id {
+            rag_chunks
+                .into_iter()
+                .filter(|c| c.source_id != excluded)
+                .collect()
+        } else {
+            rag_chunks
+        };
 
         // Stage 3: Context Analysis (select top 3)
         info!("Stage 3: Analyzing context...");

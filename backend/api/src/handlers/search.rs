@@ -9,6 +9,8 @@ use linggen_core::Chunk;
 pub struct SearchRequest {
     pub query: String,
     pub limit: Option<usize>,
+    /// Optional: exclude results from a specific source/project ID
+    pub exclude_source_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -33,11 +35,16 @@ pub async fn search(
 
     // 2. Search vector store
     let limit = req.limit.unwrap_or(10);
-    let results = state
+    let mut results = state
         .vector_store
         .search(embedding, Some(&req.query), limit)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Optional filtering: exclude chunks from a specific source
+    if let Some(excluded) = req.exclude_source_id.as_deref() {
+        results.retain(|c| c.source_id != excluded);
+    }
 
     Ok(Json(SearchResponse { results }))
 }

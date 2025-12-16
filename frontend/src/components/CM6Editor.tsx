@@ -4,13 +4,14 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
-import { getNote, saveNote } from '../api';
+import { getNote, saveNote, getMemoryFile, saveMemoryFile } from '../api';
 import { livePreviewPlugin, livePreviewTheme } from './cm6-live-preview';
 import './CM6Editor.css';
 
 interface CM6EditorProps {
     sourceId: string;
-    notePath: string;
+    docPath: string;
+    docType?: 'notes' | 'memory';
     onClose?: () => void;
 }
 
@@ -90,7 +91,7 @@ const linggenTheme = EditorView.theme({
     },
 }, { dark: true });
 
-export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
+export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType = 'notes' }) => {
     const [value, setValue] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -103,25 +104,32 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
         const load = async () => {
             setLoading(true);
             try {
-                const note = await getNote(sourceId, notePath);
-                setValue(note.content || '');
+                const doc =
+                    docType === 'memory'
+                        ? await getMemoryFile(sourceId, docPath)
+                        : await getNote(sourceId, docPath);
+                setValue((doc as any).content || '');
                 setDirty(false);
             } catch (err) {
                 console.error("Failed to load note:", err);
-                setValue("# Error loading note\n\n" + String(err));
+                setValue("# Error loading document\n\n" + String(err));
             } finally {
                 setLoading(false);
             }
         };
         load();
-    }, [sourceId, notePath]);
+    }, [sourceId, docPath, docType]);
 
     // Save handler
     const handleSave = useCallback(async () => {
         if (!dirty) return;
         setSaving(true);
         try {
-            await saveNote(sourceId, notePath, value);
+            if (docType === 'memory') {
+                await saveMemoryFile(sourceId, docPath, value);
+            } else {
+                await saveNote(sourceId, docPath, value);
+            }
             setLastSaved(new Date());
             setDirty(false);
         } catch (err) {
@@ -129,7 +137,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
         } finally {
             setSaving(false);
         }
-    }, [dirty, sourceId, notePath, value]);
+    }, [dirty, sourceId, docPath, docType, value]);
 
     // Autosave with debounce (1.5 seconds after typing stops)
     useEffect(() => {
@@ -160,14 +168,16 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, notePath }) => {
     }, []);
 
     if (loading) {
-        return <div className="cm6-editor-loading">Loading {notePath}...</div>;
+        return <div className="cm6-editor-loading">Loading {docPath}...</div>;
     }
 
     return (
         <div className="cm6-editor-container">
             {/* Header / Status Bar */}
             <div className="cm6-editor-header">
-                <div className="cm6-editor-title">{notePath}</div>
+                <div className="cm6-editor-title">
+                    {docType === 'memory' ? `Memory: ${docPath}` : docPath}
+                </div>
                 <div className="cm6-editor-status">
                     {saving ? (
                         <span className="saving">Saving...</span>

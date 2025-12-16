@@ -78,3 +78,5 @@ dist/
 # Signing configuration (contains sensitive passwords)
 .tauri-signing.conf
 frontend/src-tauri/resources/
+
+.linggen/memory/
