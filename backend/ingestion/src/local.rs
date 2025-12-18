@@ -91,10 +91,10 @@ impl Ingestor for LocalIngestor {
         builder.hidden(true); // Ignore hidden files (like .git) by default
         builder.git_ignore(true);
 
-        // Explicitly add .linggen/notes to be indexed
-        let notes_path = self.path.join(".linggen").join("notes");
-        if notes_path.exists() {
-            builder.add(notes_path);
+        // Explicitly add .linggen to be indexed even if ignored by .gitignore
+        let linggen_path = self.path.join(".linggen");
+        if linggen_path.exists() {
+            builder.add(linggen_path);
         }
 
         let walker = builder.build();

@@ -43,7 +43,7 @@ function getApiBase(): string {
     return origin;
 }
 
-const API_BASE = getApiBase();
+export const API_BASE = getApiBase();
 
 /** Indexing mode: "full" rebuilds everything, "incremental" only updates changed files */
 export type IndexMode = 'full' | 'incremental';

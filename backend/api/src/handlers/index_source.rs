@@ -767,6 +767,28 @@ async fn run_indexing_job(
                 tracing::error!("Graph build task panicked: {}", e);
             }
         }
+
+        // 7. Rescan internal files (memories/prompts) for the internal index
+        tracing::info!(
+            "🔍 Rescanning internal index for source {}...",
+            initial_job.source_id
+        );
+        if let Err(e) = crate::internal_indexer::rescan_internal_files(
+            &state.internal_index_store,
+            &state.embedding_model,
+            &state.chunker,
+            &initial_job.source_id,
+            &source_path,
+        )
+        .await
+        {
+            tracing::error!("Failed to rescan internal index: {}", e);
+        } else {
+            tracing::info!(
+                "✅ Internal index rescan complete for source {}!",
+                initial_job.source_id
+            );
+        }
     }
 }
 

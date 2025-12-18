@@ -5,12 +5,15 @@ pub mod graph;
 pub mod index;
 pub mod index_source;
 pub mod intent;
+pub mod internal_rescan;
 pub mod jobs;
 pub mod mcp;
 pub mod memory;
+pub mod memory_semantic;
 pub mod notes;
 pub mod preferences;
 pub mod profile;
+pub mod prompts;
 pub mod resources;
 pub mod retry_init;
 pub mod settings;
@@ -28,7 +31,10 @@ pub use intent::classify_intent;
 pub use jobs::{cancel_job, list_jobs};
 // pub use preferences::{get_preferences, update_preferences};
 
+pub use internal_rescan::rescan_internal_index;
 pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
+pub use memory_semantic::search_semantic as memory_search_semantic;
+pub use prompts::{delete_prompt, get_prompt, list_prompts, rename_prompt, save_prompt};
 pub use resources::{
     add_resource, list_resources, remove_resource, rename_resource, update_resource_patterns,
 };

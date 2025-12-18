@@ -1,3 +1,8 @@
+[workspace.package]
+version = "0.3.0"
+authors = ["linggen77@gmail.com"]
+edition = "2021"
+
 [workspace]
 members = [
     "api",

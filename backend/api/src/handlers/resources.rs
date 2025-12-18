@@ -253,25 +253,6 @@ pub async fn remove_resource(
         tracing::warn!("Failed to remove graph cache for source {}: {}", req.id, e);
     }
 
-    // Delete all notes in .linggen/notes directory (if source exists)
-    if let Some(source) = source {
-        let notes_dir = std::path::PathBuf::from(&source.path)
-            .join(".linggen")
-            .join("notes");
-
-        if notes_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&notes_dir) {
-                tracing::warn!(
-                    "Failed to remove notes directory for source {}: {}",
-                    req.id,
-                    e
-                );
-            } else {
-                tracing::info!("Removed notes directory for source {}", req.id);
-            }
-        }
-    }
-
     tracing::info!(
         "Successfully removed source {} and all associated data",
         req.id

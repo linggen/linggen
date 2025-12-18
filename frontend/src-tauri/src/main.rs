@@ -32,6 +32,14 @@ fn kill_linggen_server_by_bundle_path() {
             }
         }
     }
+
+    // Fallback: kill anything with "linggen-server" in the name to be sure.
+    let _ = Command::new("pkill")
+        .args(["-f", "linggen-server"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Global state to hold the backend child process and whether we started it

@@ -1,7 +1,9 @@
 [package]
 name = "linggen-llm"
-version = "0.1.0"
-edition = "2021"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+
 
 [dependencies]
 # Candle ML framework (using git for latest Qwen3 support)

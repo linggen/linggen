@@ -1,7 +1,9 @@
 [package]
 name = "mcp-server"
-version = "0.1.0"
-edition = "2021"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+
 
 [dependencies]
 rmcp = { version = "0.9.1", features = ["server", "macros", "transport-io"] }

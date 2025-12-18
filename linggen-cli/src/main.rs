@@ -103,39 +103,31 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
         return Ok(());
     }
 
-    // On macOS, prefer launching the desktop app (Tauri) which bundles the backend.
-    // This makes `linggen start` feel natural: it starts the app, not just a headless server.
-    #[cfg(target_os = "macos")]
-    {
-        if try_launch_desktop_app().is_ok() {
-            let max_attempts = 30;
-            for _ in 0..max_attempts {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                if api_client.get_status().await.is_ok() {
-                    println!(
-                        "✅ Backend is ready (started via Linggen.app) at {}",
-                        api_url
-                    );
-                    return Ok(());
-                }
-            }
-            eprintln!(
-                "⚠️  Linggen.app did not bring up the backend in time; falling back to linggen-server..."
-            );
-        }
-    }
-
     // Try to derive the port from the URL, fall back to default 8787
     let port = extract_port_from_url(api_url).unwrap_or(8787);
+
+    // 1. Start backend first (headless) - this is fast
     start_backend_subprocess(port)?;
 
-    // Poll until backend becomes available, with a timeout.
-    let max_attempts = 30;
-    for _ in 0..max_attempts {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    // 2. On macOS, launch the desktop app (Tauri) in parallel.
+    // Since backend is already starting, the app will connect to it.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = try_launch_desktop_app();
+    }
+
+    // 3. Poll until backend becomes available, with a timeout.
+    // Use smaller intervals for a faster "feeling".
+    let max_attempts = 40; // 40 * 250ms = 10 seconds
+    for i in 0..max_attempts {
         if api_client.get_status().await.is_ok() {
             println!("✅ Backend is ready at {}", api_url);
             return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if i % 4 == 3 {
+            // Every second, print a heartbeat if not ready
+            println!("... waiting for backend to initialize ...");
         }
     }
 

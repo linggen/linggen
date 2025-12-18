@@ -9,10 +9,12 @@ use linggen_core::Chunk;
 use std::sync::Arc;
 use tracing::debug;
 
+pub mod internal_index;
 pub mod metadata;
 pub mod preferences;
 pub mod profile;
 
+pub use internal_index::InternalIndexStore;
 pub use metadata::MetadataStore;
 pub use preferences::UserPreferences;
 pub use profile::SourceProfile;

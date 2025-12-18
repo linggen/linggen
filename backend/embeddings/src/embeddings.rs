@@ -11,6 +11,8 @@ pub struct EmbeddingModel {
     model: BertModel,
     tokenizer: Tokenizer,
     device: Device,
+    /// Lock to prevent concurrent forward passes on the same device (critical for Metal)
+    forward_lock: std::sync::Mutex<()>,
 }
 
 impl EmbeddingModel {
@@ -94,6 +96,7 @@ impl EmbeddingModel {
             model,
             tokenizer,
             device,
+            forward_lock: std::sync::Mutex::new(()),
         })
     }
 
@@ -148,6 +151,13 @@ impl EmbeddingModel {
             // Pad mask with zeros (ignore padding tokens)
             batch_attention_mask.extend(vec![0u32; max_len - attention_mask.len()]);
         }
+
+        // Acquire lock before any device operations to prevent concurrent Metal command encoder conflicts
+        let _lock = self
+            .forward_lock
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Forward lock poisoned: {}", e))?;
+        tracing::debug!("Acquired forward lock for embedding batch pass");
 
         // Create batch tensors [batch_size, max_len]
         let token_ids = Tensor::from_vec(batch_token_ids, (batch_size, max_len), &self.device)?;

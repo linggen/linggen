@@ -69,6 +69,15 @@ pub struct GraphQuery {
     pub hops: Option<usize>,
 }
 
+/// Query parameters for focused graph endpoint (alias for focus/hops).
+#[derive(Deserialize, Default)]
+pub struct GraphFocusQuery {
+    /// Focus node id (relative file path from project root)
+    pub file_path: String,
+    /// Number of hops (default 1)
+    pub hops: Option<usize>,
+}
+
 impl From<&ProjectGraph> for GraphResponse {
     fn from(graph: &ProjectGraph) -> Self {
         GraphResponse {
@@ -191,6 +200,28 @@ pub async fn get_graph(
     };
 
     Ok(Json(GraphResponse::from(&filtered_graph)))
+}
+
+/// Focused neighborhood graph (convenience endpoint for extensions)
+///
+/// GET /api/sources/:source_id/graph/focus?file_path=src/lib.rs&hops=2
+pub async fn get_graph_focus(
+    State(state): State<Arc<AppState>>,
+    Path(source_id): Path<String>,
+    Query(query): Query<GraphFocusQuery>,
+) -> Result<Json<GraphResponse>, (StatusCode, String)> {
+    let focus = query.file_path;
+    let hops = query.hops.unwrap_or(1);
+    get_graph(
+        State(state),
+        Path(source_id),
+        Query(GraphQuery {
+            focus: Some(focus),
+            hops: Some(hops),
+            folder: None,
+        }),
+    )
+    .await
 }
 
 /// Get graph with status in a single request (optimized endpoint)

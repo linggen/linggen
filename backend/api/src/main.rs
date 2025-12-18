@@ -2,6 +2,7 @@ use anyhow::Result;
 
 mod analytics;
 mod handlers;
+mod internal_indexer;
 mod job_manager;
 mod memory;
 mod server;

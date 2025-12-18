@@ -122,6 +122,30 @@ pub async fn create_memory(
         )
         .map_err(internal_err)?;
 
+    // Index in background
+    let internal_index_store = state.internal_index_store.clone();
+    let embedding_model = state.embedding_model.clone();
+    let chunker = state.chunker.clone();
+    // For global memories, we can use a "global" source_id or empty
+    let source_id = "global".to_string();
+    let file_path = mem.path.clone();
+    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::internal_indexer::index_internal_file(
+            &internal_index_store,
+            &embedding_model,
+            &chunker,
+            &source_id,
+            &file_path,
+            &relative_path,
+        )
+        .await
+        {
+            tracing::warn!("Failed to index global memory: {}", e);
+        }
+    });
+
     Ok(Json(MemoryCreateResponse {
         id: mem.meta.id,
         path: mem.path.display().to_string(),
@@ -145,6 +169,29 @@ pub async fn update_memory(
         )
         .map_err(internal_err)?;
 
+    // Index in background
+    let internal_index_store = state.internal_index_store.clone();
+    let embedding_model = state.embedding_model.clone();
+    let chunker = state.chunker.clone();
+    let source_id = "global".to_string();
+    let file_path = mem.path.clone();
+    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::internal_indexer::index_internal_file(
+            &internal_index_store,
+            &embedding_model,
+            &chunker,
+            &source_id,
+            &file_path,
+            &relative_path,
+        )
+        .await
+        {
+            tracing::warn!("Failed to index global memory: {}", e);
+        }
+    });
+
     Ok(Json(to_read(mem)))
 }
 
@@ -152,10 +199,34 @@ pub async fn delete_memory(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MemoryDeleteRequest>,
 ) -> Result<Json<()>, (StatusCode, String)> {
-    state
-        .memory_store
-        .delete(&req.id)
-        .map_err(internal_err)?;
+    // Get info first to know relative path for unindexing
+    let relative_path = if let Ok(mem) = state.memory_store.read(&req.id) {
+        Some(format!(
+            "memory/{}",
+            mem.path.file_name().unwrap().to_string_lossy()
+        ))
+    } else {
+        None
+    };
+
+    state.memory_store.delete(&req.id).map_err(internal_err)?;
+
+    if let Some(rel_path) = relative_path {
+        let internal_index_store = state.internal_index_store.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::internal_indexer::remove_internal_file(
+                &internal_index_store,
+                "global",
+                "memory",
+                &rel_path,
+            )
+            .await
+            {
+                tracing::warn!("Failed to unindex global memory: {}", e);
+            }
+        });
+    }
+
     Ok(Json(()))
 }
 
@@ -190,4 +261,3 @@ fn to_read(mem: MemoryEntry) -> MemoryReadResponse {
 fn internal_err<E: std::fmt::Display>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
-

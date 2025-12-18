@@ -374,9 +374,22 @@ async fn handle_initialized(id: Option<serde_json::Value>) -> McpResponse {
 
 /// Handle tools/list request
 async fn handle_tools_list(id: Option<serde_json::Value>) -> McpResponse {
-    info!("Handling MCP tools/list request");
+    info!("📋 [MCP] Handling MCP tools/list request");
 
     let tools = get_tool_definitions();
+    info!("📋 [MCP] Returning {} tool definitions", tools.len());
+
+    // Log all tool names for debugging
+    let tool_names: Vec<String> = tools
+        .iter()
+        .filter_map(|t| {
+            t.get("name")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+    info!("📋 [MCP] Available tools: {:?}", tool_names);
+
     let result = serde_json::json!({
         "tools": tools
     });
@@ -390,16 +403,26 @@ async fn handle_tools_call(
     params: &serde_json::Value,
     app_state: &Arc<AppState>,
 ) -> McpResponse {
+    info!("🔧 [MCP] handle_tools_call - params: {:?}", params);
+
     let tool_name = params
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
     let tool_args = params.get("arguments").cloned().unwrap_or_default();
 
-    info!("Handling MCP tools/call: name={}", tool_name);
+    info!(
+        "🔧 [MCP] Handling MCP tools/call: name={}, args={:?}",
+        tool_name, tool_args
+    );
 
     match execute_tool(tool_name, tool_args, app_state).await {
         Ok(content) => {
+            info!(
+                "✅ [MCP] Tool '{}' succeeded, content length: {} bytes",
+                tool_name,
+                content.len()
+            );
             let result = serde_json::json!({
                 "content": [{
                     "type": "text",
@@ -409,7 +432,8 @@ async fn handle_tools_call(
             McpResponse::success(id, result)
         }
         Err(e) => {
-            error!("MCP tool execution failed: {}", e);
+            error!("❌ [MCP] Tool '{}' execution failed: {}", tool_name, e);
+            error!("❌ [MCP] Error details: {:?}", e);
             McpResponse::error(id, MCP_INTERNAL_ERROR, e.to_string())
         }
     }
@@ -515,25 +539,7 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         serde_json::json!({
-            "name": "memory.search",
-            "description": "Search saved memories (Markdown under .linggen/memory). Returns headers/snippets for matching memories.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Full-text query (optional)" },
-                    "tags": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Filter by tags (all must match)"
-                    },
-                    "source_id": { "type": "string", "description": "Filter by source_id scope" },
-                    "limit": { "type": "integer", "description": "Max results (default 10, max 50)" }
-                },
-                "required": []
-            }
-        }),
-        serde_json::json!({
-            "name": "memory.create",
+            "name": "memory_create",
             "description": "Create a new memory (Markdown with frontmatter) under .linggen/memory.",
             "inputSchema": {
                 "type": "object",
@@ -564,7 +570,7 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         serde_json::json!({
-            "name": "memory.update",
+            "name": "memory_update",
             "description": "Update an existing memory by id.",
             "inputSchema": {
                 "type": "object",
@@ -596,7 +602,7 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         serde_json::json!({
-            "name": "memory.delete",
+            "name": "memory_delete",
             "description": "Delete a memory by id.",
             "inputSchema": {
                 "type": "object",
@@ -604,6 +610,28 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
                     "id": { "type": "string" }
                 },
                 "required": ["id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "memory_search_semantic",
+            "description": "Semantic (vector) search across memories using LanceDB. Returns structured JSON with source_id, file_path, title, and matching snippets. Best for finding conceptually related memories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query for semantic search"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 10, max: 50)"
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "description": "Optional: filter to a specific source/project ID"
+                    }
+                },
+                "required": ["query"]
             }
         }),
         serde_json::json!({
@@ -701,24 +729,46 @@ struct MemoryDeleteParams {
     id: String,
 }
 
+#[derive(Deserialize)]
+struct MemorySearchSemanticParams {
+    query: String,
+    limit: Option<i64>,
+    source_id: Option<String>,
+}
+
 /// Execute a tool by name with given arguments
 async fn execute_tool(
     name: &str,
     args: serde_json::Value,
     app_state: &Arc<AppState>,
 ) -> anyhow::Result<String> {
-    match name {
+    info!(
+        "🔧 [MCP] execute_tool called: name={}, args={:?}",
+        name, args
+    );
+
+    let result = match name {
         "search_codebase" => execute_search_codebase(args, app_state).await,
         "enhance_prompt" => execute_enhance_prompt(args, app_state).await,
         "list_sources" => execute_list_sources(app_state).await,
         "get_status" => execute_get_status(app_state).await,
         "query_codebase" => execute_query_codebase(args, app_state).await,
-        "memory.search" => execute_memory_search(args, app_state).await,
-        "memory.create" => execute_memory_create(args, app_state).await,
-        "memory.update" => execute_memory_update(args, app_state).await,
-        "memory.delete" => execute_memory_delete(args, app_state).await,
-        _ => anyhow::bail!("Unknown tool: {}", name),
+        "memory_create" => execute_memory_create(args, app_state).await,
+        "memory_update" => execute_memory_update(args, app_state).await,
+        "memory_delete" => execute_memory_delete(args, app_state).await,
+        "memory_search_semantic" => execute_memory_search_semantic(args, app_state).await,
+        _ => {
+            error!("❌ [MCP] Unknown tool requested: {}", name);
+            anyhow::bail!("Unknown tool: {}", name)
+        }
+    };
+
+    match &result {
+        Ok(_) => info!("✅ [MCP] Tool '{}' executed successfully", name),
+        Err(e) => error!("❌ [MCP] Tool '{}' failed: {}", name, e),
     }
+
+    result
 }
 
 async fn execute_query_codebase(
@@ -852,6 +902,29 @@ async fn execute_memory_create(
         params.confidence,
     )?;
 
+    // Index in background
+    let internal_index_store = app_state.internal_index_store.clone();
+    let embedding_model = app_state.embedding_model.clone();
+    let chunker = app_state.chunker.clone();
+    let source_id = "global".to_string();
+    let file_path = mem.path.clone();
+    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::internal_indexer::index_internal_file(
+            &internal_index_store,
+            &embedding_model,
+            &chunker,
+            &source_id,
+            &file_path,
+            &relative_path,
+        )
+        .await
+        {
+            tracing::warn!("Failed to index global memory: {}", e);
+        }
+    });
+
     Ok(format!(
         "Memory created: id={} | title=\"{}\"",
         mem.meta.id, mem.meta.title
@@ -892,6 +965,29 @@ async fn execute_memory_update(
         Some(params.confidence),
     )?;
 
+    // Index in background
+    let internal_index_store = app_state.internal_index_store.clone();
+    let embedding_model = app_state.embedding_model.clone();
+    let chunker = app_state.chunker.clone();
+    let source_id = "global".to_string();
+    let file_path = mem.path.clone();
+    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::internal_indexer::index_internal_file(
+            &internal_index_store,
+            &embedding_model,
+            &chunker,
+            &source_id,
+            &file_path,
+            &relative_path,
+        )
+        .await
+        {
+            tracing::warn!("Failed to index global memory: {}", e);
+        }
+    });
+
     Ok(format!(
         "Memory updated: id={} | title=\"{}\"",
         mem.meta.id, mem.meta.title
@@ -902,9 +998,109 @@ async fn execute_memory_delete(
     args: serde_json::Value,
     app_state: &Arc<AppState>,
 ) -> anyhow::Result<String> {
+    // Get info first to know relative path for unindexing
     let params: MemoryDeleteParams = serde_json::from_value(args)?;
+    let relative_path = if let Ok(mem) = app_state.memory_store.read(&params.id) {
+        Some(format!(
+            "memory/{}",
+            mem.path.file_name().unwrap().to_string_lossy()
+        ))
+    } else {
+        None
+    };
+
     app_state.memory_store.delete(&params.id)?;
+
+    if let Some(rel_path) = relative_path {
+        let internal_index_store = app_state.internal_index_store.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::internal_indexer::remove_internal_file(
+                &internal_index_store,
+                "global",
+                "memory",
+                &rel_path,
+            )
+            .await
+            {
+                tracing::warn!("Failed to unindex global memory: {}", e);
+            }
+        });
+    }
+
     Ok(format!("Memory deleted: id={}", params.id))
+}
+
+async fn execute_memory_search_semantic(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    info!(
+        "🔍 [MCP] memory.search_semantic called with args: {:?}",
+        args
+    );
+
+    let params: MemorySearchSemanticParams = serde_json::from_value(args.clone()).map_err(|e| {
+        error!(
+            "❌ [MCP] Failed to parse memory.search_semantic params: {}",
+            e
+        );
+        e
+    })?;
+
+    // Clamp limit
+    let limit = params
+        .limit
+        .map(|l| {
+            if l <= 0 {
+                10usize
+            } else {
+                (l.min(50)) as usize
+            }
+        })
+        .unwrap_or(10usize);
+
+    info!(
+        "=== MCP TOOL: memory.search_semantic ===\n  Query: {:?}\n  Limit: {}\n  Source ID: {:?}",
+        params.query, limit, params.source_id
+    );
+
+    // Call shared implementation from memory_semantic module
+    info!("📞 [MCP] Calling shared search_memories_semantic function...");
+    let results = crate::handlers::memory_semantic::search_memories_semantic(
+        app_state,
+        &params.query,
+        limit,
+        params.source_id.as_deref(),
+    )
+    .await
+    .map_err(|e| {
+        error!("❌ [MCP] search_memories_semantic failed: {}", e);
+        e
+    })?;
+
+    info!(
+        "✅ [MCP] search_memories_semantic returned {} results",
+        results.len()
+    );
+
+    // Return as JSON string
+    let json_output = serde_json::json!({
+        "results": results,
+        "count": results.len()
+    });
+
+    info!(
+        "=== MCP TOOL RESPONSE: memory.search_semantic ===\n  Results: {}",
+        results.len()
+    );
+
+    let json_string = serde_json::to_string_pretty(&json_output)?;
+    info!(
+        "📤 [MCP] Returning JSON response ({} bytes)",
+        json_string.len()
+    );
+
+    Ok(json_string)
 }
 
 async fn execute_search_codebase(

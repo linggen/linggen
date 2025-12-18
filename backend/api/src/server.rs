@@ -20,8 +20,8 @@ use crate::handlers::{
     enhance_prompt, get_app_status, get_graph, get_graph_status, get_graph_with_status,
     index_source, list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    rebuild_graph, remove_resource, rename_resource, retry_init, update_resource_patterns,
-    upload_file, upload_file_stream, AppState,
+    rebuild_graph, remove_resource, rename_resource, rescan_internal_index, retry_init,
+    update_resource_patterns, upload_file, upload_file_stream, AppState,
 };
 use crate::job_manager::JobManager;
 
@@ -39,6 +39,11 @@ fn pid_is_alive(pid: u32) -> bool {
             .raw_os_error()
             .is_some_and(|e| e == libc::EPERM)
     }
+}
+
+#[cfg(unix)]
+fn get_parent_pid() -> u32 {
+    unsafe { libc::getppid() as u32 }
 }
 
 #[cfg(not(unix))]
@@ -73,6 +78,15 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
                     eprintln!(
                         "[linggen-server] Parent PID {} exited; shutting down backend sidecar",
                         ppid
+                    );
+                    std::process::exit(0);
+                }
+
+                // Check for orphaned process (adopted by init)
+                #[cfg(unix)]
+                if get_parent_pid() == 1 {
+                    eprintln!(
+                        "[linggen-server] Backend sidecar was orphaned (adopted by init); shutting down"
                     );
                     std::process::exit(0);
                 }
@@ -207,14 +221,21 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     let chunker = Arc::new(TextChunker::new());
 
     info!("Connecting to LanceDB...");
+    let lancedb_uri = lancedb_path
+        .to_str()
+        .expect("Failed to convert lancedb path to string");
+
     let vector_store = Arc::new(
-        VectorStore::new(
-            lancedb_path
-                .to_str()
-                .expect("Failed to convert lancedb path to string"),
-        )
-        .await
-        .expect("Failed to initialize vector store"),
+        VectorStore::new(lancedb_uri)
+            .await
+            .expect("Failed to initialize vector store"),
+    );
+
+    // Initialize internal index store (same DB, different table)
+    let internal_index_store = Arc::new(
+        storage::InternalIndexStore::new(lancedb_uri)
+            .await
+            .expect("Failed to initialize internal index store"),
     );
 
     // Check if LLM is enabled in settings
@@ -413,6 +434,7 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         embedding_model,
         chunker,
         vector_store,
+        internal_index_store,
         metadata_store,
         memory_store,
         cancellation_flags: DashMap::new(),
@@ -465,6 +487,10 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             post(crate::handlers::memory::list_memories),
         )
         .route(
+            "/api/memory/search_semantic",
+            post(crate::handlers::memory_search_semantic),
+        )
+        .route(
             "/api/memory/read",
             get(crate::handlers::memory::read_memory),
         )
@@ -506,6 +532,10 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         // Graph (Architect) routes
         .route("/api/sources/:source_id/graph", get(get_graph))
         .route(
+            "/api/sources/:source_id/graph/focus",
+            get(crate::handlers::graph::get_graph_focus),
+        )
+        .route(
             "/api/sources/:source_id/graph/status",
             get(get_graph_status),
         )
@@ -544,6 +574,26 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             "/api/sources/:source_id/memory/rename",
             post(crate::handlers::rename_memory_file),
         )
+        // Source Prompt Templates (markdown files under source/.linggen/prompts)
+        .route(
+            "/api/sources/:source_id/prompts",
+            get(crate::handlers::list_prompts),
+        )
+        .route(
+            "/api/sources/:source_id/prompts/*file_path",
+            get(crate::handlers::get_prompt)
+                .put(crate::handlers::save_prompt)
+                .delete(crate::handlers::delete_prompt),
+        )
+        .route(
+            "/api/sources/:source_id/prompts/rename",
+            post(crate::handlers::rename_prompt),
+        )
+        // TODO: Internal index rescan endpoint - handler trait issue to be resolved
+        // .route(
+        //     "/api/sources/:source_id/internal/rescan",
+        //     post(rescan_internal_index),
+        // )
         .with_state(app_state);
 
     // MCP routes (for Cursor integration)
