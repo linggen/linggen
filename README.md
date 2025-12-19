@@ -1,262 +1,82 @@
-# Linggen
+<p align="center">
+  <img src="frontend/public/logo.svg" width="120" alt="Linggen Logo">
+</p>
 
-**Linggen** is a local, privacy-focused RAG (Retrieval-Augmented Generation) service written in Rust. It turns your local history (git repos, docs, notes) into a searchable "second brain" for your AI tools.
+# Linggen: Stop re-explaining to AI.
 
-## Documentation
+**The free and local app for your AI’s memory.**
 
-- **[Features](doc/features.md)**: Detailed list of capabilities.
-- **[Framework Architecture](doc/framework.md)**: System design and architecture diagram.
-- **[Cursor MCP Setup](doc/cursor-mcp-setup.md)**: How to integrate Linggen with Cursor IDE.
+Linggen indexes your codebases and tribal knowledge so your AI (Cursor, Zed, Claude, etc.) can actually understand your architecture, cross-project dependencies, and long-term decisions.
 
-## CLI Tool
+[Website](https://linggen.dev) • [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=linggen.linggen-vscode) • [Documentation](https://linggen.dev/docs)
 
-Linggen now ships as:
+---
 
-- **`linggen`**: standalone CLI (new repo/binary).
-- **`linggen-server`**: backend server/runtime (used by CLI, Tauri sidecar, and Linux service).
+## 🌀 Why Linggen?
 
-### Installation (CLI)
+Traditional AI chat is "blind" to anything you haven't manually copy-pasted. Linggen bridges this "context gap" by providing:
 
-- **One-liner (manifest-driven)**:
-  ```bash
-  curl -fsSL https://linggen.dev/install-cli.sh | bash
-  ```
-- **Build from source**:
-  ```bash
-  ./scripts/build-cli.sh
-  # tarball emitted to dist/linggen-cli-<arch>-<os>.tar.gz
-  tar -xzf dist/linggen-cli-*.tar.gz -C /usr/local/bin
-  ```
+- **🧠 Persistent Memory:** Store architectural decisions in `.linggen/memory` as Markdown. AI recalls them via semantic search.
+- **🌐 Cross-Project Intelligence:** Work on Project A while your AI learns design patterns or auth logic from Project B.
+- **📊 System Map (Graph):** Visualize file dependencies and "blast radius" before you refactor.
+- **🔒 Local-First & Private:** All indexing and vector search (via LanceDB) happens on your machine. Your code and embeddings never leave your side. No accounts required.
 
-### Installation (Desktop / Server)
+---
 
-- **macOS desktop app**: download the DMG from releases and copy `Linggen.app` to `/Applications`. The Tauri app bundles the `linggen-server` sidecar.
-- **Linux server**: download the server tarball from releases and install manually. The CLI can also attempt to install/update via `linggen install` / `linggen update` using the manifest.
+## 🚀 Quick Start (macOS)
 
-### New management commands (rustup-style)
-
-- `linggen install` – platform-aware install/update of the runtime (macOS app or Linux server) using the manifest.
-- `linggen update` – update CLI + runtime for the current platform.
-- `linggen check` – show installed vs detected versions (uses manifest).
-
-### Usage
-
-#### Start Server
+Install the CLI in seconds and start indexing:
 
 ```bash
-# Start the server (foreground)
-linggen serve
-# Or just:
-linggen
-
-# With custom port
-linggen serve --port 9000
-```
-
-#### Check Backend Status
-
-```bash
+curl -sSL https://linggen.dev/install-cli.sh | bash
 linggen start
+linggen index .
 ```
 
-Checks if the Linggen backend is running and displays its current status.
+_Windows & Linux support coming soon._
 
-#### Index a Directory
+---
 
-```bash
-# Auto mode (default) - automatically chooses incremental or full
-# Uses incremental if source was previously indexed, full otherwise
-linggen index /path/to/your/project
+## 💬 How to use it with your AI
 
-# Explicit incremental indexing
-linggen index /path/to/your/project --mode incremental
+Once Linggen is running and your project is indexed, simply talk to your MCP-enabled IDE (like Cursor or Zed):
 
-# Full reindex (rebuild from scratch)
-linggen index /path/to/your/project --mode full
+> "Call Linggen MCP, find out how project-sender sends out messages, and ingest it."
 
-# Index with custom name
-linggen index /path/to/your/project --name "My Project"
+> "Call Linggen MCP, load memory from Project-B, learn its code style and design pattern."
 
-# Index with file patterns
-linggen index /path/to/your/project --include "*.rs" --include "*.md" --exclude "target/**"
+> "Load memory from Linggen, find out what is the goal of this piece of code."
 
-# Wait for indexing to complete
-linggen index /path/to/your/project --wait
-```
+---
 
-#### Check Status and View Jobs
+## 📂 The Linggen Ecosystem
 
-```bash
-linggen status
+- **[linggen](https://github.com/linggen/linggen):** The core engine and CLI runtime.
+- **[linggen-vscode](https://github.com/linggen/linggen-vscode):** VS Code extension for Graph View and automatic MCP setup.
+- **[linggensite](https://github.com/linggen/linggensite):** (This Repo) The landing page and documentation site.
+- **[linggen-releases](https://github.com/linggen/linggen-releases):** Pre-built binaries and distribution scripts.
 
-# Show more recent jobs
-linggen status --limit 20
-```
+---
 
-### Configuration
+## 📜 License & Support
 
-The CLI can be configured via command-line flags or environment variables:
+Linggen is open-source under the **[MIT License](LICENSE)**.
 
-- `--api-url <URL>` or `LINGGEN_API_URL`: Base URL of the Linggen backend (default: `http://127.0.0.1:8787`)
+- **100% Free for Individuals:** Use it for all your personal and open-source projects.
+- **Local-First:** Your code and your "memory" never leave your machine.
+- **Commercial Support:** If you are a team (5+ users) or a company using Linggen in a professional environment, we ask that you support the project's development by purchasing a **Commercial License**.
 
-Example:
+For more details on future enterprise features (SSO, Team Sync, RBAC), visit our [Pricing Page](https://linggen.dev/pricing) or [get in touch via email](mailto:linggen77@gmail.com).
 
-```bash
-export LINGGEN_API_URL=http://localhost:8787
-linggen status
-```
+---
 
-## VS Code Extension
+## 🗺️ Roadmap
 
-The Linggen VS Code extension provides seamless integration with your editor.
+- [x] **Core Engine:** Local indexing and semantic search (LanceDB).
+- [x] **MCP Support:** Use with Cursor, Zed, and Claude.
+- [x] **Visual System Map:** Graph visualization of your codebase.
+- [ ] **Team Memory Sync:** Share architectural decisions across your team.
+- [ ] **Deep Integration:** More IDEs and specialized agents.
+- [ ] **Windows Support:** Bringing the local engine to more platforms.
 
-### Installation
-
-1. Open VS Code
-2. Navigate to the `vscode-extension` directory
-3. Install dependencies: `npm install`
-4. Press F5 to launch the extension in development mode
-
-For production use, package the extension:
-
-```bash
-cd vscode-extension
-npm install -g @vscode/vsce
-vsce package
-code --install-extension linggen-0.1.0.vsix
-```
-
-### Commands
-
-Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P) and type "Linggen":
-
-- **Linggen: Index Current Workspace** - Incrementally index your workspace
-- **Linggen: Full Reindex Current Workspace** - Perform a full reindex
-- **Linggen: Check Backend Status** - Check if the backend is running
-- **Linggen: Open in Linggen** - Open Linggen in your browser
-
-### Settings
-
-Configure the extension in VS Code settings:
-
-- `linggen.cliPath`: Path to the linggen CLI binary (default: "linggen")
-- `linggen.indexModeDefault`: Default indexing mode - "incremental" or "full" (default: "incremental")
-- `linggen.apiUrl`: Base URL of the Linggen backend API (default: "http://127.0.0.1:8787")
-
-### Requirements
-
-The VS Code extension requires the Linggen CLI to be installed and available on your PATH (see CLI installation above).
-
-## Current Status
-
-- **Frontend**: React + Vite setup, connected to backend.
-- **Backend**: Rust Axum server with integrated MCP endpoint.
-- **Desktop App**: Tauri 2.9-based native app for macOS (bundles backend as sidecar).
-- **Ingestion**: Basic file walker and watcher implemented.
-- **MCP**: Built-in SSE endpoint for Cursor integration (no separate binary needed).
-
-## Quick Start
-
-### Prerequisites
-
-- Rust (latest stable, 1.70+)
-- Node.js & npm (for frontend and Tauri CLI)
-- macOS 12.0+ (for desktop app)
-
-### Option 1: Desktop App (Recommended)
-
-Build and run the native Tauri desktop app:
-
-```bash
-./build-tauri-app.sh
-open frontend/src-tauri/target/release/bundle/macos/Linggen.app
-```
-
-### Option 2: Development Mode
-
-1. **Start the Backend Server**:
-
-   ```bash
-   cd backend && cargo run --bin linggen-server --release
-   # Custom port:
-   LINGGEN_PORT=9000 cargo run --bin linggen-server --release
-   ```
-
-   This starts:
-
-   - **API** at `http://localhost:8787/api/*`
-   - **MCP endpoint** at `http://localhost:8787/mcp/*`
-   - **Frontend** at `http://localhost:8787/` (if built)
-
-2. **Start the Frontend** (for development with hot reload):
-
-   ```bash
-   cd frontend && npm run dev
-   ```
-
-   Access the web UI at `http://localhost:5173`.
-
-3. **Or run Tauri in dev mode** (native window + hot reload):
-
-   ```bash
-   # Terminal 1: Start backend
-   cd backend && cargo run --bin linggen-server --release
-
-   # Terminal 2: Start Tauri dev
-   cd frontend && npm run tauri:dev
-   ```
-
-   > **Note**: When running `tauri:dev`, if the backend is already running (e.g., from Terminal 1 or your IDE), the Tauri app will detect it and connect to it instead of spawning its own sidecar. This allows seamless debugging of backend changes while using the native desktop window.
-
-### Remote Access
-
-The backend listens on all interfaces, so remote users on your network can access the UI:
-
-```
-http://<your-ip>:8787
-```
-
-### Cursor Integration
-
-Add to your `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "linggen": {
-      "url": "http://localhost:8787/mcp/sse"
-    }
-  }
-}
-```
-
-Restart Cursor, and the Linggen tools will be available in chat.
-
-See [Cursor MCP Setup](doc/cursor-mcp-setup.md) for detailed instructions and team setup.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Linggen Server                          │
-│                                                                 │
-│  ┌─────────┐     SSE      ┌──────────────────────────────────┐  │
-│  │ Cursor  │◄────────────►│  /mcp/*  - MCP SSE endpoint      │  │
-│  └─────────┘              │  /api/*  - REST API              │  │
-│                           │  /       - Frontend (if built)   │  │
-│  ┌─────────┐     HTTP     └──────────────────────────────────┘  │
-│  │ Web UI  │◄────────────►                                      │
-│  └─────────┘                                                    │
-│                                                                 │
-│  ┌─────────┐   Sidecar    ┌──────────────────────────────────┐  │
-│  │ Tauri   │◄────────────►│  Native desktop window           │  │
-│  │ Desktop │              │  (embeds backend + frontend)     │  │
-│  └─────────┘              └──────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                          localhost:8787
-```
-
-## License
-
-MCP publish:
-https://modelcontextprotocol.info/tools/registry/cli/
+MIT © 2025 [Linggen](https://linggen.dev)
