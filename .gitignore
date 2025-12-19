@@ -80,3 +80,7 @@ dist/
 frontend/src-tauri/resources/
 
 .linggen/memory/
+
+# MCP Registry tokens
+.mcpregistry_github_token
+.mcpregistry_registry_token
