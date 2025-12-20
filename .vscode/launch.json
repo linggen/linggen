@@ -22,7 +22,10 @@
             "type": "node-terminal",
             "request": "launch",
             "command": "npm run tauri:dev",
-            "cwd": "${workspaceFolder}/frontend"
+            "cwd": "${workspaceFolder}/frontend",
+            "env": {
+                "LINGGEN_DEV": "true"
+            }
         },
         {
             "name": "Frontend",

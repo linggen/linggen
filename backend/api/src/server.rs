@@ -20,8 +20,8 @@ use crate::handlers::{
     enhance_prompt, get_app_status, get_graph, get_graph_status, get_graph_with_status,
     index_source, list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    rebuild_graph, remove_resource, rename_resource, rescan_internal_index, retry_init,
-    update_resource_patterns, upload_file, upload_file_stream, AppState,
+    rebuild_graph, remove_resource, rename_resource, retry_init, update_resource_patterns,
+    upload_file, upload_file_stream, AppState,
 };
 use crate::job_manager::JobManager;
 
@@ -116,19 +116,38 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     info!("Using metadata store at {:?}", metadata_path);
     info!("Using LanceDB store at {:?}", lancedb_path);
 
-    let metadata_store = match MetadataStore::new(&metadata_path) {
+    let mut metadata_store_result = MetadataStore::new(&metadata_path);
+    let mut lock_retries = 0;
+    let max_lock_retries = 20; // 10 seconds total wait
+    while metadata_store_result.is_err() && lock_retries < max_lock_retries {
+        let err_msg = metadata_store_result.as_ref().err().unwrap().to_string();
+        if err_msg.contains("Database already open") || err_msg.contains("Cannot acquire lock") {
+            warn!(
+                "Metadata database is locked, retrying in 500ms... (attempt {}/{})",
+                lock_retries + 1,
+                max_lock_retries
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            metadata_store_result = MetadataStore::new(&metadata_path);
+            lock_retries += 1;
+        } else {
+            break;
+        }
+    }
+
+    let metadata_store = match metadata_store_result {
         Ok(s) => Arc::new(s),
         Err(e) => {
             // redb returns "Database already open. Cannot acquire lock." when another instance is running.
             let msg = e.to_string();
             if msg.contains("Database already open") || msg.contains("Cannot acquire lock") {
                 return Err(anyhow::anyhow!(
-                    "Linggen metadata database is already in use.\n\
-                     - Another Linggen backend is likely running (e.g. Linggen.app sidecar).\n\
+                    "Linggen metadata database is still locked after {} seconds.\n\
+                     - Another Linggen backend is likely running.\n\
                      - Stop the other backend OR run this instance with a separate data dir via LINGGEN_DATA_DIR.\n\
-                     - Example: LINGGEN_DATA_DIR=\"$HOME/Library/Application Support/Linggen-dev\" linggen-server --port 8788\n\
                      \n\
                      DB path: {}",
+                    max_lock_retries / 2,
                     metadata_path.display()
                 ));
             }
