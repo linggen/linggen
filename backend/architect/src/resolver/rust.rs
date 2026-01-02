@@ -28,22 +28,22 @@ impl RustResolver {
         name.trim().replace('-', "_")
     }
 
-    /// Find the nearest Cargo workspace root (directory containing Cargo.toml with `[workspace]`)
-    /// by walking up from `start_dir` until `project_root`.
+    /// Find the best Cargo root (workspace root or package root) for the current file.
+    /// Prefers the outermost directory containing `[workspace]` up to `project_root`,
+    /// or falls back to the innermost directory containing `[package]`.
     fn find_workspace_root(project_root: &Path, start_dir: &Path) -> Option<PathBuf> {
         let mut dir = start_dir.to_path_buf();
+        let mut innermost_package = None;
+        let mut outermost_workspace = None;
+
         loop {
             let manifest = dir.join("Cargo.toml");
             if manifest.exists() {
                 if let Ok(s) = std::fs::read_to_string(&manifest) {
-                    // Fast check first to avoid parsing in most dirs
                     if s.contains("[workspace]") {
-                        // Ensure it's valid TOML workspace (best-effort)
-                        if let Ok(v) = s.parse::<toml::Value>() {
-                            if v.get("workspace").is_some() {
-                                return Some(dir);
-                            }
-                        }
+                        outermost_workspace = Some(dir.clone());
+                    } else if s.contains("[package]") && innermost_package.is_none() {
+                        innermost_package = Some(dir.clone());
                     }
                 }
             }
@@ -51,9 +51,14 @@ impl RustResolver {
             if dir == project_root || !dir.starts_with(project_root) {
                 break;
             }
-            dir = dir.parent()?.to_path_buf();
+            if let Some(parent) = dir.parent() {
+                dir = parent.to_path_buf();
+            } else {
+                break;
+            }
         }
-        None
+
+        outermost_workspace.or(innermost_package)
     }
 
     /// Best-effort: get workspace member crates for this `project_root`.
@@ -252,7 +257,20 @@ impl RustResolver {
             other => {
                 let workspace_root = Self::find_workspace_root(project_root, current_dir)?;
                 let map = Self::workspace_crate_roots(&workspace_root);
-                map.get(&Self::crate_name_key(other)).cloned()
+                let crate_root_file = map.get(&Self::crate_name_key(other))?;
+
+                // If we have more parts, try to resolve to the specific module within that crate.
+                if parts.len() > 1 {
+                    if let Some(crate_src_dir) = crate_root_file.parent() {
+                        if let Some(module_path) =
+                            self.resolve_module_chain(crate_src_dir, &parts[1..])
+                        {
+                            return Some(module_path);
+                        }
+                    }
+                }
+
+                Some(crate_root_file.clone())
             }
         }
     }
