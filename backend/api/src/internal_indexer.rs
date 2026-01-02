@@ -1,14 +1,175 @@
 use anyhow::Result;
 use embeddings::{EmbeddingModel, TextChunker};
 use linggen_core::Chunk;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-/// Extract title from markdown frontmatter (YAML between --- delimiters)
-fn extract_title_from_content(content: &str) -> Option<String> {
+/// Start a background file watcher for a project's .linggen directory
+pub async fn start_internal_watcher(
+    internal_index_store: Arc<storage::InternalIndexStore>,
+    embedding_model: Arc<RwLock<Option<EmbeddingModel>>>,
+    chunker: Arc<TextChunker>,
+    broadcast_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    source_id: String,
+    linggen_dir: PathBuf,
+) -> Result<()> {
+    use ingestion::FileWatcher;
+
+    let mut watcher = FileWatcher::new(&linggen_dir)?;
+    info!(
+        "Started internal watcher for source {} at {:?}",
+        source_id, linggen_dir
+    );
+
+    let internal_index_store_broadcast = broadcast_tx.clone();
+
+    tokio::spawn(async move {
+        while let Some(res) = watcher.next_event().await {
+            match res {
+                Ok(event) => {
+                    for path in event.paths {
+                        // Skip directories
+                        if path.is_dir() {
+                            continue;
+                        }
+
+                        // We only care about markdown files in specific subdirs
+                        if path.extension().map(|e| e == "md").unwrap_or(false) {
+                            let rel_str = if let Ok(rel) = path.strip_prefix(&linggen_dir) {
+                                Some(rel.to_string_lossy().to_string())
+                            } else {
+                                // Fallback for edge cases where strip_prefix fails
+                                let path_str = path.to_string_lossy();
+                                let root_str = linggen_dir.to_string_lossy();
+                                if path_str.starts_with(&*root_str) {
+                                    Some(path_str[root_str.len()..].to_string())
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some(mut rel_str) = rel_str {
+                                // Ensure no leading slash
+                                if rel_str.starts_with('/') {
+                                    rel_str = rel_str[1..].to_string();
+                                }
+
+                                // Check if it's in one of our tracked folders
+                                if !rel_str.starts_with("memory/")
+                                    && !rel_str.starts_with("prompts/")
+                                    && !rel_str.starts_with("notes/")
+                                {
+                                    continue;
+                                }
+
+                                // Determine if we should treat this as a removal or an update
+                                // On some OSes (like macOS), renames/deletes can show up as Modify/Name
+                                // If the file no longer exists, it's a removal.
+                                let is_removal = event.kind.is_remove() || !path.exists();
+
+                                if is_removal {
+                                    let kind = if rel_str.starts_with("memory/") {
+                                        "memory"
+                                    } else if rel_str.starts_with("prompts/") {
+                                        "prompt"
+                                    } else {
+                                        "note"
+                                    };
+
+                                    if let Err(e) = remove_internal_file(
+                                        &internal_index_store,
+                                        &source_id,
+                                        kind,
+                                        &rel_str,
+                                    )
+                                    .await
+                                    {
+                                        warn!("Watcher: failed to remove {}: {}", rel_str, e);
+                                    }
+
+                                    // Always notify UI of removal
+                                    let msg = serde_json::json!({
+                                        "event": "file_removed",
+                                        "path": rel_str,
+                                        "source_id": source_id,
+                                    });
+                                    let _ = internal_index_store_broadcast.send(msg);
+                                } else {
+                                    // Index the file
+                                    match index_internal_file(
+                                        &internal_index_store,
+                                        &embedding_model,
+                                        &chunker,
+                                        &source_id,
+                                        &path,
+                                        &rel_str,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            let msg = serde_json::json!({
+                                                "event": "file_changed",
+                                                "path": rel_str,
+                                                "source_id": source_id,
+                                            });
+                                            let _ = internal_index_store_broadcast.send(msg);
+                                        }
+                                        Err(e) => {
+                                            // If indexing fails because file is gone (race condition), treat as removal
+                                            if e.to_string().contains("No such file") {
+                                                let kind = if rel_str.starts_with("memory/") {
+                                                    "memory"
+                                                } else if rel_str.starts_with("prompts/") {
+                                                    "prompt"
+                                                } else {
+                                                    "note"
+                                                };
+                                                let _ = remove_internal_file(
+                                                    &internal_index_store,
+                                                    &source_id,
+                                                    kind,
+                                                    &rel_str,
+                                                )
+                                                .await;
+                                                let msg = serde_json::json!({
+                                                    "event": "file_removed",
+                                                    "path": rel_str,
+                                                    "source_id": source_id,
+                                                });
+                                                let _ = internal_index_store_broadcast.send(msg);
+                                            } else {
+                                                warn!(
+                                                    "Watcher: failed to index {}: {}",
+                                                    rel_str, e
+                                                );
+                                                // Still notify UI that *something* happened to this file
+                                                let msg = serde_json::json!({
+                                                    "event": "file_changed",
+                                                    "path": rel_str,
+                                                    "source_id": source_id,
+                                                });
+                                                let _ = internal_index_store_broadcast.send(msg);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => warn!("Watcher error for {}: {}", source_id, e),
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Extract all metadata from markdown frontmatter as a JSON Value
+fn extract_all_meta_from_content(content: &str) -> Option<serde_json::Value> {
     if !content.starts_with("---") {
         return None;
     }
@@ -17,22 +178,14 @@ fn extract_title_from_content(content: &str) -> Option<String> {
     parts.next(); // skip empty before first ---
     let frontmatter = parts.next()?;
 
-    // Simple YAML parsing for title field
-    for line in frontmatter.lines() {
-        let line = line.trim();
-        if line.starts_with("title:") {
-            let title = line.strip_prefix("title:")?.trim();
-            // Remove quotes if present
-            let title = title.trim_matches(|c| c == '"' || c == '\'');
-            return Some(title.to_string());
-        }
-    }
+    // Parse YAML into a generic serde_yaml::Value
+    let yaml_val: serde_yaml::Value = serde_yaml::from_str(frontmatter).ok()?;
 
-    None
+    // Convert YAML Value to JSON Value for storage in LanceDB/Metadata
+    serde_json::to_value(yaml_val).ok()
 }
 
 /// Index a memory or prompt file into the internal index
-/// This is called after saving/updating a memory/prompt file
 pub async fn index_internal_file(
     internal_index_store: &storage::InternalIndexStore,
     embedding_model: &Arc<RwLock<Option<EmbeddingModel>>>,
@@ -61,11 +214,22 @@ pub async fn index_internal_file(
         "other"
     };
 
-    // Create unique document_id: {source_id}/{kind}/{path}
-    let document_id = format!("{}/{}/{}", source_id, kind, relative_path);
+    // Extract all metadata from frontmatter
+    let frontmatter_json = extract_all_meta_from_content(&content);
 
-    // Extract title from frontmatter for memories
-    let title = extract_title_from_content(&content);
+    // Extract specific stable ID if available for memories
+    let meta_id = frontmatter_json
+        .as_ref()
+        .and_then(|json| json.get("id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Create unique document_id: {source_id}/{kind}/{path_or_id}
+    let document_id = if kind == "memory" && meta_id.is_some() {
+        format!("{}/{}/id:{}", source_id, kind, meta_id.as_ref().unwrap())
+    } else {
+        format!("{}/{}/{}", source_id, kind, relative_path)
+    };
 
     // Chunk the content
     let text_chunks = chunker.chunk(&content);
@@ -83,7 +247,6 @@ pub async fn index_internal_file(
     let model_guard = embedding_model.read().await;
     if let Some(model) = model_guard.as_ref() {
         // Get embeddings for all chunks in batch
-        // Convert Vec<String> to Vec<&str> for embed_batch
         let text_refs: Vec<&str> = text_chunks.iter().map(|s| s.as_str()).collect();
         let embedding_result = model.embed_batch(&text_refs);
 
@@ -96,8 +259,14 @@ pub async fn index_internal_file(
                         "kind": kind,
                         "file_path": relative_path,
                     });
-                    if let Some(ref t) = title {
-                        metadata["title"] = serde_json::Value::String(t.clone());
+
+                    // Merge frontmatter into metadata
+                    if let Some(meta) = &frontmatter_json {
+                        if let Some(obj) = meta.as_object() {
+                            for (k, v) in obj {
+                                metadata[k] = v.clone();
+                            }
+                        }
                     }
 
                     chunks.push(Chunk {
@@ -111,239 +280,104 @@ pub async fn index_internal_file(
                 }
             }
             Err(e) => {
-                warn!("Failed to generate embeddings for internal file: {}", e);
-                // Create chunks without embeddings
-                for text_chunk in text_chunks.iter() {
-                    let mut metadata = serde_json::json!({
-                        "kind": kind,
-                        "file_path": relative_path,
-                    });
-                    if let Some(ref t) = title {
-                        metadata["title"] = serde_json::Value::String(t.clone());
-                    }
-
+                warn!("Failed to generate embeddings for {}: {}", relative_path, e);
+                // Fallback: add chunks without embeddings
+                for text_chunk in text_chunks {
                     chunks.push(Chunk {
                         id: Uuid::new_v4(),
                         source_id: source_id.to_string(),
                         document_id: document_id.clone(),
-                        content: text_chunk.clone(),
+                        content: text_chunk,
                         embedding: None,
-                        metadata,
+                        metadata: serde_json::json!({
+                            "kind": kind,
+                            "file_path": relative_path,
+                        }),
                     });
                 }
             }
         }
-    } else {
-        // No embedding model, create chunks without embeddings
-        for text_chunk in text_chunks.iter() {
-            let mut metadata = serde_json::json!({
-                "kind": kind,
-                "file_path": relative_path,
-            });
-            if let Some(ref t) = title {
-                metadata["title"] = serde_json::Value::String(t.clone());
-            }
-
-            chunks.push(Chunk {
-                id: Uuid::new_v4(),
-                source_id: source_id.to_string(),
-                document_id: document_id.clone(),
-                content: text_chunk.clone(),
-                embedding: None,
-                metadata,
-            });
-        }
     }
+    drop(model_guard);
 
-    // Upsert into internal index (this deletes old chunks and adds new ones)
-    internal_index_store
-        .upsert_document(&document_id, chunks)
-        .await?;
-
-    info!(
-        "Indexed internal file {} ({} chunks)",
-        relative_path,
-        text_chunks.len()
-    );
+    // Save to internal index store
+    internal_index_store.add_chunks(chunks).await?;
 
     Ok(())
 }
 
-/// Remove an internal file from the index
+/// Remove a file from the internal index
 pub async fn remove_internal_file(
     internal_index_store: &storage::InternalIndexStore,
     source_id: &str,
     kind: &str,
     relative_path: &str,
 ) -> Result<()> {
+    // 1. Try deleting by path (default for notes/prompts)
     let document_id = format!("{}/{}/{}", source_id, kind, relative_path);
     internal_index_store.delete_document(&document_id).await?;
+
     info!("Removed internal file from index: {}", document_id);
     Ok(())
 }
 
-/// Rescan and reindex all memory/prompt files for a source
-/// This is useful for out-of-band edits or initial population
+/// Rescan all internal files for a source
 pub async fn rescan_internal_files(
-    internal_index_store: &storage::InternalIndexStore,
+    internal_index_store: &Arc<storage::InternalIndexStore>,
     embedding_model: &Arc<RwLock<Option<EmbeddingModel>>>,
-    chunker: &TextChunker,
+    chunker: &Arc<TextChunker>,
     source_id: &str,
-    source_path: &str,
+    source_root: &str,
 ) -> Result<(usize, usize)> {
-    use std::path::PathBuf;
-
-    let linggen_dir = PathBuf::from(source_path).join(".linggen");
-    let memory_dir = linggen_dir.join("memory");
-    let prompts_dir = linggen_dir.join("prompts");
-    let notes_dir = linggen_dir.join("notes");
-
+    let root = Path::new(source_root);
     let mut files_indexed = 0;
     let mut files_failed = 0;
 
-    // Index memory files
-    if memory_dir.exists() {
-        info!("Rescanning memory files in {:?}", memory_dir);
-        let result = rescan_directory(
-            internal_index_store,
-            embedding_model,
-            chunker,
-            source_id,
-            &memory_dir,
-            &linggen_dir,
-        )
-        .await;
+    // For "global" source, it's already the linggen dir.
+    // For other sources, we check source_root/.linggen/
+    let linggen_dir = if source_id == "global" {
+        root.to_path_buf()
+    } else {
+        root.join(".linggen")
+    };
 
-        match result {
-            Ok((indexed, failed)) => {
-                files_indexed += indexed;
-                files_failed += failed;
-            }
-            Err(e) => {
-                warn!("Failed to rescan memory directory: {}", e);
-            }
-        }
+    if !linggen_dir.exists() {
+        return Ok((0, 0));
     }
 
-    // Index prompt files
-    if prompts_dir.exists() {
-        info!("Rescanning prompt files in {:?}", prompts_dir);
-        let result = rescan_directory(
-            internal_index_store,
-            embedding_model,
-            chunker,
-            source_id,
-            &prompts_dir,
-            &linggen_dir,
-        )
-        .await;
-
-        match result {
-            Ok((indexed, failed)) => {
-                files_indexed += indexed;
-                files_failed += failed;
-            }
-            Err(e) => {
-                warn!("Failed to rescan prompts directory: {}", e);
-            }
+    let subdirs = ["memory", "prompts", "notes"];
+    for subdir in subdirs {
+        let dir = linggen_dir.join(subdir);
+        if !dir.exists() {
+            continue;
         }
-    }
 
-    // Index notes files
-    if notes_dir.exists() {
-        info!("Rescanning notes files in {:?}", notes_dir);
-        let result = rescan_directory(
-            internal_index_store,
-            embedding_model,
-            chunker,
-            source_id,
-            &notes_dir,
-            &linggen_dir,
-        )
-        .await;
-
-        match result {
-            Ok((indexed, failed)) => {
-                files_indexed += indexed;
-                files_failed += failed;
-            }
-            Err(e) => {
-                warn!("Failed to rescan notes directory: {}", e);
+        let mut entries = tokio::fs::read_dir(dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(rel_path) = path.strip_prefix(&linggen_dir) {
+                    let rel_str = rel_path.to_string_lossy().to_string();
+                    match index_internal_file(
+                        internal_index_store,
+                        embedding_model,
+                        chunker,
+                        source_id,
+                        &path,
+                        &rel_str,
+                    )
+                    .await
+                    {
+                        Ok(_) => files_indexed += 1,
+                        Err(e) => {
+                            warn!("Failed to index {}: {}", rel_str, e);
+                            files_failed += 1;
+                        }
+                    }
+                }
             }
         }
     }
 
     Ok((files_indexed, files_failed))
-}
-
-fn rescan_directory<'a>(
-    internal_index_store: &'a storage::InternalIndexStore,
-    embedding_model: &'a Arc<RwLock<Option<EmbeddingModel>>>,
-    chunker: &'a TextChunker,
-    source_id: &'a str,
-    dir: &'a Path,
-    base_dir: &'a Path,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(usize, usize)>> + Send + 'a>> {
-    Box::pin(async move {
-        let mut files_indexed = 0;
-        let mut files_failed = 0;
-
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!("Failed to read directory {:?}: {}", dir, e);
-                return Ok((0, 0));
-            }
-        };
-
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Recursive
-                let (indexed, failed) = rescan_directory(
-                    internal_index_store,
-                    embedding_model,
-                    chunker,
-                    source_id,
-                    &path,
-                    base_dir,
-                )
-                .await?;
-                files_indexed += indexed;
-                files_failed += failed;
-            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                // Index markdown file
-                let relative_path = path
-                    .strip_prefix(base_dir)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-
-                match index_internal_file(
-                    internal_index_store,
-                    embedding_model,
-                    chunker,
-                    source_id,
-                    &path,
-                    &relative_path,
-                )
-                .await
-                {
-                    Ok(_) => files_indexed += 1,
-                    Err(e) => {
-                        warn!("Failed to index internal file {}: {}", relative_path, e);
-                        files_failed += 1;
-                    }
-                }
-            }
-        }
-
-        Ok((files_indexed, files_failed))
-    })
 }

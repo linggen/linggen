@@ -10,6 +10,7 @@ import {
   retryInit,
   renameResource,
   updateResourcePatterns,
+  API_BASE,
   type Resource,
   type ResourceType,
   type IndexMode,
@@ -109,20 +110,39 @@ function App() {
     fetchResources()
   }, [resourcesVersion])
 
-  // Periodically refresh resources so external changes (e.g. CLI / VS Code extension)
-  // are reflected in the UI without requiring a manual reload.
+  // Listen for real-time events from the backend (file changes, indexing status, etc.)
   useEffect(() => {
-    const intervalId = window.setInterval(async () => {
+    console.log(`[Real-time] Connecting to ${API_BASE}/api/events...`)
+    const eventSource = new EventSource(`${API_BASE}/api/events`)
+
+    eventSource.onopen = () => {
+      console.log('[Real-time] Connection established.')
+    }
+
+    eventSource.onmessage = (e) => {
       try {
-        const response = await listResources()
-        setResources(response.resources)
+        const data = JSON.parse(e.data)
+        if (data.event === 'file_changed' || data.event === 'file_removed') {
+          console.log(`[Real-time] Event received: ${data.event} - ${data.path}. Refreshing UI...`)
+          setResourcesVersion((v) => v + 1)
+        } else if (data.event === 'lagged') {
+          console.warn('[Real-time] Event stream lagged. Some notifications might have been missed.')
+        }
       } catch (err) {
-        console.error('Failed to load resources:', err)
+        // Handle non-JSON keep-alive messages
+        if (e.data !== 'keep-alive') {
+          console.error('Failed to parse backend event:', err, 'Raw data:', e.data)
+        }
       }
-    }, 10000) // every 10 seconds
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[Real-time] EventSource error or disconnected. Retrying...', e)
+    }
 
     return () => {
-      window.clearInterval(intervalId)
+      console.log('[Real-time] Closing connection.')
+      eventSource.close()
     }
   }, [])
 
@@ -565,6 +585,7 @@ function App() {
       currentView={currentView}
       onChangeView={setCurrentView}
       resources={resources}
+      resourcesVersion={resourcesVersion}
       selectedSourceId={selectedSourceId}
       onSelectSource={handleSelectSource}
       selectedNotePath={selectedNotePath}

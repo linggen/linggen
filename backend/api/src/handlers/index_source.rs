@@ -627,7 +627,7 @@ async fn run_indexing_job(
             // Actually, let's just fetch a reasonable sample if READMEs are missing.
             if profile_chunks.is_empty() {
                 match state.vector_store.search(vec![0.0; 384], None, 50).await {
-                    Ok(chunks) => {
+                    Ok(_chunks) => {
                         // Filter for this source only (search returns global results potentially?)
                         // VectorStore::search doesn't filter by source_id in the current impl shown earlier.
                         // We should probably use get_chunks_by_file_pattern with "*"

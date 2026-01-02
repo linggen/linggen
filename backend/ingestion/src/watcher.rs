@@ -15,8 +15,11 @@ impl FileWatcher {
 
         let watcher = RecommendedWatcher::new(
             move |res| {
+                if let Ok(ref event) = res {
+                    info!(event = ?event, "[DEBUG Watcher] RAW NOTIFY");
+                }
                 if let Err(e) = tx.blocking_send(res) {
-                    error!("Failed to send watch event: {}", e);
+                    error!(error = %e, "Failed to send watch event");
                 }
             },
             Config::default(),

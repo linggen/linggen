@@ -1,0 +1,66 @@
+# Dockerfile for multi-architecture Linux builds (amd64 and arm64)
+# This Dockerfile is designed to be used with docker buildx
+
+# Stage 1: Build the backend and frontend
+FROM rust:1.83-bookworm AS builder
+
+# TARGETARCH is automatically set by Docker Buildx (amd64, arm64, etc.)
+ARG TARGETARCH
+
+# Install system dependencies for Tauri and the backend
+RUN apt-get update && apt-get install -y \
+    libwebkit2gtk-4.1-dev \
+    libappindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    libpoppler-glib-dev \
+    dpkg \
+    pkg-config \
+    cmake \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Install Tauri CLI
+RUN cargo install tauri-cli
+
+WORKDIR /app
+
+# Copy the whole project
+COPY . .
+
+# Build the backend binary (linggen-server)
+WORKDIR /app/backend
+RUN cargo build --release -p api
+
+# Copy backend binary to where Tauri expects it as a sidecar
+# Tauri sidecars must follow the naming convention: <name>-<target-triple>
+WORKDIR /app/frontend/src-tauri
+RUN mkdir -p binaries && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        cp /app/backend/target/release/linggen-server binaries/linggen-server-x86_64-unknown-linux-gnu; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        cp /app/backend/target/release/linggen-server binaries/linggen-server-aarch64-unknown-linux-gnu; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH"; exit 1; \
+    fi
+
+# Install frontend dependencies
+WORKDIR /app/frontend
+RUN npm ci
+
+# Build the Tauri app for Linux (.deb and .AppImage)
+# This will build for the container's native architecture (handled by Buildx/QEMU)
+RUN cargo tauri build --bundles deb,appimage
+
+# Stage 2: Artifact extraction
+FROM scratch AS artifacts
+COPY --from=builder /app/frontend/src-tauri/target/release/bundle/deb/*.deb /
+COPY --from=builder /app/frontend/src-tauri/target/release/bundle/appimage/*.AppImage /
+

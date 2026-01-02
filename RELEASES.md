@@ -239,6 +239,18 @@ To test different update channels in the future, you can:
 
 If you need to create a release manually without GitHub Actions:
 
+### Linux (Multi-Arch)
+
+To build for both x86_64 and ARM64 Linux using Docker Buildx:
+
+```bash
+./deploy/build-linux-multiarch.sh
+```
+
+This will produce `.deb` and `.AppImage` files in `dist/linux/` for both architectures.
+
+### Local Build (Single Architecture)
+
 1. **Build locally**:
 
    ```bash

@@ -81,7 +81,7 @@ impl InternalIndexStore {
     }
 
     /// Add chunks to the internal index
-    async fn add_chunks(&self, chunks: Vec<Chunk>) -> Result<()> {
+    pub async fn add_chunks(&self, chunks: Vec<Chunk>) -> Result<()> {
         if chunks.is_empty() {
             return Ok(());
         }
@@ -96,6 +96,8 @@ impl InternalIndexStore {
             Field::new("kind", DataType::Utf8, true), // "memory" or "prompt"
             Field::new("file_path", DataType::Utf8, true), // relative path under .linggen/
             Field::new("title", DataType::Utf8, true), // extracted title
+            Field::new("memory_id", DataType::Utf8, true), // stable memory ID
+            Field::new("tags", DataType::Utf8, true), // comma-separated tags
             Field::new(
                 "vector",
                 DataType::FixedSizeList(
@@ -139,6 +141,29 @@ impl InternalIndexStore {
                     .map(|s| s.to_string())
             })
             .collect();
+        let memory_ids: Vec<Option<String>> = chunks
+            .iter()
+            .map(|c| {
+                c.metadata
+                    .get("memory_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        let tags_list: Vec<Option<String>> = chunks
+            .iter()
+            .map(|c| {
+                c.metadata
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|tags| {
+                        tags.iter()
+                            .filter_map(|t| t.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+            })
+            .collect();
 
         let id_array = StringArray::from(ids);
         let source_id_array = StringArray::from(source_ids);
@@ -147,6 +172,8 @@ impl InternalIndexStore {
         let kind_array = StringArray::from(kinds);
         let file_path_array = StringArray::from(file_paths);
         let title_array = StringArray::from(titles);
+        let memory_id_array = StringArray::from(memory_ids);
+        let tags_array = StringArray::from(tags_list);
 
         let vector_array = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
             chunks.iter().map(|c| {
@@ -169,6 +196,8 @@ impl InternalIndexStore {
                 Arc::new(kind_array),
                 Arc::new(file_path_array),
                 Arc::new(title_array),
+                Arc::new(memory_id_array),
+                Arc::new(tags_array),
                 Arc::new(vector_array),
             ],
         )?;
@@ -266,6 +295,12 @@ impl InternalIndexStore {
             let title_col = batch
                 .column_by_name("title")
                 .map(|col| col.as_any().downcast_ref::<StringArray>().unwrap());
+            let memory_id_col = batch
+                .column_by_name("memory_id")
+                .map(|col| col.as_any().downcast_ref::<StringArray>().unwrap());
+            let tags_col = batch
+                .column_by_name("tags")
+                .map(|col| col.as_any().downcast_ref::<StringArray>().unwrap());
 
             for i in 0..batch.num_rows() {
                 let mut metadata = serde_json::Map::new();
@@ -292,6 +327,24 @@ impl InternalIndexStore {
                             "title".to_string(),
                             serde_json::Value::String(col.value(i).to_string()),
                         );
+                    }
+                }
+                if let Some(col) = memory_id_col {
+                    if !col.is_null(i) {
+                        metadata.insert(
+                            "id".to_string(), // Keep consistent with user expectation
+                            serde_json::Value::String(col.value(i).to_string()),
+                        );
+                    }
+                }
+                if let Some(col) = tags_col {
+                    if !col.is_null(i) {
+                        let tags = col
+                            .value(i)
+                            .split(',')
+                            .map(|s| serde_json::Value::String(s.to_string()))
+                            .collect::<Vec<_>>();
+                        metadata.insert("tags".to_string(), serde_json::Value::Array(tags));
                     }
                 }
 
@@ -326,6 +379,49 @@ impl InternalIndexStore {
             chunks.len()
         );
         Ok(chunks)
+    }
+
+    /// Find an internal document path by any metadata key-value pair
+    pub async fn find_path_by_meta(&self, key: &str, value: &str) -> Result<Option<String>> {
+        let table_names = self.conn.table_names().execute().await?;
+        if !table_names.contains(&self.table_name) {
+            return Ok(None);
+        }
+
+        let table = self.conn.open_table(&self.table_name).execute().await?;
+
+        // Query all internal metadata
+        let results = table.query().execute().await?;
+
+        let mut stream = results;
+        while let Some(batch) = stream.try_next().await? {
+            let col = batch
+                .column_by_name(key)
+                .ok_or_else(|| anyhow::anyhow!("Missing column: {}", key))?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| anyhow::anyhow!("Failed to downcast column: {}", key))?;
+
+            let file_path_col = batch
+                .column_by_name("file_path")
+                .ok_or_else(|| anyhow::anyhow!("Missing file_path column"))?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| anyhow::anyhow!("Failed to downcast file_path"))?;
+
+            for i in 0..batch.num_rows() {
+                if !col.is_null(i) && col.value(i) == value {
+                    return Ok(Some(file_path_col.value(i).to_string()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Find an internal document path by memory ID
+    pub async fn find_path_by_memory_id(&self, memory_id: &str) -> Result<Option<String>> {
+        self.find_path_by_meta("memory_id", memory_id).await
     }
 
     /// List all documents in the internal index

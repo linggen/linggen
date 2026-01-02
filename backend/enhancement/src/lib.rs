@@ -252,9 +252,13 @@ impl PromptEnhancer {
             profile.profile_name, profile.description,
         );
 
+        let memory_anchors_text = "MEMORY ANCHORS:\nLinggen supports memory anchors in code. \
+        - To read a memory: If you see comments like '//linggen memory: <ID>' (e.g., //linggen memory: 4f7a905824), use the 'memory_fetch_by_meta' tool with key='id' and value='<ID>'. \
+        - To create/update a memory: Simply edit or create a markdown file in the '.linggen/memory/' directory. Ensure it has a YAML frontmatter with a unique 10-character 'id', a 'title', and optional 'tags'. Linggen will automatically index these changes.";
+
         let enhanced = format!(
-            "{}\n\nCONTEXT:\n{}\n\nUSER PREFERENCES:\n{}\n\nTASK: {:?}\n\nQUERY:\n{}",
-            profile_text, context_text, preferences, intent, query
+            "{}\n\n{}\n\nCONTEXT:\n{}\n\nUSER PREFERENCES:\n{}\n\nTASK: {:?}\n\nQUERY:\n{}",
+            profile_text, memory_anchors_text, context_text, preferences, intent, query
         );
 
         Ok(enhanced)

@@ -36,10 +36,10 @@ COPY . .
 WORKDIR /app/backend
 RUN cargo build --release -p api
 
-# Copy backend binary to where Tauri expects it
+# Copy backend binary to where Tauri expects it as a sidecar
 WORKDIR /app/frontend/src-tauri
 RUN mkdir -p binaries && \
-    cp /app/backend/target/release/api binaries/linggen-backend-x86_64-unknown-linux-gnu
+    cp /app/backend/target/release/linggen-server binaries/linggen-server-x86_64-unknown-linux-gnu
 
 # Install frontend dependencies
 WORKDIR /app/frontend

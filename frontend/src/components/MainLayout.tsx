@@ -17,6 +17,7 @@ interface MainLayoutProps {
     statusElement: ReactNode
     children: ReactNode
     resources?: Resource[]
+    resourcesVersion?: number
     selectedSourceId?: string | null
     onSelectSource?: (id: string | null) => void
     selectedNotePath?: string | null
@@ -32,6 +33,7 @@ export function MainLayout({
     statusElement,
     children,
     resources,
+    resourcesVersion,
     selectedSourceId,
     onSelectSource,
     selectedNotePath,
@@ -55,6 +57,7 @@ export function MainLayout({
                     currentView={currentView}
                     onChangeView={onChangeView}
                     resources={resources}
+                    resourcesVersion={resourcesVersion}
                     selectedSourceId={selectedSourceId}
                     onSelectSource={onSelectSource}
                     selectedNotePath={selectedNotePath}

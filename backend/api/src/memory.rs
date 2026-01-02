@@ -57,7 +57,7 @@ impl MemoryStore {
         Ok(Self { root })
     }
 
-    fn memory_dir(&self) -> PathBuf {
+    pub fn memory_dir(&self) -> PathBuf {
         self.root.clone()
     }
 
@@ -128,20 +128,42 @@ impl MemoryStore {
     }
 
     pub fn read(&self, id: &str) -> Result<MemoryEntry> {
+        // Try direct access first (new format: <id>.md)
+        let direct_path = self.memory_dir().join(format!("{}.md", id));
+        if direct_path.exists() {
+            if let Ok(mem) = self.read_from_path(&direct_path) {
+                if mem.meta.id == id {
+                    return Ok(mem);
+                }
+            }
+        }
+
+        // Fallback to list search (old format or mismatched filename)
         let entries = self.list()?;
         entries
             .into_iter()
             .find(|m| m.meta.id == id)
-            .ok_or_else(|| anyhow!("Memory not found"))
+            .ok_or_else(|| anyhow!("Memory not found: {}", id))
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
+        // Try direct access first
+        let direct_path = self.memory_dir().join(format!("{}.md", id));
+        if direct_path.exists() {
+            if let Ok(mem) = self.read_from_path(&direct_path) {
+                if mem.meta.id == id {
+                    fs::remove_file(direct_path)?;
+                    return Ok(());
+                }
+            }
+        }
+
         let entries = self.list()?;
         if let Some(mem) = entries.into_iter().find(|m| m.meta.id == id) {
             fs::remove_file(mem.path)?;
             return Ok(());
         }
-        Err(anyhow!("Memory not found"))
+        Err(anyhow!("Memory not found: {}", id))
     }
 
     pub fn create(
@@ -155,13 +177,9 @@ impl MemoryStore {
     ) -> Result<MemoryEntry> {
         let now = Utc::now();
         let uuid = Uuid::new_v4().to_string();
-        let short_id = uuid.chars().take(8).collect::<String>();
-        let id = format!("mem_{}", uuid);
-        let slug = slugify(title);
-        // Short, filesystem-friendly filename (avoid colons/timezones; keep stable uniqueness)
-        // Example: 20251216-192050__hello-memory-test__1a2b3c4d.md
-        let ts = now.format("%Y%m%d-%H%M%S").to_string();
-        let filename = format!("{}__{}__{}.md", ts, slug, short_id);
+        let short_id = uuid.chars().take(10).collect::<String>();
+        let id = short_id.clone();
+        let filename = format!("{}.md", short_id);
         let path = self.memory_dir().join(filename);
 
         let meta = MemoryMeta {
@@ -226,7 +244,7 @@ impl MemoryStore {
         Ok(())
     }
 
-    fn read_from_path(&self, path: &Path) -> Result<MemoryEntry> {
+    pub fn read_from_path(&self, path: &Path) -> Result<MemoryEntry> {
         let mut content = String::new();
         fs::File::open(path)?.read_to_string(&mut content)?;
 

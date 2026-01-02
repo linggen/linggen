@@ -153,6 +153,33 @@ pub async fn add_resource(
         .add_source(&source)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Start watcher for the new source if it has a .linggen folder
+    if source.source_type == linggen_core::SourceType::Local {
+        let linggen_path = std::path::PathBuf::from(&source.path).join(".linggen");
+        if linggen_path.exists() {
+            let internal_index_store = state.internal_index_store.clone();
+            let embedding_model = state.embedding_model.clone();
+            let chunker = state.chunker.clone();
+            let broadcast_tx = state.broadcast_tx.clone();
+            let source_id = source.id.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = crate::internal_indexer::start_internal_watcher(
+                    internal_index_store,
+                    embedding_model,
+                    chunker,
+                    broadcast_tx,
+                    source_id,
+                    linggen_path,
+                )
+                .await
+                {
+                    tracing::warn!("Failed to start watcher for new source: {}", e);
+                }
+            });
+        }
+    }
+
     // Track source_added analytics event (non-blocking)
     let source_type_for_analytics = source.source_type.clone();
     tokio::spawn(async move {
@@ -220,8 +247,8 @@ pub async fn remove_resource(
 ) -> Result<Json<RemoveResourceResponse>, (StatusCode, String)> {
     tracing::info!("Removing source {} and all associated data", req.id);
 
-    // Get the source before deleting to access its path
-    let source = state
+    // Get the source before deleting (checking if it exists)
+    let _source = state
         .metadata_store
         .get_source(&req.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

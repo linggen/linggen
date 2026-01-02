@@ -25,6 +25,7 @@ use crate::handlers::{
 };
 use crate::job_manager::JobManager;
 
+//.linggen/memory/2025-12-16T19:20:50.051071+00:00__hello-memory-test__mem_48748d35-9c3f-4526-b85e-c84dc5f9ef92.md
 #[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
     // On Unix, `kill(pid, 0)` checks for existence without sending a signal.
@@ -430,6 +431,8 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     // This avoids writing memories under `backend/.linggen/` when the server is started from `backend/`.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let linggen_dir = find_workspace_linggen_dir(&cwd);
+    // Canonicalize linggen_dir to ensure path matching works reliably in the watcher
+    let linggen_dir = std::fs::canonicalize(&linggen_dir).unwrap_or(linggen_dir);
     let memory_dir = linggen_dir.join("memory");
 
     // Best-effort migration: move any nested `.linggen/memory/*.md` into the repo-root memory dir.
@@ -446,19 +449,76 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     }
     info!("Using memory store at {:?}", memory_dir);
     let memory_store = Arc::new(
-        crate::memory::MemoryStore::new(memory_dir).expect("Failed to initialize memory store"),
+        crate::memory::MemoryStore::new(memory_dir.clone())
+            .expect("Failed to initialize memory store"),
     );
 
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel(100);
+
     let app_state = Arc::new(AppState {
-        embedding_model,
-        chunker,
-        vector_store,
-        internal_index_store,
-        metadata_store,
-        memory_store,
+        embedding_model: embedding_model.clone(),
+        chunker: chunker.clone(),
+        vector_store: vector_store.clone(),
+        internal_index_store: internal_index_store.clone(),
+        metadata_store: metadata_store.clone(),
+        memory_store: memory_store.clone(),
         cancellation_flags: DashMap::new(),
-        job_manager,
-        graph_cache,
+        job_manager: job_manager.clone(),
+        graph_cache: graph_cache.clone(),
+        broadcast_tx: broadcast_tx.clone(),
+    });
+
+    // Start background watchers for all configured projects
+    let internal_index_store_clone = internal_index_store.clone();
+    let embedding_model_clone = embedding_model.clone();
+    let chunker_clone = chunker.clone();
+    let broadcast_tx_clone = broadcast_tx.clone();
+    let metadata_store_clone = metadata_store.clone();
+    let linggen_dir_clone = linggen_dir.clone();
+
+    tokio::spawn(async move {
+        // 1. Watch the global .linggen directory
+        if let Err(e) = crate::internal_indexer::start_internal_watcher(
+            internal_index_store_clone.clone(),
+            embedding_model_clone.clone(),
+            chunker_clone.clone(),
+            broadcast_tx_clone.clone(),
+            "global".to_string(),
+            linggen_dir_clone,
+        )
+        .await
+        {
+            warn!("Failed to start internal file watcher for global: {}", e);
+        }
+
+        // 2. Watch all existing local sources
+        if let Ok(sources) = metadata_store_clone.get_sources() {
+            for source in sources {
+                if source.source_type == linggen_core::SourceType::Local {
+                    let project_path = std::path::PathBuf::from(&source.path);
+                    let linggen_path = project_path.join(".linggen");
+
+                    if linggen_path.exists() {
+                        info!(
+                            "Starting internal watcher for source '{}' at {:?}",
+                            source.name, linggen_path
+                        );
+                        if let Err(e) = crate::internal_indexer::start_internal_watcher(
+                            internal_index_store_clone.clone(),
+                            embedding_model_clone.clone(),
+                            chunker_clone.clone(),
+                            broadcast_tx_clone.clone(),
+                            source.id.clone(),
+                            linggen_path,
+                        )
+                        .await
+                        {
+                            warn!("Failed to start watcher for {}: {}", source.name, e);
+                        }
+                    }
+                }
+            }
+        }
     });
 
     // Create MCP state (wraps app_state for MCP handlers)
@@ -492,6 +552,7 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         .with_state(app_state.clone());
 
     let api_routes = Router::new()
+        .route("/api/events", get(crate::handlers::events_handler))
         .route("/api/status", get(get_app_status))
         .route("/api/retry_init", post(retry_init))
         .route("/api/index_source", post(index_source))
@@ -608,11 +669,10 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             "/api/sources/:source_id/prompts/rename",
             post(crate::handlers::rename_prompt),
         )
-        // TODO: Internal index rescan endpoint - handler trait issue to be resolved
-        // .route(
-        //     "/api/sources/:source_id/internal/rescan",
-        //     post(rescan_internal_index),
-        // )
+        .route(
+            "/api/sources/:source_id/internal/rescan",
+            post(crate::handlers::rescan_internal_index),
+        )
         .with_state(app_state);
 
     // MCP routes (for Cursor integration)

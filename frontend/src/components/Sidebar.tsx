@@ -29,6 +29,7 @@ interface SidebarProps {
     currentView: View
     onChangeView: (view: View) => void
     resources?: Resource[]
+    resourcesVersion?: number
     selectedSourceId?: string | null
     onSelectSource?: (id: string | null) => void
     selectedNotePath?: string | null
@@ -54,6 +55,7 @@ export function Sidebar({
     currentView,
     onChangeView,
     resources = [],
+    resourcesVersion = 0,
     selectedSourceId,
     onSelectSource,
     selectedNotePath,
@@ -73,7 +75,7 @@ export function Sidebar({
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
     const [sourceMemories, setSourceMemories] = useState<Record<string, MemoryFile[]>>({});
 
-    // Refresh notes for expanded sources periodically or when resources change
+    // Refresh notes for expanded sources periodically or when resources/version change
     useEffect(() => {
         resources.forEach(resource => {
             if (expandedSources.has(resource.id)) {
@@ -81,7 +83,7 @@ export function Sidebar({
                 loadMemories(resource.id);
             }
         });
-    }, [expandedSources]);
+    }, [expandedSources, resources, resourcesVersion]);
 
     const loadNotes = async (sourceId: string) => {
         try {

@@ -16,4 +16,5 @@ pub struct AppState {
     pub cancellation_flags: DashMap<String, bool>, // job_id -> is_cancelled
     pub job_manager: Arc<JobManager>,
     pub graph_cache: Arc<GraphCache>,
+    pub broadcast_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
 }

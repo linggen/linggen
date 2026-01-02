@@ -5,7 +5,6 @@
 //! - `GET /mcp/sse` for Server-Sent Events (server -> client streaming)
 //! - `POST /mcp/message` for client -> server MCP messages
 
-use crate::memory::{MemoryCitation, MemoryScope};
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -237,6 +236,23 @@ pub async fn mcp_sse_handler(
 
     // Store sender in state
     state.mcp.clients.insert(session_id.clone(), tx.clone());
+
+    // Listen for broadcast events from AppState
+    let mut broadcast_rx = state.app.broadcast_tx.subscribe();
+    let tx_broadcast = tx.clone();
+    let session_id_broadcast = session_id.clone();
+    tokio::spawn(async move {
+        while let Ok(msg) = broadcast_rx.recv().await {
+            let event = Event::default().event("notification").data(msg.to_string());
+            if let Err(e) = tx_broadcast.send(Ok(event)).await {
+                warn!(
+                    "Failed to send broadcast event to session {}: {}",
+                    session_id_broadcast, e
+                );
+                break; // Client likely disconnected
+            }
+        }
+    });
 
     // Send initial endpoint event with session info
     let endpoint_event = serde_json::json!({
@@ -539,82 +555,8 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         serde_json::json!({
-            "name": "memory_create",
-            "description": "Create a new memory (Markdown with frontmatter) under .linggen/memory.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string" },
-                    "body": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "scope_source_ids": { "type": "array", "items": { "type": "string" } },
-                    "citations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "source_id": { "type": "string" },
-                                "file_path": { "type": "string" },
-                                "line_range": {
-                                    "type": "array",
-                                    "items": { "type": "integer" },
-                                    "description": "Two-element array [start, end]"
-                                }
-                            },
-                            "required": ["source_id", "file_path"]
-                        }
-                    },
-                    "confidence": { "type": "number" }
-                },
-                "required": ["title", "body"]
-            }
-        }),
-        serde_json::json!({
-            "name": "memory_update",
-            "description": "Update an existing memory by id.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "body": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "scope_source_ids": { "type": "array", "items": { "type": "string" } },
-                    "citations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "source_id": { "type": "string" },
-                                "file_path": { "type": "string" },
-                                "line_range": {
-                                    "type": "array",
-                                    "items": { "type": "integer" },
-                                    "description": "Two-element array [start, end]"
-                                }
-                            },
-                            "required": ["source_id", "file_path"]
-                        }
-                    },
-                    "confidence": { "type": "number" }
-                },
-                "required": ["id"]
-            }
-        }),
-        serde_json::json!({
-            "name": "memory_delete",
-            "description": "Delete a memory by id.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" }
-                },
-                "required": ["id"]
-            }
-        }),
-        serde_json::json!({
             "name": "memory_search_semantic",
-            "description": "Semantic (vector) search across memories using LanceDB. Returns structured JSON with source_id, file_path, title, and matching snippets. Best for finding conceptually related memories.",
+            "description": "Semantic (vector) search across memories using LanceDB. Returns structured JSON with source_id, file_path, title, and matching snippets. Best for finding conceptually related memories. Note: You may see references to memories in code as '//linggen memory: <ID>'. Use memory_fetch_by_meta to retrieve those specific memories.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -632,6 +574,24 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
                     }
                 },
                 "required": ["query"]
+            }
+        }),
+        serde_json::json!({
+            "name": "memory_fetch_by_meta",
+            "description": "Fetch the full content of a specific memory using any metadata field (anchor) defined in its frontmatter. Common keys include 'id' (from code comments like //linggen memory: <ID>), 'title', or any custom key added by the user.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "The metadata key to search for (e.g., 'id', 'title', 'feature')"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "The value to match exactly"
+                    }
+                },
+                "required": ["key", "value"]
             }
         }),
         serde_json::json!({
@@ -688,52 +648,16 @@ struct QueryParams {
 }
 
 #[derive(Deserialize)]
-struct MemorySearchParams {
-    query: Option<String>,
-    tags: Option<Vec<String>>,
-    source_id: Option<String>,
-    limit: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct MemoryCitationParam {
-    source_id: String,
-    file_path: String,
-    #[serde(default)]
-    line_range: Option<Vec<i64>>, // [start, end]
-}
-
-#[derive(Deserialize)]
-struct MemoryCreateParams {
-    title: String,
-    body: String,
-    tags: Option<Vec<String>>,
-    scope_source_ids: Option<Vec<String>>,
-    citations: Option<Vec<MemoryCitationParam>>,
-    confidence: Option<f64>,
-}
-
-#[derive(Deserialize)]
-struct MemoryUpdateParams {
-    id: String,
-    title: Option<String>,
-    body: Option<String>,
-    tags: Option<Vec<String>>,
-    scope_source_ids: Option<Vec<String>>,
-    citations: Option<Vec<MemoryCitationParam>>,
-    confidence: Option<f64>,
-}
-
-#[derive(Deserialize)]
-struct MemoryDeleteParams {
-    id: String,
-}
-
-#[derive(Deserialize)]
 struct MemorySearchSemanticParams {
     query: String,
     limit: Option<i64>,
     source_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MemoryFetchByMetaParams {
+    key: String,
+    value: String,
 }
 
 /// Execute a tool by name with given arguments
@@ -753,10 +677,8 @@ async fn execute_tool(
         "list_sources" => execute_list_sources(app_state).await,
         "get_status" => execute_get_status(app_state).await,
         "query_codebase" => execute_query_codebase(args, app_state).await,
-        "memory_create" => execute_memory_create(args, app_state).await,
-        "memory_update" => execute_memory_update(args, app_state).await,
-        "memory_delete" => execute_memory_delete(args, app_state).await,
         "memory_search_semantic" => execute_memory_search_semantic(args, app_state).await,
+        "memory_fetch_by_meta" => execute_memory_fetch_by_meta(args, app_state).await,
         _ => {
             error!("❌ [MCP] Unknown tool requested: {}", name);
             anyhow::bail!("Unknown tool: {}", name)
@@ -820,214 +742,6 @@ async fn execute_query_codebase(
     }
 
     Ok(output)
-}
-
-async fn execute_memory_search(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: MemorySearchParams = serde_json::from_value(args)?;
-    let limit = params
-        .limit
-        .map(|l| {
-            if l <= 0 {
-                10usize
-            } else {
-                (l.min(50)) as usize
-            }
-        })
-        .unwrap_or(10usize);
-
-    let results = app_state.memory_store.search(
-        params.query.as_deref(),
-        params.tags.as_ref().map(|v| v.as_slice()),
-        params.source_id.as_deref(),
-        Some(limit),
-    )?;
-
-    if results.is_empty() {
-        return Ok("No matching memories found.".to_string());
-    }
-
-    let mut out = String::new();
-    out.push_str(&format!("Found {} memories:\n\n", results.len()));
-    for (i, m) in results.iter().enumerate() {
-        out.push_str(&format!(
-            "{}. {} [tags: {}] (updated: {})\n{}\n\n",
-            i + 1,
-            m.meta.title,
-            if m.meta.tags.is_empty() {
-                "none".to_string()
-            } else {
-                m.meta.tags.join(", ")
-            },
-            m.meta.updated_at.to_rfc3339(),
-            m.body.lines().take(3).collect::<Vec<_>>().join("\n")
-        ));
-    }
-    Ok(out)
-}
-
-async fn execute_memory_create(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: MemoryCreateParams = serde_json::from_value(args)?;
-
-    let citations = params
-        .citations
-        .unwrap_or_default()
-        .into_iter()
-        .map(|c| MemoryCitation {
-            source_id: c.source_id,
-            file_path: c.file_path,
-            line_range: c.line_range.and_then(|v| {
-                if v.len() == 2 {
-                    Some((v[0], v[1]))
-                } else {
-                    None
-                }
-            }),
-        })
-        .collect();
-
-    let mem = app_state.memory_store.create(
-        &params.title,
-        &params.body,
-        params.tags.unwrap_or_default(),
-        MemoryScope {
-            source_ids: params.scope_source_ids.unwrap_or_default(),
-        },
-        citations,
-        params.confidence,
-    )?;
-
-    // Index in background
-    let internal_index_store = app_state.internal_index_store.clone();
-    let embedding_model = app_state.embedding_model.clone();
-    let chunker = app_state.chunker.clone();
-    let source_id = "global".to_string();
-    let file_path = mem.path.clone();
-    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
-
-    tokio::spawn(async move {
-        if let Err(e) = crate::internal_indexer::index_internal_file(
-            &internal_index_store,
-            &embedding_model,
-            &chunker,
-            &source_id,
-            &file_path,
-            &relative_path,
-        )
-        .await
-        {
-            tracing::warn!("Failed to index global memory: {}", e);
-        }
-    });
-
-    Ok(format!(
-        "Memory created: id={} | title=\"{}\"",
-        mem.meta.id, mem.meta.title
-    ))
-}
-
-async fn execute_memory_update(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: MemoryUpdateParams = serde_json::from_value(args)?;
-
-    let citations = params.citations.map(|vec| {
-        vec.into_iter()
-            .map(|c| MemoryCitation {
-                source_id: c.source_id,
-                file_path: c.file_path,
-                line_range: c.line_range.and_then(|v| {
-                    if v.len() == 2 {
-                        Some((v[0], v[1]))
-                    } else {
-                        None
-                    }
-                }),
-            })
-            .collect()
-    });
-
-    let mem = app_state.memory_store.update(
-        &params.id,
-        params.title.as_deref(),
-        params.body.as_deref(),
-        params.tags,
-        params
-            .scope_source_ids
-            .map(|ids| MemoryScope { source_ids: ids }),
-        citations,
-        Some(params.confidence),
-    )?;
-
-    // Index in background
-    let internal_index_store = app_state.internal_index_store.clone();
-    let embedding_model = app_state.embedding_model.clone();
-    let chunker = app_state.chunker.clone();
-    let source_id = "global".to_string();
-    let file_path = mem.path.clone();
-    let relative_path = format!("memory/{}", mem.path.file_name().unwrap().to_string_lossy());
-
-    tokio::spawn(async move {
-        if let Err(e) = crate::internal_indexer::index_internal_file(
-            &internal_index_store,
-            &embedding_model,
-            &chunker,
-            &source_id,
-            &file_path,
-            &relative_path,
-        )
-        .await
-        {
-            tracing::warn!("Failed to index global memory: {}", e);
-        }
-    });
-
-    Ok(format!(
-        "Memory updated: id={} | title=\"{}\"",
-        mem.meta.id, mem.meta.title
-    ))
-}
-
-async fn execute_memory_delete(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    // Get info first to know relative path for unindexing
-    let params: MemoryDeleteParams = serde_json::from_value(args)?;
-    let relative_path = if let Ok(mem) = app_state.memory_store.read(&params.id) {
-        Some(format!(
-            "memory/{}",
-            mem.path.file_name().unwrap().to_string_lossy()
-        ))
-    } else {
-        None
-    };
-
-    app_state.memory_store.delete(&params.id)?;
-
-    if let Some(rel_path) = relative_path {
-        let internal_index_store = app_state.internal_index_store.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::internal_indexer::remove_internal_file(
-                &internal_index_store,
-                "global",
-                "memory",
-                &rel_path,
-            )
-            .await
-            {
-                tracing::warn!("Failed to unindex global memory: {}", e);
-            }
-        });
-    }
-
-    Ok(format!("Memory deleted: id={}", params.id))
 }
 
 async fn execute_memory_search_semantic(
@@ -1101,6 +815,53 @@ async fn execute_memory_search_semantic(
     );
 
     Ok(json_string)
+}
+
+async fn execute_memory_fetch_by_meta(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: MemoryFetchByMetaParams = serde_json::from_value(args)?;
+
+    // 1. Map 'id' to 'memory_id' for internal consistency
+    let search_key = if params.key == "id" {
+        "memory_id"
+    } else {
+        &params.key
+    };
+
+    // 2. Try to find the file path in LanceDB using the metadata
+    let file_path = app_state
+        .internal_index_store
+        .find_path_by_meta(search_key, &params.value)
+        .await?;
+
+    let mem = match file_path {
+        Some(path) => {
+            // Found via index! Read from path
+            let full_path = app_state.memory_store.memory_dir().join(path);
+            app_state.memory_store.read_from_path(&full_path)?
+        }
+        None => {
+            // Fallback: If it's an 'id' search, try the old-school filesystem scan
+            if params.key == "id" || params.key == "memory_id" {
+                app_state.memory_store.read(&params.value)?
+            } else {
+                anyhow::bail!("Memory not found with {}='{}'", params.key, params.value);
+            }
+        }
+    };
+
+    let mut output = String::new();
+    output.push_str(&format!("## Memory: {}\n", mem.meta.title));
+    output.push_str(&format!("ID: {}\n", mem.meta.id));
+    if !mem.meta.tags.is_empty() {
+        output.push_str(&format!("Tags: {}\n", mem.meta.tags.join(", ")));
+    }
+    output.push_str("\n---\n\n");
+    output.push_str(&mem.body);
+
+    Ok(output)
 }
 
 async fn execute_search_codebase(

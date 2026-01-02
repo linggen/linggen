@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod clear_data;
 pub mod enhance;
+pub mod events;
 pub mod graph;
 pub mod index;
 pub mod index_source;
@@ -24,6 +25,7 @@ pub mod upload;
 pub use chat::chat_stream;
 pub use clear_data::clear_all_data;
 pub use enhance::enhance_prompt;
+pub use events::events_handler;
 pub use graph::{get_graph, get_graph_status, get_graph_with_status, rebuild_graph};
 pub use index::AppState;
 pub use index_source::index_source;
@@ -32,7 +34,7 @@ pub use jobs::{cancel_job, list_jobs};
 // pub use preferences::{get_preferences, update_preferences};
 
 pub use internal_rescan::rescan_internal_index;
-pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
+// pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
 pub use memory_semantic::search_semantic as memory_search_semantic;
 pub use prompts::{delete_prompt, get_prompt, list_prompts, rename_prompt, save_prompt};
 pub use resources::{
