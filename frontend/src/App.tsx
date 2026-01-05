@@ -124,6 +124,7 @@ function App() {
         const data = JSON.parse(e.data)
         if (data.event === 'file_changed' || data.event === 'file_removed') {
           console.log(`[Real-time] Event received: ${data.event} - ${data.path}. Refreshing UI...`)
+          // linggen memory: 9488da103d
           setResourcesVersion((v) => v + 1)
         } else if (data.event === 'lagged') {
           console.warn('[Real-time] Event stream lagged. Some notifications might have been missed.')
