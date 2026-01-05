@@ -198,6 +198,8 @@ function App() {
         } else if (response.status === 'ready') {
           setStatus('idle')
           setStatusMessage(null)
+          // Refresh resources when backend becomes ready
+          setResourcesVersion(v => v + 1)
         } else if (response.status === 'error') {
           setStatus('error')
           setStatusMessage(response.message || 'Initialization failed')
@@ -216,6 +218,8 @@ function App() {
         if (response.status === 'ready') {
           setStatus('idle')
           setStatusMessage(null)
+          // Refresh resources when backend becomes ready
+          setResourcesVersion(v => v + 1)
           clearInterval(statusInterval)
         } else if (response.status === 'initializing') {
           setStatus('initializing')
@@ -276,7 +280,7 @@ function App() {
     }
 
     fetchJobs()
-  }, [])
+  }, [resourcesVersion])
 
   // Start polling when we detect a running job (e.g., on page load)
   useEffect(() => {

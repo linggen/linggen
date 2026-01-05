@@ -101,14 +101,21 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     info!("Initializing metadata store...");
 
     // Allow overriding the data directory to run multiple instances (e.g. dev server alongside app).
-    // Example:
-    //   LINGGEN_DATA_DIR="$HOME/Library/Application Support/Linggen-dev" linggen-server --port 8788
     let base_data_dir = if let Ok(dir) = std::env::var("LINGGEN_DATA_DIR") {
         PathBuf::from(dir)
     } else {
-        data_dir()
-            .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"))
-            .join("Linggen")
+        // Priority:
+        // 1. macOS/Linux standard App Data dir (~/Library/Application Support/Linggen)
+        // 2. If that fails, ONLY THEN fall back to current directory (dev mode)
+        data_dir().map(|d| d.join("Linggen")).unwrap_or_else(|| {
+            // Dev fallback: look for a 'data' folder in the workspace
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            if cwd.join("data").is_dir() {
+                cwd.join("data")
+            } else {
+                cwd.join("Linggen")
+            }
+        })
     };
 
     let metadata_path = base_data_dir.join("metadata.redb");
@@ -427,13 +434,12 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
             .expect("Failed to initialize graph cache"),
     );
 
-    // Memory store: prefer the workspace root `.linggen/` if present.
-    // This avoids writing memories under `backend/.linggen/` when the server is started from `backend/`.
+    // Memory store:
+    // - Prefer a workspace/repo `.linggen/` when running inside a project.
+    // - But when launched from Finder / as a sidecar, cwd may be `/` and is not writable.
+    //   In that case fall back to the stable app data dir (Application Support/Linggen).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let linggen_dir = find_workspace_linggen_dir(&cwd);
-    // Canonicalize linggen_dir to ensure path matching works reliably in the watcher
-    let linggen_dir = std::fs::canonicalize(&linggen_dir).unwrap_or(linggen_dir);
-    let memory_dir = linggen_dir.join("memory");
+    let (linggen_dir, memory_dir) = resolve_memory_dirs(&cwd, &base_data_dir);
 
     // Best-effort migration: move any nested `.linggen/memory/*.md` into the repo-root memory dir.
     for nested in find_all_linggen_dirs(&cwd) {
@@ -718,6 +724,57 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
 
 async fn root_handler() -> &'static str {
     "Hello from Linggen Backend!"
+}
+
+fn is_writable_dir(path: &Path) -> bool {
+    // We consider a directory "writable" if we can create it (if missing) and create a temp file.
+    if std::fs::create_dir_all(path).is_err() {
+        return false;
+    }
+    let probe = path.join(".linggen_write_probe");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn resolve_memory_dirs(cwd: &Path, base_data_dir: &Path) -> (PathBuf, PathBuf) {
+    // 1. Check for an explicit workspace/repo '.linggen' directory first.
+    let candidate_linggen_dir = find_workspace_linggen_dir(cwd);
+    let candidate_linggen_dir =
+        std::fs::canonicalize(&candidate_linggen_dir).unwrap_or(candidate_linggen_dir);
+
+    let home = dirs::home_dir().and_then(|h| std::fs::canonicalize(h).ok());
+
+    // Only use the workspace candidate if:
+    // - It has a parent (not root)
+    // - It's writable
+    // - It is NOT exactly $HOME/.linggen (we want to use Application Support for global data)
+    let is_home_linggen = home
+        .map(|h| candidate_linggen_dir == h.join(".linggen"))
+        .unwrap_or(false);
+
+    if candidate_linggen_dir.parent().is_some()
+        && is_writable_dir(&candidate_linggen_dir)
+        && !is_home_linggen
+    {
+        let memory_dir = candidate_linggen_dir.join("memory");
+        return (candidate_linggen_dir, memory_dir);
+    }
+
+    // 2. Fallback: Use the stable app data directory (~/Library/Application Support/Linggen/.linggen)
+    let fallback_linggen_dir = base_data_dir.join(".linggen");
+    let fallback_memory_dir = fallback_linggen_dir.join("memory");
+
+    (fallback_linggen_dir, fallback_memory_dir)
 }
 
 fn find_git_root(start: &Path) -> Option<PathBuf> {
