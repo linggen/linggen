@@ -8,7 +8,6 @@ import {
   type GraphEdge,
   type GraphStatusResponse,
 } from '../api';
-import './GraphView.css';
 
 export interface SelectedNodeInfo {
   id: string;
@@ -516,8 +515,8 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
 
   if (loading) {
     return (
-      <div className="graph-view graph-loading">
-        <div className="loading-spinner"></div>
+      <div className="flex flex-col flex-1 items-center justify-center h-full bg-[var(--bg-app)] text-[var(--text-secondary)] p-8">
+        <div className="w-10 h-10 border-3 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4"></div>
         <p>Loading graph...</p>
       </div>
     );
@@ -525,51 +524,53 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
 
   if (error) {
     return (
-      <div className="graph-view graph-error">
+      <div className="flex flex-col flex-1 items-center justify-center h-full bg-[var(--bg-app)] text-red-400 p-8">
         <p>Error: {error}</p>
-        <button onClick={fetchGraph}>Retry</button>
+        <button onClick={fetchGraph} className="btn-primary mt-4">Retry</button>
       </div>
     );
   }
 
   if (status?.status === 'missing') {
     return (
-      <div className="graph-view graph-empty">
+      <div className="flex flex-col flex-1 items-center justify-center h-full bg-[var(--bg-app)] text-[var(--text-secondary)] p-8">
         <p>No graph available yet.</p>
-        <p className="hint">The graph will be built automatically after indexing completes.</p>
-        <button onClick={handleRebuild}>Build Graph Now</button>
+        <p className="text-xs text-[var(--text-muted)] mt-2 italic">The graph will be built automatically after indexing completes.</p>
+        <button onClick={handleRebuild} className="btn-primary mt-4">Build Graph Now</button>
       </div>
     );
   }
 
   if (status?.status === 'building') {
     return (
-      <div className="graph-view graph-building">
-        <div className="loading-spinner"></div>
+      <div className="flex flex-col flex-1 items-center justify-center h-full bg-[var(--bg-app)] text-[var(--text-secondary)] p-8">
+        <div className="w-10 h-10 border-3 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4"></div>
         <p>Building graph...</p>
-        <p className="hint">This may take a moment for large projects.</p>
+        <p className="text-xs text-[var(--text-muted)] mt-2 italic">This may take a moment for large projects.</p>
       </div>
     );
   }
 
   return (
-    <div className="graph-view">
-      <div className="graph-toolbar">
-        <div className="graph-search">
+    <div className="flex flex-col flex-1 h-full bg-[#1a1a2e] rounded-lg overflow-hidden relative">
+      <div className="flex items-center gap-4 px-4 py-3 bg-black/20 border-b border-[var(--border-color)] flex-wrap">
+        <div className="flex gap-2">
           <input
             type="text"
             placeholder="Search files..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            className="px-3 py-1.5 bg-[var(--bg-app)] border border-[var(--border-color)] rounded text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--accent)] min-w-[200px]"
           />
-          <button onClick={handleSearch}>Search</button>
+          <button onClick={handleSearch} className="btn-secondary !normal-case">Search</button>
         </div>
 
-        <div className="graph-filters">
+        <div className="flex items-center gap-2">
           <select
             value={folderFilter}
             onChange={(e) => setFolderFilter(e.target.value)}
+            className="px-3 py-1.5 bg-[var(--bg-app)] border border-[var(--border-color)] rounded text-sm text-[var(--text-primary)] outline-none cursor-pointer focus:border-[var(--accent)]"
           >
             <option value="">All folders</option>
             {folders.map((folder) => (
@@ -580,42 +581,42 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
           </select>
         </div>
 
-        <div className="graph-zoom">
+        <div className="flex gap-1">
           <button onClick={() => {
             const currentZoom = graphRef.current?.zoom();
             if (currentZoom) graphRef.current?.zoom(currentZoom * 1.5, 300);
-          }} title="Zoom in">
+          }} title="Zoom in" className="btn-secondary !px-2.5 font-bold">
             +
           </button>
           <button onClick={() => {
             const currentZoom = graphRef.current?.zoom();
             if (currentZoom) graphRef.current?.zoom(currentZoom / 1.5, 300);
-          }} title="Zoom out">
+          }} title="Zoom out" className="btn-secondary !px-2.5 font-bold">
             −
           </button>
-          <button onClick={() => graphRef.current?.zoomToFit(400, 50)} title="Fit to view">
+          <button onClick={() => graphRef.current?.zoomToFit(400, 50)} title="Fit to view" className="btn-secondary !px-2.5">
             Fit
           </button>
         </div>
 
-        <div className="graph-actions">
-          <button onClick={handleRebuild} title="Rebuild graph">
+        <div className="ml-auto">
+          <button onClick={handleRebuild} title="Rebuild graph" className="btn-secondary">
             Rebuild
           </button>
         </div>
 
-        <div className="graph-stats">
-          <span>{nodes.length} files</span>
-          <span>{links.length} dependencies</span>
+        <div className="flex items-center gap-4 text-[11px] text-[var(--text-secondary)] tracking-tight">
+          <span className="whitespace-nowrap">{nodes.length} files</span>
+          <span className="whitespace-nowrap">{links.length} dependencies</span>
           {status?.built_at && (
-            <span className="hint">
-              Built: {new Date(status.built_at).toLocaleString()}
+            <span className="opacity-60 italic hidden sm:inline">
+              Built: {new Date(status.built_at).toLocaleTimeString()}
             </span>
           )}
         </div>
       </div>
 
-      <div className="graph-container" ref={containerRef}>
+      <div className="flex-1 min-h-0 relative" ref={containerRef}>
         <ForceGraph2D
           ref={graphRef}
           width={dimensions.width}
@@ -641,12 +642,15 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       </div>
 
       {selectedNode && (
-        <div className="graph-node-detail">
-          <h4>Selected File</h4>
-          <p className="node-id">{selectedNode}</p>
-          <div className="node-connections">
-            <h5>Connections</h5>
-            <ul>
+        <div className="absolute bottom-4 right-4 w-[300px] max-h-[300px] bg-black/80 backdrop-blur-md border border-[var(--border-color)] rounded-lg p-4 overflow-y-auto z-10 shadow-2xl flex flex-col gap-3">
+          <div>
+            <h4 className="m-0 text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">Selected File</h4>
+            <p className="m-0 font-mono text-[11px] text-blue-400 break-all">{selectedNode}</p>
+          </div>
+          
+          <div className="flex flex-col gap-2">
+            <h5 className="m-0 text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Connections</h5>
+            <ul className="list-none p-0 m-0 max-h-[150px] overflow-y-auto flex flex-col gap-1">
               {links
                 .filter((l) => {
                   const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
@@ -657,30 +661,31 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
                   const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
                   const targetId = typeof l.target === 'object' ? l.target.id : l.target;
                   const isOutgoing = sourceId === selectedNode;
+                  const otherNodeId = isOutgoing ? targetId : sourceId;
                   return (
-                    <li key={i}>
-                      {isOutgoing ? '→ ' : '← '}
-                      <span
-                        className="connection-target"
+                    <li key={i} className="text-[11px] text-[var(--text-secondary)] flex items-center gap-1.5">
+                      <span className="opacity-50">{isOutgoing ? '→' : '←'}</span>
+                      <button
+                        className="text-left text-blue-400 hover:underline break-all bg-transparent border-none p-0 cursor-pointer flex-1"
                         onClick={() => {
-                          setSelectedNode(isOutgoing ? targetId : sourceId);
+                          setSelectedNode(otherNodeId);
                           const targetNode = nodes.find(
-                            (n) => n.id === (isOutgoing ? targetId : sourceId)
+                            (n) => n.id === otherNodeId
                           );
                           if (targetNode && targetNode.x !== undefined && targetNode.y !== undefined && graphRef.current) {
                             graphRef.current.centerAt(targetNode.x, targetNode.y, 500);
                           }
                         }}
                       >
-                        {isOutgoing ? targetId : sourceId}
-                      </span>
-                      <span className="connection-kind">({l.kind})</span>
+                        {otherNodeId}
+                      </button>
+                      <span className="text-[9px] text-[var(--text-muted)] opacity-70">({l.kind})</span>
                     </li>
                   );
                 })}
             </ul>
           </div>
-          <button onClick={() => setSelectedNode(null)}>Close</button>
+          <button onClick={() => setSelectedNode(null)} className="btn-secondary !w-full !py-1 text-[10px]">Close</button>
         </div>
       )}
     </div>

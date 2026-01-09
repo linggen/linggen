@@ -513,31 +513,23 @@ export function Sidebar({
         onToggle: () => void, 
         actions?: React.ReactNode 
     }) => (
-        <div className="tree-header" style={{
-            padding: '4px 16px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginTop: '8px',
-            marginBottom: '4px',
-            cursor: 'pointer'
-        }} onClick={onToggle}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div 
+            className="px-4 py-1 flex justify-between items-center mt-2 mb-1 cursor-pointer select-none group"
+            onClick={onToggle}
+        >
+            <div className="flex items-center gap-1">
                 {isCollapsed ? (
-                    <ChevronRightIcon style={{ width: '10px', height: '10px', color: 'var(--text-secondary)' }} />
+                    <ChevronRightIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
                 ) : (
-                    <ChevronDownIcon style={{ width: '10px', height: '10px', color: 'var(--text-secondary)' }} />
+                    <ChevronDownIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
                 )}
-                <span style={{
-                    fontSize: '11px',
-                    fontWeight: '700',
-                    color: 'var(--text-secondary)',
-                    letterSpacing: '0.05em'
-                }}>{label}</span>
+                <span className="text-[11px] font-bold text-[var(--text-secondary)] tracking-wider">
+                    {label}
+                </span>
             </div>
 
             {actions && (
-                <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                     {actions}
                 </div>
             )}
@@ -545,9 +537,9 @@ export function Sidebar({
     );
 
     return (
-        <div className="sidebar">
-            <div className="sidebar-section">
-                <div className="sidebar-tree">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex-1 overflow-y-auto py-2.5 flex flex-col min-h-0">
+                <div className="flex flex-col mb-4">
                     <SidebarSectionHeader 
                         label="PROJECTS"
                         isCollapsed={isProjectsCollapsed}
@@ -555,332 +547,175 @@ export function Sidebar({
                         actions={
                             <>
                                 <button
-                                    className="icon-button"
+                                    className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         handleHeaderAddMarkdown();
                                     }}
                                     title="Add Doc"
-                                    style={{
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--text-secondary)',
-                                        padding: '2px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        borderRadius: '4px'
-                                    }}
                                 >
-                                    <DocumentPlusIcon style={{ width: '18px', height: '18px' }} />
+                                    <DocumentPlusIcon className="w-4.5 h-4.5" />
                                 </button>
                                 <button
-                                    className="icon-button"
+                                    className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         onAddSource?.();
                                     }}
                                     title="Add Project"
-                                    style={{
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--text-secondary)',
-                                        padding: '2px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        borderRadius: '4px'
-                                    }}
                                 >
-                                    <FolderPlusIcon style={{ width: '18px', height: '18px' }} />
+                                    <FolderPlusIcon className="w-4.5 h-4.5" />
                                 </button>
                             </>
                         }
                     />
 
-                    {!isProjectsCollapsed && resources.map(resource => (
-                        <div
-                            key={resource.id}
-                            onContextMenu={(e) => handleContextMenu(e, resource.id)}
-                            style={{ cursor: 'context-menu' }}
-                        >
+                    {!isProjectsCollapsed && resources.map(resource => {
+                        const notesCount = sourceNotes[resource.id]?.length || 0;
+                        const memoriesCount = sourceMemories[resource.id]?.length || 0;
+                        const totalItems = notesCount + memoriesCount;
+                        const isExpanded = expandedSources.has(resource.id);
+
+                        return (
                             <div
-                                className={`sidebar-item ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath && !selectedMemoryPath ? 'active' : ''}`}
-                                onClick={() => handleSourceClick(resource.id)}
-                                style={{
-                                    paddingLeft: '8px',
-                                    width: '100%',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                }}
+                                key={resource.id}
+                                onContextMenu={(e) => handleContextMenu(e, resource.id)}
+                                className="flex flex-col"
                             >
                                 <button
-                                    onClick={(e) => toggleSourceExpansion(e, resource.id)}
-                                    style={{
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--text-secondary)',
-                                        padding: '2px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                    }}
+                                    className={`sidebar-item pl-4 text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90 transition-colors ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath && !selectedMemoryPath ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : ''}`}
+                                    onClick={() => handleSourceClick(resource.id)}
                                 >
-                                    {expandedSources.has(resource.id) ? (
-                                        <ChevronDownIcon style={{ width: '12px', height: '12px' }} />
-                                    ) : (
-                                        <ChevronRightIcon style={{ width: '12px', height: '12px' }} />
+                                    <div
+                                        className="p-0.5 hover:text-[var(--text-active)] cursor-pointer"
+                                        onClick={(e) => toggleSourceExpansion(e, resource.id)}
+                                    >
+                                        {isExpanded ? (
+                                            <ChevronDownIcon className="w-3 h-3" />
+                                        ) : (
+                                            <ChevronRightIcon className="w-3 h-3" />
+                                        )}
+                                    </div>
+
+                                    <span className="overflow-hidden text-ellipsis whitespace-nowrap flex-1 text-left">
+                                        {resource.name}
+                                    </span>
+                                    {totalItems > 0 && (
+                                        <span className="text-[0.65rem] opacity-80">
+                                            {totalItems}
+                                        </span>
                                     )}
                                 </button>
 
-                                <FolderIcon className="sidebar-icon" style={{ width: '14px', height: '14px' }} />
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                    {resource.name}
-                                </span>
-                            </div>
-
-                            {expandedSources.has(resource.id) && (
-                                <>
-                                    {creatingNote === resource.id && (
-                                        <div
-                                            className="sidebar-item note-item"
-                                            style={{
-                                                paddingLeft: '32px',
-                                                fontSize: '0.85rem',
-                                                width: '100%',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '6px'
-                                            }}
-                                        >
-                                            <div style={{
-                                                fontSize: '10px',
-                                                fontWeight: 'bold',
-                                                color: '#60A5FA',
-                                                border: '1px solid #60A5FA',
-                                                borderRadius: '2px',
-                                                width: '14px',
-                                                height: '14px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                lineHeight: 1
-                                            }}>M</div>
-                                            <input
-                                                autoFocus
-                                                type="text"
-                                                defaultValue="New Note.md"
-                                                style={{
-                                                    background: 'var(--bg-app)',
-                                                    border: '1px solid var(--border-color)',
-                                                    borderRadius: '2px',
-                                                    color: 'var(--text-primary)',
-                                                    fontSize: 'inherit',
-                                                    width: '100%',
-                                                    outline: 'none',
-                                                    padding: '1px 4px'
-                                                }}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
-                                                        handleCreateNoteSubmit(resource.id, e.currentTarget.value);
-                                                    } else if (e.key === 'Escape') {
-                                                        setCreatingNote(null);
-                                                    }
-                                                    e.stopPropagation();
-                                                }}
-                                                onBlur={() => {
-                                                    setCreatingNote(null);
-                                                }}
-                                                onClick={(e) => e.stopPropagation()}
-                                            />
-                                        </div>
-                                    )}
-                                    {sourceNotes[resource.id]?.map((note) => (
-                                        renamingNote?.sourceId === resource.id && renamingNote.oldPath === note.path ? (
-                                            <div
-                                                key={note.path}
-                                                className="sidebar-item note-item"
-                                                style={{
-                                                    paddingLeft: '32px',
-                                                    fontSize: '0.85rem',
-                                                    width: '100%',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px'
-                                                }}
-                                                onClick={(e) => e.stopPropagation()}
-                                            >
-                                                <div style={{
-                                                    fontSize: '10px',
-                                                    fontWeight: 'bold',
-                                                    color: '#60A5FA',
-                                                    border: '1px solid #60A5FA',
-                                                    borderRadius: '2px',
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    lineHeight: 1
-                                                }}>M</div>
+                                {isExpanded && (
+                                    <div className="flex flex-col pl-2">
+                                        {creatingNote === resource.id && (
+                                            <div className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5">
+                                                <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">M</div>
                                                 <input
                                                     autoFocus
                                                     type="text"
-                                                    defaultValue={note.name}
-                                                    style={{
-                                                        background: 'var(--bg-app)',
-                                                        border: '1px solid var(--border-color)',
-                                                        borderRadius: '2px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: 'inherit',
-                                                        width: '100%',
-                                                        outline: 'none',
-                                                        padding: '1px 4px'
-                                                    }}
+                                                    defaultValue="New Note.md"
+                                                    className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter') {
-                                                            handleRenameSubmit(e.currentTarget.value);
+                                                            handleCreateNoteSubmit(resource.id, e.currentTarget.value);
                                                         } else if (e.key === 'Escape') {
-                                                            setRenamingNote(null);
+                                                            setCreatingNote(null);
                                                         }
                                                         e.stopPropagation();
                                                     }}
                                                     onBlur={() => {
-                                                        setRenamingNote(null);
+                                                        setCreatingNote(null);
                                                     }}
                                                     onClick={(e) => e.stopPropagation()}
                                                 />
                                             </div>
-                                        ) : (
-                                            <button
-                                                key={note.path}
-                                                className={`sidebar-item note-item ${selectedNotePath === note.path && selectedSourceId === resource.id ? 'active' : ''}`}
-                                                onClick={(e) => handleNoteClick(e, resource.id, note.path)}
-                                                onContextMenu={(e) => handleContextMenu(e, resource.id, note.path)}
-                                                style={{
-                                                    paddingLeft: '32px',
-                                                    fontSize: '0.85rem',
-                                                    width: '100%',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px',
-                                                    color: selectedNotePath === note.path && selectedSourceId === resource.id ? 'var(--text-active)' : 'var(--text-secondary)',
-                                                    backgroundColor: selectedNotePath === note.path && selectedSourceId === resource.id ? 'var(--bg-active)' : 'transparent',
-                                                    opacity: 0.9
-                                                }}
-                                            >
-                                                <div style={{
-                                                    fontSize: '10px',
-                                                    fontWeight: 'bold',
-                                                    color: '#60A5FA',
-                                                    border: '1px solid #60A5FA',
-                                                    borderRadius: '2px',
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    lineHeight: 1
-                                                }}>M</div>
-                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {note.name}
-                                                </span>
-                                            </button>
-                                        )
-                                    ))}
-
-                                    {/* Memories */}
-                                    {sourceMemories[resource.id]?.length ? (
-                                        <>
-                                            <button
-                                                className="sidebar-item note-item"
-                                                onClick={(e) => toggleMemoriesExpansion(e, resource.id)}
-                                                style={{
-                                                    paddingLeft: '32px',
-                                                    marginTop: '6px',
-                                                    marginBottom: '4px',
-                                                    fontSize: '0.7rem',
-                                                    width: '100%',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px',
-                                                    color: 'var(--text-muted)',
-                                                    background: 'transparent',
-                                                    textTransform: 'uppercase',
-                                                    letterSpacing: '0.06em',
-                                                    opacity: 0.9,
-                                                }}
-                                                title={expandedMemories.has(resource.id) ? 'Collapse memories' : 'Expand memories'}
-                                            >
-                                                {expandedMemories.has(resource.id) ? (
-                                                    <ChevronDownIcon className="sidebar-icon" style={{ width: '14px', height: '14px' }} />
-                                                ) : (
-                                                    <ChevronRightIcon className="sidebar-icon" style={{ width: '14px', height: '14px' }} />
-                                                )}
-                                                <span style={{ flex: 1, textAlign: 'left' }}>Memories</span>
-                                                <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
-                                                    {sourceMemories[resource.id]?.length || 0}
-                                                </span>
-                                            </button>
-
-                                            {expandedMemories.has(resource.id) &&
-                                                sourceMemories[resource.id]?.map((mem) => (
-                                                    <button
-                                                        key={mem.path}
-                                                        className={`sidebar-item note-item ${selectedMemoryPath === mem.path && selectedSourceId === resource.id ? 'active' : ''}`}
-                                                        onClick={(e) => handleMemoryClick(e, resource.id, mem.path)}
-                                                        style={{
-                                                            paddingLeft: '48px',
-                                                            fontSize: '0.85rem',
-                                                            width: '100%',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px',
-                                                            color:
-                                                                selectedMemoryPath === mem.path && selectedSourceId === resource.id
-                                                                    ? 'var(--text-active)'
-                                                                    : 'var(--text-secondary)',
-                                                            backgroundColor:
-                                                                selectedMemoryPath === mem.path && selectedSourceId === resource.id
-                                                                    ? 'var(--bg-active)'
-                                                                    : 'transparent',
-                                                            opacity: 0.9,
+                                        )}
+                                        {sourceNotes[resource.id]?.map((note) => (
+                                            renamingNote?.sourceId === resource.id && renamingNote.oldPath === note.path ? (
+                                                <div
+                                                    key={note.path}
+                                                    className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">M</div>
+                                                    <input
+                                                        autoFocus
+                                                        type="text"
+                                                        defaultValue={note.name}
+                                                        className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                handleRenameSubmit(e.currentTarget.value);
+                                                            } else if (e.key === 'Escape') {
+                                                                setRenamingNote(null);
+                                                            }
+                                                            e.stopPropagation();
                                                         }}
-                                                    >
-                                                        <div
-                                                            style={{
-                                                                fontSize: '10px',
-                                                                fontWeight: 'bold',
-                                                                color: '#A78BFA',
-                                                                border: '1px solid #A78BFA',
-                                                                borderRadius: '2px',
-                                                                width: '14px',
-                                                                height: '14px',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                justifyContent: 'center',
-                                                                lineHeight: 1,
-                                                            }}
+                                                        onBlur={() => {
+                                                            setRenamingNote(null);
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    key={note.path}
+                                                    className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${selectedNotePath === note.path && selectedSourceId === resource.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
+                                                    onClick={(e) => handleNoteClick(e, resource.id, note.path)}
+                                                    onContextMenu={(e) => handleContextMenu(e, resource.id, note.path)}
+                                                >
+                                                    <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">M</div>
+                                                    <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                                                        {note.name}
+                                                    </span>
+                                                </button>
+                                            )
+                                        ))}
+
+                                        {/* Memories */}
+                                        {sourceMemories[resource.id]?.length ? (
+                                            <>
+                                                <button
+                                                    className="sidebar-item pl-8 mt-1.5 mb-1 text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90"
+                                                    onClick={(e) => toggleMemoriesExpansion(e, resource.id)}
+                                                    title={expandedMemories.has(resource.id) ? 'Collapse memories' : 'Expand memories'}
+                                                >
+                                                    {expandedMemories.has(resource.id) ? (
+                                                        <ChevronDownIcon className="w-3.5 h-3.5" />
+                                                    ) : (
+                                                        <ChevronRightIcon className="w-3.5 h-3.5" />
+                                                    )}
+                                                    <span className="flex-1 text-left">Memories</span>
+                                                    <span className="text-[0.65rem] opacity-80">
+                                                        {sourceMemories[resource.id]?.length || 0}
+                                                    </span>
+                                                </button>
+
+                                                {expandedMemories.has(resource.id) &&
+                                                    sourceMemories[resource.id]?.map((mem) => (
+                                                        <button
+                                                            key={mem.path}
+                                                            className={`sidebar-item pl-12 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${selectedMemoryPath === mem.path && selectedSourceId === resource.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
+                                                            onClick={(e) => handleMemoryClick(e, resource.id, mem.path)}
                                                         >
-                                                            M
-                                                        </div>
-                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {mem.name}
-                                                        </span>
-                                                    </button>
-                                                ))}
-                                        </>
-                                    ) : null}
-                                </>
-                            )}
-                        </div>
-                    ))}
+                                                            <div className="text-[10px] font-bold text-purple-400 border border-purple-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">M</div>
+                                                            <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                                                                {mem.name}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                            </>
+                                        ) : null}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
 
-                <div className="sidebar-tree" style={{ marginTop: '16px' }}>
+                <div className="flex flex-col mb-4">
                     <SidebarSectionHeader 
                         label="LIBRARY"
                         isCollapsed={isLibraryCollapsed}
@@ -891,82 +726,41 @@ export function Sidebar({
                         actions={
                             <>
                                 <button
-                                    className="icon-button"
+                                    className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setCreatingLibraryPack('general');
                                         if (isLibraryCollapsed) setIsLibraryCollapsed(false);
                                     }}
                                     title="Add Library File"
-                                    style={{
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--text-secondary)',
-                                        padding: '2px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        borderRadius: '4px'
-                                    }}
                                 >
-                                    <DocumentPlusIcon style={{ width: '18px', height: '18px' }} />
+                                    <DocumentPlusIcon className="w-4.5 h-4.5" />
                                 </button>
                                 <button
-                                    className="icon-button"
+                                    className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setCreatingLibraryFolder(true);
                                         if (isLibraryCollapsed) setIsLibraryCollapsed(false);
                                     }}
                                     title="Add Library Folder"
-                                    style={{
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--text-secondary)',
-                                        padding: '2px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        borderRadius: '4px'
-                                    }}
                                 >
-                                    <FolderPlusIcon style={{ width: '18px', height: '18px' }} />
+                                    <FolderPlusIcon className="w-4.5 h-4.5" />
                                 </button>
                             </>
                         }
                     />
 
                     {!isLibraryCollapsed && (
-                        <div style={{ padding: '0 8px' }}>
+                        <div className="px-2">
                             {creatingLibraryFolder && (
-                                <div
-                                    className="sidebar-item note-item"
-                                    style={{
-                                        paddingLeft: '16px',
-                                        fontSize: '0.85rem',
-                                        width: '100%',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                    }}
-                                >
-                                    <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
+                                <div className="sidebar-item pl-4 text-[0.85rem] w-full flex items-center gap-1.5">
+                                    <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                                     <input
                                         autoFocus
                                         type="text"
                                         defaultValue="new-folder"
-                                        style={{
-                                            background: 'var(--bg-app)',
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: '2px',
-                                            color: 'var(--text-primary)',
-                                            fontSize: 'inherit',
-                                            width: '100%',
-                                            outline: 'none',
-                                            padding: '1px 4px'
-                                        }}
+                                        className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 handleCreateLibraryFolderSubmit(e.currentTarget.value);
@@ -981,34 +775,15 @@ export function Sidebar({
                             {Object.entries(libraryGroups).map(([folder, packs]) => {
                                 const isRenamingFolder = folder && renamingLibraryFolder?.oldName === folder;
                                 return (
-                                    <div key={folder}>
+                                    <div key={folder} className="flex flex-col">
                                         {isRenamingFolder ? (
-                                            <div
-                                                className="sidebar-item note-item"
-                                                style={{
-                                                    paddingLeft: '16px',
-                                                    fontSize: '0.85rem',
-                                                    width: '100%',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px'
-                                                }}
-                                            >
-                                                <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
+                                            <div className="sidebar-item pl-4 text-[0.85rem] w-full flex items-center gap-1.5">
+                                                <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                                                 <input
                                                     autoFocus
                                                     type="text"
                                                     defaultValue={folder}
-                                                    style={{
-                                                        background: 'var(--bg-app)',
-                                                        border: '1px solid var(--border-color)',
-                                                        borderRadius: '2px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: 'inherit',
-                                                        width: '100%',
-                                                        outline: 'none',
-                                                        padding: '1px 4px'
-                                                    }}
+                                                    className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter') {
                                                             handleRenameLibraryFolderSubmit(e.currentTarget.value);
@@ -1021,75 +796,31 @@ export function Sidebar({
                                             </div>
                                         ) : (
                                             <button
-                                                className="sidebar-item note-item"
+                                                className="sidebar-item pl-4 text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90"
                                                 onClick={() => toggleLibraryFolder(folder)}
                                                 onContextMenu={(e) => handleLibraryContextMenu(e, undefined, folder)}
-                                                style={{ 
-                                                    paddingLeft: '16px',
-                                                    fontSize: '0.7rem',
-                                                    width: '100%',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px',
-                                                    color: 'var(--text-muted)',
-                                                    background: 'transparent',
-                                                    textTransform: 'uppercase',
-                                                    letterSpacing: '0.06em',
-                                                    opacity: 0.9,
-                                                }}
                                             >
                                                 {expandedLibraryFolders.has(folder) ? (
-                                                    <ChevronDownIcon style={{ width: '12px', height: '12px' }} />
+                                                    <ChevronDownIcon className="w-3 h-3" />
                                                 ) : (
-                                                    <ChevronRightIcon style={{ width: '12px', height: '12px' }} />
+                                                    <ChevronRightIcon className="w-3 h-3" />
                                                 )}
-                                                <span style={{ flex: 1, textAlign: 'left' }}>{folder}</span>
-                                                <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
+                                                <span className="flex-1 text-left">{folder}</span>
+                                                <span className="text-[0.65rem] opacity-80">
                                                     {packs.length}
                                                 </span>
                                             </button>
                                         )}
                                         {expandedLibraryFolders.has(folder) && (
-                                            <div style={{ paddingLeft: '8px' }}>
+                                            <div className="pl-2 flex flex-col">
                                                 {creatingLibraryPack === folder && (
-                                                    <div
-                                                        className="sidebar-item note-item"
-                                                        style={{
-                                                            paddingLeft: '32px',
-                                                            fontSize: '0.85rem',
-                                                            width: '100%',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px'
-                                                        }}
-                                                    >
-                                                        <div style={{
-                                                            fontSize: '10px',
-                                                            fontWeight: 'bold',
-                                                            color: '#60A5FA',
-                                                            border: '1px solid #60A5FA',
-                                                            borderRadius: '2px',
-                                                            width: '14px',
-                                                            height: '14px',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            lineHeight: 1
-                                                        }}>L</div>
+                                                    <div className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5">
+                                                        <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">L</div>
                                                         <input
                                                             autoFocus
                                                             type="text"
                                                             defaultValue="New Pack"
-                                                            style={{
-                                                                background: 'var(--bg-app)',
-                                                                border: '1px solid var(--border-color)',
-                                                                borderRadius: '2px',
-                                                                color: 'var(--text-primary)',
-                                                                fontSize: 'inherit',
-                                                                width: '100%',
-                                                                outline: 'none',
-                                                                padding: '1px 4px'
-                                                            }}
+                                                            className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                                             onKeyDown={(e) => {
                                                                 if (e.key === 'Enter') {
                                                                     handleCreateLibraryPackSubmit(folder, e.currentTarget.value);
@@ -1103,46 +834,21 @@ export function Sidebar({
                                                 )}
                                                 {packs.map(pack => {
                                                     const isRenaming = pack.id && renamingLibraryPack?.id === pack.id;
+                                                    const color = pack.color || '#A78BFA';
                                                     return isRenaming ? (
                                                         <div
                                                             key={pack.id || 'renaming'}
-                                                            className="sidebar-item note-item"
-                                                            style={{
-                                                                paddingLeft: '32px',
-                                                                fontSize: '0.85rem',
-                                                                width: '100%',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '6px'
-                                                            }}
+                                                            className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5"
                                                         >
-                                                            <div style={{
-                                                                fontSize: '10px',
-                                                                fontWeight: 'bold',
-                                                                color: pack.color || '#A78BFA',
-                                                                border: `1px solid ${pack.color || '#A78BFA'}`,
-                                                                borderRadius: '2px',
-                                                                width: '14px',
-                                                                height: '14px',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                justifyContent: 'center',
-                                                                lineHeight: 1
-                                                            }}>L</div>
+                                                            <div 
+                                                                className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
+                                                                style={{ color, borderColor: color }}
+                                                            >L</div>
                                                             <input
                                                                 autoFocus
                                                                 type="text"
                                                                 defaultValue={pack.filename || pack.name}
-                                                                style={{
-                                                                    background: 'var(--bg-app)',
-                                                                    border: '1px solid var(--border-color)',
-                                                                    borderRadius: '2px',
-                                                                    color: 'var(--text-primary)',
-                                                                    fontSize: 'inherit',
-                                                                    width: '100%',
-                                                                    outline: 'none',
-                                                                    padding: '1px 4px'
-                                                                }}
+                                                                className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                                                 onKeyDown={(e) => {
                                                                     if (e.key === 'Enter') {
                                                                         handleRenameLibraryPackSubmit(e.currentTarget.value);
@@ -1156,39 +862,17 @@ export function Sidebar({
                                                     ) : (
                                                         <button
                                                             key={pack.id}
-                                                            className={`sidebar-item note-item ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : ''}`}
+                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
                                                             onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
                                                             onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
-                                                            style={{
-                                                                paddingLeft: '32px',
-                                                                fontSize: '0.85rem',
-                                                                width: '100%',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '6px',
-                                                                color: selectedLibraryPackId === pack.id ? 'var(--text-active)' : 'var(--text-secondary)',
-                                                                backgroundColor: selectedLibraryPackId === pack.id ? 'var(--bg-active)' : 'transparent',
-                                                                opacity: 0.9,
-                                                            }}
                                                         >
                                                             <div
-                                                                style={{
-                                                                    fontSize: '10px',
-                                                                    fontWeight: 'bold',
-                                                                    color: pack.color || '#A78BFA',
-                                                                    border: `1px solid ${pack.color || '#A78BFA'}`,
-                                                                    borderRadius: '2px',
-                                                                    width: '14px',
-                                                                    height: '14px',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    justifyContent: 'center',
-                                                                    lineHeight: 1,
-                                                                }}
+                                                                className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
+                                                                style={{ color, borderColor: color }}
                                                             >
                                                                 L
                                                             </div>
-                                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                            <span className="overflow-hidden text-ellipsis whitespace-nowrap">
                                                                 {pack.filename || pack.name}
                                                             </span>
                                                         </button>
@@ -1200,12 +884,7 @@ export function Sidebar({
                                 );
                             })}
                             {libraryPacks.length === 0 && !creatingLibraryFolder && (
-                                <div style={{ 
-                                    padding: '8px 16px', 
-                                    fontSize: '11px', 
-                                    color: 'var(--text-muted)',
-                                    fontStyle: 'italic'
-                                }}>
+                                <div className="px-4 py-2 text-[11px] text-[var(--text-muted)] italic">
                                     No library packs found.
                                 </div>
                             )}
@@ -1214,33 +893,20 @@ export function Sidebar({
                 </div>
             </div>
 
-            <div className="sidebar-spacer" />
-
-            <div className="sidebar-section">
-                <div className="sidebar-section-header">TOOLS</div>
-                {/* Assistant view is hidden until it's complete */}
-                {/* <button
-                    className={`sidebar-item ${currentView === 'assistant' ? 'active' : ''}`}
-                    onClick={() => onChangeView('assistant')}
-                >
-                    <ChatBubbleLeftRightIcon className="sidebar-icon" />
-                    <span>Assistant</span>
-                </button> */}
+            <div className="mt-auto flex flex-col py-2 border-t border-[var(--border-color)]/30">
+                <div className="px-4 pb-1 text-[11px] font-bold text-[var(--text-secondary)] tracking-wider uppercase opacity-60">TOOLS</div>
                 <button
-                    className={`sidebar-item ${currentView === 'activity' ? 'active' : ''}`}
+                    className={`sidebar-item flex items-center gap-2 ${currentView === 'activity' ? 'active' : ''}`}
                     onClick={() => onChangeView('activity')}
                 >
-                    <ClockIcon className="sidebar-icon" />
+                    <ClockIcon className="w-4 h-4" />
                     <span>Activity</span>
                 </button>
-            </div>
-
-            <div className="sidebar-section">
                 <button
-                    className={`sidebar-item ${currentView === 'settings' ? 'active' : ''}`}
+                    className={`sidebar-item flex items-center gap-2 mt-1 ${currentView === 'settings' ? 'active' : ''}`}
                     onClick={() => onChangeView('settings')}
                 >
-                    <Cog6ToothIcon className="sidebar-icon" />
+                    <Cog6ToothIcon className="w-4 h-4" />
                     <span>Settings</span>
                 </button>
             </div>
@@ -1342,82 +1008,27 @@ export function Sidebar({
             {/* Delete Note Confirmation Modal */}
             {deleteConfirmation && (
                 <div
-                    style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                        pointerEvents: 'auto'
-                    }}
-                    onClick={(e) => {
-                        // Close on backdrop click
-                        if (e.target === e.currentTarget) {
-                            setDeleteConfirmation(null);
-                        }
-                    }}
+                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] pointer-events-auto"
+                    onClick={() => setDeleteConfirmation(null)}
                 >
                     <div
-                        style={{
-                            backgroundColor: 'var(--bg-content)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '8px',
-                            padding: '24px',
-                            width: '320px',
-                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '16px',
-                            pointerEvents: 'auto'
-                        }}
+                        className="bg-[var(--bg-content)] border border-[var(--border-color)] rounded-lg p-6 w-[320px] shadow-xl flex flex-col gap-4"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Delete Note?</h3>
-                        <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                        <h3 className="m-0 text-[1.1rem] font-semibold text-[var(--text-primary)]">Delete Note?</h3>
+                        <p className="m-0 text-sm text-[var(--text-secondary)]">
                             Are you sure you want to delete <strong>{deleteConfirmation.notePath}</strong>? This action cannot be undone.
                         </p>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                        <div className="flex justify-end gap-3 mt-2">
                             <button
-                                onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setDeleteConfirmation(null);
-                                }}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'transparent',
-                                    color: 'var(--text-primary)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem',
-                                    pointerEvents: 'auto'
-                                }}
+                                className="btn-secondary"
+                                onClick={() => setDeleteConfirmation(null)}
                             >
                                 Cancel
                             </button>
                             <button
-                                onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleConfirmDelete();
-                                }}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: 'none',
-                                    background: 'var(--error, #ef4444)',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem',
-                                    fontWeight: 600,
-                                    pointerEvents: 'auto'
-                                }}
+                                className="btn-danger"
+                                onClick={handleConfirmDelete}
                             >
                                 Delete
                             </button>
@@ -1429,97 +1040,42 @@ export function Sidebar({
             {/* Remove Source Confirmation Modal */}
             {deleteSourceConfirmation && (
                 <div
-                    style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                        pointerEvents: 'auto'
-                    }}
-                    onClick={(e) => {
-                        // Close on backdrop click
-                        if (e.target === e.currentTarget) {
-                            setDeleteSourceConfirmation(null);
-                        }
-                    }}
+                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] pointer-events-auto"
+                    onClick={() => setDeleteSourceConfirmation(null)}
                 >
                     <div
-                        style={{
-                            backgroundColor: 'var(--bg-content)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '8px',
-                            padding: '24px',
-                            width: '400px',
-                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '16px',
-                            pointerEvents: 'auto'
-                        }}
+                        className="bg-[var(--bg-content)] border border-[var(--border-color)] rounded-lg p-6 w-[400px] shadow-xl flex flex-col gap-4"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#ef4444' }}>⚠️ Remove Source?</h3>
-                        <div style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                            <p style={{ margin: '0 0 12px 0' }}>
+                        <h3 className="m-0 text-[1.1rem] font-semibold text-red-500">⚠️ Remove Source?</h3>
+                        <div className="m-0 text-sm text-[var(--text-secondary)] flex flex-col gap-3">
+                            <p>
                                 Are you sure you want to remove <strong>{deleteSourceConfirmation.sourceName}</strong>?
                             </p>
-                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem' }}>
-                                This will permanently delete:
-                            </p>
-                            <ul style={{ margin: '0 0 12px 20px', fontSize: '0.85rem', lineHeight: '1.6' }}>
-                                <li>All indexed files and chunks</li>
-                                <li>All vector embeddings (LanceDB)</li>
-                                <li>All metadata (redb)</li>
-                                <li>All notes and documents</li>
-                                <li>Graph cache</li>
-                            </ul>
-                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#ef4444', fontWeight: 600 }}>
+                            <div>
+                                <p className="text-[0.85rem] mb-2 font-semibold">This will permanently delete:</p>
+                                <ul className="ml-5 list-disc text-[0.85rem] leading-relaxed">
+                                    <li>All indexed files and chunks</li>
+                                    <li>All vector embeddings (LanceDB)</li>
+                                    <li>All metadata (redb)</li>
+                                    <li>All notes and documents</li>
+                                    <li>Graph cache</li>
+                                </ul>
+                            </div>
+                            <p className="text-[0.85rem] text-red-500 font-semibold">
                                 ⚠️ This action cannot be undone!
                             </p>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                        <div className="flex justify-end gap-3 mt-2">
                             <button
-                                onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setDeleteSourceConfirmation(null);
-                                }}
-                                style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'transparent',
-                                    color: 'var(--text-primary)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.9rem',
-                                    pointerEvents: 'auto'
-                                }}
+                                className="btn-secondary"
+                                onClick={() => setDeleteSourceConfirmation(null)}
                             >
                                 Cancel
                             </button>
                             <button
-                                onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleConfirmRemoveSource();
-                                }}
-                                style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '4px',
-                                    border: 'none',
-                                    background: '#ef4444',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    fontSize: '0.9rem',
-                                    fontWeight: 600,
-                                    pointerEvents: 'auto'
-                                }}
+                                className="btn-danger"
+                                onClick={handleConfirmRemoveSource}
                             >
                                 Remove Source
                             </button>
@@ -1527,74 +1083,31 @@ export function Sidebar({
                     </div>
                 </div>
             )}
+
             {/* Delete Library Pack Confirmation Modal */}
             {deleteLibraryPackConfirmation && (
                 <div
-                    style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                        pointerEvents: 'auto'
-                    }}
-                    onClick={(e) => {
-                        if (e.target === e.currentTarget) {
-                            setDeleteLibraryPackConfirmation(null);
-                        }
-                    }}
+                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] pointer-events-auto"
+                    onClick={() => setDeleteLibraryPackConfirmation(null)}
                 >
                     <div
-                        style={{
-                            backgroundColor: 'var(--bg-content)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '8px',
-                            padding: '24px',
-                            width: '320px',
-                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '16px',
-                            pointerEvents: 'auto'
-                        }}
+                        className="bg-[var(--bg-content)] border border-[var(--border-color)] rounded-lg p-6 w-[320px] shadow-xl flex flex-col gap-4"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Delete Library Pack?</h3>
-                        <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                        <h3 className="m-0 text-[1.1rem] font-semibold text-[var(--text-primary)]">Delete Library Pack?</h3>
+                        <p className="m-0 text-sm text-[var(--text-secondary)]">
                             Are you sure you want to delete <strong>{deleteLibraryPackConfirmation.name}</strong>? This action cannot be undone.
                         </p>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                        <div className="flex justify-end gap-3 mt-2">
                             <button
+                                className="btn-secondary"
                                 onClick={() => setDeleteLibraryPackConfirmation(null)}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'transparent',
-                                    color: 'var(--text-primary)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem'
-                                }}
                             >
                                 Cancel
                             </button>
                             <button
+                                className="btn-danger"
                                 onClick={handleConfirmDeleteLibraryPack}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: 'none',
-                                    background: 'var(--error, #ef4444)',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem',
-                                    fontWeight: 600
-                                }}
                             >
                                 Delete
                             </button>
@@ -1606,71 +1119,27 @@ export function Sidebar({
             {/* Delete Library Folder Confirmation Modal */}
             {deleteLibraryFolderConfirmation && (
                 <div
-                    style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                        pointerEvents: 'auto'
-                    }}
-                    onClick={(e) => {
-                        if (e.target === e.currentTarget) {
-                            setDeleteLibraryFolderConfirmation(null);
-                        }
-                    }}
+                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] pointer-events-auto"
+                    onClick={() => setDeleteLibraryFolderConfirmation(null)}
                 >
                     <div
-                        style={{
-                            backgroundColor: 'var(--bg-content)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '8px',
-                            padding: '24px',
-                            width: '320px',
-                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '16px',
-                            pointerEvents: 'auto'
-                        }}
+                        className="bg-[var(--bg-content)] border border-[var(--border-color)] rounded-lg p-6 w-[320px] shadow-xl flex flex-col gap-4"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Delete Library Folder?</h3>
-                        <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                        <h3 className="m-0 text-[1.1rem] font-semibold text-[var(--text-primary)]">Delete Library Folder?</h3>
+                        <p className="m-0 text-sm text-[var(--text-secondary)]">
                             Are you sure you want to delete folder <strong>{deleteLibraryFolderConfirmation.name}</strong> and all its contents? This action cannot be undone.
                         </p>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                        <div className="flex justify-end gap-3 mt-2">
                             <button
+                                className="btn-secondary"
                                 onClick={() => setDeleteLibraryFolderConfirmation(null)}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'transparent',
-                                    color: 'var(--text-primary)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem'
-                                }}
                             >
                                 Cancel
                             </button>
                             <button
+                                className="btn-danger"
                                 onClick={handleConfirmDeleteLibraryFolder}
-                                style={{
-                                    padding: '6px 12px',
-                                    borderRadius: '4px',
-                                    border: 'none',
-                                    background: 'var(--error, #ef4444)',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    fontSize: '0.85rem',
-                                    fontWeight: 600
-                                }}
                             >
                                 Delete
                             </button>

@@ -579,37 +579,25 @@ function App() {
   // Define Status Bar Element
   const renderStatusElement = () => {
     let statusText = 'Idle'
-    let statusDotClass = 'status-dot idle'
 
     if (status === 'initializing') {
       statusText = statusMessage || 'Initializing...'
-      statusDotClass = 'status-dot initializing'
     } else if (status === 'indexing') {
       statusText = 'Indexing...'
-      statusDotClass = 'status-dot indexing'
     } else if (status === 'error') {
       statusText = 'Error'
-      statusDotClass = 'status-dot error'
     }
 
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0 8px' }}>
-        <div className="status-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
-          <span className={statusDotClass} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' }}></span>
+      <div className="flex items-center justify-between w-full px-2 h-full">
+        <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)] font-medium">
+          <span className={`w-1.5 h-1.5 rounded-full ${status === 'idle' ? 'bg-green-500' : status === 'initializing' ? 'bg-[var(--accent)] animate-pulse' : status === 'indexing' ? 'bg-[var(--accent)] animate-[pulse_1s_infinite]' : 'bg-red-500'}`}></span>
           <span>{statusText}</span>
         </div>
         {status === 'error' && (
           <button
             onClick={handleRetryInit}
-            style={{
-              padding: '2px 8px',
-              background: 'var(--error)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '10px',
-            }}
+            className="btn-danger !px-2 !py-0.5 !text-[10px] !normal-case"
           >
             Retry
           </button>

@@ -47,20 +47,10 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose, childre
     return (
         <div
             ref={menuRef}
-            className="context-menu"
+            className="fixed z-[1000] bg-[var(--bg-content)] border border-[var(--border-color)] rounded-md shadow-lg py-1 min-w-[160px] flex flex-col"
             style={{
-                position: 'fixed',
                 top: y,
                 left: x,
-                zIndex: 1000, // Above everything
-                backgroundColor: 'var(--bg-content)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '6px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-                padding: '4px 0',
-                minWidth: '160px',
-                display: 'flex',
-                flexDirection: 'column'
             }}
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
@@ -81,28 +71,13 @@ interface ContextMenuItemProps {
 export const ContextMenuItem: React.FC<ContextMenuItemProps> = ({ onClick, label, icon, color, danger }) => {
     return (
         <button
-            className="context-menu-item"
+            className={`flex items-center gap-2 px-3 py-2 w-full border-none bg-transparent text-left text-[0.85rem] cursor-pointer hover:bg-[var(--bg-secondary)] transition-colors ${danger ? 'text-red-500' : (color || 'text-[var(--text-primary)]')}`}
             onClick={(e) => {
                 e.stopPropagation(); // Prevent Sidebar click
                 onClick();
             }}
-            style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 12px',
-                width: '100%',
-                border: 'none',
-                background: 'transparent',
-                color: danger ? 'var(--error)' : (color || 'var(--text-primary)'),
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontSize: '0.85rem'
-            }}
-            onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-secondary)'}
-            onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
         >
-            {icon && <span style={{ width: '16px', height: '16px', display: 'flex', alignItems: 'center' }}>{icon}</span>}
+            {icon && <span className="w-4 h-4 flex items-center justify-center">{icon}</span>}
             <span>{label}</span>
         </button>
     );

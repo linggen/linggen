@@ -51,7 +51,7 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
     }
 
     return (
-        <div className="flex h-full flex-col gap-6 overflow-hidden p-6 bg-[var(--bg-content)] text-[var(--text-primary)]">
+        <div className="flex flex-1 flex-col gap-6 overflow-hidden p-6 bg-[var(--bg-content)] text-[var(--text-primary)]">
             <div className="flex flex-col gap-2">
                 <div className="relative max-w-xl">
                     <MagnifyingGlassIcon 

@@ -35,7 +35,7 @@ export function ActivityView({ jobs }: ActivityViewProps) {
     }, [])
 
     return (
-        <div className="p-6">
+        <div className="flex-1 overflow-y-auto p-6">
             <section className="p-4 px-5 bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-md shadow-none mb-5">
                 <h3 className="text-sm font-semibold text-[var(--text-active)] mb-4 pb-2 border-b border-[var(--border-color)]">System Status</h3>
                 <div className="grid grid-cols-3 gap-4">

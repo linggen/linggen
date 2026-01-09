@@ -56,12 +56,12 @@ export function MainLayout({
     // const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
     return (
-        <div className="main-layout">
+        <div className="flex h-screen w-screen overflow-hidden">
             {/* Left Sidebar */}
-            <div className="left-sidebar">
-                <div className="app-brand">
-                    <div className="app-logo">LG</div>
-                    <div className="app-name">Linggen</div>
+            <div className="w-[260px] bg-[var(--bg-sidebar)] border-r border-[var(--border-color)] flex flex-col flex-shrink-0">
+                <div className="h-[50px] flex items-center px-4 border-b border-[var(--border-color)] gap-2.5">
+                    <div className="w-6 h-6 bg-[var(--accent)] text-white rounded flex items-center justify-center font-extrabold text-[11px]">LG</div>
+                    <div className="font-semibold text-[var(--text-active)] text-[13px] tracking-wider">Linggen</div>
                 </div>
                 <Sidebar
                     currentView={currentView}
@@ -83,21 +83,14 @@ export function MainLayout({
                 />
             </div>
 
-            <div className="content-area">
-                <header className="content-header">
+            <div className="flex-1 flex flex-col min-w-0 bg-[var(--bg-content)]">
+                <header className="h-12 flex items-center px-6 border-b border-[var(--border-color)]">
                     {/* Breadcrumbs or Title could go here */}
-                    <div className="view-title">
+                    <div className="text-sm font-semibold text-[var(--text-active)]">
                         {currentView === 'sources' ? 'Projects' : currentView.charAt(0).toUpperCase() + currentView.slice(1)}
                     </div>
                     {currentView === 'sources' && resources && resources.length > 0 && (
-                        <div style={{
-                            fontSize: '0.85rem',
-                            color: 'var(--text-muted)',
-                            display: 'flex',
-                            gap: '12px',
-                            alignItems: 'center',
-                            marginLeft: 'auto'
-                        }}>
+                        <div className="ml-auto flex items-center gap-3 text-[0.85rem] text-[var(--text-secondary)]">
                             <span>{resources.length} {resources.length === 1 ? 'project' : 'projects'}</span>
                             <span>•</span>
                             <span>
@@ -110,23 +103,15 @@ export function MainLayout({
                         </div>
                     )}
                 </header>
-                <main className="content-scroll">
+                <main className="flex-1 overflow-hidden flex flex-col">
                     {children}
                 </main>
                 {statusElement && (
-                    <footer className="status-bar">
+                    <footer className="h-[22px] bg-[var(--bg-status-bar)] border-t border-[var(--border-color)] flex items-center px-2 text-[11px] text-[var(--text-secondary)]">
                         {statusElement}
                     </footer>
                 )}
             </div>
-
-            {/* Right Sidebar placeholder - for future 'Inspector' panel */}
-            {/* 
-      <aside className="right-sidebar">
-        <div className="sidebar-header">Inspector</div>
-        ...
-      </aside> 
-      */}
         </div>
     )
 }

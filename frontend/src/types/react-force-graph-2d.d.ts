@@ -1,5 +1,5 @@
 declare module 'react-force-graph-2d' {
-  import { Component, RefObject } from 'react';
+  import { Component } from 'react';
 
   export interface NodeObject {
     id?: string | number;

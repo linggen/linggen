@@ -513,7 +513,7 @@ export function SettingsView() {
     }
 
     return (
-        <div className="p-6 flex flex-col gap-4 max-w-[700px]">
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 max-w-[700px]">
             {message && (
                 <div className={`fixed top-20 right-10 p-3 rounded-md text-sm font-medium z-50 animate-in slide-in-from-right-5 ${message.startsWith('✓') ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-red-500/15 border border-red-500/30 text-red-400'}`}>
                     {message}

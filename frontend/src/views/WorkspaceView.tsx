@@ -93,9 +93,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
     return (
         // Root container for the right-hand panel.
-        // Use flex + minHeight: 0 so inner panes (graph/editor) can fully
-        // consume the available vertical space without leaving gaps.
-        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto h-[calc(100vh-48px-22px-24px)]">
+        // Scroll internally to avoid double scrollbars with MainLayout.
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto h-full">
             {/* Header / Stats Strip */}
             {currentSource && (
                 <div className="px-6 py-3 border-b border-[var(--border-color)] bg-[var(--bg-content)] flex items-center justify-between">
@@ -225,7 +224,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             <div
                 className={`relative ${
                     showingEditor
-                        ? 'flex-[0_0_auto] block overflow-visible'
+                        ? 'flex-[0_0_auto] block overflow-visible p-6'
                         : 'flex-1 flex overflow-hidden min-h-0'
                 }`}
             >

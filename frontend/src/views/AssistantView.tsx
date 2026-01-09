@@ -176,7 +176,7 @@ export function AssistantView() {
     }
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-content)] text-[var(--text-primary)]">
+        <div className="flex flex-1 flex-col overflow-hidden bg-[var(--bg-content)] text-[var(--text-primary)]">
             <div className="flex flex-1 overflow-hidden">
                 {/* Left + middle columns */}
                 <div className="flex-1 flex flex-col overflow-y-auto p-6 gap-6">

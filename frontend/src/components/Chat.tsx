@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import { chatStream } from '../api'
-import './Chat.css'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -102,26 +101,16 @@ export function Chat({ llmEnabled }: ChatProps) {
   // If LLM is disabled, show a message instead of the chat interface
   if (!llmEnabled) {
     return (
-      <div className="chat-container">
-        <div className="chat-header">
-          <h3>💬 Quick Chat</h3>
-          <p className="chat-caption">Powered by Qwen3-4B</p>
+      <div className="flex flex-col h-[600px] bg-black/20 rounded-xl border border-[var(--border-color)] overflow-hidden">
+        <div className="p-4 bg-white/2 border-b border-white/5">
+          <h3 className="m-0 text-base text-[var(--text-active)]">💬 Quick Chat</h3>
+          <p className="m-0 mt-1 text-[10px] text-[var(--text-secondary)] uppercase tracking-wider">Powered by Qwen3-4B</p>
         </div>
-        <div className="chat-messages" style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '300px',
-          padding: '2rem'
-        }}>
-          <div style={{
-            textAlign: 'center',
-            color: 'var(--text-muted)',
-            maxWidth: '400px'
-          }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔒</div>
-            <h4>Chat Disabled</h4>
-            <p style={{ marginTop: '0.5rem', lineHeight: '1.6' }}>
+        <div className="flex-1 flex items-center justify-center p-8 text-center">
+          <div className="max-w-[400px]">
+            <div className="text-5xl mb-4 opacity-20 grayscale">🔒</div>
+            <h4 className="text-[var(--text-active)] font-semibold">Chat Disabled</h4>
+            <p className="mt-2 text-sm text-[var(--text-secondary)] leading-relaxed">
               The local LLM is currently disabled. Enable it in Settings to use the chat feature.
             </p>
           </div>
@@ -131,16 +120,20 @@ export function Chat({ llmEnabled }: ChatProps) {
   }
 
   return (
-    <div className="chat-container">
-      <div className="chat-header">
-        <h3>💬 Quick Chat</h3>
-        <p className="chat-caption">Powered by Qwen3-4B · Does not use indexed context yet</p>
+    <div className="flex flex-col h-[600px] bg-black/20 rounded-xl border border-[var(--border-color)] overflow-hidden">
+      <div className="p-4 bg-white/2 border-b border-white/5">
+        <h3 className="m-0 text-base text-[var(--text-active)] font-semibold">💬 Quick Chat</h3>
+        <p className="m-0 mt-1 text-[10px] text-[var(--text-secondary)] uppercase tracking-wider">Powered by Qwen3-4B · No Context</p>
       </div>
 
-      <div className="chat-messages">
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         {messages.map((msg, idx) => (
-          <div key={idx} className={`chat-message ${msg.role}`}>
-            <div className="message-content">
+          <div key={idx} className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}>
+            <div className={`p-3 px-4 rounded-2xl text-[0.9rem] leading-relaxed break-words ${
+              msg.role === 'user' 
+                ? 'bg-[var(--accent)] text-white rounded-br-none shadow-sm' 
+                : 'bg-white/10 text-[var(--text-primary)] rounded-bl-none'
+            }`}>
               {msg.content || (isLoading && idx === messages.length - 1 ? '...' : '')}
             </div>
           </div>
@@ -148,15 +141,16 @@ export function Chat({ llmEnabled }: ChatProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="chat-input-form">
+      <form onSubmit={handleSubmit} className="p-4 bg-white/2 border-t border-white/5 flex gap-2">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type a message..."
+          placeholder="Ask a question..."
           disabled={isLoading}
+          className="flex-1 p-2 px-3 bg-black/30 border border-white/10 rounded-md text-[var(--text-primary)] text-[0.9rem] outline-none focus:border-[var(--accent)] transition-all"
         />
-        <button type="submit" disabled={isLoading || !input.trim()}>
+        <button type="submit" disabled={isLoading || !input.trim()} className="btn-primary">
           Send
         </button>
       </form>

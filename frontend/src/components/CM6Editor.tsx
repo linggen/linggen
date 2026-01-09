@@ -6,7 +6,6 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import { getNote, saveNote, getMemoryFile, saveMemoryFile, getPack, savePack } from '../api';
 import { livePreviewPlugin, livePreviewTheme } from './cm6-live-preview';
-import './CM6Editor.css';
 
 interface CM6EditorProps {
     sourceId: string;
@@ -198,38 +197,42 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
     }, []);
 
     if (loading) {
-        return <div className="cm6-editor-loading">Loading {docPath}...</div>;
+        return (
+            <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-[0.9rem] bg-[var(--bg-content)]">
+                Loading {docPath}...
+            </div>
+        );
     }
 
-    const containerClassName =
-        scrollMode === 'container' ? 'cm6-editor-container cm6-container-scroll' : 'cm6-editor-container';
+    const isContainerScroll = scrollMode === 'container';
 
     return (
-        <div className={containerClassName}>
+        <div className={`flex flex-col h-full min-h-0 bg-[var(--bg-content)] overflow-hidden ${isContainerScroll ? 'h-auto overflow-visible' : ''}`}>
             {/* Header / Status Bar */}
-            <div className="cm6-editor-header">
-                <div className="cm6-editor-title">
+            <div className="flex justify-between items-center px-4 py-2 border-b border-[var(--border-color)] bg-[var(--bg-content)]">
+                <div className="text-[0.9rem] font-medium text-[var(--text-primary)]">
                     {docType === 'memory' ? `Memory: ${docPath}` : docType === 'library' ? `Library: ${docPath}` : docPath}
                 </div>
-                <div className="cm6-editor-status">
+                <div className="text-[0.8rem] text-[var(--text-muted)]">
                     {saving ? (
-                        <span className="saving">Saving...</span>
+                        <span className="text-amber-500">Saving...</span>
                     ) : lastSaved ? (
-                        <span className="saved">Saved {lastSaved.toLocaleTimeString()}</span>
+                        <span className="text-green-500">Saved {lastSaved.toLocaleTimeString()}</span>
                     ) : dirty ? (
-                        <span className="unsaved">Unsaved</span>
+                        <span className="text-amber-500">Unsaved</span>
                     ) : null}
                 </div>
             </div>
 
             {/* Editor */}
-            <div className="cm6-editor-content">
+            <div className={`min-h-0 ${isContainerScroll ? 'block overflow-visible' : 'flex-1 overflow-hidden'}`}>
                 <CodeMirror
                     ref={editorRef}
                     value={value}
                     onChange={handleChange}
-                    height={scrollMode === 'editor' ? '100%' : undefined}
-                    
+                    height={scrollMode === 'editor' ? '100%' : 'auto'}
+                    minHeight="200px"
+                    className={isContainerScroll ? 'cm-auto-height' : 'h-full'}
                     theme={oneDark}
                     extensions={[
                         markdown({
