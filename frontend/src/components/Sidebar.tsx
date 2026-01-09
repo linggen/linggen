@@ -978,131 +978,81 @@ export function Sidebar({
                                     />
                                 </div>
                             )}
-                            {Object.entries(libraryGroups).map(([folder, packs]) => (
-                                <div key={folder}>
-                                    {renamingLibraryFolder?.oldName === folder ? (
-                                        <div
-                                            className="sidebar-item note-item"
-                                            style={{
-                                                paddingLeft: '16px',
-                                                fontSize: '0.85rem',
-                                                width: '100%',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '6px'
-                                            }}
-                                        >
-                                            <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
-                                            <input
-                                                autoFocus
-                                                type="text"
-                                                defaultValue={folder}
+                            {Object.entries(libraryGroups).map(([folder, packs]) => {
+                                const isRenamingFolder = folder && renamingLibraryFolder?.oldName === folder;
+                                return (
+                                    <div key={folder}>
+                                        {isRenamingFolder ? (
+                                            <div
+                                                className="sidebar-item note-item"
                                                 style={{
-                                                    background: 'var(--bg-app)',
-                                                    border: '1px solid var(--border-color)',
-                                                    borderRadius: '2px',
-                                                    color: 'var(--text-primary)',
-                                                    fontSize: 'inherit',
+                                                    paddingLeft: '16px',
+                                                    fontSize: '0.85rem',
                                                     width: '100%',
-                                                    outline: 'none',
-                                                    padding: '1px 4px'
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '6px'
                                                 }}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
-                                                        handleRenameLibraryFolderSubmit(e.currentTarget.value);
-                                                    } else if (e.key === 'Escape') {
-                                                        setRenamingLibraryFolder(null);
-                                                    }
-                                                }}
-                                                onBlur={() => setRenamingLibraryFolder(null)}
-                                            />
-                                        </div>
-                                    ) : (
-                                        <button
-                                            className="sidebar-item note-item"
-                                            onClick={() => toggleLibraryFolder(folder)}
-                                            onContextMenu={(e) => handleLibraryContextMenu(e, undefined, folder)}
-                                            style={{ 
-                                                paddingLeft: '16px',
-                                                fontSize: '0.7rem',
-                                                width: '100%',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '6px',
-                                                color: 'var(--text-muted)',
-                                                background: 'transparent',
-                                                textTransform: 'uppercase',
-                                                letterSpacing: '0.06em',
-                                                opacity: 0.9,
-                                            }}
-                                        >
-                                            {expandedLibraryFolders.has(folder) ? (
-                                                <ChevronDownIcon style={{ width: '12px', height: '12px' }} />
-                                            ) : (
-                                                <ChevronRightIcon style={{ width: '12px', height: '12px' }} />
-                                            )}
-                                            <span style={{ flex: 1, textAlign: 'left' }}>{folder}</span>
-                                            <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
-                                                {packs.length}
-                                            </span>
-                                        </button>
-                                    )}
-                                    {expandedLibraryFolders.has(folder) && (
-                                        <div style={{ paddingLeft: '8px' }}>
-                                            {creatingLibraryPack === folder && (
-                                                <div
-                                                    className="sidebar-item note-item"
+                                            >
+                                                <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
+                                                <input
+                                                    autoFocus
+                                                    type="text"
+                                                    defaultValue={folder}
                                                     style={{
-                                                        paddingLeft: '32px',
-                                                        fontSize: '0.85rem',
-                                                        width: '100%',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '6px'
-                                                    }}
-                                                >
-                                                    <div style={{
-                                                        fontSize: '10px',
-                                                        fontWeight: 'bold',
-                                                        color: '#60A5FA',
-                                                        border: '1px solid #60A5FA',
+                                                        background: 'var(--bg-app)',
+                                                        border: '1px solid var(--border-color)',
                                                         borderRadius: '2px',
-                                                        width: '14px',
-                                                        height: '14px',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        lineHeight: 1
-                                                    }}>L</div>
-                                                    <input
-                                                        autoFocus
-                                                        type="text"
-                                                        defaultValue="New Pack"
-                                                        style={{
-                                                            background: 'var(--bg-app)',
-                                                            border: '1px solid var(--border-color)',
-                                                            borderRadius: '2px',
-                                                            color: 'var(--text-primary)',
-                                                            fontSize: 'inherit',
-                                                            width: '100%',
-                                                            outline: 'none',
-                                                            padding: '1px 4px'
-                                                        }}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') {
-                                                                handleCreateLibraryPackSubmit(folder, e.currentTarget.value);
-                                                            } else if (e.key === 'Escape') {
-                                                                setCreatingLibraryPack(null);
-                                                            }
-                                                        }}
-                                                        onBlur={() => setCreatingLibraryPack(null)}
-                                                    />
-                                                </div>
-                                            )}
-                                            {packs.map(pack => (
-                                                renamingLibraryPack?.id === pack.id ? (
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: 'inherit',
+                                                        width: '100%',
+                                                        outline: 'none',
+                                                        padding: '1px 4px'
+                                                    }}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            handleRenameLibraryFolderSubmit(e.currentTarget.value);
+                                                        } else if (e.key === 'Escape') {
+                                                            setRenamingLibraryFolder(null);
+                                                        }
+                                                    }}
+                                                    onBlur={() => setRenamingLibraryFolder(null)}
+                                                />
+                                            </div>
+                                        ) : (
+                                            <button
+                                                className="sidebar-item note-item"
+                                                onClick={() => toggleLibraryFolder(folder)}
+                                                onContextMenu={(e) => handleLibraryContextMenu(e, undefined, folder)}
+                                                style={{ 
+                                                    paddingLeft: '16px',
+                                                    fontSize: '0.7rem',
+                                                    width: '100%',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '6px',
+                                                    color: 'var(--text-muted)',
+                                                    background: 'transparent',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.06em',
+                                                    opacity: 0.9,
+                                                }}
+                                            >
+                                                {expandedLibraryFolders.has(folder) ? (
+                                                    <ChevronDownIcon style={{ width: '12px', height: '12px' }} />
+                                                ) : (
+                                                    <ChevronRightIcon style={{ width: '12px', height: '12px' }} />
+                                                )}
+                                                <span style={{ flex: 1, textAlign: 'left' }}>{folder}</span>
+                                                <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
+                                                    {packs.length}
+                                                </span>
+                                            </button>
+                                        )}
+                                        {expandedLibraryFolders.has(folder) && (
+                                            <div style={{ paddingLeft: '8px' }}>
+                                                {creatingLibraryPack === folder && (
                                                     <div
-                                                        key={pack.id}
                                                         className="sidebar-item note-item"
                                                         style={{
                                                             paddingLeft: '32px',
@@ -1116,8 +1066,8 @@ export function Sidebar({
                                                         <div style={{
                                                             fontSize: '10px',
                                                             fontWeight: 'bold',
-                                                            color: pack.color || '#A78BFA',
-                                                            border: `1px solid ${pack.color || '#A78BFA'}`,
+                                                            color: '#60A5FA',
+                                                            border: '1px solid #60A5FA',
                                                             borderRadius: '2px',
                                                             width: '14px',
                                                             height: '14px',
@@ -1129,7 +1079,7 @@ export function Sidebar({
                                                         <input
                                                             autoFocus
                                                             type="text"
-                                                            defaultValue={pack.name}
+                                                            defaultValue="New Pack"
                                                             style={{
                                                                 background: 'var(--bg-app)',
                                                                 border: '1px solid var(--border-color)',
@@ -1142,34 +1092,31 @@ export function Sidebar({
                                                             }}
                                                             onKeyDown={(e) => {
                                                                 if (e.key === 'Enter') {
-                                                                    handleRenameLibraryPackSubmit(e.currentTarget.value);
+                                                                    handleCreateLibraryPackSubmit(folder, e.currentTarget.value);
                                                                 } else if (e.key === 'Escape') {
-                                                                    setRenamingLibraryPack(null);
+                                                                    setCreatingLibraryPack(null);
                                                                 }
                                                             }}
-                                                            onBlur={() => setRenamingLibraryPack(null)}
+                                                            onBlur={() => setCreatingLibraryPack(null)}
                                                         />
                                                     </div>
-                                                ) : (
-                                                    <button
-                                                        key={pack.id}
-                                                        className={`sidebar-item note-item ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : ''}`}
-                                                        onClick={() => onSelectLibraryPack?.(pack.id)}
-                                                        onContextMenu={(e) => handleLibraryContextMenu(e, pack.id)}
-                                                        style={{
-                                                            paddingLeft: '32px',
-                                                            fontSize: '0.85rem',
-                                                            width: '100%',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px',
-                                                            color: selectedLibraryPackId === pack.id ? 'var(--text-active)' : 'var(--text-secondary)',
-                                                            backgroundColor: selectedLibraryPackId === pack.id ? 'var(--bg-active)' : 'transparent',
-                                                            opacity: 0.9,
-                                                        }}
-                                                    >
+                                                )}
+                                                {packs.map(pack => {
+                                                    const isRenaming = pack.id && renamingLibraryPack?.id === pack.id;
+                                                    return isRenaming ? (
                                                         <div
+                                                            key={pack.id || 'renaming'}
+                                                            className="sidebar-item note-item"
                                                             style={{
+                                                                paddingLeft: '32px',
+                                                                fontSize: '0.85rem',
+                                                                width: '100%',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '6px'
+                                                            }}
+                                                        >
+                                                            <div style={{
                                                                 fontSize: '10px',
                                                                 fontWeight: 'bold',
                                                                 color: pack.color || '#A78BFA',
@@ -1180,21 +1127,78 @@ export function Sidebar({
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
-                                                                lineHeight: 1,
+                                                                lineHeight: 1
+                                                            }}>L</div>
+                                                            <input
+                                                                autoFocus
+                                                                type="text"
+                                                                defaultValue={pack.filename || pack.name}
+                                                                style={{
+                                                                    background: 'var(--bg-app)',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    borderRadius: '2px',
+                                                                    color: 'var(--text-primary)',
+                                                                    fontSize: 'inherit',
+                                                                    width: '100%',
+                                                                    outline: 'none',
+                                                                    padding: '1px 4px'
+                                                                }}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') {
+                                                                        handleRenameLibraryPackSubmit(e.currentTarget.value);
+                                                                    } else if (e.key === 'Escape') {
+                                                                        setRenamingLibraryPack(null);
+                                                                    }
+                                                                }}
+                                                                onBlur={() => setRenamingLibraryPack(null)}
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <button
+                                                            key={pack.id}
+                                                            className={`sidebar-item note-item ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : ''}`}
+                                                            onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
+                                                            onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
+                                                            style={{
+                                                                paddingLeft: '32px',
+                                                                fontSize: '0.85rem',
+                                                                width: '100%',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '6px',
+                                                                color: selectedLibraryPackId === pack.id ? 'var(--text-active)' : 'var(--text-secondary)',
+                                                                backgroundColor: selectedLibraryPackId === pack.id ? 'var(--bg-active)' : 'transparent',
+                                                                opacity: 0.9,
                                                             }}
                                                         >
-                                                            L
-                                                        </div>
-                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {pack.name}
-                                                        </span>
-                                                    </button>
-                                                )
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
+                                                            <div
+                                                                style={{
+                                                                    fontSize: '10px',
+                                                                    fontWeight: 'bold',
+                                                                    color: pack.color || '#A78BFA',
+                                                                    border: `1px solid ${pack.color || '#A78BFA'}`,
+                                                                    borderRadius: '2px',
+                                                                    width: '14px',
+                                                                    height: '14px',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    lineHeight: 1,
+                                                                }}
+                                                            >
+                                                                L
+                                                            </div>
+                                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                {pack.filename || pack.name}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                             {libraryPacks.length === 0 && !creatingLibraryFolder && (
                                 <div style={{ 
                                     padding: '8px 16px', 
@@ -1255,7 +1259,7 @@ export function Sidebar({
                                 onClick={() => {
                                     const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
                                     if (pack) {
-                                        setRenamingLibraryPack({ id: pack.id, oldName: pack.name });
+                                        setRenamingLibraryPack({ id: pack.id, oldName: pack.filename || pack.name });
                                     }
                                     setContextMenu(null);
                                 }}
@@ -1266,7 +1270,7 @@ export function Sidebar({
                                 onClick={() => {
                                     const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
                                     if (pack) {
-                                        setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.name });
+                                        setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.filename || pack.name });
                                     }
                                     setContextMenu(null);
                                 }}

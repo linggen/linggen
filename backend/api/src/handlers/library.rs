@@ -89,14 +89,38 @@ pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::
                 } else if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         if let Some(mut meta) = extract_all_meta_from_content(&content) {
-                            if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
-                                if seen_ids.contains(id) {
-                                    continue;
-                                }
-                                seen_ids.insert(id.to_string());
+                            // Extract or default the ID
+                            let id = if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
+                                id.to_string()
+                            } else {
+                                // Default to filename slug
+                                path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string()
+                            };
+
+                            if seen_ids.contains(&id) {
+                                continue;
                             }
+                            seen_ids.insert(id.clone());
 
                             if let Some(obj) = meta.as_object_mut() {
+                                // Ensure ID is in the object
+                                obj.insert("id".to_string(), serde_json::json!(id));
+
+                                // Add filename (without extension) for sidebar display
+                                let filename = path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(&id)
+                                    .to_string();
+                                obj.insert("filename".to_string(), serde_json::json!(filename));
+
+                                // Ensure Name is in the object (default to ID if missing)
+                                if !obj.contains_key("name") {
+                                    obj.insert("name".to_string(), serde_json::json!(id));
+                                }
+
                                 // Add file metadata
                                 if let Ok(metadata) = std::fs::metadata(&path) {
                                     if let Ok(created) = metadata.created() {

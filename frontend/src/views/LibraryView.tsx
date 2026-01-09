@@ -31,7 +31,8 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
     }, []);
 
     const filteredPacks = packs.filter(pack => {
-        const matchesSearch = pack.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        const matchesSearch = (pack.filename || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                             pack.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                              (pack.folder || '').toLowerCase().includes(searchQuery.toLowerCase());
         return matchesSearch;
     });
@@ -103,10 +104,10 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
                                             </div>
                                             <div className="min-w-0">
                                                 <div className="truncate font-medium text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
-                                                    {pack.name}
+                                                    {pack.filename || pack.name}
                                                 </div>
                                                 <div className="truncate text-[11px] text-slate-400">
-                                                    {pack.id}
+                                                    {pack.name !== pack.filename ? pack.name : pack.id}
                                                 </div>
                                             </div>
                                         </div>

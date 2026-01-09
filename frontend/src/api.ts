@@ -995,6 +995,7 @@ export async function renameNote(sourceId: string, oldPath: string, newPath: str
 export interface LibraryPack {
     id: string;
     name: string;
+    filename?: string;
     description: string;
     scope: 'Curated' | 'Team' | 'Personal';
     version: string;
