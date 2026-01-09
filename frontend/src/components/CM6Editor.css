@@ -3,9 +3,17 @@
 .cm6-editor-container {
   display: flex;
   flex-direction: column;
-  /* height: 100%; */
+  height: 100%;
+  min-height: 0; /* allow flex children to shrink for scrolling */
   background: var(--bg-content, #1e2433);
-  overflow-y: scroll;
+  overflow: hidden; /* let CodeMirror scroller handle scrolling */
+}
+
+.cm6-editor-container.cm6-container-scroll {
+  /* In container-scroll mode, the editor grows with content and the parent (workspace)
+     provides the scrolling. */
+  height: auto;
+  overflow: visible;
 }
 
 .cm6-editor-header {
@@ -42,7 +50,12 @@
 
 .cm6-editor-content {
   flex: 1;
+  min-height: 0; /* critical for nested scrolling in flex containers */
   overflow: hidden;
+}
+
+.cm6-editor-container.cm6-container-scroll .cm6-editor-content {
+  overflow: visible;
 }
 
 .cm6-editor-content .cm-editor {
@@ -50,8 +63,8 @@
 }
 
 .cm6-editor-content .cm-scroller {
-  /* Force a visible vertical scrollbar so it's obvious the editor is scrollable */
-  overflow-y: scroll;
+  /* Ensure CodeMirror itself scrolls */
+  overflow-y: auto;
   overflow-x: auto;
 }
 

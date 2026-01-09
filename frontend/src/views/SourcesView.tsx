@@ -27,11 +27,11 @@ export function SourcesView(_props: SourcesViewProps) {
         }}>
             <div style={{ textAlign: 'center', maxWidth: '400px' }}>
                 <div style={{ fontSize: '4rem', marginBottom: '16px', opacity: 0.2 }}>🗂️</div>
-                <h2 style={{ color: 'var(--text-active)', marginBottom: '12px' }}>No Source Selected</h2>
+                <h2 style={{ color: 'var(--text-active)', marginBottom: '12px' }}>No Project Selected</h2>
                 <p style={{ marginBottom: '32px', lineHeight: '1.6' }}>
-                    Select a source from the sidebar to view its details, graph, and profile.
+                    Select a project from the sidebar to view its details, graph, and profile.
                     <br />
-                    Or add a new source to get started.
+                    Or add a new project to get started.
                 </p>
                 <button
                     className="btn-action"
@@ -48,7 +48,7 @@ export function SourcesView(_props: SourcesViewProps) {
                         btn?.click();
                     }}
                 >
-                    + Add New Source
+                    + Add New Project
                 </button>
             </div>
         </div>

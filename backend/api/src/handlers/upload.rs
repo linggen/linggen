@@ -6,11 +6,11 @@ use axum::{
     body::Body,
     extract::{Multipart, State},
     http::{header, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     Json,
 };
 use chrono::Utc;
-use futures::stream::{self, StreamExt};
+use futures::stream;
 use ingestion::extract_text;
 use linggen_core::Chunk;
 use serde::{Deserialize, Serialize};
@@ -357,7 +357,7 @@ pub async fn upload_file_stream(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Response {
-    let (tx, mut rx) = mpsc::channel::<UploadProgress>(10);
+    let (tx, rx) = mpsc::channel::<UploadProgress>(10);
 
     // Spawn the upload processing in background
     let state_clone = state.clone();

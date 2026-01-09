@@ -4,21 +4,26 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
-import { getNote, saveNote, getMemoryFile, saveMemoryFile } from '../api';
+import { getNote, saveNote, getMemoryFile, saveMemoryFile, getPack, savePack } from '../api';
 import { livePreviewPlugin, livePreviewTheme } from './cm6-live-preview';
 import './CM6Editor.css';
 
 interface CM6EditorProps {
     sourceId: string;
     docPath: string;
-    docType?: 'notes' | 'memory';
+    docType?: 'notes' | 'memory' | 'library';
+    /**
+     * How scrolling should work:
+     * - editor: CodeMirror scrolls internally (default, best for large docs)
+     * - container: editor grows with content; parent container scrolls
+     */
+    scrollMode?: 'editor' | 'container';
     onClose?: () => void;
 }
 
 // Custom theme to match Linggen dark mode
-const linggenTheme = EditorView.theme({
+const linggenBaseTheme = EditorView.theme({
     '&': {
-        height: '100%',
         fontSize: '14px',
     },
     '.cm-content': {
@@ -91,7 +96,28 @@ const linggenTheme = EditorView.theme({
     },
 }, { dark: true });
 
-export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType = 'notes' }) => {
+const linggenFillHeightTheme = EditorView.theme(
+    {
+        '&': { height: '100%' },
+        '.cm-scroller': { height: '100%' },
+    },
+    { dark: true }
+);
+
+const linggenAutoHeightTheme = EditorView.theme(
+    {
+        '&': { height: 'auto' },
+        '.cm-scroller': { overflow: 'visible' },
+    },
+    { dark: true }
+);
+
+export const CM6Editor: React.FC<CM6EditorProps> = ({
+    sourceId,
+    docPath,
+    docType = 'notes',
+    scrollMode = 'editor',
+}) => {
     const [value, setValue] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -107,8 +133,10 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType
                 const doc =
                     docType === 'memory'
                         ? await getMemoryFile(sourceId, docPath)
+                        : docType === 'library'
+                        ? await getPack(docPath)
                         : await getNote(sourceId, docPath);
-                setValue((doc as any).content || '');
+                setValue(doc.content || '');
                 setDirty(false);
             } catch (err) {
                 console.error("Failed to load note:", err);
@@ -127,6 +155,8 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType
         try {
             if (docType === 'memory') {
                 await saveMemoryFile(sourceId, docPath, value);
+            } else if (docType === 'library') {
+                await savePack(docPath, value);
             } else {
                 await saveNote(sourceId, docPath, value);
             }
@@ -171,12 +201,15 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType
         return <div className="cm6-editor-loading">Loading {docPath}...</div>;
     }
 
+    const containerClassName =
+        scrollMode === 'container' ? 'cm6-editor-container cm6-container-scroll' : 'cm6-editor-container';
+
     return (
-        <div className="cm6-editor-container">
+        <div className={containerClassName}>
             {/* Header / Status Bar */}
             <div className="cm6-editor-header">
                 <div className="cm6-editor-title">
-                    {docType === 'memory' ? `Memory: ${docPath}` : docPath}
+                    {docType === 'memory' ? `Memory: ${docPath}` : docType === 'library' ? `Library: ${docPath}` : docPath}
                 </div>
                 <div className="cm6-editor-status">
                     {saving ? (
@@ -195,7 +228,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType
                     ref={editorRef}
                     value={value}
                     onChange={handleChange}
-                    height="100%"
+                    height={scrollMode === 'editor' ? '100%' : undefined}
                     
                     theme={oneDark}
                     extensions={[
@@ -203,7 +236,8 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({ sourceId, docPath, docType
                             base: markdownLanguage,
                             codeLanguages: languages
                         }),
-                        linggenTheme,
+                        linggenBaseTheme,
+                        scrollMode === 'editor' ? linggenFillHeightTheme : linggenAutoHeightTheme,
                         livePreviewPlugin,
                         livePreviewTheme,
                         EditorView.lineWrapping,

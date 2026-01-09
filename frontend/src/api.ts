@@ -990,3 +990,154 @@ export async function renameNote(sourceId: string, oldPath: string, newPath: str
         throw new Error(`Failed to rename note: ${response.statusText}`);
     }
 }
+
+// Library API
+export interface LibraryPack {
+    id: string;
+    name: string;
+    description: string;
+    scope: 'Curated' | 'Team' | 'Personal';
+    version: string;
+    author: string;
+    tags: string[];
+    color?: string;
+    folder?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface ListPacksResponse {
+    packs: LibraryPack[];
+}
+
+export async function listPacks(): Promise<LibraryPack[]> {
+    const response = await fetch(`${API_BASE}/api/library/packs`);
+    if (!response.ok) {
+        throw new Error(`Failed to list library packs: ${response.statusText}`);
+    }
+    const data: ListPacksResponse = await response.json();
+    return data.packs;
+}
+
+export async function createPack(folder: string, name: string): Promise<{ id: string; path: string }> {
+    const response = await fetch(`${API_BASE}/api/library/packs`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ folder, name }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to create pack: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function renamePack(packId: string, newName: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/packs/rename`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ pack_id: packId, new_name: newName }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to rename pack: ${response.statusText}`);
+    }
+}
+
+export async function deletePack(packId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to delete pack: ${response.statusText}`);
+    }
+}
+
+export async function createLibraryFolder(name: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/folders`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to create library folder: ${response.statusText}`);
+    }
+}
+
+export async function renameLibraryFolder(oldName: string, newName: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/folders/rename`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ old_name: oldName, new_name: newName }),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to rename library folder: ${response.statusText}`);
+    }
+}
+
+export async function deleteLibraryFolder(folderName: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/folders/${folderName}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to delete library folder: ${response.statusText}`);
+    }
+}
+
+export interface ListLibraryFoldersResponse {
+    folders: string[];
+}
+
+export async function listLibraryFolders(): Promise<string[]> {
+    const response = await fetch(`${API_BASE}/api/library/folders`);
+    if (!response.ok) {
+        throw new Error(`Failed to list library folders: ${response.statusText}`);
+    }
+    const data: ListLibraryFoldersResponse = await response.json();
+    return data.folders || [];
+}
+
+export async function getPack(packId: string): Promise<{ path: string; content: string }> {
+    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`);
+    if (!response.ok) {
+        throw new Error(`Failed to get pack: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export async function savePack(packId: string, content: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to save pack: ${response.statusText}`);
+    }
+}
+
+export async function applyPack(packId: string, projectId: string): Promise<{ success: boolean; destination: string }> {
+    const response = await fetch(`${API_BASE}/api/library/packs/${packId}/apply`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ project_id: projectId }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to apply pack: ${text}`);
+    }
+
+    return response.json();
+}

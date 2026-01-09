@@ -147,6 +147,7 @@ class MermaidWidget extends WidgetType {
     // Let CodeMirror handle events normally. We rely on explicit state
     // (`mermaidEditBlocks`) to decide raw vs preview, so clicks on the
     // diagram no longer force a mode change.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     ignoreEvent(_event: Event) {
         return false;
     }

@@ -8,6 +8,7 @@ pub mod index_source;
 pub mod intent;
 pub mod internal_rescan;
 pub mod jobs;
+pub mod library;
 pub mod mcp;
 pub mod memory;
 pub mod memory_semantic;
@@ -17,6 +18,7 @@ pub mod profile;
 pub mod prompts;
 pub mod resources;
 pub mod retry_init;
+pub mod search;
 pub mod settings;
 pub mod source_memory;
 pub mod status;
@@ -35,6 +37,10 @@ pub use jobs::{cancel_job, list_jobs};
 
 pub use internal_rescan::rescan_internal_index;
 // pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
+pub use library::{
+    apply_pack, create_folder, create_pack, delete_folder, delete_pack, get_pack, list_folders,
+    list_packs, rename_folder, rename_pack, save_pack,
+};
 pub use memory_semantic::search_semantic as memory_search_semantic;
 pub use prompts::{delete_prompt, get_prompt, list_prompts, rename_prompt, save_prompt};
 pub use resources::{
@@ -44,7 +50,5 @@ pub use retry_init::retry_init;
 pub use source_memory::{
     delete_memory_file, get_memory_file, list_memory_files, rename_memory_file, save_memory_file,
 };
-pub mod search;
-pub use search::search;
 pub use status::get_app_status;
 pub use upload::{delete_uploaded_file, list_uploaded_files, upload_file, upload_file_stream};

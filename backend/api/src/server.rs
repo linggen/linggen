@@ -1,5 +1,5 @@
 use anyhow::Context;
-use axum::{extract::DefaultBodyLimit, routing::get, routing::post, Router};
+use axum::{extract::DefaultBodyLimit, routing::delete, routing::get, routing::post, Router};
 use dashmap::DashMap;
 use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
@@ -16,12 +16,13 @@ use tracing::{info, warn};
 
 use crate::analytics;
 use crate::handlers::{
-    add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, delete_uploaded_file,
-    enhance_prompt, get_app_status, get_graph, get_graph_status, get_graph_with_status,
-    index_source, list_jobs, list_resources, list_uploaded_files,
+    add_resource, apply_pack, cancel_job, chat_stream, classify_intent, clear_all_data,
+    create_folder, create_pack, delete_folder, delete_pack, delete_uploaded_file, enhance_prompt,
+    get_app_status, get_graph, get_graph_status, get_graph_with_status, get_pack, index_source,
+    list_folders, list_jobs, list_packs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
-    rebuild_graph, remove_resource, rename_resource, retry_init, update_resource_patterns,
-    upload_file, upload_file_stream, AppState,
+    rebuild_graph, remove_resource, rename_folder, rename_pack, rename_resource, retry_init,
+    save_pack, update_resource_patterns, upload_file, upload_file_stream, AppState,
 };
 use crate::job_manager::JobManager;
 
@@ -50,6 +51,201 @@ fn get_parent_pid() -> u32 {
 #[cfg(not(unix))]
 fn pid_is_alive(_pid: u32) -> bool {
     true
+}
+
+/// Seed the library directory with default folders and packs
+fn seed_library(library_path: &Path) -> anyhow::Result<()> {
+    if !library_path.exists() {
+        std::fs::create_dir_all(library_path)?;
+    }
+
+    // ----------------------------------------------------------------------------
+    // Install/upgrade-time trigger
+    // ----------------------------------------------------------------------------
+    // We treat library seeding as an install/upgrade-time migration:
+    // - On first app launch after install, marker is missing → seed.
+    // - On first app launch after upgrade, marker differs → seed.
+    // Seeding never overwrites existing user files; it only copies missing templates.
+    let current_version = env!("CARGO_PKG_VERSION");
+    let marker_path = library_path.join(".linggen_library_seed_version");
+    let previous_version = std::fs::read_to_string(&marker_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let is_first_run_or_upgrade = previous_version.as_deref() != Some(current_version);
+
+    info!(
+        "Seeding Library with default folders and packs at {:?}",
+        library_path
+    );
+    if is_first_run_or_upgrade {
+        info!(
+            "Library seed trigger: {} → {}",
+            previous_version.as_deref().unwrap_or("<none>"),
+            current_version
+        );
+    } else {
+        info!(
+            "Library seed trigger: unchanged ({}), skipping template sync",
+            current_version
+        );
+    }
+
+    // ----------------------------------------------------------------------------
+    // Template sync (filesystem-based; no hardcoded list)
+    // ----------------------------------------------------------------------------
+    fn find_library_templates_dir() -> Option<PathBuf> {
+        // 0) Explicit override (useful for debugging / custom packaging).
+        if let Ok(dir) = std::env::var("LINGGEN_LIBRARY_TEMPLATES_DIR") {
+            let p = PathBuf::from(dir);
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        // 0.5) Tauri provides the resources directory at runtime in some environments.
+        // Prefer it if available (cross-platform).
+        if let Ok(dir) = std::env::var("TAURI_RESOURCE_DIR") {
+            let base = PathBuf::from(dir);
+            candidates.push(base.join("library_templates"));
+            candidates.push(base.join("resources").join("library_templates"));
+        }
+
+        // 1) Resolve relative to the server executable (best for release apps / Finder launches).
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                // Common layouts for "installed binary" distributions:
+                // - <prefix>/bin/linggen-server
+                // - <prefix>/share/linggen/library_templates
+                // - <prefix>/bin/library_templates (next to binary)
+                candidates.push(exe_dir.join("library_templates"));
+                candidates.push(exe_dir.join("../library_templates"));
+                candidates.push(exe_dir.join("../share/linggen/library_templates"));
+
+                // Windows-friendly layouts (or generic "resources" folder next to binary)
+                candidates.push(exe_dir.join("resources").join("library_templates"));
+                candidates.push(exe_dir.join("../resources").join("library_templates"));
+
+                candidates.push(exe_dir.join("../Resources/library_templates"));
+                // Tauri bundles `bundle.resources` under `Contents/Resources/resources/...` by default.
+                candidates.push(exe_dir.join("../Resources/resources/library_templates"));
+                candidates.push(exe_dir.join("../../Resources/library_templates"));
+                candidates.push(exe_dir.join("../../Resources/resources/library_templates"));
+            }
+        }
+
+        // 2) Resolve relative to this crate (useful for local dev builds).
+        candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("library_templates"));
+
+        // 3) Optional conventional locations (if an installer drops templates here).
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join(".linggen").join("library_templates"));
+        }
+
+        // 4) OS-specific application data locations (macOS Application Support, Linux XDG data dir, Windows AppData).
+        // `dirs::data_dir()` typically resolves to:
+        // - macOS: ~/Library/Application Support
+        // - Linux: ~/.local/share (or XDG_DATA_HOME)
+        // - Windows: %APPDATA%
+        if let Some(data_dir) = dirs::data_dir() {
+            candidates.push(data_dir.join("Linggen").join("library_templates"));
+            candidates.push(data_dir.join("linggen").join("library_templates"));
+        }
+
+        // 5) Windows system-wide data dir (optional installer target)
+        if let Ok(program_data) = std::env::var("PROGRAMDATA") {
+            candidates.push(
+                PathBuf::from(program_data)
+                    .join("Linggen")
+                    .join("library_templates"),
+            );
+        }
+
+        candidates.into_iter().find(|p| p.is_dir())
+    }
+
+    fn sync_missing_templates(src_root: &Path, dst_root: &Path) -> anyhow::Result<usize> {
+        fn walk(
+            cur: &Path,
+            src_root: &Path,
+            dst_root: &Path,
+            copied: &mut usize,
+        ) -> anyhow::Result<()> {
+            for entry in std::fs::read_dir(cur)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                // Skip dotfiles/directories.
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                }
+
+                if path.is_dir() {
+                    walk(&path, src_root, dst_root, copied)?;
+                    continue;
+                }
+
+                // Only copy markdown templates.
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+
+                let rel = path.strip_prefix(src_root).context("strip_prefix failed")?;
+                let dst_path = dst_root.join(rel);
+
+                // Never overwrite existing user files.
+                if dst_path.exists() {
+                    continue;
+                }
+
+                if let Some(parent) = dst_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                std::fs::copy(&path, &dst_path)?;
+                *copied += 1;
+            }
+            Ok(())
+        }
+
+        let mut copied = 0usize;
+        walk(src_root, src_root, dst_root, &mut copied)?;
+        Ok(copied)
+    }
+
+    if is_first_run_or_upgrade {
+        match find_library_templates_dir() {
+            Some(src_root) => {
+                let copied = sync_missing_templates(&src_root, library_path)?;
+                info!(
+                    "Library templates synced from {:?} -> {:?} ({} new files)",
+                    src_root, library_path, copied
+                );
+            }
+            None => {
+                warn!(
+                    "Library templates dir not found; skipping template sync into {:?}",
+                    library_path
+                );
+            }
+        }
+    }
+
+    // Update marker on first run/upgrade (best effort; don't fail startup).
+    if is_first_run_or_upgrade {
+        if let Err(e) = std::fs::write(&marker_path, format!("{}\n", current_version)) {
+            warn!(
+                "Failed to write library seed marker at {:?}: {}",
+                marker_path, e
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<()> {
@@ -121,8 +317,19 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
     let metadata_path = base_data_dir.join("metadata.redb");
     let lancedb_path = base_data_dir.join("lancedb");
 
+    // Library path: prioritize ~/.linggen/library
+    let library_path = dirs::home_dir()
+        .map(|h| h.join(".linggen").join("library"))
+        .unwrap_or_else(|| base_data_dir.join("library"));
+
     info!("Using metadata store at {:?}", metadata_path);
     info!("Using LanceDB store at {:?}", lancedb_path);
+    info!("Using Library store at {:?}", library_path);
+
+    // Seed Library with default packs
+    if let Err(e) = seed_library(&library_path) {
+        warn!("Failed to seed library: {}", e);
+    }
 
     let mut metadata_store_result = MetadataStore::new(&metadata_path);
     let mut lock_retries = 0;
@@ -472,6 +679,7 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         job_manager: job_manager.clone(),
         graph_cache: graph_cache.clone(),
         broadcast_tx: broadcast_tx.clone(),
+        library_path: library_path.clone(),
     });
 
     // Start background watchers for all configured projects
@@ -600,6 +808,19 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         .route("/api/resources/remove", post(remove_resource))
         .route("/api/resources/rename", post(rename_resource))
         .route("/api/resources/patterns", post(update_resource_patterns))
+        .route("/api/library/packs", get(list_packs).post(create_pack))
+        .route("/api/library/packs/rename", post(rename_pack))
+        .route(
+            "/api/library/packs/:pack_id",
+            get(get_pack).put(save_pack).delete(delete_pack),
+        )
+        .route("/api/library/packs/:pack_id/apply", post(apply_pack))
+        .route(
+            "/api/library/folders",
+            get(list_folders).post(create_folder),
+        )
+        .route("/api/library/folders/rename", post(rename_folder))
+        .route("/api/library/folders/:folder_name", delete(delete_folder))
         .route(
             "/api/settings",
             get(crate::handlers::settings::get_settings)

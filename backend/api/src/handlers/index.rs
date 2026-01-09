@@ -17,4 +17,5 @@ pub struct AppState {
     pub job_manager: Arc<JobManager>,
     pub graph_cache: Arc<GraphCache>,
     pub broadcast_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    pub library_path: std::path::PathBuf,
 }

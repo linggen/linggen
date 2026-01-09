@@ -75,7 +75,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                 boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
             }} onClick={e => e.stopPropagation()}>
                 <h3 style={{ marginTop: 0, marginBottom: '20px', fontSize: '1.1rem', color: 'var(--text-active)' }}>
-                    Add New Source
+                    Add New Project
                 </h3>
 
                 <form onSubmit={handleSubmit}>
@@ -242,7 +242,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                                 opacity: isSubmitting ? 0.7 : 1
                             }}
                         >
-                            {isSubmitting ? 'Adding...' : 'Add Source'}
+                            {isSubmitting ? 'Adding...' : 'Add Project'}
                         </button>
                     </div>
                 </form>

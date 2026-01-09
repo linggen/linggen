@@ -481,6 +481,64 @@ const DEFAULT_LIMIT: usize = 5;
 fn get_tool_definitions() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
+            "name": "list_library_packs",
+            "description": "List all library packs (skills/policies) available in the global Linggen library. Returns JSON with pack metadata (id, name, folder, timestamps, etc.).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        serde_json::json!({
+            "name": "get_library_pack",
+            "description": "Get a library pack by pack_id. Returns JSON containing the pack file path, parsed frontmatter (info), and full markdown content.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pack_id": {
+                        "type": "string",
+                        "description": "The pack id from frontmatter (e.g. 'security-policy', 'rust-rules')"
+                    }
+                },
+                "required": ["pack_id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "create_library_pack",
+            "description": "Create a new library pack markdown file under a folder (e.g. skills/policies). Returns JSON with created pack id and file path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "folder": { "type": "string", "description": "Destination folder under the library root (e.g. 'skills', 'policies', or 'general')" },
+                    "name": { "type": "string", "description": "Human-friendly name (will become frontmatter name and filename)" }
+                },
+                "required": ["folder", "name"]
+            }
+        }),
+        serde_json::json!({
+            "name": "rename_library_pack",
+            "description": "Rename a library pack file (and update its frontmatter name).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pack_id": { "type": "string", "description": "Existing pack id to rename" },
+                    "new_name": { "type": "string", "description": "New display name / filename ('.md' optional)" }
+                },
+                "required": ["pack_id", "new_name"]
+            }
+        }),
+        serde_json::json!({
+            "name": "delete_library_pack",
+            "description": "Delete a library pack file by pack_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pack_id": { "type": "string", "description": "Pack id to delete" }
+                },
+                "required": ["pack_id"]
+            }
+        }),
+        serde_json::json!({
             "name": "search_codebase",
             "description": "Search the Linggen knowledge base for relevant code snippets and documentation. Returns raw context chunks that match the query.",
             "inputSchema": {
@@ -660,6 +718,28 @@ struct MemoryFetchByMetaParams {
     value: String,
 }
 
+#[derive(Deserialize)]
+struct GetLibraryPackParams {
+    pack_id: String,
+}
+
+#[derive(Deserialize)]
+struct CreateLibraryPackParams {
+    folder: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct RenameLibraryPackParams {
+    pack_id: String,
+    new_name: String,
+}
+
+#[derive(Deserialize)]
+struct DeleteLibraryPackParams {
+    pack_id: String,
+}
+
 /// Execute a tool by name with given arguments
 async fn execute_tool(
     name: &str,
@@ -672,6 +752,11 @@ async fn execute_tool(
     );
 
     let result = match name {
+        "list_library_packs" => execute_list_library_packs(app_state).await,
+        "get_library_pack" => execute_get_library_pack(args, app_state).await,
+        "create_library_pack" => execute_create_library_pack(args, app_state).await,
+        "rename_library_pack" => execute_rename_library_pack(args, app_state).await,
+        "delete_library_pack" => execute_delete_library_pack(args, app_state).await,
         "search_codebase" => execute_search_codebase(args, app_state).await,
         "enhance_prompt" => execute_enhance_prompt(args, app_state).await,
         "list_sources" => execute_list_sources(app_state).await,
@@ -691,6 +776,298 @@ async fn execute_tool(
     }
 
     result
+}
+
+fn extract_frontmatter_json(content: &str) -> Option<serde_json::Value> {
+    if !content.starts_with("---") {
+        return None;
+    }
+
+    let mut parts = content.splitn(3, "---");
+    parts.next(); // skip empty before first ---
+    let frontmatter = parts.next()?;
+
+    let yaml_val: serde_yaml::Value = serde_yaml::from_str(frontmatter).ok()?;
+    serde_json::to_value(yaml_val).ok()
+}
+
+fn slugify_id(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn find_pack_by_id(root: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(p) = find_pack_by_id(&path, id) {
+                    return Some(p);
+                }
+            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Some(meta) = extract_frontmatter_json(&content) {
+                        if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn execute_list_library_packs(app_state: &Arc<AppState>) -> anyhow::Result<String> {
+    let library_root = app_state.library_path.as_path();
+    let mut packs: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    fn scan_dir(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        packs: &mut Vec<serde_json::Value>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    scan_dir(&path, root, packs, seen);
+                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Some(mut meta) = extract_frontmatter_json(&content) {
+                            if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
+                                if seen.contains(id) {
+                                    continue;
+                                }
+                                seen.insert(id.to_string());
+                            }
+
+                            if let Some(obj) = meta.as_object_mut() {
+                                // folder
+                                if let Some(parent_name) = path
+                                    .parent()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|n| n.to_str())
+                                {
+                                    if path.parent() != Some(root) {
+                                        obj.insert(
+                                            "folder".to_string(),
+                                            serde_json::json!(parent_name),
+                                        );
+                                    }
+                                }
+
+                                // timestamps (best-effort)
+                                if let Ok(metadata) = std::fs::metadata(&path) {
+                                    if let Ok(created) = metadata.created() {
+                                        obj.insert(
+                                            "created_at".to_string(),
+                                            serde_json::json!(
+                                                chrono::DateTime::<chrono::Utc>::from(created)
+                                            ),
+                                        );
+                                    }
+                                    if let Ok(modified) = metadata.modified() {
+                                        obj.insert(
+                                            "updated_at".to_string(),
+                                            serde_json::json!(
+                                                chrono::DateTime::<chrono::Utc>::from(modified)
+                                            ),
+                                        );
+                                    }
+                                }
+
+                                obj.insert(
+                                    "path".to_string(),
+                                    serde_json::json!(path.to_string_lossy()),
+                                );
+                            }
+
+                            packs.push(meta);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    scan_dir(library_root, library_root, &mut packs, &mut seen);
+    let out = serde_json::json!({ "packs": packs });
+    Ok(serde_json::to_string_pretty(&out)?)
+}
+
+async fn execute_get_library_pack(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: GetLibraryPackParams = serde_json::from_value(args)?;
+    let library_root = app_state.library_path.as_path();
+
+    let pack_path = find_pack_by_id(library_root, &params.pack_id)
+        .ok_or_else(|| anyhow::anyhow!("Pack not found: {}", params.pack_id))?;
+
+    let content = std::fs::read_to_string(&pack_path)?;
+    let meta = extract_frontmatter_json(&content);
+    let folder = pack_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
+    let out = serde_json::json!({
+        "pack_id": params.pack_id,
+        "path": pack_path.to_string_lossy(),
+        "folder": folder,
+        "meta": meta,
+        "content": content
+    });
+
+    Ok(serde_json::to_string_pretty(&out)?)
+}
+
+async fn execute_create_library_pack(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: CreateLibraryPackParams = serde_json::from_value(args)?;
+
+    if params.folder.contains(std::path::MAIN_SEPARATOR)
+        || params.folder.contains("..")
+        || params.name.contains(std::path::MAIN_SEPARATOR)
+        || params.name.contains("..")
+    {
+        anyhow::bail!("Invalid folder or file name");
+    }
+
+    let library_root = app_state.library_path.as_path();
+    let folder_path = library_root.join(&params.folder);
+    std::fs::create_dir_all(&folder_path)?;
+
+    let display_name = params.name.trim();
+    let pack_id = slugify_id(display_name);
+
+    let mut file_name = display_name.to_string();
+    if !file_name.ends_with(".md") {
+        file_name.push_str(".md");
+    }
+    let file_path = folder_path.join(&file_name);
+    if file_path.exists() {
+        anyhow::bail!("Pack already exists: {}", file_name);
+    }
+
+    let body = format!(
+        "---\nid: {}\nname: {}\ndescription: New library pack\nscope: Personal\nversion: 1.0.0\nauthor: User\ntags: []\n---\n\n# {}\n\nStart writing...\n",
+        pack_id, display_name, display_name
+    );
+    std::fs::write(&file_path, body)?;
+
+    let out = serde_json::json!({
+        "pack_id": pack_id,
+        "path": file_path.to_string_lossy()
+    });
+    Ok(serde_json::to_string_pretty(&out)?)
+}
+
+async fn execute_rename_library_pack(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: RenameLibraryPackParams = serde_json::from_value(args)?;
+    if params.new_name.contains(std::path::MAIN_SEPARATOR) || params.new_name.contains("..") {
+        anyhow::bail!("Invalid pack name");
+    }
+
+    let library_root = app_state.library_path.as_path();
+    let pack_path = find_pack_by_id(library_root, &params.pack_id)
+        .ok_or_else(|| anyhow::anyhow!("Pack not found: {}", params.pack_id))?;
+
+    let display_name = params
+        .new_name
+        .trim()
+        .trim_end_matches(".md")
+        .trim()
+        .to_string();
+
+    let mut new_file_name = display_name.clone();
+    if !new_file_name.ends_with(".md") {
+        new_file_name.push_str(".md");
+    }
+    let new_path = pack_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid pack path"))?
+        .join(&new_file_name);
+
+    if new_path.exists() {
+        anyhow::bail!("New pack name already exists: {}", new_file_name);
+    }
+
+    let content = std::fs::read_to_string(&pack_path)?;
+
+    fn update_frontmatter_name(content: &str, new_name: &str) -> String {
+        if !content.starts_with("---") {
+            return content.to_string();
+        }
+
+        let mut parts = content.splitn(3, "---");
+        parts.next();
+        let frontmatter = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("");
+
+        let mut replaced = false;
+        let mut out = Vec::new();
+        for line in frontmatter.lines() {
+            if !replaced && line.trim_start().starts_with("name:") {
+                out.push(format!("name: {}", new_name));
+                replaced = true;
+            } else {
+                out.push(line.to_string());
+            }
+        }
+        if !replaced {
+            out.push(format!("name: {}", new_name));
+        }
+
+        format!("---\n{}\n---{}", out.join("\n"), rest)
+    }
+
+    let updated = update_frontmatter_name(&content, &display_name);
+
+    std::fs::rename(&pack_path, &new_path)?;
+    std::fs::write(&new_path, updated)?;
+
+    Ok(format!(
+        "Renamed pack '{}' -> '{}' (file: {})",
+        params.pack_id,
+        display_name,
+        new_path.to_string_lossy()
+    ))
+}
+
+async fn execute_delete_library_pack(
+    args: serde_json::Value,
+    app_state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let params: DeleteLibraryPackParams = serde_json::from_value(args)?;
+    let library_root = app_state.library_path.as_path();
+
+    let pack_path = find_pack_by_id(library_root, &params.pack_id)
+        .ok_or_else(|| anyhow::anyhow!("Pack not found: {}", params.pack_id))?;
+
+    std::fs::remove_file(&pack_path)?;
+    Ok(format!(
+        "Deleted pack '{}' (file: {})",
+        params.pack_id,
+        pack_path.to_string_lossy()
+    ))
 }
 
 async fn execute_query_codebase(

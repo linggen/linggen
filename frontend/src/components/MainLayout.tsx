@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Sidebar, type View } from './Sidebar'
-import type { Resource } from '../api'
+import type { Resource, LibraryPack } from '../api'
 
 // Helper function to format bytes into human-readable size
 function formatSize(bytes: number): string {
@@ -24,7 +24,12 @@ interface MainLayoutProps {
     onSelectNote?: (sourceId: string, path: string) => void
     selectedMemoryPath?: string | null
     onSelectMemory?: (sourceId: string, path: string) => void
+    selectedLibraryPackId?: string | null
+    onSelectLibraryPack?: (packId: string) => void
     onAddSource?: () => void
+    libraryPacks?: LibraryPack[]
+    libraryFolders?: string[]
+    onRefresh?: () => void
 }
 
 export function MainLayout({
@@ -40,7 +45,12 @@ export function MainLayout({
     onSelectNote,
     selectedMemoryPath,
     onSelectMemory,
-    onAddSource
+    selectedLibraryPackId,
+    onSelectLibraryPack,
+    onAddSource,
+    libraryPacks,
+    libraryFolders,
+    onRefresh
 }: MainLayoutProps) {
     // We can add state for collapsing sidebar later if needed
     // const [isSidebarOpen, setIsSidebarOpen] = useState(true)
@@ -51,7 +61,7 @@ export function MainLayout({
             <div className="left-sidebar">
                 <div className="app-brand">
                     <div className="app-logo">LG</div>
-                    <div className="app-name">Linggen Architect</div>
+                    <div className="app-name">Linggen</div>
                 </div>
                 <Sidebar
                     currentView={currentView}
@@ -64,14 +74,21 @@ export function MainLayout({
                     onSelectNote={onSelectNote}
                     selectedMemoryPath={selectedMemoryPath}
                     onSelectMemory={onSelectMemory}
+                    selectedLibraryPackId={selectedLibraryPackId}
+                    onSelectLibraryPack={onSelectLibraryPack}
                     onAddSource={onAddSource}
+                    libraryPacks={libraryPacks}
+                    libraryFolders={libraryFolders}
+                    onRefresh={onRefresh}
                 />
             </div>
 
             <div className="content-area">
                 <header className="content-header">
                     {/* Breadcrumbs or Title could go here */}
-                    <div className="view-title">{currentView.charAt(0).toUpperCase() + currentView.slice(1)}</div>
+                    <div className="view-title">
+                        {currentView === 'sources' ? 'Projects' : currentView.charAt(0).toUpperCase() + currentView.slice(1)}
+                    </div>
                     {currentView === 'sources' && resources && resources.length > 0 && (
                         <div style={{
                             fontSize: '0.85rem',
@@ -81,7 +98,7 @@ export function MainLayout({
                             alignItems: 'center',
                             marginLeft: 'auto'
                         }}>
-                            <span>{resources.length} {resources.length === 1 ? 'source' : 'sources'}</span>
+                            <span>{resources.length} {resources.length === 1 ? 'project' : 'projects'}</span>
                             <span>•</span>
                             <span>
                                 {formatSize(

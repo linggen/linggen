@@ -2,7 +2,7 @@ use anyhow::Result;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 
 use super::AppState;
 

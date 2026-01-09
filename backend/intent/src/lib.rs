@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::error;
 
 /// Developer intent types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

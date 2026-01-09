@@ -12,6 +12,7 @@ import {
 import { useState, useEffect } from 'react';
 import {
     type Resource,
+    type LibraryPack,
     saveNote,
     listNotes,
     renameNote,
@@ -20,10 +21,16 @@ import {
     type Note,
     listMemoryFiles,
     type MemoryFile,
+    createPack,
+    renamePack,
+    deletePack,
+    createLibraryFolder,
+    renameLibraryFolder,
+    deleteLibraryFolder,
 } from '../api'
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
-export type View = 'sources' | 'activity' | 'assistant' | 'settings'
+export type View = 'sources' | 'library' | 'activity' | 'assistant' | 'settings'
 
 interface SidebarProps {
     currentView: View
@@ -36,14 +43,21 @@ interface SidebarProps {
     onSelectNote?: (sourceId: string, path: string) => void
     selectedMemoryPath?: string | null
     onSelectMemory?: (sourceId: string, path: string) => void
+    selectedLibraryPackId?: string | null
+    onSelectLibraryPack?: (packId: string) => void
     onAddSource?: () => void
+    libraryPacks?: LibraryPack[]
+    libraryFolders?: string[]
+    onRefresh?: () => void
 }
 
 interface ContextMenuState {
     x: number;
     y: number;
-    sourceId: string;
+    sourceId?: string;
     notePath?: string;
+    libraryPackId?: string;
+    libraryFolder?: string;
 }
 
 interface DeleteSourceConfirmation {
@@ -62,18 +76,57 @@ export function Sidebar({
     onSelectNote,
     selectedMemoryPath,
     onSelectMemory,
-    onAddSource
+    selectedLibraryPackId,
+    onSelectLibraryPack,
+    onAddSource,
+    libraryPacks = [],
+    libraryFolders = [],
+    onRefresh
 }: SidebarProps) {
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [creatingNote, setCreatingNote] = useState<string | null>(null); // sourceId where we are creating a note
-    // renamingNote: { sourceId, oldPath }
+    const [creatingLibraryPack, setCreatingLibraryPack] = useState<string | null>(null); // folder where we are creating a pack
+    const [creatingLibraryFolder, setCreatingLibraryFolder] = useState(false);
+    
+    // renaming: { type: 'note' | 'source' | 'libraryPack' | 'libraryFolder', id: string, oldPath: string }
     const [renamingNote, setRenamingNote] = useState<{ sourceId: string, oldPath: string } | null>(null);
+    const [renamingLibraryPack, setRenamingLibraryPack] = useState<{ id: string, oldName: string } | null>(null);
+    const [renamingLibraryFolder, setRenamingLibraryFolder] = useState<{ oldName: string } | null>(null);
+
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ sourceId: string, notePath: string } | null>(null);
     const [deleteSourceConfirmation, setDeleteSourceConfirmation] = useState<DeleteSourceConfirmation | null>(null);
+    const [deleteLibraryPackConfirmation, setDeleteLibraryPackConfirmation] = useState<{ id: string, name: string } | null>(null);
+    const [deleteLibraryFolderConfirmation, setDeleteLibraryFolderConfirmation] = useState<{ name: string } | null>(null);
     const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
     const [expandedMemories, setExpandedMemories] = useState<Set<string>>(new Set());
+    const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<Set<string>>(new Set(['skills', 'policies']));
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
     const [sourceMemories, setSourceMemories] = useState<Record<string, MemoryFile[]>>({});
+
+    // Collapsible sections state
+    const [isProjectsCollapsed, setIsProjectsCollapsed] = useState(false);
+    const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
+
+    // Group library packs by folder (also include empty folders)
+    const libraryGroups = libraryPacks.reduce((acc, pack) => {
+        const folder = pack.folder || 'general';
+        if (!acc[folder]) acc[folder] = [];
+        acc[folder].push(pack);
+        return acc;
+    }, {} as Record<string, LibraryPack[]>);
+
+    for (const folder of libraryFolders) {
+        if (!libraryGroups[folder]) {
+            libraryGroups[folder] = [];
+        }
+    }
+
+    const toggleLibraryFolder = (folder: string) => {
+        const newSet = new Set(expandedLibraryFolders);
+        if (newSet.has(folder)) newSet.delete(folder);
+        else newSet.add(folder);
+        setExpandedLibraryFolders(newSet);
+    };
 
     // Refresh notes for expanded sources periodically or when resources/version change
     useEffect(() => {
@@ -203,7 +256,7 @@ export function Sidebar({
     };
 
     const handleRenameNoteTrigger = () => {
-        if (!contextMenu?.notePath) return;
+        if (!contextMenu?.notePath || !contextMenu?.sourceId) return;
         setRenamingNote({
             sourceId: contextMenu.sourceId,
             oldPath: contextMenu.notePath
@@ -238,7 +291,7 @@ export function Sidebar({
     };
 
     const handleDeleteNote = () => {
-        if (!contextMenu?.notePath) return;
+        if (!contextMenu?.notePath || !contextMenu?.sourceId) return;
         const { sourceId, notePath } = contextMenu;
         setContextMenu(null);
         setDeleteConfirmation({ sourceId, notePath });
@@ -265,14 +318,14 @@ export function Sidebar({
     };
 
     const handleAddMarkdown = () => {
-        if (!contextMenu) return;
+        if (!contextMenu || !contextMenu.sourceId) return;
         const { sourceId } = contextMenu;
         setContextMenu(null);
         startCreatingNote(sourceId);
     };
 
     const handleRemoveSource = () => {
-        if (!contextMenu || contextMenu.notePath) return; // Only for sources, not notes
+        if (!contextMenu || !contextMenu.sourceId || contextMenu.notePath) return; // Only for sources, not notes
         const { sourceId } = contextMenu;
         const resource = resources.find(r => r.id === sourceId);
         setContextMenu(null);
@@ -330,74 +383,224 @@ export function Sidebar({
         onSelectNote?.(sourceId, notePath);
     };
 
+    const handleLibraryContextMenu = (e: React.MouseEvent, packId?: string, folder?: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
+        setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            libraryPackId: packId,
+            libraryFolder: folder
+        });
+    };
+
+    const handleCreateLibraryPackSubmit = async (folder: string, name: string) => {
+        if (!name.trim()) {
+            setCreatingLibraryPack(null);
+            return;
+        }
+
+        try {
+            await createPack(folder, name);
+            onRefresh?.();
+        } catch (err) {
+            console.error("Failed to create library pack:", err);
+            alert("Failed to create library pack.");
+        } finally {
+            setCreatingLibraryPack(null);
+        }
+    };
+
+    const handleCreateLibraryFolderSubmit = async (name: string) => {
+        if (!name.trim()) {
+            setCreatingLibraryFolder(false);
+            return;
+        }
+
+        try {
+            await createLibraryFolder(name);
+            onRefresh?.();
+        } catch (err) {
+            console.error("Failed to create library folder:", err);
+            alert("Failed to create library folder.");
+        } finally {
+            setCreatingLibraryFolder(false);
+        }
+    };
+
+    const handleRenameLibraryPackSubmit = async (newName: string) => {
+        if (!renamingLibraryPack || !newName.trim()) {
+            setRenamingLibraryPack(null);
+            return;
+        }
+
+        if (newName === renamingLibraryPack.oldName) {
+            setRenamingLibraryPack(null);
+            return;
+        }
+
+        try {
+            await renamePack(renamingLibraryPack.id, newName);
+            onRefresh?.();
+        } catch (err) {
+            console.error("Failed to rename library pack:", err);
+            alert("Failed to rename library pack.");
+        } finally {
+            setRenamingLibraryPack(null);
+        }
+    };
+
+    const handleRenameLibraryFolderSubmit = async (newName: string) => {
+        if (!renamingLibraryFolder || !newName.trim()) {
+            setRenamingLibraryFolder(null);
+            return;
+        }
+
+        if (newName === renamingLibraryFolder.oldName) {
+            setRenamingLibraryFolder(null);
+            return;
+        }
+
+        try {
+            await renameLibraryFolder(renamingLibraryFolder.oldName, newName);
+            onRefresh?.();
+        } catch (err) {
+            console.error("Failed to rename library folder:", err);
+            alert("Failed to rename library folder.");
+        } finally {
+            setRenamingLibraryFolder(null);
+        }
+    };
+
+    const handleConfirmDeleteLibraryPack = async () => {
+        if (!deleteLibraryPackConfirmation) return;
+        try {
+            await deletePack(deleteLibraryPackConfirmation.id);
+            onRefresh?.();
+            if (selectedLibraryPackId === deleteLibraryPackConfirmation.id) {
+                onSelectLibraryPack?.('');
+            }
+        } catch (err) {
+            console.error("Failed to delete library pack:", err);
+            alert("Failed to delete library pack.");
+        } finally {
+            setDeleteLibraryPackConfirmation(null);
+        }
+    };
+
+    const handleConfirmDeleteLibraryFolder = async () => {
+        if (!deleteLibraryFolderConfirmation) return;
+        try {
+            await deleteLibraryFolder(deleteLibraryFolderConfirmation.name);
+            onRefresh?.();
+        } catch (err) {
+            console.error("Failed to delete library folder:", err);
+            alert("Failed to delete library folder.");
+        } finally {
+            setDeleteLibraryFolderConfirmation(null);
+        }
+    };
+
+    const SidebarSectionHeader = ({ 
+        label, 
+        isCollapsed, 
+        onToggle, 
+        actions 
+    }: { 
+        label: string, 
+        isCollapsed: boolean, 
+        onToggle: () => void, 
+        actions?: React.ReactNode 
+    }) => (
+        <div className="tree-header" style={{
+            padding: '4px 16px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginTop: '8px',
+            marginBottom: '4px',
+            cursor: 'pointer'
+        }} onClick={onToggle}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {isCollapsed ? (
+                    <ChevronRightIcon style={{ width: '10px', height: '10px', color: 'var(--text-secondary)' }} />
+                ) : (
+                    <ChevronDownIcon style={{ width: '10px', height: '10px', color: 'var(--text-secondary)' }} />
+                )}
+                <span style={{
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '0.05em'
+                }}>{label}</span>
+            </div>
+
+            {actions && (
+                <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                    {actions}
+                </div>
+            )}
+        </div>
+    );
+
     return (
         <div className="sidebar">
             <div className="sidebar-section">
-
-
                 <div className="sidebar-tree">
-                    <div className="tree-header" style={{
-                        padding: '4px 16px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginTop: '8px',
-                        marginBottom: '4px',
+                    <SidebarSectionHeader 
+                        label="PROJECTS"
+                        isCollapsed={isProjectsCollapsed}
+                        onToggle={() => setIsProjectsCollapsed(!isProjectsCollapsed)}
+                        actions={
+                            <>
+                                <button
+                                    className="icon-button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleHeaderAddMarkdown();
+                                    }}
+                                    title="Add Doc"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--text-secondary)',
+                                        padding: '2px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: '4px'
+                                    }}
+                                >
+                                    <DocumentPlusIcon style={{ width: '18px', height: '18px' }} />
+                                </button>
+                                <button
+                                    className="icon-button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onAddSource?.();
+                                    }}
+                                    title="Add Project"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--text-secondary)',
+                                        padding: '2px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: '4px'
+                                    }}
+                                >
+                                    <FolderPlusIcon style={{ width: '18px', height: '18px' }} />
+                                </button>
+                            </>
+                        }
+                    />
 
-                    }}>
-                        <span style={{
-                            fontSize: '11px',
-                            fontWeight: '700',
-                            color: 'var(--text-secondary)'
-                        }}>SOURCES</span>
-
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                                className="icon-button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleHeaderAddMarkdown();
-                                }}
-                                title="Add Doc"
-                                style={{
-                                    background: 'transparent',
-                                    border: 'none',
-                                    color: 'var(--text-secondary)',
-                                    padding: '2px',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '4px'
-                                }}
-                            >
-                                <DocumentPlusIcon style={{ width: '18px', height: '18px' }} />
-                            </button>
-                            <button
-                                className="icon-button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onAddSource?.();
-                                }}
-                                title="Add Source"
-                                style={{
-                                    background: 'transparent',
-                                    border: 'none',
-                                    color: 'var(--text-secondary)',
-                                    padding: '2px',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '4px'
-                                }}
-                            >
-                                <FolderPlusIcon style={{ width: '18px', height: '18px' }} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {resources.map(resource => (
+                    {!isProjectsCollapsed && resources.map(resource => (
                         <div
                             key={resource.id}
                             onContextMenu={(e) => handleContextMenu(e, resource.id)}
@@ -676,6 +879,335 @@ export function Sidebar({
                         </div>
                     ))}
                 </div>
+
+                <div className="sidebar-tree" style={{ marginTop: '16px' }}>
+                    <SidebarSectionHeader 
+                        label="LIBRARY"
+                        isCollapsed={isLibraryCollapsed}
+                        onToggle={() => {
+                            setIsLibraryCollapsed(!isLibraryCollapsed);
+                            onChangeView('library');
+                        }}
+                        actions={
+                            <>
+                                <button
+                                    className="icon-button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setCreatingLibraryPack('general');
+                                        if (isLibraryCollapsed) setIsLibraryCollapsed(false);
+                                    }}
+                                    title="Add Library File"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--text-secondary)',
+                                        padding: '2px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: '4px'
+                                    }}
+                                >
+                                    <DocumentPlusIcon style={{ width: '18px', height: '18px' }} />
+                                </button>
+                                <button
+                                    className="icon-button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setCreatingLibraryFolder(true);
+                                        if (isLibraryCollapsed) setIsLibraryCollapsed(false);
+                                    }}
+                                    title="Add Library Folder"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--text-secondary)',
+                                        padding: '2px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: '4px'
+                                    }}
+                                >
+                                    <FolderPlusIcon style={{ width: '18px', height: '18px' }} />
+                                </button>
+                            </>
+                        }
+                    />
+
+                    {!isLibraryCollapsed && (
+                        <div style={{ padding: '0 8px' }}>
+                            {creatingLibraryFolder && (
+                                <div
+                                    className="sidebar-item note-item"
+                                    style={{
+                                        paddingLeft: '16px',
+                                        fontSize: '0.85rem',
+                                        width: '100%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                    }}
+                                >
+                                    <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        defaultValue="new-folder"
+                                        style={{
+                                            background: 'var(--bg-app)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '2px',
+                                            color: 'var(--text-primary)',
+                                            fontSize: 'inherit',
+                                            width: '100%',
+                                            outline: 'none',
+                                            padding: '1px 4px'
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                handleCreateLibraryFolderSubmit(e.currentTarget.value);
+                                            } else if (e.key === 'Escape') {
+                                                setCreatingLibraryFolder(false);
+                                            }
+                                        }}
+                                        onBlur={() => setCreatingLibraryFolder(false)}
+                                    />
+                                </div>
+                            )}
+                            {Object.entries(libraryGroups).map(([folder, packs]) => (
+                                <div key={folder}>
+                                    {renamingLibraryFolder?.oldName === folder ? (
+                                        <div
+                                            className="sidebar-item note-item"
+                                            style={{
+                                                paddingLeft: '16px',
+                                                fontSize: '0.85rem',
+                                                width: '100%',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '6px'
+                                            }}
+                                        >
+                                            <FolderIcon style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                defaultValue={folder}
+                                                style={{
+                                                    background: 'var(--bg-app)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '2px',
+                                                    color: 'var(--text-primary)',
+                                                    fontSize: 'inherit',
+                                                    width: '100%',
+                                                    outline: 'none',
+                                                    padding: '1px 4px'
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleRenameLibraryFolderSubmit(e.currentTarget.value);
+                                                    } else if (e.key === 'Escape') {
+                                                        setRenamingLibraryFolder(null);
+                                                    }
+                                                }}
+                                                onBlur={() => setRenamingLibraryFolder(null)}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <button
+                                            className="sidebar-item note-item"
+                                            onClick={() => toggleLibraryFolder(folder)}
+                                            onContextMenu={(e) => handleLibraryContextMenu(e, undefined, folder)}
+                                            style={{ 
+                                                paddingLeft: '16px',
+                                                fontSize: '0.7rem',
+                                                width: '100%',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                color: 'var(--text-muted)',
+                                                background: 'transparent',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '0.06em',
+                                                opacity: 0.9,
+                                            }}
+                                        >
+                                            {expandedLibraryFolders.has(folder) ? (
+                                                <ChevronDownIcon style={{ width: '12px', height: '12px' }} />
+                                            ) : (
+                                                <ChevronRightIcon style={{ width: '12px', height: '12px' }} />
+                                            )}
+                                            <span style={{ flex: 1, textAlign: 'left' }}>{folder}</span>
+                                            <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>
+                                                {packs.length}
+                                            </span>
+                                        </button>
+                                    )}
+                                    {expandedLibraryFolders.has(folder) && (
+                                        <div style={{ paddingLeft: '8px' }}>
+                                            {creatingLibraryPack === folder && (
+                                                <div
+                                                    className="sidebar-item note-item"
+                                                    style={{
+                                                        paddingLeft: '32px',
+                                                        fontSize: '0.85rem',
+                                                        width: '100%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        fontSize: '10px',
+                                                        fontWeight: 'bold',
+                                                        color: '#60A5FA',
+                                                        border: '1px solid #60A5FA',
+                                                        borderRadius: '2px',
+                                                        width: '14px',
+                                                        height: '14px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        lineHeight: 1
+                                                    }}>L</div>
+                                                    <input
+                                                        autoFocus
+                                                        type="text"
+                                                        defaultValue="New Pack"
+                                                        style={{
+                                                            background: 'var(--bg-app)',
+                                                            border: '1px solid var(--border-color)',
+                                                            borderRadius: '2px',
+                                                            color: 'var(--text-primary)',
+                                                            fontSize: 'inherit',
+                                                            width: '100%',
+                                                            outline: 'none',
+                                                            padding: '1px 4px'
+                                                        }}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                handleCreateLibraryPackSubmit(folder, e.currentTarget.value);
+                                                            } else if (e.key === 'Escape') {
+                                                                setCreatingLibraryPack(null);
+                                                            }
+                                                        }}
+                                                        onBlur={() => setCreatingLibraryPack(null)}
+                                                    />
+                                                </div>
+                                            )}
+                                            {packs.map(pack => (
+                                                renamingLibraryPack?.id === pack.id ? (
+                                                    <div
+                                                        key={pack.id}
+                                                        className="sidebar-item note-item"
+                                                        style={{
+                                                            paddingLeft: '32px',
+                                                            fontSize: '0.85rem',
+                                                            width: '100%',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px'
+                                                        }}
+                                                    >
+                                                        <div style={{
+                                                            fontSize: '10px',
+                                                            fontWeight: 'bold',
+                                                            color: pack.color || '#A78BFA',
+                                                            border: `1px solid ${pack.color || '#A78BFA'}`,
+                                                            borderRadius: '2px',
+                                                            width: '14px',
+                                                            height: '14px',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            lineHeight: 1
+                                                        }}>L</div>
+                                                        <input
+                                                            autoFocus
+                                                            type="text"
+                                                            defaultValue={pack.name}
+                                                            style={{
+                                                                background: 'var(--bg-app)',
+                                                                border: '1px solid var(--border-color)',
+                                                                borderRadius: '2px',
+                                                                color: 'var(--text-primary)',
+                                                                fontSize: 'inherit',
+                                                                width: '100%',
+                                                                outline: 'none',
+                                                                padding: '1px 4px'
+                                                            }}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    handleRenameLibraryPackSubmit(e.currentTarget.value);
+                                                                } else if (e.key === 'Escape') {
+                                                                    setRenamingLibraryPack(null);
+                                                                }
+                                                            }}
+                                                            onBlur={() => setRenamingLibraryPack(null)}
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        key={pack.id}
+                                                        className={`sidebar-item note-item ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : ''}`}
+                                                        onClick={() => onSelectLibraryPack?.(pack.id)}
+                                                        onContextMenu={(e) => handleLibraryContextMenu(e, pack.id)}
+                                                        style={{
+                                                            paddingLeft: '32px',
+                                                            fontSize: '0.85rem',
+                                                            width: '100%',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            color: selectedLibraryPackId === pack.id ? 'var(--text-active)' : 'var(--text-secondary)',
+                                                            backgroundColor: selectedLibraryPackId === pack.id ? 'var(--bg-active)' : 'transparent',
+                                                            opacity: 0.9,
+                                                        }}
+                                                    >
+                                                        <div
+                                                            style={{
+                                                                fontSize: '10px',
+                                                                fontWeight: 'bold',
+                                                                color: pack.color || '#A78BFA',
+                                                                border: `1px solid ${pack.color || '#A78BFA'}`,
+                                                                borderRadius: '2px',
+                                                                width: '14px',
+                                                                height: '14px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                lineHeight: 1,
+                                                            }}
+                                                        >
+                                                            L
+                                                        </div>
+                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                            {pack.name}
+                                                        </span>
+                                                    </button>
+                                                )
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            {libraryPacks.length === 0 && !creatingLibraryFolder && (
+                                <div style={{ 
+                                    padding: '8px 16px', 
+                                    fontSize: '11px', 
+                                    color: 'var(--text-muted)',
+                                    fontStyle: 'italic'
+                                }}>
+                                    No library packs found.
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div className="sidebar-spacer" />
@@ -715,32 +1247,90 @@ export function Sidebar({
                     y={contextMenu.y}
                     onClose={() => setContextMenu(null)}
                 >
-                    <ContextMenuItem
-                        label="Add Doc"
-                        icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
-                        onClick={handleAddMarkdown}
-                    />
-                    {contextMenu.notePath ? (
+                    {contextMenu.libraryPackId ? (
                         <>
                             <ContextMenuItem
                                 label="Rename"
                                 icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
-                                onClick={handleRenameNoteTrigger}
+                                onClick={() => {
+                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                    if (pack) {
+                                        setRenamingLibraryPack({ id: pack.id, oldName: pack.name });
+                                    }
+                                    setContextMenu(null);
+                                }}
                             />
                             <ContextMenuItem
                                 label="Delete"
                                 icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
-                                onClick={handleDeleteNote}
+                                onClick={() => {
+                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                    if (pack) {
+                                        setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.name });
+                                    }
+                                    setContextMenu(null);
+                                }}
+                                danger={true}
+                            />
+                        </>
+                    ) : contextMenu.libraryFolder ? (
+                        <>
+                            <ContextMenuItem
+                                label="Add Doc"
+                                icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
+                                onClick={() => {
+                                    setCreatingLibraryPack(contextMenu.libraryFolder!);
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Rename"
+                                icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
+                                onClick={() => {
+                                    setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Delete"
+                                icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                onClick={() => {
+                                    setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
+                                    setContextMenu(null);
+                                }}
                                 danger={true}
                             />
                         </>
                     ) : (
-                        <ContextMenuItem
-                            label="Remove Source"
-                            icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
-                            onClick={handleRemoveSource}
-                            danger={true}
-                        />
+                        <>
+                            <ContextMenuItem
+                                label="Add Doc"
+                                icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
+                                onClick={handleAddMarkdown}
+                            />
+                            {contextMenu.notePath ? (
+                                <>
+                                    <ContextMenuItem
+                                        label="Rename"
+                                        icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
+                                        onClick={handleRenameNoteTrigger}
+                                    />
+                                    <ContextMenuItem
+                                        label="Delete"
+                                        icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                        onClick={handleDeleteNote}
+                                        danger={true}
+                                    />
+                                </>
+                            ) : (
+                                <ContextMenuItem
+                                    label="Remove Project"
+                                    icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                    onClick={handleRemoveSource}
+                                    danger={true}
+                                />
+                            )}
+                        </>
                     )}
                 </ContextMenu>
             )}
@@ -928,6 +1518,157 @@ export function Sidebar({
                                 }}
                             >
                                 Remove Source
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Delete Library Pack Confirmation Modal */}
+            {deleteLibraryPackConfirmation && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        pointerEvents: 'auto'
+                    }}
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) {
+                            setDeleteLibraryPackConfirmation(null);
+                        }
+                    }}
+                >
+                    <div
+                        style={{
+                            backgroundColor: 'var(--bg-content)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '24px',
+                            width: '320px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '16px',
+                            pointerEvents: 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Delete Library Pack?</h3>
+                        <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            Are you sure you want to delete <strong>{deleteLibraryPackConfirmation.name}</strong>? This action cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                            <button
+                                onClick={() => setDeleteLibraryPackConfirmation(null)}
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '4px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'transparent',
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmDeleteLibraryPack}
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: 'var(--error, #ef4444)',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600
+                                }}
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Library Folder Confirmation Modal */}
+            {deleteLibraryFolderConfirmation && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        pointerEvents: 'auto'
+                    }}
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) {
+                            setDeleteLibraryFolderConfirmation(null);
+                        }
+                    }}
+                >
+                    <div
+                        style={{
+                            backgroundColor: 'var(--bg-content)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '24px',
+                            width: '320px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '16px',
+                            pointerEvents: 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Delete Library Folder?</h3>
+                        <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            Are you sure you want to delete folder <strong>{deleteLibraryFolderConfirmation.name}</strong> and all its contents? This action cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                            <button
+                                onClick={() => setDeleteLibraryFolderConfirmation(null)}
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '4px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'transparent',
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmDeleteLibraryFolder}
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: 'var(--error, #ef4444)',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600
+                                }}
+                            >
+                                Delete
                             </button>
                         </div>
                     </div>
