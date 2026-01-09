@@ -11,18 +11,48 @@ body,
 }
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* Obsidian-like Dark Theme Palette */
+  --bg-app: #1e1e1e;
+  --bg-sidebar: #252526;
+  --bg-content: #1e1e1e;
+  --bg-status: #007acc;
+  --bg-status-bar: #2e2e2e;
+
+  --border-color: #3e3e42;
+  --border-active: #007fd4;
+
+  --text-primary: #cccccc;
+  --text-secondary: #999999;
+  --text-active: #ffffff;
+
+  --accent: #7137f1;
+  --accent-hover: #824bf3;
+
+  --item-hover: #2a2d2e;
+  --item-active: #37373d;
+  --bg-active: var(--item-active);
+  --bg-secondary: #2d2d2d;
+
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-code: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color: var(--text-primary);
+  background-color: var(--bg-app);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 a {
@@ -109,6 +139,35 @@ button {
   }
   .btn-outline:hover {
     border-color: #555;
+    color: var(--text-active);
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background-color: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+    transition: all 0.1s ease;
+    width: 100%;
+    border-radius: 0;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+  }
+
+  .sidebar-item:hover {
+    background-color: var(--item-hover);
+    color: var(--text-primary);
+  }
+
+  .sidebar-item.active {
+    background-color: var(--item-active);
     color: var(--text-active);
   }
 }

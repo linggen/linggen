@@ -52,35 +52,15 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
     };
 
     return (
-        <div className="modal-overlay" style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            backdropFilter: 'blur(2px)'
-        }} onClick={onClose}>
-            <div className="modal-content" style={{
-                backgroundColor: 'var(--bg-sidebar)',
-                borderRadius: '8px',
-                padding: '24px',
-                width: '450px',
-                maxWidth: '90%',
-                border: '1px solid var(--border-color)',
-                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
-            }} onClick={e => e.stopPropagation()}>
-                <h3 style={{ marginTop: 0, marginBottom: '20px', fontSize: '1.1rem', color: 'var(--text-active)' }}>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] backdrop-blur-[2px]" onClick={onClose}>
+            <div className="bg-[var(--bg-sidebar)] rounded-lg p-6 w-[450px] max-w-[90%] border border-[var(--border-color)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]" onClick={e => e.stopPropagation()}>
+                <h3 className="mt-0 mb-5 text-[1.1rem] font-semibold text-[var(--text-active)] uppercase tracking-wider">
                     Add New Project
                 </h3>
 
                 <form onSubmit={handleSubmit}>
-                    <div className="form-group" style={{ marginBottom: '16px' }}>
-                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    <div className="mb-4">
+                        <label className="block mb-1.5 text-[0.85rem] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                             NAME
                         </label>
                         <input
@@ -89,47 +69,24 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                             onChange={e => setName(e.target.value)}
                             placeholder="e.g. My Project"
                             autoFocus
-                            style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                borderRadius: '4px',
-                                border: '1px solid var(--border-color)',
-                                background: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                outline: 'none'
-                            }}
+                            className="w-full px-3 py-2 rounded border border-[var(--border-color)] bg-[var(--bg-app)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
                         />
                     </div>
 
-                    <div className="form-group" style={{ marginBottom: '16px' }}>
-                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    <div className="mb-4">
+                        <label className="block mb-1.5 text-[0.85rem] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                             TYPE
                         </label>
-                        <div style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: '4px',
-                            border: '1px solid var(--border-color)',
-                            background: 'var(--bg-content)',
-                            color: 'var(--text-primary)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            fontSize: '0.9rem'
-                        }}>
+                        <div className="w-full px-3 py-2 rounded border border-[var(--border-color)] bg-[var(--bg-content)] text-[var(--text-primary)] flex items-center text-[0.9rem]">
                             ✓ Local Folder
-                            <span style={{ 
-                                marginLeft: 'auto', 
-                                fontSize: '0.75rem', 
-                                color: 'var(--text-muted)',
-                                fontStyle: 'italic'
-                            }}>
+                            <span className="ml-auto text-[0.75rem] text-[var(--text-muted)] italic">
                                 (Other types coming soon)
                             </span>
                         </div>
                     </div>
 
-                    <div className="form-group" style={{ marginBottom: '24px' }}>
-                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    <div className="mb-6">
+                        <label className="block mb-1.5 text-[0.85rem] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                             LOCAL PATH
                         </label>
                         <input
@@ -137,22 +94,13 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                             value={path}
                             onChange={e => setPath(e.target.value)}
                             placeholder="/absolute/path/to/project"
-                            style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                borderRadius: '4px',
-                                border: '1px solid var(--border-color)',
-                                background: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                outline: 'none',
-                                fontFamily: 'monospace'
-                            }}
+                            className="w-full px-3 py-2 rounded border border-[var(--border-color)] bg-[var(--bg-app)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-mono transition-colors"
                         />
                     </div>
 
-                    <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
-                        <div className="form-group" style={{ flex: 1 }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    <div className="flex gap-4 mb-4">
+                        <div className="flex-1">
+                            <label className="block mb-1.5 text-[0.85rem] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                                 INCLUDE PATTERNS (OPTIONAL)
                             </label>
                             <input
@@ -160,25 +108,15 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                                 value={includePatterns}
                                 onChange={e => setIncludePatterns(e.target.value)}
                                 placeholder="e.g. *.rs, src/**/*.ts"
-                                style={{
-                                    width: '100%',
-                                    padding: '8px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-app)',
-                                    color: 'var(--text-primary)',
-                                    outline: 'none',
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.8rem'
-                                }}
+                                className="w-full px-3 py-2 rounded border border-[var(--border-color)] bg-[var(--bg-app)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-mono text-[0.8rem] transition-colors"
                             />
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                            <div className="text-[0.7rem] text-[var(--text-muted)] mt-1">
                                 Glob patterns, comma separated
                             </div>
                         </div>
 
-                        <div className="form-group" style={{ flex: 1 }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        <div className="flex-1">
+                            <label className="block mb-1.5 text-[0.85rem] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
                                 EXCLUDE PATTERNS (OPTIONAL)
                             </label>
                             <input
@@ -186,61 +124,29 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({ isOpen, onClose,
                                 value={excludePatterns}
                                 onChange={e => setExcludePatterns(e.target.value)}
                                 placeholder="e.g. target/*, node_modules/*"
-                                style={{
-                                    width: '100%',
-                                    padding: '8px 12px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-app)',
-                                    color: 'var(--text-primary)',
-                                    outline: 'none',
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.8rem'
-                                }}
+                                className="w-full px-3 py-2 rounded border border-[var(--border-color)] bg-[var(--bg-app)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-mono text-[0.8rem] transition-colors"
                             />
                         </div>
                     </div>
 
                     {error && (
-                        <div style={{
-                            color: '#f48771',
-                            fontSize: '0.85rem',
-                            marginBottom: '16px',
-                            background: 'rgba(244, 135, 113, 0.1)',
-                            padding: '8px',
-                            borderRadius: '4px'
-                        }}>
+                        <div className="text-[#f48771] text-[0.85rem] mb-4 bg-[#f48771]/10 p-2 rounded">
                             {error}
                         </div>
                     )}
 
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <div className="flex justify-end gap-3 mt-6">
                         <button
                             type="button"
                             onClick={onClose}
-                            style={{
-                                padding: '8px 16px',
-                                background: 'transparent',
-                                border: '1px solid var(--border-color)',
-                                borderRadius: '4px',
-                                color: 'var(--text-primary)',
-                                cursor: 'pointer'
-                            }}
+                            className="btn-outline px-4 py-2 text-[12px]"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
                             disabled={isSubmitting}
-                            style={{
-                                padding: '8px 16px',
-                                background: 'var(--accent)',
-                                border: '1px solid var(--accent)',
-                                borderRadius: '4px',
-                                color: 'white',
-                                cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                                opacity: isSubmitting ? 0.7 : 1
-                            }}
+                            className={`btn-primary px-4 py-2 text-[12px] ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                             {isSubmitting ? 'Adding...' : 'Add Project'}
                         </button>

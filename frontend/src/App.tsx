@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import './App.css'
 import {
   indexSource,
   listJobs,
@@ -648,6 +647,7 @@ function App() {
               onCancelJob={handleCancelJob}
               onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
               resourcesVersion={resourcesVersion}
+              onAddSource={() => setIsAddSourceModalOpen(true)}
             />
           )
         )}

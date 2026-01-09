@@ -921,7 +921,7 @@ export function Sidebar({
                         <>
                             <ContextMenuItem
                                 label="Rename"
-                                icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<PencilIcon className="w-3.5 h-3.5" />}
                                 onClick={() => {
                                     const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
                                     if (pack) {
@@ -932,7 +932,7 @@ export function Sidebar({
                             />
                             <ContextMenuItem
                                 label="Delete"
-                                icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<TrashIcon className="w-3.5 h-3.5" />}
                                 onClick={() => {
                                     const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
                                     if (pack) {
@@ -947,7 +947,7 @@ export function Sidebar({
                         <>
                             <ContextMenuItem
                                 label="Add Doc"
-                                icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
                                 onClick={() => {
                                     setCreatingLibraryPack(contextMenu.libraryFolder!);
                                     setContextMenu(null);
@@ -955,7 +955,7 @@ export function Sidebar({
                             />
                             <ContextMenuItem
                                 label="Rename"
-                                icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<PencilIcon className="w-3.5 h-3.5" />}
                                 onClick={() => {
                                     setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
                                     setContextMenu(null);
@@ -963,7 +963,7 @@ export function Sidebar({
                             />
                             <ContextMenuItem
                                 label="Delete"
-                                icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<TrashIcon className="w-3.5 h-3.5" />}
                                 onClick={() => {
                                     setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
                                     setContextMenu(null);
@@ -975,19 +975,19 @@ export function Sidebar({
                         <>
                             <ContextMenuItem
                                 label="Add Doc"
-                                icon={<DocumentPlusIcon style={{ width: '14px', height: '14px' }} />}
+                                icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
                                 onClick={handleAddMarkdown}
                             />
                             {contextMenu.notePath ? (
                                 <>
                                     <ContextMenuItem
                                         label="Rename"
-                                        icon={<PencilIcon style={{ width: '14px', height: '14px' }} />}
+                                        icon={<PencilIcon className="w-3.5 h-3.5" />}
                                         onClick={handleRenameNoteTrigger}
                                     />
                                     <ContextMenuItem
                                         label="Delete"
-                                        icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                        icon={<TrashIcon className="w-3.5 h-3.5" />}
                                         onClick={handleDeleteNote}
                                         danger={true}
                                     />
@@ -995,7 +995,7 @@ export function Sidebar({
                             ) : (
                                 <ContextMenuItem
                                     label="Remove Project"
-                                    icon={<TrashIcon style={{ width: '14px', height: '14px' }} />}
+                                    icon={<TrashIcon className="w-3.5 h-3.5" />}
                                     onClick={handleRemoveSource}
                                     danger={true}
                                 />

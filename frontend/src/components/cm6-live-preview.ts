@@ -64,36 +64,22 @@ class MermaidWidget extends WidgetType {
 
     toDOM(view: EditorView) {
         const container = document.createElement('div');
-        container.className = 'cm-mermaid-container';
-        container.style.cssText = 'position: relative; margin: 8px 0;';
+        container.className = 'cm-mermaid-container relative my-2';
 
         // Edit button overlay
         const editBtn = document.createElement('button');
-        editBtn.className = 'cm-mermaid-edit-btn';
+        editBtn.className = 'cm-mermaid-edit-btn absolute top-2 right-2 bg-[#646cff]/80 border-none text-white px-2 py-1 rounded cursor-pointer text-[12px] z-10 opacity-0 transition-opacity duration-200';
         editBtn.innerHTML = '&lt;/&gt;';
         editBtn.title = 'Edit this block';
-        editBtn.style.cssText = `
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: rgba(100, 108, 255, 0.8);
-            border: none;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            z-index: 10;
-            opacity: 0;
-            transition: opacity 0.2s;
-        `;
 
         // Show button on hover
         container.addEventListener('mouseenter', () => {
-            editBtn.style.opacity = '1';
+            editBtn.classList.remove('opacity-0');
+            editBtn.classList.add('opacity-100');
         });
         container.addEventListener('mouseleave', () => {
-            editBtn.style.opacity = '0';
+            editBtn.classList.remove('opacity-100');
+            editBtn.classList.add('opacity-0');
         });
 
         // Click to focus on the mermaid code block in the editor
@@ -112,9 +98,8 @@ class MermaidWidget extends WidgetType {
 
         // Diagram container (no special pointer/scroll handling; let CM6 handle it)
         const diagramContainer = document.createElement('div');
-        diagramContainer.className = 'cm-mermaid-diagram';
-        diagramContainer.style.cssText = 'display: flex; justify-content: center; padding: 16px; background: rgba(0,0,0,0.15); border-radius: 8px;';
-        diagramContainer.innerHTML = '<div style="color: #94a3b8; padding: 16px;">Loading diagram...</div>';
+        diagramContainer.className = 'cm-mermaid-diagram flex justify-center p-4 bg-black/15 rounded-lg';
+        diagramContainer.innerHTML = '<div class="text-[#94a3b8] p-4">Loading diagram...</div>';
 
         container.appendChild(editBtn);
         container.appendChild(diagramContainer);
@@ -129,14 +114,14 @@ class MermaidWidget extends WidgetType {
         try {
             const mermaid = await getMermaid();
             if (!mermaid) {
-                container.innerHTML = '<div style="color: #ef4444; padding: 8px;">Mermaid not available</div>';
+                container.innerHTML = '<div class="text-red-500 p-2">Mermaid not available</div>';
                 return;
             }
             const cleanCode = this.code.trim();
             const { svg } = await mermaid.render(this.id, cleanCode);
             container.innerHTML = svg;
         } catch (err) {
-            container.innerHTML = `<div style="color: #ef4444; padding: 8px;">Mermaid Error: ${err instanceof Error ? err.message : String(err)}</div>`;
+            container.innerHTML = `<div class="text-red-500 p-2">Mermaid Error: ${err instanceof Error ? err.message : String(err)}</div>`;
         }
     }
 
