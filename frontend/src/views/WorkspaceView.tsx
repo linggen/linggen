@@ -81,7 +81,11 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     };
 
     if (!currentSource && !isLibraryPack) {
-        return <div className="workspace-loading">Loading Workspace...</div>;
+        return (
+            <div className="flex items-center justify-center flex-1 h-full text-[var(--text-secondary)]">
+                Loading Workspace...
+            </div>
+        );
     }
 
     const isIndexing = currentSource && indexingResourceId === currentSource.id;
@@ -91,48 +95,28 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
         // Root container for the right-hand panel.
         // Use flex + minHeight: 0 so inner panes (graph/editor) can fully
         // consume the available vertical space without leaving gaps.
-        <div
-            className="workspace-view"
-            style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'scroll' }}
-        >
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto h-[calc(100vh-48px-22px-24px)]">
             {/* Header / Stats Strip */}
             {currentSource && (
-                <div className="workspace-header" style={{
-                    padding: '12px 24px',
-                    borderBottom: '1px solid var(--border-color)',
-                    backgroundColor: 'var(--bg-content)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                }}>
+                <div className="px-6 py-3 border-b border-[var(--border-color)] bg-[var(--bg-content)] flex items-center justify-between">
                     {/* ... existing header content ... */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1, marginRight: '20px' }}>
-                        <div className="source-icon" style={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div className="flex items-center gap-4 flex-1 mr-5">
+                        <div className="text-2xl flex items-center justify-center">
                             {currentSource.resource_type === 'local' ? '📁' : currentSource.resource_type === 'git' ? '🔗' : '📄'}
                         </div>
-                        <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minHeight: '32px' }}>
+                        <div className="flex-1">
+                            <div className="flex items-center gap-2.5 min-h-[32px]">
                                 {isEditing ? (
                                     <input
                                         type="text"
                                         value={editName}
                                         onChange={(e) => setEditName(e.target.value)}
                                         placeholder="Source Name"
-                                        style={{
-                                            fontSize: '1.1rem',
-                                            fontWeight: '600',
-                                            color: 'var(--text-active)',
-                                            background: 'var(--bg-app)',
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: '4px',
-                                            padding: '4px 8px',
-                                            outline: 'none',
-                                            width: '200px'
-                                        }}
+                                        className="text-[1.1rem] font-semibold text-[var(--text-active)] bg-[var(--bg-app)] border border-[var(--border-color)] rounded px-2 py-1 outline-none w-[200px]"
                                         disabled={isSaving}
                                     />
                                 ) : (
-                                    <h2 style={{ fontSize: '1.2rem', fontWeight: '600', margin: 0, color: 'var(--text-active)' }}>
+                                    <h2 className="text-[1.2rem] font-semibold m-0 text-[var(--text-active)]">
                                         {currentSource.name}
                                     </h2>
                                 )}
@@ -140,21 +124,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                                 {!isEditing && (
                                     <button
                                         onClick={() => setIsEditing(true)}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: 'var(--text-muted)',
-                                            padding: '4px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            opacity: 0.7,
-                                            transition: 'opacity 0.2s',
-                                        }}
+                                        className="btn-ghost p-1 flex items-center justify-center transition-opacity"
                                         title="Edit Source"
-                                        onMouseOver={e => e.currentTarget.style.opacity = '1'}
-                                        onMouseOut={e => e.currentTarget.style.opacity = '0.7'}
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -165,67 +136,60 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
                                 {/* Status Badge */}
                                 {isIndexing && (
-                                    <span style={{
-                                        fontSize: '0.75rem',
-                                        background: 'var(--accent)',
-                                        color: 'white',
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        fontWeight: '600'
-                                    }}>
+                                    <span className="text-[0.75rem] bg-[var(--accent)] text-white px-2 py-0.5 rounded-full font-semibold">
                                         Indexing... {indexingProgress}
                                     </span>
                                 )}
                             </div>
 
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '4px' }}>
+                            <div className="text-[0.8rem] text-[var(--text-secondary)] font-mono mt-1">
                                 {currentSource.path}
                             </div>
 
                             {/* Edit Mode Inputs */}
                             {isEditing ? (
-                                <div style={{ marginTop: '8px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>IN:</span>
+                                <div className="mt-2 flex gap-3 items-center">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-[0.75rem] font-semibold text-[var(--text-secondary)]">IN:</span>
                                         <input
                                             type="text"
                                             value={editInclude}
                                             onChange={(e) => setEditInclude(e.target.value)}
                                             placeholder="*.rs, src/**/*.ts"
-                                            style={{ fontSize: '0.8rem', fontFamily: 'monospace', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 6px', width: '180px', color: 'var(--text-primary)' }}
+                                            className="text-[0.8rem] font-mono bg-[var(--bg-app)] border border-[var(--border-color)] rounded px-1.5 py-0.5 w-[180px] text-[var(--text-primary)]"
                                             disabled={isSaving}
                                         />
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>EX:</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-[0.75rem] font-semibold text-[var(--text-secondary)]">EX:</span>
                                         <input
                                             type="text"
                                             value={editExclude}
                                             onChange={(e) => setEditExclude(e.target.value)}
                                             placeholder="target/*"
-                                            style={{ fontSize: '0.8rem', fontFamily: 'monospace', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 6px', width: '180px', color: 'var(--text-primary)' }}
+                                            className="text-[0.8rem] font-mono bg-[var(--bg-app)] border border-[var(--border-color)] rounded px-1.5 py-0.5 w-[180px] text-[var(--text-primary)]"
                                             disabled={isSaving}
                                         />
                                     </div>
-                                    <div style={{ display: 'flex', gap: '8px', marginLeft: '8px' }}>
-                                        <button onClick={handleSaveSource} disabled={isSaving} style={{ padding: '2px 8px', float: 'right', fontSize: '0.75rem', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Save</button>
-                                        <button onClick={() => setIsEditing(false)} disabled={isSaving} style={{ padding: '2px 8px', fontSize: '0.75rem', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                                    <div className="flex gap-2 ml-2">
+                                        <button onClick={handleSaveSource} disabled={isSaving} className="btn-primary px-2 py-0.5 border-none">Save</button>
+                                        <button onClick={() => setIsEditing(false)} disabled={isSaving} className="btn-outline px-2 py-0.5">Cancel</button>
                                     </div>
                                 </div>
                             ) : (
                                 (currentSource.include_patterns?.length > 0 || currentSource.exclude_patterns?.length > 0) && (
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                        {currentSource.include_patterns?.length > 0 && <span title={currentSource.include_patterns.join(', ')}><span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>IN: </span><span style={{ fontFamily: 'monospace' }}>{currentSource.include_patterns.join(', ')}</span></span>}
-                                        {currentSource.exclude_patterns?.length > 0 && <span title={currentSource.exclude_patterns.join(', ')}><span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>EX: </span><span style={{ fontFamily: 'monospace' }}>{currentSource.exclude_patterns.join(', ')}</span></span>}
+                                    <div className="text-[0.75rem] text-[var(--text-secondary)] mt-1 flex gap-3 flex-wrap">
+                                        {currentSource.include_patterns?.length > 0 && <span title={currentSource.include_patterns.join(', ')}><span className="font-semibold text-[var(--text-secondary)]">IN: </span><span className="font-mono">{currentSource.include_patterns.join(', ')}</span></span>}
+                                        {currentSource.exclude_patterns?.length > 0 && <span title={currentSource.exclude_patterns.join(', ')}><span className="font-semibold text-[var(--text-secondary)]">EX: </span><span className="font-mono">{currentSource.exclude_patterns.join(', ')}</span></span>}
                                     </div>
                                 )
                             )}
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div className="flex items-center gap-4">
                         {/* Stats Compact */}
-                        <div style={{ display: 'flex', gap: '16px', marginRight: '16px', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        <div className="flex gap-4 mr-4 items-center text-[0.8rem] text-[var(--text-secondary)]">
                             {currentSource.stats && (
                                 <>
                                     <span>{currentSource.stats.file_count} files</span>
@@ -237,7 +201,11 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
                         {/* Actions */}
                         <button
-                            className="btn-action"
+                            className={`px-3 py-1.5 transition-all ${
+                                isIndexing 
+                                    ? 'btn-outline opacity-70 cursor-not-allowed' 
+                                    : 'btn-primary'
+                            }`}
                             onClick={(e) => {
                                 // Shift+click for full reindex, normal click for incremental
                                 const mode = e.shiftKey ? 'full' : 'incremental';
@@ -245,14 +213,6 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                             }}
                             disabled={isIndexing}
                             title="Update Index (Shift+Click for full reindex)"
-                            style={{
-                                padding: '6px 12px',
-                                background: isIndexing ? 'var(--bg-sidebar)' : 'var(--accent)',
-                                color: 'white',
-                                border: isIndexing ? '1px solid var(--border-color)' : '1px solid var(--accent)',
-                                opacity: isIndexing ? 0.7 : 1,
-                                fontSize: '0.85rem'
-                            }}
                         >
                             {isIndexing ? 'Indexing...' : 'Update'}
                         </button>
@@ -263,41 +223,33 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
             {/* Main Content Area: Conditional Render */}
             {/* Right side handles its own vertical scroll; sidebar scrolls independently. */}
             <div
-                className="workspace-body"
-                // When showing the editor we let this grow naturally, and let the outer
-                // workspace view scroll. This is more robust if CM6 internal scrolling
-                // is disrupted (e.g. by overlays/widgets).
-                style={
+                className={`relative ${
                     showingEditor
-                        ? { flex: '0 0 auto', display: 'block', overflow: 'visible', position: 'relative' }
-                        : { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative', minHeight: 0 }
-                }
+                        ? 'flex-[0_0_auto] block overflow-visible'
+                        : 'flex-1 flex overflow-hidden min-h-0'
+                }`}
             >
                 {selectedNotePath ? (
                     <div
-                        className="workspace-editor"
-                        style={showingEditor ? { display: 'block' } : { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+                        className={showingEditor ? 'block' : 'flex-1 flex flex-col min-h-0 overflow-hidden'}
                     >
                         <CM6Editor sourceId={sourceId} docPath={selectedNotePath} docType="notes" scrollMode="container" />
                     </div>
                 ) : selectedMemoryPath ? (
                     <div
-                        className="workspace-editor"
-                        style={showingEditor ? { display: 'block' } : { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+                        className={showingEditor ? 'block' : 'flex-1 flex flex-col min-h-0 overflow-hidden'}
                     >
                         <CM6Editor sourceId={sourceId} docPath={selectedMemoryPath} docType="memory" scrollMode="container" />
                     </div>
                 ) : selectedLibraryPackId ? (
                     <div
-                        className="workspace-editor"
-                        style={showingEditor ? { display: 'block' } : { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+                        className={showingEditor ? 'block' : 'flex-1 flex flex-col min-h-0 overflow-hidden'}
                     >
                         <CM6Editor sourceId="library" docPath={selectedLibraryPackId} docType="library" scrollMode="container" />
                     </div>
                 ) : (
                     <div
-                        className="workspace-graph"
-                        style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
+                        className="flex-1 flex flex-col h-full min-h-0"
                     >
                         
                         <GraphView sourceId={sourceId} />

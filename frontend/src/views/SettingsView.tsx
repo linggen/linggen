@@ -513,102 +513,104 @@ export function SettingsView() {
     }
 
     return (
-        <div className="view settings-view">
+        <div className="p-6 flex flex-col gap-4 max-w-[700px]">
             {message && (
-                <div className={`settings-toast ${message.startsWith('✓') ? 'success' : 'error'}`}>
+                <div className={`fixed top-20 right-10 p-3 rounded-md text-sm font-medium z-50 animate-in slide-in-from-right-5 ${message.startsWith('✓') ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-red-500/15 border border-red-500/30 text-red-400'}`}>
                     {message}
                 </div>
             )}
 
-            <section className="settings-card">
-                <div className="settings-card-header">
-                    <span className="settings-icon">💾</span>
-                    <h3>Data Storage</h3>
+            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
+                    <span className="text-base">💾</span>
+                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Data Storage</h3>
                 </div>
-                <div className="settings-card-body">
-                    <div className="settings-row">
-                        <span className="settings-row-label">Search index</span>
-                        <span className="settings-row-value mono">~/Library/Application Support/Linggen/lancedb</span>
+                <div className="px-5 py-4">
+                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
+                        <span className="text-sm text-[var(--text-secondary)]">Search index</span>
+                        <span className="font-mono text-[11px] text-[var(--text-secondary)] bg-black/30 px-2 py-1 rounded">~/Library/Application Support/Linggen/lancedb</span>
                     </div>
-                    <div className="settings-row">
-                        <span className="settings-row-label">Source metadata</span>
-                        <span className="settings-row-value mono">~/Library/Application Support/Linggen/metadata.redb</span>
+                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
+                        <span className="text-sm text-[var(--text-secondary)]">Source metadata</span>
+                        <span className="font-mono text-[11px] text-[var(--text-secondary)] bg-black/30 px-2 py-1 rounded">~/Library/Application Support/Linggen/metadata.redb</span>
                     </div>
                 </div>
             </section>
 
-            <section className="settings-card">
-                <div className="settings-card-header">
-                    <span className="settings-icon">🔍</span>
-                    <h3>Search Engine</h3>
+            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
+                    <span className="text-base">🔍</span>
+                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Search Engine</h3>
                 </div>
-                <div className="settings-card-body">
-                    <div className="settings-row">
-                        <span className="settings-row-label">Embedding Model</span>
-                        <span className="settings-row-value">all-MiniLM-L6-v2</span>
+                <div className="px-5 py-4">
+                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
+                        <span className="text-sm text-[var(--text-secondary)]">Embedding Model</span>
+                        <span className="text-sm text-[var(--text-primary)] text-right max-w-[60%]">all-MiniLM-L6-v2</span>
                     </div>
-                    <div className="settings-row">
-                        <span className="settings-row-label">Privacy</span>
-                        <span className="settings-row-value highlight">100% local · offline-capable · data never leaves your device</span>
+                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
+                        <span className="text-sm text-[var(--text-secondary)]">Privacy</span>
+                        <span className="text-green-400 text-xs text-right max-w-[60%]">100% local · offline-capable · data never leaves your device</span>
                     </div>
                 </div>
             </section>
 
             {/* Local LLM section - hidden until ready */}
-            {/* <section className="settings-card">
-                <div className="settings-card-header">
-                    <span className="settings-icon">🤖</span>
-                    <h3>Local LLM</h3>
-                    <span className="settings-model-name">Qwen3-4B</span>
+            {/* <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
+                    <span className="text-base">🤖</span>
+                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Local LLM</h3>
+                    <span className="ml-auto text-[11px] text-[var(--text-secondary)] bg-[var(--accent)]/15 px-2.5 py-0.5 rounded font-mono">Qwen3-4B</span>
                 </div>
-                <div className="settings-card-body">
-                    <div className="settings-row llm-toggle-row">
-                        <div className="llm-toggle-left">
-                            <label className="toggle-switch">
+                <div className="px-5 py-4">
+                    <div className="flex justify-between items-center py-2 border-b-0">
+                        <div className="flex items-center gap-3">
+                            <label className="relative inline-block w-11 h-6">
                                 <input
                                     type="checkbox"
+                                    className="sr-only peer"
                                     checked={!!settings?.llm_enabled}
                                     onChange={handleToggleLlm}
                                     disabled={loading || saving || llmInitializing || !settings}
                                 />
-                                <span className="toggle-slider"></span>
+                                <span className="absolute cursor-pointer inset-0 bg-[#404040] rounded-full transition-colors peer-checked:bg-[var(--accent)] after:content-[''] after:absolute after:h-[18px] after:w-[18px] after:left-[3px] after:bottom-[3px] after:bg-[#999] after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px] peer-checked:after:bg-white peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></span>
                             </label>
-                            <span className="settings-row-label">Enable Local LLM</span>
+                            <span className="text-sm text-[var(--text-secondary)]">Enable Local LLM</span>
                         </div>
                         {getLlmStatusBadge()}
                     </div>
 
                     {llmInitializing && llmProgress && (
-                        <div className="llm-progress-bar">
-                            <div className="llm-progress-spinner"></div>
+                        <div className="flex items-center gap-2.5 px-3.5 py-3 mt-3 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs text-blue-400">
+                            <div className="w-3.5 h-3.5 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin"></div>
                             <span>{llmProgress}</span>
                         </div>
                     )}
 
                     {llmStatus === 'error' && !llmInitializing && llmProgress && (
-                        <div className="llm-error-message">
+                        <div className="px-3.5 py-2.5 mt-3 bg-red-500/10 border border-red-500/20 rounded-md text-xs text-red-400">
                             <span>⚠️ {llmProgress}</span>
                         </div>
                     )}
 
-                    <p className="settings-description">
+                    <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
                         Enables chat, profile generation, and AI-powered analysis. 
                         The model (~3GB) will be downloaded on first enable.
                     </p>
                 </div>
             </section> */}
 
-            <section className="settings-card">
-                <div className="settings-card-header">
-                    <span className="settings-icon">📊</span>
-                    <h3>Analytics</h3>
+            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
+                    <span className="text-base">📊</span>
+                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Analytics</h3>
                 </div>
-                <div className="settings-card-body">
-                    <div className="settings-row llm-toggle-row">
-                        <div className="llm-toggle-left">
-                            <label className="toggle-switch">
+                <div className="px-5 py-4">
+                    <div className="flex justify-between items-center py-2 border-b-0">
+                        <div className="flex items-center gap-3">
+                            <label className="relative inline-block w-11 h-6">
                                 <input
                                     type="checkbox"
+                                    className="sr-only peer"
                                     checked={settings?.analytics_enabled ?? true}
                                     onChange={async () => {
                                         if (!settings || saving) return
@@ -628,126 +630,94 @@ export function SettingsView() {
                                     }}
                                     disabled={loading || saving || !settings}
                                 />
-                                <span className="toggle-slider"></span>
+                                <span className="absolute cursor-pointer inset-0 bg-[#404040] rounded-full transition-colors peer-checked:bg-[var(--accent)] after:content-[''] after:absolute after:h-[18px] after:w-[18px] after:left-[3px] after:bottom-[3px] after:bg-[#999] after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px] peer-checked:after:bg-white peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></span>
                             </label>
-                            <span className="settings-row-label">Help improve Linggen</span>
+                            <span className="text-sm text-[var(--text-secondary)]">Help improve Linggen</span>
                         </div>
-                        <span className={`llm-status-badge ${settings?.analytics_enabled !== false ? 'ready' : 'disabled'}`}>
+                        <span className={`text-[11px] px-2.5 py-1 rounded font-medium ${settings?.analytics_enabled !== false ? 'bg-green-500/15 text-green-400' : 'bg-neutral-500/20 text-neutral-500'}`}>
                             {settings?.analytics_enabled !== false ? 'Enabled' : 'Disabled'}
                         </span>
                     </div>
-                    <p className="settings-description">
+                    <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
                         Send anonymous usage statistics to help improve Linggen. 
-                        We only collect basic usage data (app launches, sources added) — <strong>no code content, file paths, or personal information is ever sent</strong>.
+                        We only collect basic usage data (app launches, sources added) — <strong className="text-[var(--text-primary)]">no code content, file paths, or personal information is ever sent</strong>.
                     </p>
                 </div>
             </section>
 
             {isTauriApp && (
-                <section className="settings-card">
-                    <div className="settings-card-header">
-                        <span className="settings-icon">🔄</span>
-                        <h3>Software Update</h3>
+                <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
+                        <span className="text-base">🔄</span>
+                        <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Software Update</h3>
                         {appVersion && (
-                            <span className="settings-model-name">v{appVersion}</span>
+                            <span className="ml-auto text-[11px] text-[var(--text-secondary)] bg-[var(--accent)]/15 px-2.5 py-0.5 rounded font-mono">v{appVersion}</span>
                         )}
                     </div>
-                    <div className="settings-card-body">
-                        <div className="settings-row">
-                            <div className="danger-action-info" style={{ flex: 1 }}>
-                                <strong>Application Updates</strong>
-                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    <div className="px-5 py-4">
+                        <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
+                            <div className="flex-1">
+                                <strong className="block text-sm text-[var(--text-primary)] mb-1">Application Updates</strong>
+                                <p className="m-0 text-xs text-[var(--text-secondary)] leading-tight">
                                     Check for new versions and install updates automatically.
                                 </p>
                             </div>
                             <button
                                 type="button"
-                                className="btn-action"
+                                className="btn-secondary whitespace-nowrap"
                                 onClick={handleCheckForUpdates}
                                 disabled={checkingUpdate || downloading}
-                                style={{ whiteSpace: 'nowrap' }}
                             >
                                 {checkingUpdate ? 'Checking...' : 'Check for Updates'}
                             </button>
                         </div>
 
                         {updateAvailable && updateInfo && (
-                            <div style={{
-                                marginTop: '12px',
-                                padding: '12px 14px',
-                                background: 'rgba(96, 165, 250, 0.1)',
-                                border: '1px solid rgba(96, 165, 250, 0.2)',
-                                borderRadius: '6px'
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <div className="mt-3 px-3.5 py-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
+                                <div className="flex justify-between items-center mb-2">
                                     <div>
-                                        <strong style={{ color: '#60a5fa', fontSize: '13px' }}>
+                                        <strong className="text-blue-400 text-sm">
                                             Version {updateInfo.version} Available
                                         </strong>
                                         {updateInfo.date && (
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                            <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
                                                 Released: {new Date(updateInfo.date).toLocaleDateString()}
                                             </div>
                                         )}
                                     </div>
                                     <button
                                         type="button"
-                                        className="btn-action"
+                                        className="bg-blue-400 border border-blue-400 text-white px-3 py-1.5 rounded !text-[11px] font-semibold cursor-pointer uppercase tracking-wider hover:bg-blue-500 transition-all"
                                         onClick={handleInstallUpdate}
                                         disabled={downloading || restarting}
-                                        style={{ background: '#60a5fa', borderColor: '#60a5fa' }}
                                     >
                                         {downloading ? 'Installing...' : 'Install Update'}
                                     </button>
                                 </div>
                                 {updateInfo.body && (
-                                    <div style={{
-                                        fontSize: '12px',
-                                        color: 'var(--text-secondary)',
-                                        marginTop: '8px',
-                                        paddingTop: '8px',
-                                        borderTop: '1px solid rgba(96, 165, 250, 0.2)',
-                                        maxHeight: '150px',
-                                        overflowY: 'auto'
-                                    }}>
-                                        <strong>What's New:</strong>
-                                        <pre style={{ 
-                                            whiteSpace: 'pre-wrap', 
-                                            fontFamily: 'inherit',
-                                            margin: '4px 0 0 0'
-                                        }}>{updateInfo.body}</pre>
+                                    <div className="text-xs text-[var(--text-secondary)] mt-2 pt-2 border-t border-blue-500/20 max-h-[150px] overflow-y-auto">
+                                        <strong className="text-[var(--text-primary)]">What's New:</strong>
+                                        <pre className="whitespace-pre-wrap font-inherit mt-1">{updateInfo.body}</pre>
                                     </div>
                                 )}
                                 {downloading && downloadProgress > 0 && (
-                                    <div style={{ marginTop: '8px' }}>
-                                        <div style={{
-                                            width: '100%',
-                                            height: '4px',
-                                            background: 'rgba(96, 165, 250, 0.2)',
-                                            borderRadius: '2px',
-                                            overflow: 'hidden'
-                                        }}>
-                                            <div style={{
-                                                width: `${downloadProgress}%`,
-                                                height: '100%',
-                                                background: '#60a5fa',
-                                                transition: 'width 0.3s ease'
-                                            }} />
+                                    <div className="mt-2">
+                                        <div className="w-full h-1 bg-blue-500/20 rounded overflow-hidden">
+                                            <div className="h-full bg-blue-400 transition-[width] duration-300 ease-in-out" style={{ width: `${downloadProgress}%` }} />
                                         </div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                        <div className="text-[11px] text-[var(--text-secondary)] mt-1">
                                             Downloading... {downloadProgress}%
                                         </div>
                                     </div>
                                 )}
 
                                 {restartReady && (
-                                    <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <div className="mt-2.5 flex justify-end">
                                         <button
                                             type="button"
-                                            className="btn-action"
+                                            className="bg-green-500 border border-green-500 text-white px-3 py-1.5 rounded !text-[11px] font-semibold cursor-pointer uppercase tracking-wider hover:bg-green-600 transition-all"
                                             onClick={handleRestartNow}
                                             disabled={restarting}
-                                            style={{ background: '#22c55e', borderColor: '#22c55e' }}
                                         >
                                             {restarting ? 'Restarting...' : 'Restart Now'}
                                         </button>
@@ -756,7 +726,7 @@ export function SettingsView() {
                             </div>
                         )}
 
-                        <p className="settings-description" style={{ marginTop: '12px' }}>
+                        <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
                             Updates are downloaded from the official Linggen releases repository. 
                             After installation, click “Restart Now” to finish applying the update.
                         </p>
@@ -764,20 +734,20 @@ export function SettingsView() {
                 </section>
             )}
 
-            <section className="settings-card danger">
-                <div className="settings-card-header">
-                    <span className="settings-icon">⚠️</span>
-                    <h3>Danger Zone</h3>
+            <section className="bg-[var(--bg-sidebar)] border border-red-500/30 rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-red-500/10 border-b border-red-500/20">
+                    <span className="text-base">⚠️</span>
+                    <h3 className="m-0 text-sm font-semibold text-red-400 border-none p-0">Danger Zone</h3>
                 </div>
-                <div className="settings-card-body">
-                    <div className="danger-action">
-                        <div className="danger-action-info">
-                            <strong>Clear All Data</strong>
-                            <p>Permanently delete all indexed data, sources, profiles, and settings. This cannot be undone.</p>
+                <div className="px-5 py-4">
+                    <div className="flex justify-between items-center gap-5">
+                        <div className="flex-1">
+                            <strong className="block text-sm text-[var(--text-primary)] mb-1">Clear All Data</strong>
+                            <p className="m-0 text-xs text-[var(--text-secondary)] leading-tight">Permanently delete all indexed data, sources, profiles, and settings. This cannot be undone.</p>
                         </div>
                         <button
                             type="button"
-                            className="btn-danger"
+                            className="btn-danger whitespace-nowrap"
                             onClick={handleClearAllData}
                             disabled={clearing}
                         >
@@ -789,30 +759,30 @@ export function SettingsView() {
 
             {/* Clear Data Confirmation Modal */}
             {showClearConfirm && (
-                <div className="modal-overlay" onClick={() => setShowClearConfirm(false)}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3>⚠️ Clear All Data</h3>
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]" onClick={() => setShowClearConfirm(false)}>
+                    <div className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-xl w-[420px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="px-5 py-4 border-b border-[var(--border-color)]">
+                            <h3 className="m-0 text-sm font-semibold text-[var(--text-active)]">⚠️ Clear All Data</h3>
                         </div>
-                        <div className="modal-body">
-                            <p style={{ marginBottom: '1rem', color: 'var(--text)' }}>
+                        <div className="p-5">
+                            <p className="mb-4 text-[var(--text-primary)]">
                                 This will <strong>permanently delete</strong>:
                             </p>
-                            <ul style={{ margin: '0 0 1rem 1.5rem', color: 'var(--text-muted)', lineHeight: '1.8' }}>
+                            <ul className="m-0 mb-4 ml-6 text-[var(--text-secondary)] leading-[1.8] list-disc text-sm">
                                 <li>All indexed chunks in vector database</li>
                                 <li>All source configurations</li>
                                 <li>All project profiles</li>
                                 <li>All indexing history</li>
                                 <li>All uploaded files</li>
                             </ul>
-                            <p style={{ marginBottom: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                            <p className="mb-2 text-[var(--text-secondary)] text-[0.85rem]">
                                 ✓ Your settings and downloaded models will be preserved.
                             </p>
-                            <p style={{ color: '#ef4444', fontWeight: '600' }}>
+                            <p className="text-red-500 font-semibold">
                                 This action cannot be undone!
                             </p>
                         </div>
-                        <div className="modal-footer">
+                        <div className="flex justify-end gap-2.5 px-5 py-4 border-t border-[var(--border-color)] bg-black/10">
                             <button
                                 type="button"
                                 className="btn-secondary"
@@ -822,7 +792,7 @@ export function SettingsView() {
                             </button>
                             <button
                                 type="button"
-                                className="btn-danger"
+                                className="btn-danger whitespace-nowrap"
                                 onClick={confirmClearAllData}
                             >
                                 🗑️ Yes, Delete Everything
