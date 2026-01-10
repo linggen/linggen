@@ -84,17 +84,22 @@ export function SettingsView() {
 
     const handleThemeChange = async (theme: 'dark' | 'light' | 'system') => {
         if (!settings || saving) return
-        const next = { ...settings, theme }
-        setSettings(next)
+        
+        // Use functional update for robustness and immediate local feedback
+        setSettings(prev => prev ? { ...prev, theme } : null)
         setSaving(true)
+        
         try {
-            await updateAppSettings(next)
+            await updateAppSettings({ ...settings, theme })
             const root = document.documentElement
             if (theme === 'system') root.removeAttribute('data-theme')
             else root.setAttribute('data-theme', theme)
             setMessage('✓ Theme updated')
         } catch (err) {
-            console.error(err)
+            console.error('Failed to update theme:', err)
+            // Rollback on failure
+            const data = await getAppSettings()
+            setSettings(data)
             setMessage('✗ Failed to update theme')
         } finally {
             setSaving(false)
@@ -200,20 +205,26 @@ export function SettingsView() {
                                     <span className="text-sm font-bold text-[var(--text-primary)]">Interface Theme</span>
                                     <span className="text-xs text-[var(--text-muted)]">Select how Linggen looks in your system</span>
                                 </div>
-                                <div className="flex bg-[var(--bg-app)] border border-[var(--border-color)] rounded-xl p-1.5 shadow-inner w-fit">
-                                    {(['system', 'light', 'dark'] as const).map((mode) => (
-                                        <button
-                                            key={mode}
-                                            onClick={() => handleThemeChange(mode)}
-                                            className={`px-5 py-2 rounded-lg text-[10px] font-black tracking-widest transition-all ${
-                                                (settings?.theme || 'system') === mode
-                                                    ? 'bg-[var(--accent)] text-white shadow-lg transform scale-105'
-                                                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--item-hover)]'
-                                            }`}
-                                        >
-                                            {mode.toUpperCase()}
-                                        </button>
-                                    ))}
+                                <div className="flex bg-[var(--bg-app)] border border-[var(--border-color)] rounded-2xl p-1 shadow-inner relative">
+                                    {(['system', 'light', 'dark'] as const).map((mode) => {
+                                        const isSelected = (settings?.theme || 'system') === mode;
+                                        return (
+                                            <button
+                                                key={mode}
+                                                onClick={() => handleThemeChange(mode)}
+                                                className={`px-6 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all relative z-10 ${
+                                                    isSelected
+                                                        ? 'text-white'
+                                                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                                                }`}
+                                            >
+                                                {isSelected && (
+                                                    <div className="absolute inset-0 bg-[var(--accent)] rounded-xl shadow-[0_2px_8px_rgba(113,55,241,0.4)] border border-[#c084fc]/50 z-[-1] animate-in fade-in zoom-in-95 duration-200"></div>
+                                                )}
+                                                {mode.toUpperCase()}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </div>
@@ -226,14 +237,20 @@ export function SettingsView() {
                             <h3 className="text-sm font-bold text-[var(--text-active)]">Data Storage</h3>
                         </div>
                         <div className="p-8 flex flex-col gap-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-3 p-5 bg-[var(--bg-app)] rounded-xl border border-[var(--border-color)]/60 shadow-sm">
-                                    <span className="text-[9px] font-black text-[var(--text-muted)] uppercase tracking-[0.2em]">Search Index</span>
-                                    <code className="text-[11px] text-[var(--text-secondary)] font-mono leading-relaxed break-all">~/Library/Application Support/Linggen/lancedb</code>
+                            <div className="grid grid-cols-1 gap-5">
+                                <div className="flex flex-col gap-3 p-6 bg-[var(--bg-app)] rounded-2xl border-2 border-[var(--border-color)] shadow-sm group hover:border-[var(--accent)] transition-colors">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-[var(--text-active)] uppercase tracking-[0.2em]">Search Index</span>
+                                        <span className="h-px flex-1 bg-[var(--border-color)] opacity-50"></span>
+                                    </div>
+                                    <code className="text-[12px] text-[var(--text-primary)] font-mono leading-relaxed break-all bg-black/5 dark:bg-white/5 p-3 rounded-lg border border-[var(--border-color)]/30">~/Library/Application Support/Linggen/lancedb</code>
                                 </div>
-                                <div className="flex flex-col gap-3 p-5 bg-[var(--bg-app)] rounded-xl border border-[var(--border-color)]/60 shadow-sm">
-                                    <span className="text-[9px] font-black text-[var(--text-muted)] uppercase tracking-[0.2em]">Metadata Database</span>
-                                    <code className="text-[11px] text-[var(--text-secondary)] font-mono leading-relaxed break-all">~/Library/Application Support/Linggen/metadata.redb</code>
+                                <div className="flex flex-col gap-3 p-6 bg-[var(--bg-app)] rounded-2xl border-2 border-[var(--border-color)] shadow-sm group hover:border-[var(--accent)] transition-colors">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-[var(--text-active)] uppercase tracking-[0.2em]">Metadata Database</span>
+                                        <span className="h-px flex-1 bg-[var(--border-color)] opacity-50"></span>
+                                    </div>
+                                    <code className="text-[12px] text-[var(--text-primary)] font-mono leading-relaxed break-all bg-black/5 dark:bg-white/5 p-3 rounded-lg border border-[var(--border-color)]/30">~/Library/Application Support/Linggen/metadata.redb</code>
                                 </div>
                             </div>
                         </div>
@@ -277,7 +294,7 @@ export function SettingsView() {
                                     <span className="text-sm font-bold text-[var(--text-primary)]">Usage Statistics</span>
                                     <p className="text-xs text-[var(--text-muted)] leading-relaxed">Share anonymous data to help us improve. No code content or personal info is ever tracked.</p>
                                 </div>
-                                <label className="relative inline-block w-14 h-7 flex-shrink-0 cursor-pointer">
+                                <label className="relative inline-block w-12 h-6 flex-shrink-0 cursor-pointer group">
                                     <input
                                         type="checkbox"
                                         className="sr-only peer"
@@ -293,8 +310,8 @@ export function SettingsView() {
                                         }}
                                         disabled={saving}
                                     />
-                                    <div className="w-full h-full bg-[var(--bg-app)] border-2 border-[var(--border-color)] rounded-full transition-all peer-checked:bg-[var(--accent)] peer-checked:border-[var(--accent)]"></div>
-                                    <div className="absolute top-1 left-1 w-5 h-5 bg-[var(--text-muted)] rounded-full transition-all peer-checked:translate-x-7 peer-checked:bg-white shadow-sm"></div>
+                                    <div className="w-full h-full bg-[var(--bg-app)] border-2 border-[var(--border-color)] rounded-full transition-all duration-300 peer-checked:bg-[var(--accent)] peer-checked:border-[var(--accent)] group-hover:border-[var(--accent)]/50"></div>
+                                    <div className="absolute top-1 left-1 w-4 h-4 bg-[var(--text-muted)] rounded-full transition-all duration-300 peer-checked:translate-x-6 peer-checked:bg-white peer-checked:shadow-md shadow-sm"></div>
                                 </label>
                             </div>
                         </div>
