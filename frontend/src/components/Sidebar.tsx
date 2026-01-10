@@ -506,24 +506,28 @@ export function Sidebar({
         label, 
         isCollapsed, 
         onToggle, 
-        actions 
+        actions,
+        isActive
     }: { 
         label: string, 
         isCollapsed: boolean, 
         onToggle: () => void, 
-        actions?: React.ReactNode 
+        actions?: React.ReactNode,
+        isActive?: boolean
     }) => (
         <div 
-            className="px-4 py-1 flex justify-between items-center mt-2 mb-1 cursor-pointer select-none group"
+            className={`px-4 py-1.5 flex justify-between items-center mt-2 mb-1 cursor-pointer select-none group transition-colors ${isActive ? 'bg-[var(--item-hover)] shadow-[inset_3px_0_0_0_var(--accent)]' : 'hover:bg-[var(--item-hover)]/50'}`}
             onClick={onToggle}
         >
-            <div className="flex items-center gap-1">
-                {isCollapsed ? (
-                    <ChevronRightIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
-                ) : (
-                    <ChevronDownIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
-                )}
-                <span className="text-[11px] font-bold text-[var(--text-secondary)] tracking-wider">
+            <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 flex items-center justify-center">
+                    {isCollapsed ? (
+                        <ChevronRightIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
+                    ) : (
+                        <ChevronDownIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
+                    )}
+                </div>
+                <span className={`text-[11px] font-bold tracking-wider ${isActive ? 'text-[var(--text-active)]' : 'text-[var(--text-secondary)]'}`}>
                     {label}
                 </span>
             </div>
@@ -543,7 +547,12 @@ export function Sidebar({
                     <SidebarSectionHeader 
                         label="PROJECTS"
                         isCollapsed={isProjectsCollapsed}
-                        onToggle={() => setIsProjectsCollapsed(!isProjectsCollapsed)}
+                        onToggle={() => {
+                            setIsProjectsCollapsed(!isProjectsCollapsed);
+                            onChangeView('sources');
+                            onSelectSource?.(null);
+                        }}
+                        isActive={currentView === 'sources' && !selectedSourceId && !selectedLibraryPackId}
                         actions={
                             <>
                                 <button
@@ -583,7 +592,7 @@ export function Sidebar({
                                 className="flex flex-col"
                             >
                                 <button
-                                    className={`sidebar-item pl-4 text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90 transition-colors ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath && !selectedMemoryPath ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : ''}`}
+                                    className={`sidebar-item pl-4 text-[0.7rem] w-full flex items-center gap-1.5 uppercase tracking-wider transition-colors ${selectedSourceId === resource.id && currentView === 'sources' && !selectedNotePath && !selectedMemoryPath ? 'active' : 'text-[var(--text-muted)] opacity-90'}`}
                                     onClick={() => handleSourceClick(resource.id)}
                                 >
                                     <div
@@ -662,7 +671,7 @@ export function Sidebar({
                                             ) : (
                                                 <button
                                                     key={note.path}
-                                                    className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${selectedNotePath === note.path && selectedSourceId === resource.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
+                                                    className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${selectedNotePath === note.path && selectedSourceId === resource.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
                                                     onClick={(e) => handleNoteClick(e, resource.id, note.path)}
                                                     onContextMenu={(e) => handleContextMenu(e, resource.id, note.path)}
                                                 >
@@ -697,7 +706,7 @@ export function Sidebar({
                                                     sourceMemories[resource.id]?.map((mem) => (
                                                         <button
                                                             key={mem.path}
-                                                            className={`sidebar-item pl-12 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${selectedMemoryPath === mem.path && selectedSourceId === resource.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
+                                                            className={`sidebar-item pl-12 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${selectedMemoryPath === mem.path && selectedSourceId === resource.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
                                                             onClick={(e) => handleMemoryClick(e, resource.id, mem.path)}
                                                         >
                                                             <div className="text-[10px] font-bold text-purple-400 border border-purple-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">M</div>
@@ -722,7 +731,9 @@ export function Sidebar({
                         onToggle={() => {
                             setIsLibraryCollapsed(!isLibraryCollapsed);
                             onChangeView('library');
+                            onSelectLibraryPack?.('');
                         }}
+                        isActive={currentView === 'library' && !selectedLibraryPackId}
                         actions={
                             <>
                                 <button
@@ -862,7 +873,7 @@ export function Sidebar({
                                                     ) : (
                                                         <button
                                                             key={pack.id}
-                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 opacity-90 transition-colors ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active text-[var(--text-active)] bg-[var(--bg-active)]' : 'text-[var(--text-secondary)] bg-transparent'}`}
+                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
                                                             onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
                                                             onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
                                                         >

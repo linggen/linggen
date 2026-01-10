@@ -290,7 +290,8 @@ button {
   .sidebar-item.active {
     background-color: var(--item-active);
     color: var(--text-active);
-    border-right: 2px solid var(--accent);
+    box-shadow: inset 3px 0 0 0 var(--accent);
+    font-weight: 600;
   }
 
   /* Custom Scrollbar */
