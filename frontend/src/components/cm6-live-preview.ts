@@ -29,9 +29,11 @@ async function getMermaid() {
             const mermaidModule = await import('mermaid');
             mermaidInstance = mermaidModule.default;
             if (!mermaidInitialized) {
+                const rootTheme = document.documentElement.getAttribute('data-theme');
+                const isLight = rootTheme === 'light' || (!rootTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
                 mermaidInstance.initialize({
                     startOnLoad: false,
-                    theme: 'dark',
+                    theme: isLight ? 'default' : 'dark',
                     securityLevel: 'loose',
                 });
                 mermaidInitialized = true;
@@ -422,47 +424,51 @@ export const livePreviewTheme = EditorView.theme({
         fontSize: '1.8em',
         fontWeight: 'bold',
         lineHeight: '1.3',
+        color: 'var(--text-active)',
     },
     '.cm-header-line.cm-header-2': {
         fontSize: '1.5em',
         fontWeight: 'bold',
         lineHeight: '1.3',
+        color: 'var(--text-active)',
     },
     '.cm-header-line.cm-header-3': {
         fontSize: '1.3em',
         fontWeight: 'bold',
         lineHeight: '1.3',
+        color: 'var(--text-active)',
     },
 
     // Bold
     '.cm-rendered-strong': {
         fontWeight: 'bold',
-        color: '#f8fafc',
+        color: 'var(--text-active)',
     },
 
     // Italic
     '.cm-rendered-emphasis': {
         fontStyle: 'italic',
-        color: '#e2e8f0',
+        color: 'var(--text-secondary)',
     },
 
     // Strikethrough
     '.cm-rendered-strike': {
         textDecoration: 'line-through',
-        color: '#94a3b8',
+        color: 'var(--text-muted)',
     },
 
     // Links
     '.cm-rendered-link': {
-        color: '#60a5fa',
+        color: 'var(--accent)',
         textDecoration: 'underline',
         cursor: 'pointer',
     },
 
     // Inline code
     '.cm-rendered-code': {
-        backgroundColor: 'rgba(100, 108, 255, 0.15)',
-        color: '#a78bfa',
+        backgroundColor: 'var(--accent)',
+        opacity: '0.15',
+        color: 'var(--accent)',
         padding: '2px 6px',
         borderRadius: '4px',
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -471,15 +477,15 @@ export const livePreviewTheme = EditorView.theme({
 
     // Blockquotes
     '.cm-blockquote-line': {
-        borderLeft: '3px solid #60a5fa',
+        borderLeft: '3px solid var(--accent)',
         paddingLeft: '12px',
-        color: '#94a3b8',
+        color: 'var(--text-muted)',
         fontStyle: 'italic',
     },
 
     // List bullets
     '.cm-list-bullet': {
-        color: '#60a5fa',
+        color: 'var(--accent)',
         fontWeight: 'bold',
         marginRight: '8px',
     },
@@ -491,7 +497,7 @@ export const livePreviewTheme = EditorView.theme({
         height: '18px',
         marginRight: '8px',
         fontSize: '16px',
-        color: '#94a3b8',
+        color: 'var(--text-muted)',
         cursor: 'pointer',
     },
     '.cm-checkbox-widget.checked': {
@@ -502,7 +508,7 @@ export const livePreviewTheme = EditorView.theme({
     '.cm-hr-widget': {
         display: 'block',
         border: 'none',
-        borderTop: '1px solid #475569',
+        borderTop: '1px solid var(--border-color)',
         margin: '16px 0',
     },
 
@@ -522,9 +528,9 @@ export const livePreviewTheme = EditorView.theme({
         display: 'flex',
         justifyContent: 'center',
         padding: '16px',
-        background: 'rgba(0,0,0,0.15)',
+        background: 'var(--bg-app)',
         borderRadius: '8px',
         margin: '8px 0',
         minHeight: '100px',
     },
-}, { dark: true });
+});

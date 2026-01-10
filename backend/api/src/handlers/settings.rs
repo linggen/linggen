@@ -14,6 +14,9 @@ pub struct AppSettingsDto {
     /// Collects usage data to help improve Linggen. No code or personal info is sent.
     #[serde(default = "default_analytics_enabled")]
     pub analytics_enabled: bool,
+    /// Theme mode (default: system)
+    #[serde(default)]
+    pub theme: String,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -28,6 +31,11 @@ impl From<storage::metadata::AppSettings> for AppSettingsDto {
             server_port: s.server_port,
             server_address: s.server_address,
             analytics_enabled: s.analytics_enabled.unwrap_or(true),
+            theme: match s.theme {
+                storage::metadata::ThemeMode::Dark => "dark".to_string(),
+                storage::metadata::ThemeMode::Light => "light".to_string(),
+                storage::metadata::ThemeMode::System => "system".to_string(),
+            },
         }
     }
 }
@@ -40,6 +48,11 @@ impl From<AppSettingsDto> for storage::metadata::AppSettings {
             server_port: dto.server_port,
             server_address: dto.server_address,
             analytics_enabled: Some(dto.analytics_enabled),
+            theme: match dto.theme.as_str() {
+                "dark" => storage::metadata::ThemeMode::Dark,
+                "light" => storage::metadata::ThemeMode::Light,
+                _ => storage::metadata::ThemeMode::System,
+            },
         }
     }
 }

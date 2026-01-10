@@ -23,21 +23,12 @@ export function SettingsView() {
     const progressPollRef = useRef<number | null>(null)
     const isMountedRef = useRef(true)
 
-    // Only show updater UI when running inside the Tauri WebView (not a normal browser tab).
     const isTauriApp =
         typeof window !== 'undefined' &&
         (!!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ ||
             !!(window as unknown as { __TAURI__?: unknown }).__TAURI__)
 
-    // App version (for Software Update section)
     const [appVersion, setAppVersion] = useState<string | null>(null)
-
-    // Avoid TypeScript unused warnings while Local LLM UI is hidden.
-    // These values and helpers are kept for future Local LLM support.
-    void llmInitializing
-    void llmProgress
-
-    // Update checker state
     const [checkingUpdate, setCheckingUpdate] = useState(false)
     const [updateAvailable, setUpdateAvailable] = useState(false)
     const [updateInfo, setUpdateInfo] = useState<{version?: string, date?: string, body?: string} | null>(null)
@@ -48,59 +39,31 @@ export function SettingsView() {
 
     useEffect(() => {
         isMountedRef.current = true
-
         const loadSettingsWithRetry = async (attempt = 1) => {
             try {
                 if (!isMountedRef.current) return
                 setLoading(true)
-                setMessage(null)
                 const data = await getAppSettings()
                 if (!isMountedRef.current) return
                 setSettings(data)
-
-                // Also check initial LLM status
                 if (data.llm_enabled) {
                     const status = await getAppStatus()
-                    if (!isMountedRef.current) return
-                    updateLlmStatusFromAppStatus(status)
+                    if (isMountedRef.current) updateLlmStatusFromAppStatus(status)
                 }
             } catch (err) {
-                console.error('Failed to load app settings (attempt', attempt, '):', err)
-                if (!isMountedRef.current) return
-
-                if (attempt < 5) {
-                    // Soft message while we keep retrying
-                    setMessage(`Loading settings (retry ${attempt + 1}/5)...`)
-                    setTimeout(() => loadSettingsWithRetry(attempt + 1), 500 * attempt)
-                } else {
-                    setMessage('✗ Failed to load settings')
-                }
+                console.error(err)
+                if (attempt < 3 && isMountedRef.current) setTimeout(() => loadSettingsWithRetry(attempt + 1), 1000)
             } finally {
-                if (isMountedRef.current) {
-                    setLoading(false)
-                }
+                if (isMountedRef.current) setLoading(false)
             }
         }
-
         loadSettingsWithRetry()
-
-        // Cleanup polling on unmount
-        return () => {
-            isMountedRef.current = false
-            if (progressPollRef.current) {
-                clearInterval(progressPollRef.current)
-            }
-        }
+        return () => { isMountedRef.current = false }
     }, [])
 
-    // Load app version from Tauri at startup
     useEffect(() => {
         if (!isTauriApp) return
-        getVersion()
-            .then((ver: string) => setAppVersion(ver))
-            .catch(() => {
-                // Ignore errors; we simply won't show the version badge
-            })
+        getVersion().then(setAppVersion).catch(console.error)
     }, [isTauriApp])
 
     const updateLlmStatusFromAppStatus = (status: AppStatusResponse) => {
@@ -119,72 +82,20 @@ export function SettingsView() {
         }
     }
 
-    const startProgressPolling = () => {
-        // Poll every 1 second for progress updates
-        progressPollRef.current = window.setInterval(async () => {
-            try {
-                const status = await getAppStatus()
-                updateLlmStatusFromAppStatus(status)
-                // Stop polling when done
-                if (status.status === 'ready' || status.status === 'error') {
-                    if (progressPollRef.current) {
-                        clearInterval(progressPollRef.current)
-                        progressPollRef.current = null
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to poll status:', err)
-            }
-        }, 1000)
-    }
-
-    const handleToggleLlm = async () => {
+    const handleThemeChange = async (theme: 'dark' | 'light' | 'system') => {
         if (!settings || saving) return
-        const newEnabled = !settings.llm_enabled
-        const next = { ...settings, llm_enabled: newEnabled }
+        const next = { ...settings, theme }
         setSettings(next)
         setSaving(true)
-        setMessage(null)
-        
         try {
             await updateAppSettings(next)
-            
-            if (newEnabled) {
-                // When enabling, trigger model initialization
-                setLlmInitializing(true)
-                setLlmStatus('initializing')
-                setLlmProgress('Initializing LLM...')
-                
-                const initResult = await retryInit()
-                if (initResult.success) {
-                    // Immediately check status to get actual progress
-                    try {
-                        const status = await getAppStatus()
-                        updateLlmStatusFromAppStatus(status)
-                    } catch {
-                        // Ignore, polling will catch up
-                    }
-                    startProgressPolling()
-                } else {
-                    setLlmStatus('error')
-                    setLlmProgress(initResult.message)
-                    setLlmInitializing(false)
-                }
-            } else {
-                // When disabling, just update status
-                setLlmStatus('disabled')
-                setLlmProgress(null)
-                setLlmInitializing(false)
-                if (progressPollRef.current) {
-                    clearInterval(progressPollRef.current)
-                    progressPollRef.current = null
-                }
-            }
-            
-            setMessage('✓ Settings saved')
+            const root = document.documentElement
+            if (theme === 'system') root.removeAttribute('data-theme')
+            else root.setAttribute('data-theme', theme)
+            setMessage('✓ Theme updated')
         } catch (err) {
-            console.error('Failed to save settings:', err)
-            setMessage('✗ Failed to save settings')
+            console.error(err)
+            setMessage('✗ Failed to update theme')
         } finally {
             setSaving(false)
             setTimeout(() => setMessage(null), 3000)
@@ -192,611 +103,309 @@ export function SettingsView() {
     }
 
     const handleCheckForUpdates = async () => {
-        if (!isTauriApp) {
-            setMessage('✗ Updates are only available inside the desktop app')
-            setTimeout(() => setMessage(null), 5000)
-            return
-        }
         setCheckingUpdate(true)
-        setMessage(null)
         try {
             const update = await check()
             if (update) {
                 setUpdateAvailable(true)
-                setUpdateInfo({
-                    version: update.version,
-                    date: update.date,
-                    body: update.body
-                })
+                setUpdateInfo({ version: update.version, date: update.date, body: update.body })
                 setMessage(`✓ Update available: v${update.version}`)
             } else {
-                setUpdateAvailable(false)
-                setUpdateInfo(null)
-                setMessage('✓ You are running the latest version')
+                setMessage('✓ You are up to date')
             }
         } catch (err) {
-            console.error('Update check failed:', err)
-            setMessage(`✗ Failed to check for updates: ${err}`)
+            console.error(err)
+            setMessage('✗ Update check failed')
         } finally {
             setCheckingUpdate(false)
             setTimeout(() => setMessage(null), 5000)
         }
     }
 
-    const extractErrorText = (e: unknown) => {
-        const msg = (() => {
-            if (typeof e === 'object' && e !== null && 'message' in e) {
-                const m = (e as { message?: unknown }).message
-                if (typeof m === 'string') return m
-            }
-            return ''
-        })()
-
-        let json = ''
-        try {
-            json = JSON.stringify(e)
-        } catch {
-            // ignore stringify errors (e.g. circular)
-        }
-
-        const text = `${msg} ${String(e)} ${json}`.trim()
-        return { msg, json, text, lower: text.toLowerCase() }
-    }
-
     const handleInstallUpdate = async () => {
-        if (!updateInfo) return
-        if (!isTauriApp) {
-            setMessage('✗ Updates are only available inside the desktop app')
-            setTimeout(() => setMessage(null), 5000)
-            return
-        }
-        setRestartReady(false)
-        setRestarting(false)
         setDownloading(true)
-        setMessage(null)
-        setDownloadProgress(0)
-        
         try {
             const update = await check()
-            if (!update) {
-                setMessage('✗ Update no longer available')
-                setDownloading(false)
-                setDownloadProgress(0)
-                setUpdateAvailable(false)
-                return
-            }
-
-            // Download and install app update with retry logic for network errors
-            const maxRetries = 5
-            let lastError: unknown | null = null
-            let installSuccess = false
-            
-            for (let attempt = 0; attempt < maxRetries; attempt++) {
-                try {
-                    await update.downloadAndInstall((event: UpdaterDownloadEvent) => {
-                        switch (event.event) {
-                            case 'Started':
-                                setDownloadProgress(0)
-                                if (attempt > 0) {
-                                    setMessage(`Downloading app update... (retry ${attempt + 1}/${maxRetries})`)
-                                } else {
-                                    setMessage('Downloading app update...')
-                                }
-                                break
-                            case 'Progress':
-                                // Increment progress (indeterminate since we don't have total size)
-                                setDownloadProgress((prev) => Math.min(prev + 5, 90))
-                                break
-                            case 'Finished':
-                                setDownloadProgress(90)
-                                setMessage('✓ App update installed! Updating CLI...')
-                                installSuccess = true
-                                break
-                        }
-                    })
-                    // Success - break out of retry loop
-                    installSuccess = true
-                    break
-                } catch (err: unknown) {
-                    lastError = err
-                    const { msg: errorMsg, text: errorText, lower: errorStr } = extractErrorText(err)
-                    
-                    // Categorize error types
-                    const isNetworkError = errorStr.includes('504') || 
-                                          errorStr.includes('503') || 
-                                          errorStr.includes('gateway timeout') ||
-                                          errorStr.includes('service unavailable') ||
-                                          errorStr.includes('timeout') ||
-                                          errorStr.includes('network') ||
-                                          errorStr.includes('connection') ||
-                                          errorStr.includes('econnrefused') ||
-                                          errorStr.includes('enotfound')
-                    
-                    const isSignatureError = errorStr.includes('signature') ||
-                                            errorStr.includes('minisign') ||
-                                            errorStr.includes('invalid encoding') ||
-                                            errorStr.includes('verification failed')
-                    
-                    const isPermissionError = errorStr.includes('permission') ||
-                                             errorStr.includes('eacces') ||
-                                             errorStr.includes('access denied') ||
-                                             errorStr.includes('unauthorized')
-                    
-                    const isDiskError = errorStr.includes('disk') ||
-                                      errorStr.includes('space') ||
-                                      errorStr.includes('enospc') ||
-                                      errorStr.includes('no space')
-                    
-                    // Always log the raw error: updater errors often stringify poorly.
-                    console.error('Update install attempt failed:', {
-                        attempt: attempt + 1,
-                        maxRetries,
-                        errorMsg,
-                        errorText,
-                        err
-                    })
-
-                    // Handle non-retryable errors immediately
-                    if (isSignatureError) {
-                        const devDetail = import.meta.env.DEV && errorText ? ` Details: ${errorText}` : ''
-                        setMessage(`✗ Signature verification failed. The update may be corrupted or from an untrusted source. Please try again later or download manually.${devDetail}`)
-                        setDownloading(false)
-                        setDownloadProgress(0)
-                        return
-                    }
-                    
-                    if (isPermissionError) {
-                        setMessage(`✗ Permission denied. Please ensure Linggen has write permissions to install updates.`)
-                        setDownloading(false)
-                        setDownloadProgress(0)
-                        return
-                    }
-                    
-                    if (isDiskError) {
-                        setMessage(`✗ Insufficient disk space. Please free up space and try again.`)
-                        setDownloading(false)
-                        setDownloadProgress(0)
-                        return
-                    }
-                    
-                    // Retry network errors
-                    if (isNetworkError && attempt < maxRetries - 1) {
-                        const delay = Math.min(1000 * Math.pow(2, attempt), 8000) // 1s, 2s, 4s, 8s, 8s
-                        setMessage(`⚠️ Download failed (network error), retrying in ${delay/1000}s... (attempt ${attempt + 1}/${maxRetries})`)
-                        setDownloadProgress(0) // Reset progress on retry
-                        await new Promise(resolve => setTimeout(resolve, delay))
-                        continue
-                    } else {
-                        // Not retryable or max retries reached
-                        throw err
-                    }
-                }
-            }
-            
-            if (!installSuccess && lastError) {
-                const { msg: errorMsg, text: errorText, lower: errorStr } = extractErrorText(lastError)
-
-                console.error('Update install failed after retries:', {
-                    errorMsg,
-                    errorText,
-                    lastError
+            if (update) {
+                await update.downloadAndInstall((event: UpdaterDownloadEvent) => {
+                    if (event.event === 'Progress') setDownloadProgress((prev) => Math.min(prev + 5, 95))
+                    else if (event.event === 'Finished') setDownloadProgress(100)
                 })
-                
-                // Provide specific error messages based on error type
-                if (errorStr.includes('signature') || errorStr.includes('minisign') || errorStr.includes('invalid encoding')) {
-                    setMessage(`✗ Signature verification failed. The update may be corrupted. Please try again later.`)
-                } else if (errorStr.includes('network') || errorStr.includes('timeout') || errorStr.includes('504') || errorStr.includes('503')) {
-                    setMessage(`✗ Network error: ${errorMsg || 'request failed'}. Please check your internet connection and try again.`)
-                } else if (errorStr.includes('permission') || errorStr.includes('access')) {
-                    setMessage(`✗ Permission denied. Please ensure Linggen has write permissions.`)
-                } else if (errorStr.includes('disk') || errorStr.includes('space')) {
-                    setMessage(`✗ Insufficient disk space. Please free up space and try again.`)
-                } else {
-                    setMessage(`✗ Failed to install update: ${errorMsg || errorText || 'Unknown error'}`)
-                }
-                
-                setDownloading(false)
-                setDownloadProgress(0)
-                return
+                setRestartReady(true)
+                setMessage('✓ Update installed')
             }
-            
-            // Also update CLI if available
-            try {
-                setDownloadProgress(95)
-                setMessage('Updating CLI...')
-                // Execute 'linggen update' command to update CLI
-                const cliUpdate = Command.create('linggen', ['update'])
-                const cliResult = await cliUpdate.execute()
-                
-                if (cliResult.code === 0) {
-                    setMessage('✓ App and CLI updated! Restarting...')
-                } else {
-                    // CLI update failed with non-zero exit code
-                    console.warn('CLI update failed with exit code:', cliResult.code)
-                    setMessage('✓ App updated! (CLI update failed) Restarting...')
-                }
-            } catch (cliErr: unknown) {
-                // CLI update failed, but app update succeeded - continue anyway
-                const { text: cliErrorMsg } = extractErrorText(cliErr)
-                console.warn('CLI update failed (may not be installed):', cliErr)
-                
-                // Check if CLI is not installed (common case)
-                if (cliErrorMsg.includes('not found') || cliErrorMsg.includes('command not found') || cliErrorMsg.includes('enoent')) {
-                    setMessage('✓ App updated! (CLI not installed) Restarting...')
-                } else {
-                    setMessage('✓ App updated! (CLI update skipped) Restarting...')
-                }
-            }
-            
-            setDownloadProgress(100)
-            
-            // Installation finished. Ask the user to restart.
-            setDownloadProgress(100)
+        } catch (err) {
+            console.error(err)
+            setMessage('✗ Installation failed')
+        } finally {
             setDownloading(false)
-            setRestartReady(true)
-            setMessage('✓ Update installed! Restart to finish applying it.')
-        } catch (err: unknown) {
-            console.error('Update installation failed:', err)
-            const { msg: errorMsg, lower: errorStr } = extractErrorText(err)
-            
-            // Provide user-friendly error messages
-            if (errorStr.includes('signature') || errorStr.includes('minisign') || errorStr.includes('invalid encoding')) {
-                setMessage('✗ Signature verification failed. The update may be corrupted or from an untrusted source.')
-            } else if (errorStr.includes('network') || errorStr.includes('timeout') || errorStr.includes('504') || errorStr.includes('503')) {
-                setMessage(`✗ Network error: ${errorMsg}. Please check your internet connection and try again.`)
-            } else if (errorStr.includes('permission') || errorStr.includes('access')) {
-                setMessage('✗ Permission denied. Please ensure Linggen has write permissions to install updates.')
-            } else if (errorStr.includes('disk') || errorStr.includes('space')) {
-                setMessage('✗ Insufficient disk space. Please free up space and try again.')
-            } else {
-                setMessage(`✗ Failed to install update: ${errorMsg}`)
-            }
-            
-            setDownloading(false)
-            setDownloadProgress(0)
         }
     }
 
     const handleRestartNow = async () => {
-        if (!isTauriApp) return
         setRestarting(true)
-        setMessage('Restarting...')
-        try {
-            await relaunch()
-        } catch (relaunchErr) {
-            console.error('Failed to relaunch app:', relaunchErr)
-            setMessage('✓ Update installed! Please restart the app manually. (Restart failed)')
-            setRestarting(false)
-        }
+        try { await relaunch() } catch { setRestarting(false) }
     }
 
-    const handleClearAllData = () => {
-        setShowClearConfirm(true)
-    }
+    const handleClearAllData = () => setShowClearConfirm(true)
 
     const confirmClearAllData = async () => {
         setShowClearConfirm(false)
         setClearing(true)
-        setMessage(null)
         try {
             await clearAllData()
-            setMessage('✓ All data cleared successfully. Refreshing page...')
-            setTimeout(() => {
-                window.location.reload()
-            }, 1500)
+            setMessage('✓ Data cleared. Refreshing...')
+            setTimeout(() => window.location.reload(), 1500)
         } catch (err) {
-            console.error('Failed to clear data:', err)
-            setMessage(`✗ Failed to clear data: ${err}`)
+            console.error(err)
+            setMessage('✗ Failed to clear data')
         } finally {
             setClearing(false)
         }
     }
 
     const getLlmStatusBadge = () => {
-
-    // Mark handlers as used to satisfy TypeScript while UI is commented out
-    void handleToggleLlm
-    void getLlmStatusBadge
-        if (!settings?.llm_enabled) {
-            return <span className="llm-status-badge disabled">Disabled</span>
-        }
-        if (llmStatus === 'ready') {
-            return <span className="llm-status-badge ready">Ready</span>
-        }
-        if (llmStatus === 'error') {
-            return <span className="llm-status-badge error">Error</span>
-        }
-        if (llmStatus === 'initializing') {
-            return <span className="llm-status-badge initializing">Initializing...</span>
-        }
-        return <span className="llm-status-badge">Enabled</span>
+        if (!settings?.llm_enabled) return <span className="text-[10px] bg-gray-500/20 text-gray-500 px-2 py-0.5 rounded">Disabled</span>
+        if (llmStatus === 'ready') return <span className="text-[10px] bg-green-500/20 text-green-500 px-2 py-0.5 rounded">Ready</span>
+        return <span className="text-[10px] bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded">Active</span>
     }
 
+    // Mark unused to satisfy linter
+    void loading; void llmInitializing; void llmProgress; void getLlmStatusBadge;
+
     return (
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 max-w-[700px]">
-            {message && (
-                <div className={`fixed top-20 right-10 p-3 rounded-md text-sm font-medium z-50 animate-in slide-in-from-right-5 ${message.startsWith('✓') ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-red-500/15 border border-red-500/30 text-red-400'}`}>
-                    {message}
-                </div>
-            )}
+        <div className="flex-1 overflow-y-auto w-full bg-[var(--bg-app)]">
+            <div className="max-w-[800px] mx-auto p-8 flex flex-col gap-10 pb-32">
+                {message && (
+                    <div className={`fixed top-6 right-6 p-4 rounded-xl text-xs font-bold z-[100] shadow-2xl animate-in slide-in-from-top-4 border ${message.startsWith('✓') ? 'bg-green-500 text-white border-green-400' : 'bg-red-500 text-white border-red-400'}`}>
+                        {message}
+                    </div>
+                )}
 
-            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
-                    <span className="text-base">💾</span>
-                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Data Storage</h3>
-                </div>
-                <div className="px-5 py-4">
-                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
-                        <span className="text-sm text-[var(--text-secondary)]">Search index</span>
-                        <span className="font-mono text-[11px] text-[var(--text-secondary)] bg-black/30 px-2 py-1 rounded">~/Library/Application Support/Linggen/lancedb</span>
-                    </div>
-                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
-                        <span className="text-sm text-[var(--text-secondary)]">Source metadata</span>
-                        <span className="font-mono text-[11px] text-[var(--text-secondary)] bg-black/30 px-2 py-1 rounded">~/Library/Application Support/Linggen/metadata.redb</span>
-                    </div>
-                </div>
-            </section>
+                <header className="flex flex-col gap-2">
+                    <h2 className="text-3xl font-extrabold text-[var(--text-active)] tracking-tight">Settings</h2>
+                    <p className="text-sm text-[var(--text-secondary)] opacity-80 font-medium">Configure your experience and manage application data.</p>
+                </header>
 
-            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
-                    <span className="text-base">🔍</span>
-                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Search Engine</h3>
-                </div>
-                <div className="px-5 py-4">
-                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
-                        <span className="text-sm text-[var(--text-secondary)]">Embedding Model</span>
-                        <span className="text-sm text-[var(--text-primary)] text-right max-w-[60%]">all-MiniLM-L6-v2</span>
-                    </div>
-                    <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
-                        <span className="text-sm text-[var(--text-secondary)]">Privacy</span>
-                        <span className="text-green-400 text-xs text-right max-w-[60%]">100% local · offline-capable · data never leaves your device</span>
-                    </div>
-                </div>
-            </section>
-
-            {/* Local LLM section - hidden until ready */}
-            {/* <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
-                    <span className="text-base">🤖</span>
-                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Local LLM</h3>
-                    <span className="ml-auto text-[11px] text-[var(--text-secondary)] bg-[var(--accent)]/15 px-2.5 py-0.5 rounded font-mono">Qwen3-4B</span>
-                </div>
-                <div className="px-5 py-4">
-                    <div className="flex justify-between items-center py-2 border-b-0">
-                        <div className="flex items-center gap-3">
-                            <label className="relative inline-block w-11 h-6">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={!!settings?.llm_enabled}
-                                    onChange={handleToggleLlm}
-                                    disabled={loading || saving || llmInitializing || !settings}
-                                />
-                                <span className="absolute cursor-pointer inset-0 bg-[#404040] rounded-full transition-colors peer-checked:bg-[var(--accent)] after:content-[''] after:absolute after:h-[18px] after:w-[18px] after:left-[3px] after:bottom-[3px] after:bg-[#999] after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px] peer-checked:after:bg-white peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></span>
-                            </label>
-                            <span className="text-sm text-[var(--text-secondary)]">Enable Local LLM</span>
+                <div className="flex flex-col gap-8">
+                    {/* Appearance */}
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                            <span className="text-lg">🎨</span>
+                            <h3 className="text-sm font-bold text-[var(--text-active)]">Appearance</h3>
                         </div>
-                        {getLlmStatusBadge()}
-                    </div>
-
-                    {llmInitializing && llmProgress && (
-                        <div className="flex items-center gap-2.5 px-3.5 py-3 mt-3 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs text-blue-400">
-                            <div className="w-3.5 h-3.5 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin"></div>
-                            <span>{llmProgress}</span>
-                        </div>
-                    )}
-
-                    {llmStatus === 'error' && !llmInitializing && llmProgress && (
-                        <div className="px-3.5 py-2.5 mt-3 bg-red-500/10 border border-red-500/20 rounded-md text-xs text-red-400">
-                            <span>⚠️ {llmProgress}</span>
-                        </div>
-                    )}
-
-                    <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
-                        Enables chat, profile generation, and AI-powered analysis. 
-                        The model (~3GB) will be downloaded on first enable.
-                    </p>
-                </div>
-            </section> */}
-
-            <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
-                    <span className="text-base">📊</span>
-                    <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Analytics</h3>
-                </div>
-                <div className="px-5 py-4">
-                    <div className="flex justify-between items-center py-2 border-b-0">
-                        <div className="flex items-center gap-3">
-                            <label className="relative inline-block w-11 h-6">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={settings?.analytics_enabled ?? true}
-                                    onChange={async () => {
-                                        if (!settings || saving) return
-                                        const next = { ...settings, analytics_enabled: !settings.analytics_enabled }
-                                        setSettings(next)
-                                        setSaving(true)
-                                        try {
-                                            await updateAppSettings(next)
-                                            setMessage('✓ Settings saved')
-                                        } catch (err) {
-                                            console.error('Failed to save settings:', err)
-                                            setMessage('✗ Failed to save settings')
-                                        } finally {
-                                            setSaving(false)
-                                            setTimeout(() => setMessage(null), 3000)
-                                        }
-                                    }}
-                                    disabled={loading || saving || !settings}
-                                />
-                                <span className="absolute cursor-pointer inset-0 bg-[#404040] rounded-full transition-colors peer-checked:bg-[var(--accent)] after:content-[''] after:absolute after:h-[18px] after:w-[18px] after:left-[3px] after:bottom-[3px] after:bg-[#999] after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px] peer-checked:after:bg-white peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></span>
-                            </label>
-                            <span className="text-sm text-[var(--text-secondary)]">Help improve Linggen</span>
-                        </div>
-                        <span className={`text-[11px] px-2.5 py-1 rounded font-medium ${settings?.analytics_enabled !== false ? 'bg-green-500/15 text-green-400' : 'bg-neutral-500/20 text-neutral-500'}`}>
-                            {settings?.analytics_enabled !== false ? 'Enabled' : 'Disabled'}
-                        </span>
-                    </div>
-                    <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
-                        Send anonymous usage statistics to help improve Linggen. 
-                        We only collect basic usage data (app launches, sources added) — <strong className="text-[var(--text-primary)]">no code content, file paths, or personal information is ever sent</strong>.
-                    </p>
-                </div>
-            </section>
-
-            {isTauriApp && (
-                <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-lg overflow-hidden">
-                    <div className="flex items-center gap-2.5 px-5 py-3.5 bg-black/20 border-b border-[var(--border-color)]">
-                        <span className="text-base">🔄</span>
-                        <h3 className="m-0 text-sm font-semibold text-[var(--text-active)] border-none p-0">Software Update</h3>
-                        {appVersion && (
-                            <span className="ml-auto text-[11px] text-[var(--text-secondary)] bg-[var(--accent)]/15 px-2.5 py-0.5 rounded font-mono">v{appVersion}</span>
-                        )}
-                    </div>
-                    <div className="px-5 py-4">
-                        <div className="flex justify-between items-center py-2.5 border-b border-white/5 last:border-b-0">
-                            <div className="flex-1">
-                                <strong className="block text-sm text-[var(--text-primary)] mb-1">Application Updates</strong>
-                                <p className="m-0 text-xs text-[var(--text-secondary)] leading-tight">
-                                    Check for new versions and install updates automatically.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                className="btn-secondary whitespace-nowrap"
-                                onClick={handleCheckForUpdates}
-                                disabled={checkingUpdate || downloading}
-                            >
-                                {checkingUpdate ? 'Checking...' : 'Check for Updates'}
-                            </button>
-                        </div>
-
-                        {updateAvailable && updateInfo && (
-                            <div className="mt-3 px-3.5 py-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
-                                <div className="flex justify-between items-center mb-2">
-                                    <div>
-                                        <strong className="text-blue-400 text-sm">
-                                            Version {updateInfo.version} Available
-                                        </strong>
-                                        {updateInfo.date && (
-                                            <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                                                Released: {new Date(updateInfo.date).toLocaleDateString()}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <button
-                                        type="button"
-                                        className="bg-blue-400 border border-blue-400 text-white px-3 py-1.5 rounded !text-[11px] font-semibold cursor-pointer uppercase tracking-wider hover:bg-blue-500 transition-all"
-                                        onClick={handleInstallUpdate}
-                                        disabled={downloading || restarting}
-                                    >
-                                        {downloading ? 'Installing...' : 'Install Update'}
-                                    </button>
+                        <div className="p-8">
+                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-6">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">Interface Theme</span>
+                                    <span className="text-xs text-[var(--text-muted)]">Select how Linggen looks in your system</span>
                                 </div>
-                                {updateInfo.body && (
-                                    <div className="text-xs text-[var(--text-secondary)] mt-2 pt-2 border-t border-blue-500/20 max-h-[150px] overflow-y-auto">
-                                        <strong className="text-[var(--text-primary)]">What's New:</strong>
-                                        <pre className="whitespace-pre-wrap font-inherit mt-1">{updateInfo.body}</pre>
-                                    </div>
-                                )}
-                                {downloading && downloadProgress > 0 && (
-                                    <div className="mt-2">
-                                        <div className="w-full h-1 bg-blue-500/20 rounded overflow-hidden">
-                                            <div className="h-full bg-blue-400 transition-[width] duration-300 ease-in-out" style={{ width: `${downloadProgress}%` }} />
-                                        </div>
-                                        <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-                                            Downloading... {downloadProgress}%
-                                        </div>
-                                    </div>
-                                )}
-
-                                {restartReady && (
-                                    <div className="mt-2.5 flex justify-end">
+                                <div className="flex bg-[var(--bg-app)] border border-[var(--border-color)] rounded-xl p-1.5 shadow-inner w-fit">
+                                    {(['system', 'light', 'dark'] as const).map((mode) => (
                                         <button
-                                            type="button"
-                                            className="bg-green-500 border border-green-500 text-white px-3 py-1.5 rounded !text-[11px] font-semibold cursor-pointer uppercase tracking-wider hover:bg-green-600 transition-all"
-                                            onClick={handleRestartNow}
-                                            disabled={restarting}
+                                            key={mode}
+                                            onClick={() => handleThemeChange(mode)}
+                                            className={`px-5 py-2 rounded-lg text-[10px] font-black tracking-widest transition-all ${
+                                                (settings?.theme || 'system') === mode
+                                                    ? 'bg-[var(--accent)] text-white shadow-lg transform scale-105'
+                                                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--item-hover)]'
+                                            }`}
                                         >
-                                            {restarting ? 'Restarting...' : 'Restart Now'}
+                                            {mode.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Data Storage */}
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                            <span className="text-lg">💾</span>
+                            <h3 className="text-sm font-bold text-[var(--text-active)]">Data Storage</h3>
+                        </div>
+                        <div className="p-8 flex flex-col gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-3 p-5 bg-[var(--bg-app)] rounded-xl border border-[var(--border-color)]/60 shadow-sm">
+                                    <span className="text-[9px] font-black text-[var(--text-muted)] uppercase tracking-[0.2em]">Search Index</span>
+                                    <code className="text-[11px] text-[var(--text-secondary)] font-mono leading-relaxed break-all">~/Library/Application Support/Linggen/lancedb</code>
+                                </div>
+                                <div className="flex flex-col gap-3 p-5 bg-[var(--bg-app)] rounded-xl border border-[var(--border-color)]/60 shadow-sm">
+                                    <span className="text-[9px] font-black text-[var(--text-muted)] uppercase tracking-[0.2em]">Metadata Database</span>
+                                    <code className="text-[11px] text-[var(--text-secondary)] font-mono leading-relaxed break-all">~/Library/Application Support/Linggen/metadata.redb</code>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Search Engine */}
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                            <span className="text-lg">🔍</span>
+                            <h3 className="text-sm font-bold text-[var(--text-active)]">Search Engine</h3>
+                        </div>
+                        <div className="p-8">
+                            <div className="flex flex-col gap-6">
+                                <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]/40">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-sm font-bold text-[var(--text-primary)]">Embedding Model</span>
+                                        <span className="text-xs text-[var(--text-muted)]">Local vector generation model</span>
+                                    </div>
+                                    <span className="px-3 py-1.5 bg-[var(--bg-app)] rounded-lg border border-[var(--border-color)] text-[11px] font-bold text-[var(--text-primary)] font-mono">all-MiniLM-L6-v2</span>
+                                </div>
+                                <div className="flex items-center gap-4 p-4 bg-green-500/5 border border-green-500/10 rounded-xl">
+                                    <div className="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center text-green-500">🛡️</div>
+                                    <div className="flex flex-col">
+                                        <span className="text-[11px] font-bold text-green-600">Privacy Guaranteed</span>
+                                        <span className="text-[10px] text-green-600/70">All indexing and search happens 100% locally on your machine.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Analytics */}
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                            <span className="text-lg">📊</span>
+                            <h3 className="text-sm font-bold text-[var(--text-active)]">Analytics</h3>
+                        </div>
+                        <div className="p-8">
+                            <div className="flex justify-between items-start gap-8">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">Usage Statistics</span>
+                                    <p className="text-xs text-[var(--text-muted)] leading-relaxed">Share anonymous data to help us improve. No code content or personal info is ever tracked.</p>
+                                </div>
+                                <label className="relative inline-block w-14 h-7 flex-shrink-0 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="sr-only peer"
+                                        checked={settings?.analytics_enabled ?? true}
+                                        onChange={async () => {
+                                            if (!settings || saving) return
+                                            const next = { ...settings, analytics_enabled: !settings.analytics_enabled }
+                                            setSettings(next)
+                                            setSaving(true)
+                                            try { await updateAppSettings(next); setMessage('✓ Saved') }
+                                            catch { setMessage('✗ Failed') }
+                                            finally { setSaving(false); setTimeout(() => setMessage(null), 3000) }
+                                        }}
+                                        disabled={saving}
+                                    />
+                                    <div className="w-full h-full bg-[var(--bg-app)] border-2 border-[var(--border-color)] rounded-full transition-all peer-checked:bg-[var(--accent)] peer-checked:border-[var(--accent)]"></div>
+                                    <div className="absolute top-1 left-1 w-5 h-5 bg-[var(--text-muted)] rounded-full transition-all peer-checked:translate-x-7 peer-checked:bg-white shadow-sm"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Software Update */}
+                    {isTauriApp && (
+                        <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden">
+                            <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                                <span className="text-lg">🔄</span>
+                                <h3 className="text-sm font-bold text-[var(--text-active)]">Software Update</h3>
+                                {appVersion && <span className="ml-auto px-2.5 py-1 bg-[var(--bg-app)] text-[10px] font-black text-[var(--text-muted)] rounded-full border border-[var(--border-color)] shadow-sm">v{appVersion}</span>}
+                            </div>
+                            <div className="p-8">
+                                <div className="flex flex-col gap-6">
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-sm font-bold text-[var(--text-primary)]">Application Updates</span>
+                                            <span className="text-xs text-[var(--text-muted)]">Check for new versions and improvements</span>
+                                        </div>
+                                        <button
+                                            className="btn-secondary !py-2 !px-6 !text-[10px] !font-black !rounded-xl"
+                                            onClick={handleCheckForUpdates}
+                                            disabled={checkingUpdate || downloading}
+                                        >
+                                            {checkingUpdate ? 'CHECKING...' : 'CHECK NOW'}
                                         </button>
                                     </div>
-                                )}
+
+                                    {updateAvailable && updateInfo && (
+                                        <div className="p-6 bg-blue-500/5 border border-blue-500/10 rounded-2xl animate-in zoom-in-95 duration-300">
+                                            <div className="flex justify-between items-start mb-6">
+                                                <div className="flex flex-col gap-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
+                                                        <span className="text-sm font-black text-blue-500">NEW VERSION READY</span>
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-[var(--text-muted)]">v{updateInfo.version} • {updateInfo.date ? new Date(updateInfo.date).toLocaleDateString() : 'LATEST'}</span>
+                                                </div>
+                                                {!restartReady && (
+                                                    <button className="btn-primary !py-2 !px-6 !text-[10px] !font-black !rounded-xl" onClick={handleInstallUpdate} disabled={downloading}>
+                                                        {downloading ? 'DOWNLOADING...' : 'INSTALL NOW'}
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {downloading && (
+                                                <div className="w-full h-1.5 bg-[var(--bg-app)] rounded-full overflow-hidden mb-4">
+                                                    <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${downloadProgress}%` }} />
+                                                </div>
+                                            )}
+
+                                            {restartReady && (
+                                                <div className="flex justify-end">
+                                                    <button className="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-xl text-[10px] font-black tracking-widest transition-all shadow-lg hover:scale-105 active:scale-95" onClick={handleRestartNow}>
+                                                        RESTART TO APPLY
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        )}
+                        </section>
+                    )}
 
-                        <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
-                            Updates are downloaded from the official Linggen releases repository. 
-                            After installation, click “Restart Now” to finish applying the update.
-                        </p>
-                    </div>
-                </section>
-            )}
-
-            <section className="bg-[var(--bg-sidebar)] border border-red-500/30 rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3.5 bg-red-500/10 border-b border-red-500/20">
-                    <span className="text-base">⚠️</span>
-                    <h3 className="m-0 text-sm font-semibold text-red-400 border-none p-0">Danger Zone</h3>
-                </div>
-                <div className="px-5 py-4">
-                    <div className="flex justify-between items-center gap-5">
-                        <div className="flex-1">
-                            <strong className="block text-sm text-[var(--text-primary)] mb-1">Clear All Data</strong>
-                            <p className="m-0 text-xs text-[var(--text-secondary)] leading-tight">Permanently delete all indexed data, sources, profiles, and settings. This cannot be undone.</p>
+                    {/* Danger Zone */}
+                    <section className="border border-red-500/20 rounded-2xl shadow-sm overflow-hidden bg-red-500/[0.02]">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-red-500/5 border-b border-red-500/10">
+                            <span className="text-lg">⚠️</span>
+                            <h3 className="text-sm font-bold text-red-500">Danger Zone</h3>
                         </div>
-                        <button
-                            type="button"
-                            className="btn-danger whitespace-nowrap"
-                            onClick={handleClearAllData}
-                            disabled={clearing}
-                        >
-                            {clearing ? 'Clearing...' : '🗑️ Clear All Data'}
-                        </button>
-                    </div>
+                        <div className="p-8">
+                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-8">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-sm font-bold text-red-500">Clear All Local Data</span>
+                                    <p className="text-xs text-[var(--text-muted)]">This will wipe all vector indices, sources, and settings. Impossible to undo.</p>
+                                </div>
+                                <button
+                                    className="btn-danger !py-2.5 !px-8 !text-[10px] !font-black !rounded-xl shadow-lg shadow-red-500/10 hover:bg-red-500 hover:text-white transition-all"
+                                    onClick={handleClearAllData}
+                                    disabled={clearing}
+                                >
+                                    {clearing ? 'WIPING DATA...' : 'WIPE EVERYTHING'}
+                                </button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
-            </section>
+            </div>
 
-            {/* Clear Data Confirmation Modal */}
             {showClearConfirm && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]" onClick={() => setShowClearConfirm(false)}>
-                    <div className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-xl w-[420px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
-                        <div className="px-5 py-4 border-b border-[var(--border-color)]">
-                            <h3 className="m-0 text-sm font-semibold text-[var(--text-active)]">⚠️ Clear All Data</h3>
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-6" onClick={() => setShowClearConfirm(false)}>
+                    <div className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-3xl w-[450px] max-w-full shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                        <div className="p-8 border-b border-[var(--border-color)]">
+                            <h3 className="text-xl font-black text-[var(--text-active)] flex items-center gap-3">
+                                <span className="text-2xl">🚨</span> Final Warning
+                            </h3>
                         </div>
-                        <div className="p-5">
-                            <p className="mb-4 text-[var(--text-primary)]">
-                                This will <strong>permanently delete</strong>:
+                        <div className="p-8">
+                            <p className="text-[var(--text-primary)] text-sm font-bold mb-4 leading-relaxed">
+                                You are about to permanently delete all indexed data and configurations.
                             </p>
-                            <ul className="m-0 mb-4 ml-6 text-[var(--text-secondary)] leading-[1.8] list-disc text-sm">
-                                <li>All indexed chunks in vector database</li>
-                                <li>All source configurations</li>
-                                <li>All project profiles</li>
-                                <li>All indexing history</li>
-                                <li>All uploaded files</li>
-                            </ul>
-                            <p className="mb-2 text-[var(--text-secondary)] text-[0.85rem]">
-                                ✓ Your settings and downloaded models will be preserved.
-                            </p>
-                            <p className="text-red-500 font-semibold">
-                                This action cannot be undone!
-                            </p>
+                            <div className="p-5 bg-red-500/5 border border-red-500/10 rounded-2xl">
+                                <p className="text-red-500 text-xs font-black uppercase tracking-widest mb-1">Irreversible Action</p>
+                                <p className="text-red-600/70 text-xs font-medium">All vector embeddings, metadata, and local indices will be lost forever.</p>
+                            </div>
                         </div>
-                        <div className="flex justify-end gap-2.5 px-5 py-4 border-t border-[var(--border-color)] bg-black/10">
-                            <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() => setShowClearConfirm(false)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="btn-danger whitespace-nowrap"
-                                onClick={confirmClearAllData}
-                            >
-                                🗑️ Yes, Delete Everything
-                            </button>
+                        <div className="flex justify-end gap-3 p-8 pt-4">
+                            <button className="btn-secondary !rounded-xl !px-6" onClick={() => setShowClearConfirm(false)}>CANCEL</button>
+                            <button className="btn-danger !rounded-xl !px-6 !bg-red-500 !text-white font-black" onClick={confirmClearAllData}>DELETE ALL DATA</button>
                         </div>
                     </div>
                 </div>

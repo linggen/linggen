@@ -101,7 +101,7 @@ export function Chat({ llmEnabled }: ChatProps) {
   // If LLM is disabled, show a message instead of the chat interface
   if (!llmEnabled) {
     return (
-      <div className="flex flex-col h-[600px] bg-black/20 rounded-xl border border-[var(--border-color)] overflow-hidden">
+      <div className="flex flex-col h-[600px] bg-[var(--bg-sidebar)]/50 rounded-xl border border-[var(--border-color)] overflow-hidden">
         <div className="p-4 bg-white/2 border-b border-white/5">
           <h3 className="m-0 text-base text-[var(--text-active)]">💬 Quick Chat</h3>
           <p className="m-0 mt-1 text-[10px] text-[var(--text-secondary)] uppercase tracking-wider">Powered by Qwen3-4B</p>

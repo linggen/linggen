@@ -6,6 +6,7 @@ import {
   addResource,
   cancelJob,
   getAppStatus,
+  getAppSettings,
   retryInit,
   renameResource,
   updateResourcePatterns,
@@ -103,6 +104,25 @@ function App() {
 
   // Utils
   const [resourcesVersion, setResourcesVersion] = useState(0) // bump to refresh sources list
+
+  // Theme Management
+  useEffect(() => {
+    const applyTheme = async () => {
+      try {
+        const settings = await getAppSettings()
+        const theme = settings.theme || 'system'
+        const root = document.documentElement
+        if (theme === 'system') {
+          root.removeAttribute('data-theme')
+        } else {
+          root.setAttribute('data-theme', theme)
+        }
+      } catch (err) {
+        console.error('Failed to apply theme from settings:', err)
+      }
+    }
+    applyTheme()
+  }, []) // Apply once on mount
 
   // Modal State
   const [isAddSourceModalOpen, setIsAddSourceModalOpen] = useState(false)

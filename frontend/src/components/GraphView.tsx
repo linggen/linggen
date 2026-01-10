@@ -453,10 +453,12 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       ctx.fillStyle = nodeColor(n);
       ctx.fill();
 
-      // Emphasize highlighted nodes with a stroke
+          // Emphasize highlighted nodes with a stroke
       if (highlightNodes.size === 0 || highlightNodes.has(n.id)) {
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#111827';
+        const rootTheme = document.documentElement.getAttribute('data-theme');
+        const isLight = rootTheme === 'light' || (!rootTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+        ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.1)' : '#111827';
         ctx.stroke();
       }
 
@@ -464,6 +466,8 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       const label = n.label;
       // Only show labels when zoomed in enough, Obsidian-style.
       if (label && globalScale >= LABEL_VISIBILITY_THRESHOLD) {
+        const rootTheme = document.documentElement.getAttribute('data-theme');
+        const isLight = rootTheme === 'light' || (!rootTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
         const fontSize = Math.max(10, 14 / globalScale);
         ctx.font = `${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
@@ -471,13 +475,13 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
 
         const textY = y + radius + 2;
 
-        // Text outline for contrast on dark backgrounds
+        // Text outline for contrast
         ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)'; // near-black
+        ctx.strokeStyle = isLight ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.85)';
         ctx.strokeText(label, x, textY);
 
-        // Main text color (light)
-        ctx.fillStyle = '#f9fafb'; // near-white
+        // Main text color
+        ctx.fillStyle = isLight ? '#1a1a1a' : '#f9fafb';
         ctx.fillText(label, x, textY);
       }
     },
@@ -552,8 +556,8 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
   }
 
   return (
-    <div className="flex flex-col flex-1 h-full bg-[#1a1a2e] rounded-lg overflow-hidden relative">
-      <div className="flex items-center gap-4 px-4 py-3 bg-black/20 border-b border-[var(--border-color)] flex-wrap">
+    <div className="flex flex-col flex-1 h-full bg-[var(--bg-app)] rounded-lg overflow-hidden relative">
+      <div className="flex items-center gap-4 px-4 py-3 bg-black/5 border-b border-[var(--border-color)] flex-wrap">
         <div className="flex gap-2">
           <input
             type="text"
@@ -642,7 +646,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       </div>
 
       {selectedNode && (
-        <div className="absolute bottom-4 right-4 w-[300px] max-h-[300px] bg-black/80 backdrop-blur-md border border-[var(--border-color)] rounded-lg p-4 overflow-y-auto z-10 shadow-2xl flex flex-col gap-3">
+        <div className="absolute bottom-4 right-4 w-[300px] max-h-[300px] bg-[var(--bg-sidebar)]/80 backdrop-blur-md border border-[var(--border-color)] rounded-lg p-4 overflow-y-auto z-10 shadow-2xl flex flex-col gap-3">
           <div>
             <h4 className="m-0 text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">Selected File</h4>
             <p className="m-0 font-mono text-[11px] text-blue-400 break-all">{selectedNode}</p>

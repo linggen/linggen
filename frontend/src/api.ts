@@ -827,6 +827,8 @@ export async function retryInit(): Promise<RetryInitResponse> {
 }
 
 // App Settings
+export type ThemeMode = 'dark' | 'light' | 'system';
+
 export interface AppSettings {
     intent_detection_enabled: boolean;
     llm_enabled: boolean;
@@ -834,6 +836,8 @@ export interface AppSettings {
     server_address?: string;
     /** Whether anonymous analytics is enabled (default: true) */
     analytics_enabled: boolean;
+    /** Theme mode (default: system) */
+    theme: ThemeMode;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {

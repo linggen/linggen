@@ -34,81 +34,83 @@ const linggenBaseTheme = EditorView.theme({
     },
     '.cm-gutters': {
         backgroundColor: 'transparent',
-        borderRight: '1px solid var(--border-color, #333)',
+        borderRight: '1px solid var(--border-color)',
     },
     '.cm-activeLineGutter': {
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        backgroundColor: 'var(--item-hover)',
+        opacity: '0.5',
     },
     '.cm-activeLine': {
-        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+        backgroundColor: 'var(--item-hover)',
+        opacity: '0.3',
     },
     '.cm-selectionBackground': {
-        backgroundColor: 'rgba(100, 108, 255, 0.3) !important',
+        backgroundColor: 'var(--accent)',
+        opacity: '0.3',
     },
     '.cm-cursor': {
-        borderLeftColor: '#fff',
+        borderLeftColor: 'var(--text-primary)',
     },
     // Markdown-specific styling
     '.cm-header-1': {
         fontSize: '1.8em',
         fontWeight: 'bold',
-        color: '#e2e8f0',
+        color: 'var(--text-active)',
     },
     '.cm-header-2': {
         fontSize: '1.5em',
         fontWeight: 'bold',
-        color: '#e2e8f0',
+        color: 'var(--text-active)',
     },
     '.cm-header-3': {
         fontSize: '1.3em',
         fontWeight: 'bold',
-        color: '#e2e8f0',
+        color: 'var(--text-active)',
     },
     '.cm-header-4, .cm-header-5, .cm-header-6': {
         fontSize: '1.1em',
         fontWeight: 'bold',
-        color: '#e2e8f0',
+        color: 'var(--text-active)',
     },
     '.cm-strong': {
         fontWeight: 'bold',
-        color: '#f8fafc',
+        color: 'var(--text-active)',
     },
     '.cm-emphasis': {
         fontStyle: 'italic',
-        color: '#cbd5e1',
+        color: 'var(--text-secondary)',
     },
     '.cm-strikethrough': {
         textDecoration: 'line-through',
     },
     '.cm-link': {
-        color: '#60a5fa',
+        color: 'var(--accent)',
         textDecoration: 'underline',
     },
     '.cm-url': {
-        color: '#94a3b8',
+        color: 'var(--text-muted)',
     },
     '.cm-code': {
-        backgroundColor: 'rgba(100, 108, 255, 0.1)',
-        color: '#a78bfa',
+        backgroundColor: 'var(--accent)',
+        opacity: '0.1',
+        color: 'var(--accent)',
         padding: '2px 4px',
         borderRadius: '3px',
     },
-}, { dark: true });
+});
 
 const linggenFillHeightTheme = EditorView.theme(
     {
         '&': { height: '100%' },
         '.cm-scroller': { height: '100%' },
-    },
-    { dark: true }
+    }
 );
 
 const linggenAutoHeightTheme = EditorView.theme(
     {
         '&': { height: 'auto' },
         '.cm-scroller': { overflow: 'visible' },
-    },
-    { dark: true }
+    }
 );
 
 export const CM6Editor: React.FC<CM6EditorProps> = ({
@@ -196,6 +198,42 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
         setDirty(true);
     }, []);
 
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        const rootTheme = document.documentElement.getAttribute('data-theme');
+        if (rootTheme === 'dark') return true;
+        if (rootTheme === 'light') return false;
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    });
+
+    useEffect(() => {
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                    const newTheme = document.documentElement.getAttribute('data-theme');
+                    if (newTheme === 'dark') setIsDarkMode(true);
+                    else if (newTheme === 'light') setIsDarkMode(false);
+                    else setIsDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches);
+                }
+            }
+        });
+
+        observer.observe(document.documentElement, { attributes: true });
+
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        const handler = (e: MediaQueryListEvent) => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            if (!currentTheme || currentTheme === 'system') {
+                setIsDarkMode(e.matches);
+            }
+        };
+        mq.addEventListener('change', handler);
+
+        return () => {
+            observer.disconnect();
+            mq.removeEventListener('change', handler);
+        };
+    }, []);
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-[0.9rem] bg-[var(--bg-content)]">
@@ -233,7 +271,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
                     height={scrollMode === 'editor' ? '100%' : 'auto'}
                     minHeight="200px"
                     className={isContainerScroll ? 'cm-auto-height' : 'h-full'}
-                    theme={oneDark}
+                    theme={isDarkMode ? oneDark : 'light'}
                     extensions={[
                         markdown({
                             base: markdownLanguage,

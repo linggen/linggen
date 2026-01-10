@@ -11,7 +11,7 @@ body,
 }
 
 :root {
-  /* Obsidian-like Dark Theme Palette */
+  /* Obsidian-like Dark Theme Palette (Default) */
   --bg-app: #1e1e1e;
   --bg-sidebar: #252526;
   --bg-content: #1e1e1e;
@@ -24,6 +24,7 @@ body,
   --text-primary: #cccccc;
   --text-secondary: #999999;
   --text-active: #ffffff;
+  --text-muted: #666666;
 
   --accent: #7137f1;
   --accent-hover: #824bf3;
@@ -33,15 +34,21 @@ body,
   --bg-active: var(--item-active);
   --bg-secondary: #2d2d2d;
 
+  --bg-button: #333333;
+  --bg-button-hover: #444444;
+
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
   --font-code: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
 
   font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   color: var(--text-primary);
   background-color: var(--bg-app);
 
@@ -49,6 +56,107 @@ body,
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Global transition for theme switching */
+  transition: background-color 0.1s ease, color 0.1s ease,
+    border-color 0.1s ease;
+}
+
+/* Base Light Theme Variables - Applied when explicitly set OR system is light and no explicit theme set */
+:root[data-theme="light"] {
+  --bg-app: #f9f9f9;
+  --bg-sidebar: #f3f3f3;
+  --bg-content: #ffffff;
+  --bg-status: #007acc;
+  --bg-status-bar: #eeeeee;
+
+  --border-color: #e0e0e0;
+  --border-active: #007fd4;
+
+  --text-primary: #333333;
+  --text-secondary: #666666;
+  --text-active: #000000;
+  --text-muted: #999999;
+
+  --item-hover: #e8e8e8;
+  --item-active: #dddddd;
+  --bg-active: var(--item-active);
+  --bg-secondary: #f0f0f0;
+
+  --bg-button: #efefef;
+  --bg-button-hover: #e5e5e5;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+
+  color-scheme: light;
+  color: var(--text-primary);
+  background-color: var(--bg-app);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-app: #f9f9f9;
+    --bg-sidebar: #f3f3f3;
+    --bg-content: #ffffff;
+    --bg-status: #007acc;
+    --bg-status-bar: #eeeeee;
+
+    --border-color: #e0e0e0;
+    --border-active: #007fd4;
+
+    --text-primary: #333333;
+    --text-secondary: #666666;
+    --text-active: #000000;
+    --text-muted: #999999;
+
+    --item-hover: #e8e8e8;
+    --item-active: #dddddd;
+    --bg-active: var(--item-active);
+    --bg-secondary: #f0f0f0;
+
+    --bg-button: #efefef;
+    --bg-button-hover: #e5e5e5;
+
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+
+    color-scheme: light;
+    color: var(--text-primary);
+    background-color: var(--bg-app);
+  }
+}
+
+/* Explicit Dark Theme Overrides */
+:root[data-theme="dark"] {
+  --bg-app: #1e1e1e;
+  --bg-sidebar: #252526;
+  --bg-content: #1e1e1e;
+  --bg-status: #007acc;
+  --bg-status-bar: #2e2e2e;
+
+  --border-color: #3e3e42;
+  --border-active: #007fd4;
+
+  --text-primary: #cccccc;
+  --text-secondary: #999999;
+  --text-active: #ffffff;
+  --text-muted: #666666;
+
+  --item-hover: #2a2d2e;
+  --item-active: #37373d;
+  --bg-active: var(--item-active);
+  --bg-secondary: #2d2d2d;
+
+  --bg-button: #333333;
+  --bg-button-hover: #444444;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--bg-app);
 }
 
 * {
@@ -57,11 +165,12 @@ body,
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: var(--accent);
   text-decoration: inherit;
+  transition: color 0.1s;
 }
 a:hover {
-  color: #535bf2;
+  color: var(--accent-hover);
 }
 
 body {
@@ -69,20 +178,27 @@ body {
 }
 
 h1 {
-  font-size: 3.2em;
+  font-size: 2.5em;
   line-height: 1.1;
+  font-weight: 700;
+  color: var(--text-active);
+}
+
+h2 {
+  color: var(--text-active);
 }
 
 button {
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid transparent;
   padding: 6px 12px;
   font-size: 11px !important;
   font-weight: 600;
   font-family: inherit;
-  background-color: #333;
+  background-color: var(--bg-button);
+  color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.1s ease;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -92,44 +208,49 @@ button {
     background-color: var(--accent);
     color: white;
     border-color: var(--accent);
+    box-shadow: var(--shadow-sm);
   }
   .btn-primary:hover {
     background-color: var(--accent-hover);
     border-color: var(--accent-hover);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active {
+    transform: translateY(0);
   }
 
   .btn-secondary {
-    background-color: #333;
+    background-color: var(--bg-button);
     border-color: var(--border-color);
     color: var(--text-primary);
   }
   .btn-secondary:hover {
-    background-color: #444;
-    border-color: #555;
+    background-color: var(--bg-button-hover);
+    border-color: var(--border-active);
     color: var(--text-active);
   }
 
   .btn-danger {
-    background-color: rgba(239, 68, 68, 0.15); /* red-500/15 */
-    border: 1px solid rgba(239, 68, 68, 0.4); /* red-500/40 */
-    color: #f87171; /* red-400 */
-    transition-property: color, background-color, border-color,
-      text-decoration-color, fill, stroke;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-    transition-duration: 150ms;
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    text-transform: uppercase;
   }
   .btn-danger:hover {
-    background-color: rgba(239, 68, 68, 0.25); /* red-500/25 */
-    border-color: rgba(239, 68, 68, 0.6); /* red-500/60 */
+    background-color: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
   }
 
   .btn-ghost {
     background-color: transparent;
     border-color: transparent;
     color: var(--text-secondary);
+    box-shadow: none;
   }
   .btn-ghost:hover {
     color: var(--text-active);
+    background-color: var(--item-hover);
   }
 
   .btn-outline {
@@ -138,7 +259,7 @@ button {
     color: var(--text-secondary);
   }
   .btn-outline:hover {
-    border-color: #555;
+    border-color: var(--border-active);
     color: var(--text-active);
   }
 
@@ -146,7 +267,7 @@ button {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 16px;
+    padding: 8px 16px;
     background-color: transparent;
     border: none;
     color: var(--text-secondary);
@@ -169,18 +290,56 @@ button {
   .sidebar-item.active {
     background-color: var(--item-active);
     color: var(--text-active);
+    border-right: 2px solid var(--accent);
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
   }
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Improve Input Appearance */
+input[type="text"],
+textarea,
+select {
+  background-color: var(--bg-app);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+
+input[type="text"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(113, 55, 241, 0.2);
+}
+
+/* Sections & Cards */
+section {
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.card {
+  background-color: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
 }

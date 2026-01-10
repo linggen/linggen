@@ -20,6 +20,20 @@ pub struct MetadataStore {
     db: Arc<Database>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Dark,
+    Light,
+    System,
+}
+
+impl Default for ThemeMode {
+    fn default() -> Self {
+        Self::System
+    }
+}
+
 // Application-wide settings stored in the SETTINGS_TABLE under key "app_settings"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -42,6 +56,10 @@ pub struct AppSettings {
     /// Collects usage data to help improve Linggen. No code or personal info is sent.
     #[serde(default = "default_analytics_enabled")]
     pub analytics_enabled: Option<bool>,
+
+    /// Theme mode (default: system)
+    #[serde(default)]
+    pub theme: ThemeMode,
 }
 
 fn default_analytics_enabled() -> Option<bool> {
@@ -56,6 +74,7 @@ impl Default for AppSettings {
             server_port: None,
             server_address: None,
             analytics_enabled: Some(true),
+            theme: ThemeMode::System,
         }
     }
 }
@@ -341,11 +360,7 @@ impl MetadataStore {
     }
 
     /// Set/update file index info for a specific file
-    pub fn set_file_index_info(
-        &self,
-        source_id: &str,
-        info: &FileIndexInfo,
-    ) -> Result<()> {
+    pub fn set_file_index_info(&self, source_id: &str, info: &FileIndexInfo) -> Result<()> {
         let key = Self::file_index_key(source_id, &info.document_id);
         let write_txn = self.db.begin_write()?;
         {
