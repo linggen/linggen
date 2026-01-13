@@ -264,11 +264,27 @@ pub fn select_artifact(
     platform: Platform,
     kind: ArtifactKind,
 ) -> Option<Artifact> {
-    let key = match (platform, kind) {
-        (Platform::Mac, ArtifactKind::Cli) => "cli-macos-universal",
-        (Platform::Mac, ArtifactKind::App) => "app-macos-tarball",
-        (Platform::Linux, ArtifactKind::Cli) => "cli-linux-x86_64",
-        _ => "",
+    // Detect architecture
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x86_64"
     };
-    manifest.artifacts.get(key).cloned()
+
+    let key = match (platform, kind) {
+        (Platform::Mac, ArtifactKind::Cli) => format!("cli-macos-{}", arch),
+        (Platform::Mac, ArtifactKind::App) => "app-macos-tarball".to_string(),
+        (Platform::Linux, ArtifactKind::Cli) => format!("cli-linux-{}", arch),
+        (Platform::Linux, ArtifactKind::Server) => format!("server-linux-{}", arch),
+        _ => "".to_string(),
+    };
+
+    // Fallback for universal mac cli if specific arch not found
+    if key.starts_with("cli-macos-") && !manifest.artifacts.contains_key(&key) {
+        if let Some(art) = manifest.artifacts.get("cli-macos-universal") {
+            return Some(art.clone());
+        }
+    }
+
+    manifest.artifacts.get(&key).cloned()
 }

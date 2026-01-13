@@ -159,6 +159,13 @@ main() {
   echo "✅ Installed linggen to $dest"
   echo "Version:"
   "$dest/linggen" --version || true
+  
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    echo ""
+    echo "💡 To set up the Linggen server and systemd service, run:"
+    echo "   sudo $dest/linggen install"
+  fi
+
   if [[ ":$PATH:" != *":$dest:"* ]]; then
     echo "ℹ️  Add to PATH if needed:"
     echo "    export PATH=\"$dest:\$PATH\""

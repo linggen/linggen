@@ -873,7 +873,7 @@ export function Sidebar({
                                                     ) : (
                                                         <button
                                                             key={pack.id}
-                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${currentView === 'library' && selectedLibraryPackId === pack.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
+                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${selectedLibraryPackId === pack.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
                                                             onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
                                                             onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
                                                         >

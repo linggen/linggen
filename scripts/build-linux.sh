@@ -7,8 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-echo "🐳 Building multi-arch Linux packages using Docker Buildx..."
+echo "🐳 Building Headless Linux packages using Docker Buildx..."
 echo "   Target architectures: amd64 (x86_64), arm64 (aarch64)"
+echo "   Artifacts: linggen-cli and linggen-server (with Web UI)"
 echo "   This will take a while as it builds for both architectures."
 echo ""
 
@@ -36,19 +37,15 @@ docker buildx build \
     --platform linux/amd64,linux/arm64 \
     --target artifacts \
     --output type=local,dest=./dist/linux \
-    -f deploy/Dockerfile.linux.multiarch \
+    -f scripts/Dockerfile.linux \
     .
 
 echo ""
-echo "✅ Multi-arch build complete! Packages are in dist/linux/"
+echo "✅ Headless Linux build complete! Packages are in dist/linux/"
 echo ""
 echo "Files found:"
-ls -lh dist/linux/*.deb dist/linux/*.AppImage 2>/dev/null || ls -lh dist/linux/
+ls -lh dist/linux/*.tar.gz 2>/dev/null || ls -lh dist/linux/
 
 echo ""
-echo "📝 To install on Debian/Ubuntu (amd64):"
-echo "   sudo dpkg -i dist/linux/linggen_*_amd64.deb"
-echo ""
-echo "📝 To install on Debian/Ubuntu (arm64):"
-echo "   sudo dpkg -i dist/linux/linggen_*_arm64.deb"
+echo "📝 To install on any Linux machine, download the tarball and run scripts/install-cli.sh"
 

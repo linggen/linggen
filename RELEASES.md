@@ -235,7 +235,38 @@ To test different update channels in the future, you can:
 
 ## Manual Release (Alternative)
 
-If you need to create a release manually without GitHub Actions:
+If you need to create a release manually:
+
+### Step 1: Package Artifacts
+
+You can build and sign artifacts locally without publishing:
+
+```bash
+./scripts/package.sh v0.5.0
+```
+
+This will produce signed artifacts in the `dist/` directory.
+
+### Step 2: Publish to GitHub
+
+To build, sign, and upload to GitHub in one go:
+
+```bash
+./scripts/manual-release.sh v0.5.0
+```
+
+Use `--draft` if you want to inspect the release before publishing:
+
+```bash
+./scripts/manual-release.sh v0.5.0 --draft
+```
+
+### Script Architecture
+
+- **`scripts/lib-common.sh`**: Shared helpers for platform detection and signing.
+- **`scripts/package.sh`**: Handles building and local signing.
+- **`scripts/manual-release.sh`**: Orchestrates packaging and GitHub publishing.
+- **`scripts/sync-version.sh`**: Ensures version consistency across all files.
 
 ### Linux (Multi-Arch)
 
@@ -246,38 +277,6 @@ To build for both x86_64 and ARM64 Linux using Docker Buildx:
 ```
 
 This will produce `.deb` and `.AppImage` files in `dist/linux/` for both architectures.
-
-### Local Build (Single Architecture)
-
-1. **Build locally**:
-
-   ```bash
-   ./deploy/build-tauri-app.sh
-   ```
-
-2. **Sign bundles** (requires private key):
-
-   ```bash
-   tauri signer sign \
-     dist/macos/Linggen.app \
-     --private-key ~/.tauri/private-key.pem
-   ```
-
-3. **Create update bundles**:
-
-   ```bash
-   # macOS
-   cd dist/macos
-   tar czf Linggen.dmg.tar.gz Linggen.dmg
-   tauri signer sign Linggen.dmg.tar.gz --private-key ~/.tauri/private-key.pem
-
-   # Linux
-   cd dist/linux
-   tar czf linggen.deb.tar.gz linggen_*.deb
-   tauri signer sign linggen.deb.tar.gz --private-key ~/.tauri/private-key.pem
-   ```
-
-4. **Create `latest.json` manually** and upload to `linggen`
 
 ## Security Notes
 

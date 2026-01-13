@@ -1,31 +1,23 @@
-# Ignore build artifacts
-target/
-frontend/dist/
-frontend/node_modules/
+# Build artifacts
+**/target/
+**/node_modules/
+**/dist/
+**/binaries/
+
+# IDE and metadata
+.git/
+.cursor/
+.vscode/
+**/.DS_Store
+**/.linggen/
+
+# Specific Rust/Tauri noise
 frontend/src-tauri/target/
 frontend/src-tauri/binaries/
+backend/target/
+linggen-cli/target/
 
-# Ignore local data
-*.redb
-lancedb/
-models/
-
-# Ignore IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Ignore git
-.git/
-
-# Ignore other build outputs
-dist/
-*.dmg
-*.app
-*.deb
-*.AppImage
-
-# Ignore docs/site
-linggensite/
-doc/
+# Local configuration
+.env
+.tauri-signing.conf
+*.key

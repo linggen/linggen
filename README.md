@@ -23,7 +23,7 @@ Traditional AI chat is "blind" to anything you haven't manually copy-pasted. Lin
 
 ---
 
-## 🚀 Quick Start (macOS)
+## 🚀 Quick Start (macOS & Linux)
 
 Install the CLI in seconds and start indexing:
 
@@ -33,7 +33,11 @@ linggen start
 linggen index .
 ```
 
-_Windows & Linux support coming soon._
+On Linux, you can set up the background server and systemd service after CLI installation:
+
+```bash
+sudo linggen install
+```
 
 ---
 

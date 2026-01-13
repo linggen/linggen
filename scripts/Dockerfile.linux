@@ -1,0 +1,56 @@
+# Dockerfile for Headless Linux builds (CLI and Server with Web UI)
+# This Dockerfile is designed to be used with docker buildx
+
+# Stage 1: Build the backend and frontend
+FROM rust:bookworm AS builder
+
+# TARGETARCH is automatically set by Docker Buildx (amd64, arm64, etc.)
+ARG TARGETARCH
+
+# Install essential system dependencies for backend (PDF extraction, SSL, etc.)
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    libpoppler-glib-dev \
+    pkg-config \
+    cmake \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 for frontend build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+WORKDIR /app
+
+# Copy the whole project
+COPY . .
+
+# 1. Build the backend binary (linggen-server)
+WORKDIR /app/backend
+RUN cargo build --release -p api
+
+# 2. Build the CLI binary (linggen)
+WORKDIR /app/linggen-cli
+RUN cargo build --release
+
+# 3. Build the frontend assets
+WORKDIR /app/frontend
+RUN npm install && npm run build
+
+# 4. Prepare portable artifacts
+WORKDIR /app
+RUN mkdir -p /app/dist-temp && \
+    if [ "$TARGETARCH" = "amd64" ]; then SLUG="x86_64"; else SLUG="aarch64"; fi && \
+    # CLI Tarball (Flat)
+    mkdir -p /app/dist-temp/cli-flat && \
+    cp /app/linggen-cli/target/release/linggen /app/dist-temp/cli-flat/ && \
+    cd /app/dist-temp/cli-flat && tar -czf /app/dist-temp/linggen-cli-linux-${SLUG}.tar.gz linggen && \
+    # Server Tarball (Portable with root folder)
+    mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/frontend && \
+    cp /app/backend/target/release/linggen-server /app/dist-temp/linggen-server-linux-${SLUG}/ && \
+    cp -r /app/frontend/dist/* /app/dist-temp/linggen-server-linux-${SLUG}/frontend/ && \
+    cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz linggen-server-linux-${SLUG}
+
+# Stage 2: Artifact extraction
+FROM scratch AS artifacts
+COPY --from=builder /app/dist-temp/*.tar.gz /

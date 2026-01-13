@@ -10,7 +10,7 @@ use tempfile::{tempdir, NamedTempFile};
 use crate::manifest::{select_artifact, ArtifactKind, Platform};
 
 use super::download::{default_http_client, download_to_temp};
-use super::util::{command_exists, run_cmd};
+use super::util::run_cmd;
 
 pub async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
     let client = default_http_client()?;
@@ -46,36 +46,89 @@ pub async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
 }
 
 pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
-    if command_exists("apt") {
-        run_cmd("sudo", &["apt", "update"])?;
-        run_cmd("sudo", &["apt", "install", "-y", "linggen"])?;
-        run_cmd("sudo", &["apt", "install", "-y", "linggen-server"])?;
-        println!(
-            "{}",
-            "✅ Installed/updated linggen CLI and linggen-server via APT".green()
-        );
-        return Ok(());
-    }
+    // If we have apt, try to use it, but since we are not yet in official repos,
+    // this might fail unless the user added our PPA.
+    // For now, we prefer the tarball install as it's more universal.
 
-    // Fallback: tarball install from manifest
     let client = default_http_client()?;
-    if let Some(cli_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Cli) {
+    let platform = Platform::Linux;
+
+    // 1. Install CLI
+    if let Some(cli_art) = select_artifact(manifest, platform, ArtifactKind::Cli) {
         println!("{}", "⬇️  Downloading CLI tarball...".cyan());
         let tar = download_to_temp(&client, &cli_art.url, cli_art.signature.as_deref()).await?;
-        extract_tarball(&tar, "/usr/local/bin")?;
-        println!("{}", "✅ Installed/updated CLI from tarball".green());
-    } else {
-        println!("{}", "⚠️ No CLI tarball found in manifest".yellow());
+
+        // Extract to /usr/local/bin (requires sudo)
+        println!("{}", "🔧 Installing CLI to /usr/local/bin...".cyan());
+        let status = Command::new("sudo")
+            .args(["tar", "-xzf", tar.to_str().unwrap(), "-C", "/usr/local/bin"])
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("Failed to extract CLI tarball with sudo");
+        }
+        println!("{}", "✅ CLI installed to /usr/local/bin/linggen".green());
     }
 
-    if let Some(srv_art) = select_artifact(manifest, Platform::Linux, ArtifactKind::Server) {
+    // 2. Install Server
+    if let Some(srv_art) = select_artifact(manifest, platform, ArtifactKind::Server) {
         println!("{}", "⬇️  Downloading server tarball...".cyan());
         let tar = download_to_temp(&client, &srv_art.url, srv_art.signature.as_deref()).await?;
-        extract_tarball(&tar, "/usr/local/bin")?;
+
+        let share_dir = "/usr/local/share/linggen";
+        println!(
+            "{}",
+            format!("🔧 Installing server to {}...", share_dir).cyan()
+        );
+
+        // Ensure share dir exists
+        run_cmd("sudo", &["mkdir", "-p", share_dir])?;
+
+        // Extract to share dir. Note: tarball has a root folder like linggen-server-linux-x86_64/
+        // We want the contents of that folder to be in /usr/local/share/linggen/
+        let tmp_extract = tempdir()?;
+        extract_tarball(&tar, tmp_extract.path().to_str().unwrap())?;
+
+        // Find the extracted folder (it will be linggen-server-linux-*)
+        let entries = fs::read_dir(tmp_extract.path())?;
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("linggen-server-linux-")
+            {
+                // Copy contents to /usr/local/share/linggen
+                let src = format!("{}/.", path.to_str().unwrap());
+                run_cmd("sudo", &["cp", "-rf", &src, share_dir])?;
+            }
+        }
+
+        // Symlink binary to /usr/local/bin
+        println!(
+            "{}",
+            "🔗 Creating symlink /usr/local/bin/linggen-server...".cyan()
+        );
+        run_cmd(
+            "sudo",
+            &[
+                "ln",
+                "-sf",
+                "/usr/local/share/linggen/linggen-server",
+                "/usr/local/bin/linggen-server",
+            ],
+        )?;
+
+        // Install systemd unit
         install_systemd_unit()?;
-        println!("{}", "✅ Installed/updated server from tarball".green());
-    } else {
-        println!("{}", "⚠️ No server tarball found in manifest".yellow());
+
+        println!(
+            "{}",
+            "✅ Server installed and systemd service started".green()
+        );
     }
 
     Ok(())
@@ -390,6 +443,13 @@ After=network.target
 [Service]
 ExecStart=/usr/local/bin/linggen-server
 Restart=on-failure
+Environment=LINGGEN_FRONTEND_DIR=/usr/local/share/linggen/frontend
+# Ensure it can create its own data directory in ~/.linggen or /var/lib/linggen
+# By default it uses ~/Library/Application Support/Linggen on Mac 
+# and ~/.local/share/Linggen on Linux (via dirs crate).
+# We might want to fix the user it runs as, but for a simple install,
+# running as the user who ran 'linggen install' (via sudo) might be tricky.
+# For now, it will run as root if installed via sudo, which is okay for a simple server.
 
 [Install]
 WantedBy=multi-user.target

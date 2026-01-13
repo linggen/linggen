@@ -12,6 +12,45 @@ use tracing::info;
 
 use crate::handlers::AppState;
 
+fn find_pack_by_id(dir: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(p) = find_pack_by_id(&path, target_id) {
+                    return Some(p);
+                }
+            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let meta = extract_all_meta_from_content(&content);
+
+                    // Extract ID using the same logic as list_packs
+                    let id = if let Some(ref m) = meta {
+                        if let Some(id_val) = m.get("id").and_then(|v| v.as_str()) {
+                            id_val.to_string()
+                        } else {
+                            path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string()
+                        }
+                    } else {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    };
+
+                    if id == target_id {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 #[derive(Deserialize)]
 pub struct ApplyPackRequest {
     pub project_id: String,
@@ -88,76 +127,78 @@ pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::
                     scan_dir(&path, root, packs, seen_ids);
                 } else if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(mut meta) = extract_all_meta_from_content(&content) {
-                            // Extract or default the ID
-                            let id = if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
-                                id.to_string()
-                            } else {
-                                // Default to filename slug
-                                path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("unknown")
-                                    .to_string()
-                            };
+                        let mut meta = extract_all_meta_from_content(&content)
+                            .unwrap_or_else(|| serde_json::json!({}));
 
-                            if seen_ids.contains(&id) {
-                                continue;
-                            }
-                            seen_ids.insert(id.clone());
+                        // Extract or default the ID
+                        let id = if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
+                            id.to_string()
+                        } else {
+                            // Default to filename slug
+                            path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string()
+                        };
 
-                            if let Some(obj) = meta.as_object_mut() {
-                                // Ensure ID is in the object
-                                obj.insert("id".to_string(), serde_json::json!(id));
-
-                                // Add filename (without extension) for sidebar display
-                                let filename = path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or(&id)
-                                    .to_string();
-                                obj.insert("filename".to_string(), serde_json::json!(filename));
-
-                                // Ensure Name is in the object (default to ID if missing)
-                                if !obj.contains_key("name") {
-                                    obj.insert("name".to_string(), serde_json::json!(id));
-                                }
-
-                                // Add file metadata
-                                if let Ok(metadata) = std::fs::metadata(&path) {
-                                    if let Ok(created) = metadata.created() {
-                                        obj.insert(
-                                            "created_at".to_string(),
-                                            serde_json::json!(
-                                                chrono::DateTime::<chrono::Utc>::from(created)
-                                            ),
-                                        );
-                                    }
-                                    if let Ok(modified) = metadata.modified() {
-                                        obj.insert(
-                                            "updated_at".to_string(),
-                                            serde_json::json!(
-                                                chrono::DateTime::<chrono::Utc>::from(modified)
-                                            ),
-                                        );
-                                    }
-                                }
-
-                                // Add folder info to metadata if possible
-                                if let Some(parent_name) = path
-                                    .parent()
-                                    .and_then(|p| p.file_name())
-                                    .and_then(|n| n.to_str())
-                                {
-                                    // If the parent is the root itself, we don't add a folder name (or use "general")
-                                    if path.parent() != Some(root) {
-                                        obj.insert(
-                                            "folder".to_string(),
-                                            serde_json::json!(parent_name),
-                                        );
-                                    }
-                                }
-                            }
-                            packs.push(meta);
+                        if seen_ids.contains(&id) {
+                            continue;
                         }
+                        seen_ids.insert(id.clone());
+
+                        if let Some(obj) = meta.as_object_mut() {
+                            // Ensure ID is in the object
+                            obj.insert("id".to_string(), serde_json::json!(id));
+
+                            // Add filename (without extension) for sidebar display
+                            let filename = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(&id)
+                                .to_string();
+                            obj.insert("filename".to_string(), serde_json::json!(filename));
+
+                            // Ensure Name is in the object (default to ID if missing)
+                            if !obj.contains_key("name") {
+                                obj.insert("name".to_string(), serde_json::json!(id));
+                            }
+
+                            // Add file metadata
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                if let Ok(created) = metadata.created() {
+                                    obj.insert(
+                                        "created_at".to_string(),
+                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                            created
+                                        )),
+                                    );
+                                }
+                                if let Ok(modified) = metadata.modified() {
+                                    obj.insert(
+                                        "updated_at".to_string(),
+                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                            modified
+                                        )),
+                                    );
+                                }
+                            }
+
+                            // Add folder info to metadata if possible
+                            if let Some(parent_name) = path
+                                .parent()
+                                .and_then(|p| p.file_name())
+                                .and_then(|n| n.to_str())
+                            {
+                                // If the parent is the root itself, we don't add a folder name (or use "general")
+                                if path.parent() != Some(root) {
+                                    obj.insert(
+                                        "folder".to_string(),
+                                        serde_json::json!(parent_name),
+                                    );
+                                }
+                            }
+                        }
+                        packs.push(meta);
                     }
                 }
             }
@@ -304,29 +345,7 @@ pub async fn rename_pack(
     }
     let library_root = &state.library_path;
 
-    fn find_pack(dir: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(p) = find_pack(&path, id) {
-                        return Some(p);
-                    }
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(meta) = extract_all_meta_from_content(&content) {
-                            if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    let pack_path = find_pack(library_root, &req.pack_id)
+    let pack_path = find_pack_by_id(library_root, &req.pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
 
     let display_name = req
@@ -408,29 +427,7 @@ pub async fn delete_pack(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let library_root = &state.library_path;
 
-    fn find_pack(dir: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(p) = find_pack(&path, id) {
-                        return Some(p);
-                    }
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(meta) = extract_all_meta_from_content(&content) {
-                            if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    let pack_path = find_pack(library_root, &pack_id)
+    let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
 
     std::fs::remove_file(pack_path).map_err(|e| {
@@ -450,29 +447,7 @@ pub async fn apply_pack(
     // 1. Find the pack file
     let library_root = &state.library_path;
 
-    fn find_pack(dir: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(p) = find_pack(&path, id) {
-                        return Some(p);
-                    }
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(meta) = extract_all_meta_from_content(&content) {
-                            if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    let pack_path = match find_pack(library_root, &pack_id) {
+    let pack_path = match find_pack_by_id(library_root, &pack_id) {
         Some(p) => p,
         None => return Err((StatusCode::NOT_FOUND, "Pack not found".to_string())),
     };
@@ -540,29 +515,7 @@ pub async fn get_pack(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let library_root = &state.library_path;
 
-    fn find_pack(dir: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(p) = find_pack(&path, id) {
-                        return Some(p);
-                    }
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(meta) = extract_all_meta_from_content(&content) {
-                            if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    let pack_path = find_pack(library_root, &pack_id)
+    let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
 
     let content = std::fs::read_to_string(&pack_path).map_err(|e| {
@@ -585,29 +538,7 @@ pub async fn save_pack(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let library_root = &state.library_path;
 
-    fn find_pack(dir: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(p) = find_pack(&path, id) {
-                        return Some(p);
-                    }
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Some(meta) = extract_all_meta_from_content(&content) {
-                            if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    let pack_path = find_pack(library_root, &pack_id)
+    let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
 
     std::fs::write(&pack_path, &req.content).map_err(|e| {

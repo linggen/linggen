@@ -1127,7 +1127,17 @@ fn find_frontend_dir() -> Option<PathBuf> {
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../frontend/dist"));
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../frontend/dist"));
 
-    // 3) Legacy relative paths (kept for compatibility).
+    // 3) Conventional Linux locations (for tarball/installer use).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            // If binary is in /usr/local/bin, look for /usr/local/share/linggen/frontend
+            candidates.push(exe_dir.join("../share/linggen/frontend"));
+        }
+    }
+    candidates.push(PathBuf::from("/usr/local/share/linggen/frontend"));
+    candidates.push(PathBuf::from("./frontend"));
+
+    // 4) Legacy relative paths (kept for compatibility).
     candidates.push(PathBuf::from("../Resources/frontend"));
     candidates.push(PathBuf::from("./frontend"));
     candidates.push(PathBuf::from("../frontend/dist"));
