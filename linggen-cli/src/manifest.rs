@@ -5,8 +5,8 @@ use colored::Colorize;
 use serde::Deserialize;
 
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/linggen/linggen-releases/releases/latest/download/manifest.json";
-const REPO_BASE_URL: &str = "https://github.com/linggen/linggen-releases/releases";
+    "https://github.com/linggen/linggen/releases/latest/download/manifest.json";
+const REPO_BASE_URL: &str = "https://github.com/linggen/linggen/releases";
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Manifest {
@@ -90,8 +90,7 @@ pub async fn fetch_manifest(version: Option<&str>) -> Result<Manifest> {
 
                         // Fetch latest release tag from GitHub API
                         // Use /releases (all releases) and get the first one (most recent) to avoid API cache issues
-                        let api_url =
-                            "https://api.github.com/repos/linggen/linggen-releases/releases";
+                        let api_url = "https://api.github.com/repos/linggen/linggen/releases";
                         let api_resp = client
                             .get(api_url)
                             .header("User-Agent", "linggen-cli")

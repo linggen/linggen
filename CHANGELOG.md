@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] - 2026-01-13
+
+### Added
+
+- **Library System**: Introduced a new library template system with predefined skills (linggen, code-simplifier, react-pack) and policies.
+- **Library View**: Added a dedicated view for exploring and managing library packs.
+- **MCP Support**: Implemented Model Context Protocol (MCP) handlers in the backend.
+- **Activity View Enhancements**: Improved activity monitoring and logging for better visibility into background tasks.
+
+### Changed
+
+- **Tailwind CSS Migration**: Major frontend refactor migrating from custom CSS files to Tailwind CSS for better consistency and performance.
+- **Theme Overhaul**: Updated dark and light themes with a more refined, Obsidian-like color palette.
+- **Editor Improvements**: Enhanced the CodeMirror 6 editor with better live preview rendering and mermaid diagram support.
+- **Sidebar & Navigation**: Redesigned the sidebar for better source management and more intuitive navigation.
+
+### Fixed
+
+- **Editor Visibility**: Fixed a contrast issue where inline code keywords (like `function`) were nearly invisible in dark mode.
+- **Rescan Reliability**: Improved path handling and ownership checks in the internal indexer.
+
 ## [0.4.0] - 2026-01-02
 
 ### Added

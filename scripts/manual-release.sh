@@ -7,7 +7,7 @@ set -euo pipefail
 #        Use --draft to keep as draft (updater won't see it)
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="linggen/linggen-releases"  # Change to your releases repo
+REPO="linggen/linggen"  # Change to your releases repo
 
 VERSION="${1:-}"
 KEEP_DRAFT=false

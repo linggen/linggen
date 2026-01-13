@@ -4,7 +4,7 @@
   "title": "Linggen - Local RAG",
   "description": "Local, privacy-focused RAG service for code search via MCP. https://linggen.dev",
   "repository": {
-    "url": "https://github.com/linggen/linggen-releases",
+    "url": "https://github.com/linggen/linggen",
     "source": "github"
   },
   "version": "0.1.2"

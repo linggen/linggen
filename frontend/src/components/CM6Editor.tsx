@@ -91,8 +91,7 @@ const linggenBaseTheme = EditorView.theme({
         color: 'var(--text-muted)',
     },
     '.cm-code': {
-        backgroundColor: 'var(--accent)',
-        opacity: '0.1',
+        backgroundColor: 'color-mix(in srgb, var(--accent), transparent 90%)',
         color: 'var(--accent)',
         padding: '2px 4px',
         borderRadius: '3px',

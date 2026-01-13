@@ -1,7 +1,7 @@
 {
     "$schema": "https://schema.tauri.app/config/2",
     "productName": "Linggen",
-    "version": "0.4.1",
+    "version": "0.5.0",
     "identifier": "dev.linggen.desktop",
     "build": {
         "beforeDevCommand": "npm run dev",
@@ -64,7 +64,7 @@
         "updater": {
             "active": true,
             "endpoints": [
-                "https://github.com/linggen/linggen-releases/releases/latest/download/latest.json"
+                "https://github.com/linggen/linggen/releases/latest/download/latest.json"
             ],
             "dialog": true,
             "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NkVGNURDQzExNkE1OEEKUldTS3BSYkIzUFZ1R2YzVUVaQkZPQ0V1TXIzbzhPakhzaUM5SWo3dTVVeUxra3lhVmZ2MzhTVzMK",

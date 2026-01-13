@@ -121,19 +121,19 @@ main() {
   elif [ "$version" = "latest" ]; then
     # Always fetch latest tag from GitHub API to avoid CDN cache issues
     echo "📡 Fetching latest release tag from GitHub..." >&2
-    LATEST_TAG=$(curl -s "https://api.github.com/repos/linggen/linggen-releases/releases/latest" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 || echo "")
+    LATEST_TAG=$(curl -s "https://api.github.com/repos/linggen/linggen/releases/latest" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 || echo "")
     if [ -n "$LATEST_TAG" ]; then
       # Remove 'v' prefix if present for consistency
       LATEST_TAG="${LATEST_TAG#v}"
-      url="https://github.com/linggen/linggen-releases/releases/download/v${LATEST_TAG}/linggen-cli-${slug}.tar.gz"
+      url="https://github.com/linggen/linggen/releases/download/v${LATEST_TAG}/linggen-cli-${slug}.tar.gz"
       echo "   Latest version: ${LATEST_TAG}" >&2
     else
       echo "⚠️  Failed to fetch latest tag from API, falling back to /latest/download/" >&2
-      url="https://github.com/linggen/linggen-releases/releases/latest/download/linggen-cli-${slug}.tar.gz"
+      url="https://github.com/linggen/linggen/releases/latest/download/linggen-cli-${slug}.tar.gz"
     fi
   else
     # Use versioned release tag but base filename (single asset naming)
-    url="https://github.com/linggen/linggen-releases/releases/download/v${version}/linggen-cli-${slug}.tar.gz"
+    url="https://github.com/linggen/linggen/releases/download/v${version}/linggen-cli-${slug}.tar.gz"
   fi
 
   echo "➡️  Downloading $url"

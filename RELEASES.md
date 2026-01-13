@@ -6,10 +6,9 @@ This document describes how to create and publish new releases of Linggen with a
 
 Linggen uses a two-repository release strategy:
 
-- **Main repository** (`linggen`): Source code and development
-- **Releases repository** (`linggen-releases`): Published binaries and update manifests
+- **Main repository** (`linggen`): Source code, development, and published releases.
 
-The auto-updater checks the `linggen-releases` repository for new versions and automatically downloads and installs updates.
+The auto-updater checks the `linggen` repository for new versions and automatically downloads and installs updates.
 
 ## Version Management
 
@@ -46,12 +45,11 @@ Version numbers follow semantic versioning (MAJOR.MINOR.PATCH) and must be kept 
 
    - `TAURI_SIGNING_PRIVATE_KEY` - The private key from step 1
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` - Password for the private key (if set)
-   - `RELEASES_PAT` - Personal Access Token with permissions to create releases in `linggen-releases`
+   - `RELEASES_PAT` - Personal Access Token with permissions to create releases in `linggen`
 
-3. **Create linggen-releases Repository**:
+3. **Create Release Tag**:
    ```bash
-   # Create a new public repository: linggen/linggen-releases
-   # No code needed - releases will be published via GitHub Actions
+   # Releases are now published directly to the linggen repository.
    ```
 
 ## Release Workflow
@@ -101,7 +99,7 @@ This automatically triggers the GitHub Actions workflow that:
 2. Signs the bundles with your private key
 3. Generates update signatures
 4. Creates updater manifest (`latest.json`)
-5. Publishes to `linggen-releases` repository
+5. Publishes to `linggen` repository
 
 ### Step 3: Monitor Build
 
@@ -111,7 +109,7 @@ This automatically triggers the GitHub Actions workflow that:
 
 ### Step 4: Verify Release
 
-1. Check `linggen-releases` repository for new release
+1. Check `linggen` repository for new release
 2. Verify these files are present:
 
    - `Linggen_0.3.0_universal.dmg` (macOS)
@@ -131,11 +129,11 @@ This automatically triggers the GitHub Actions workflow that:
      "platforms": {
        "darwin-universal": {
          "signature": "...",
-         "url": "https://github.com/linggen/linggen-releases/releases/download/v0.3.0/..."
+         "url": "https://github.com/linggen/linggen/releases/download/v0.3.0/..."
        },
        "linux-x86_64": {
          "signature": "...",
-         "url": "https://github.com/linggen/linggen-releases/releases/download/v0.3.0/..."
+         "url": "https://github.com/linggen/linggen/releases/download/v0.3.0/..."
        }
      }
    }
@@ -148,7 +146,7 @@ This automatically triggers the GitHub Actions workflow that:
 1. **Install previous version**:
 
    ```bash
-   # Download and install an older version from linggen-releases
+   # Download and install an older version from linggen
    ```
 
 2. **Launch the app**:
@@ -183,7 +181,7 @@ When `dialog: true`, users see a native dialog when an update is available.
 The updater checks this URL for updates:
 
 ```
-https://github.com/linggen/linggen-releases/releases/latest/download/latest.json
+https://github.com/linggen/linggen/releases/latest/download/latest.json
 ```
 
 To test different update channels in the future, you can:
@@ -212,7 +210,7 @@ To test different update channels in the future, you can:
 
 **Problem**: "Failed to check for updates" in app
 
-- **Check**: `linggen-releases` repository is public
+- **Check**: `linggen` repository is public
 - **Check**: `latest.json` is accessible at the endpoint URL
 - **Check**: JSON format is valid
 
@@ -279,7 +277,7 @@ This will produce `.deb` and `.AppImage` files in `dist/linux/` for both archite
    tauri signer sign linggen.deb.tar.gz --private-key ~/.tauri/private-key.pem
    ```
 
-4. **Create `latest.json` manually** and upload to `linggen-releases`
+4. **Create `latest.json` manually** and upload to `linggen`
 
 ## Security Notes
 

@@ -466,8 +466,7 @@ export const livePreviewTheme = EditorView.theme({
 
     // Inline code
     '.cm-rendered-code': {
-        backgroundColor: 'var(--accent)',
-        opacity: '0.15',
+        backgroundColor: 'color-mix(in srgb, var(--accent), transparent 85%)',
         color: 'var(--accent)',
         padding: '2px 6px',
         borderRadius: '4px',
