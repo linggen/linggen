@@ -74,6 +74,18 @@ if [ "$OS" = "darwin" ]; then
   mkdir -p "$FRONTEND_RESOURCE_DIR"
   cp -R "$FRONTEND_DIST_DIR/." "$FRONTEND_RESOURCE_DIR/"
 
+  # Bundle library templates into resources
+  TEMPLATE_SRC_DIR="$ROOT_DIR/backend/api/library_templates"
+  TEMPLATE_RESOURCE_DIR="$ROOT_DIR/frontend/src-tauri/resources/library_templates"
+  rm -rf "$TEMPLATE_RESOURCE_DIR"
+  mkdir -p "$TEMPLATE_RESOURCE_DIR"
+  if [ -d "$TEMPLATE_SRC_DIR" ]; then
+    cp -R "$TEMPLATE_SRC_DIR/." "$TEMPLATE_RESOURCE_DIR/"
+    echo "✅ Library templates bundled into resources"
+  else
+    echo "⚠️  Warning: library_templates directory not found at $TEMPLATE_SRC_DIR"
+  fi
+
   # Build Tauri app
   cd "$ROOT_DIR/frontend/src-tauri"
   

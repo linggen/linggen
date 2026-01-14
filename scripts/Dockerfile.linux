@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     cmake \
     curl \
+    protobuf-compiler \
+    libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20 for frontend build
@@ -35,7 +37,8 @@ RUN cargo build --release
 
 # 3. Build the frontend assets
 WORKDIR /app/frontend
-RUN npm install && npm run build
+# Remove lockfile to avoid architecture mismatches during multi-arch builds
+RUN rm -f package-lock.json && npm install && npm run build
 
 # 4. Prepare portable artifacts
 WORKDIR /app
@@ -47,8 +50,10 @@ RUN mkdir -p /app/dist-temp && \
     cd /app/dist-temp/cli-flat && tar -czf /app/dist-temp/linggen-cli-linux-${SLUG}.tar.gz linggen && \
     # Server Tarball (Portable with root folder)
     mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/frontend && \
+    mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/library_templates && \
     cp /app/backend/target/release/linggen-server /app/dist-temp/linggen-server-linux-${SLUG}/ && \
     cp -r /app/frontend/dist/* /app/dist-temp/linggen-server-linux-${SLUG}/frontend/ && \
+    cp -r /app/backend/api/library_templates/* /app/dist-temp/linggen-server-linux-${SLUG}/library_templates/ && \
     cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz linggen-server-linux-${SLUG}
 
 # Stage 2: Artifact extraction

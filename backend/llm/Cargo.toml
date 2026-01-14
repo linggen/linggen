@@ -30,9 +30,11 @@ tracing = "0.1"
 # Async
 tokio = { version = "1.42", features = ["full"] }
 
-[features]
-default = ["metal"]
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { git = "https://github.com/huggingface/candle.git", features = ["metal"] }
+candle-transformers = { git = "https://github.com/huggingface/candle.git", features = ["metal"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", features = ["metal"] }
 
+[features]
 # GPU acceleration
-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
