@@ -74,6 +74,32 @@ fn seed_library(library_path: &Path) -> anyhow::Result<()> {
         .filter(|s| !s.is_empty());
     let is_first_run_or_upgrade = previous_version.as_deref() != Some(current_version);
 
+    // Also check if the library is effectively empty (no markdown files).
+    fn has_any_markdown(dir: &Path) -> bool {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if has_any_markdown(&path) {
+                        return true;
+                    }
+                } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    let is_empty = !has_any_markdown(library_path);
+
+    if !is_first_run_or_upgrade && !is_empty {
+        info!(
+            "Library seed trigger: unchanged ({}) and not empty, skipping template sync",
+            current_version
+        );
+        return Ok(());
+    }
+
     info!(
         "Seeding Library with default folders and packs at {:?}",
         library_path
@@ -85,10 +111,7 @@ fn seed_library(library_path: &Path) -> anyhow::Result<()> {
             current_version
         );
     } else {
-        info!(
-            "Library seed trigger: unchanged ({}), skipping template sync",
-            current_version
-        );
+        info!("Library seed trigger: library is empty, forcing sync");
     }
 
     // ----------------------------------------------------------------------------
@@ -139,22 +162,37 @@ fn seed_library(library_path: &Path) -> anyhow::Result<()> {
         // 2) Resolve relative to this crate (useful for local dev builds).
         candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("library_templates"));
 
-        // 3) Optional conventional locations (if an installer drops templates here).
+        // 3) Resolve relative to current working directory (useful for some dev/dist layouts).
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join("library_templates"));
+            candidates.push(cwd.join("backend/api/library_templates"));
+        }
+
+        // 4) Optional conventional locations (if an installer drops templates here).
         if let Some(home) = dirs::home_dir() {
             candidates.push(home.join(".linggen").join("library_templates"));
         }
 
-        // 4) OS-specific application data locations (macOS Application Support, Linux XDG data dir, Windows AppData).
-        // `dirs::data_dir()` typically resolves to:
-        // - macOS: ~/Library/Application Support
-        // - Linux: ~/.local/share (or XDG_DATA_HOME)
-        // - Windows: %APPDATA%
+        // 5) OS-specific application data locations (macOS Application Support, Linux XDG data dir, Windows AppData).
         if let Some(data_dir) = dirs::data_dir() {
             candidates.push(data_dir.join("Linggen").join("library_templates"));
             candidates.push(data_dir.join("linggen").join("library_templates"));
+            candidates.push(
+                data_dir
+                    .join("Linggen")
+                    .join("Resources")
+                    .join("library_templates"),
+            );
+            candidates.push(
+                data_dir
+                    .join("Linggen")
+                    .join("Resources")
+                    .join("resources")
+                    .join("library_templates"),
+            );
         }
 
-        // 5) Windows system-wide data dir (optional installer target)
+        // 6) Windows system-wide data dir (optional installer target)
         if let Ok(program_data) = std::env::var("PROGRAMDATA") {
             candidates.push(
                 PathBuf::from(program_data)
@@ -163,7 +201,13 @@ fn seed_library(library_path: &Path) -> anyhow::Result<()> {
             );
         }
 
-        candidates.into_iter().find(|p| p.is_dir())
+        candidates.into_iter().find(|p| {
+            let found = p.is_dir();
+            if found {
+                info!("Found library templates candidate: {:?}", p);
+            }
+            found
+        })
     }
 
     fn sync_missing_templates(src_root: &Path, dst_root: &Path) -> anyhow::Result<usize> {
@@ -217,30 +261,31 @@ fn seed_library(library_path: &Path) -> anyhow::Result<()> {
         Ok(copied)
     }
 
-    if is_first_run_or_upgrade {
-        match find_library_templates_dir() {
-            Some(src_root) => {
-                let copied = sync_missing_templates(&src_root, library_path)?;
+    match find_library_templates_dir() {
+        Some(src_root) => {
+            let copied = sync_missing_templates(&src_root, library_path)?;
+            if copied > 0 {
                 info!(
                     "Library templates synced from {:?} -> {:?} ({} new files)",
                     src_root, library_path, copied
                 );
+            } else {
+                info!("All templates already present in {:?}", library_path);
             }
-            None => {
+
+            // Update marker on first run/upgrade (best effort; don't fail startup).
+            // ONLY update marker if we actually found the templates.
+            if let Err(e) = std::fs::write(&marker_path, format!("{}\n", current_version)) {
                 warn!(
-                    "Library templates dir not found; skipping template sync into {:?}",
-                    library_path
+                    "Failed to write library seed marker at {:?}: {}",
+                    marker_path, e
                 );
             }
         }
-    }
-
-    // Update marker on first run/upgrade (best effort; don't fail startup).
-    if is_first_run_or_upgrade {
-        if let Err(e) = std::fs::write(&marker_path, format!("{}\n", current_version)) {
+        None => {
             warn!(
-                "Failed to write library seed marker at {:?}: {}",
-                marker_path, e
+                "Library templates dir not found; skipping template sync into {:?}",
+                library_path
             );
         }
     }

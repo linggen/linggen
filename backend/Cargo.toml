@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.3.0"
+version = "0.5.2"
 authors = ["linggen77@gmail.com"]
 edition = "2021"
 
