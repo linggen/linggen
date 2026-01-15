@@ -1,5 +1,4 @@
 ---
-id: rust-rules
 name: Rust Conventions
 description: Idiomatic Rust patterns, safety rules, and strict verification policies.
 scope: Curated

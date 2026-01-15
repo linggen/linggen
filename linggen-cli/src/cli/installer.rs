@@ -33,7 +33,7 @@ pub async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
     if let Some(app_art) = select_artifact(manifest, Platform::Mac, ArtifactKind::App) {
         println!("{}", "⬇️  Downloading Linggen app tarball...".cyan());
         let tar = download_to_temp(&client, &app_art.url, app_art.signature.as_deref()).await?;
-        install_app_bundle(&tar)?;
+        install_app_bundle(&tar, manifest.version.as_deref())?;
     } else {
         println!(
             "{}",
@@ -87,6 +87,9 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
         // We want the contents of that folder to be in /usr/local/share/linggen/
         let tmp_extract = tempdir()?;
         extract_tarball(&tar, tmp_extract.path().to_str().unwrap())?;
+
+        // Seed library before moving contents to /usr/local/share
+        seed_library_from_extracted_path(tmp_extract.path(), manifest.version.as_deref())?;
 
         // Find the extracted folder (it will be linggen-server-linux-*)
         let entries = fs::read_dir(tmp_extract.path())?;
@@ -249,7 +252,7 @@ fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn install_app_bundle(tar_path: &PathBuf) -> Result<()> {
+fn install_app_bundle(tar_path: &PathBuf, version: Option<&str>) -> Result<()> {
     let tmp_dir = tempdir().context("Failed to create temp dir for app extraction")?;
     let tmp_path = tmp_dir.path();
 
@@ -257,6 +260,9 @@ fn install_app_bundle(tar_path: &PathBuf) -> Result<()> {
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid temp dir path"))?;
     extract_tarball(tar_path, dest_str)?;
+
+    // Seed library before moving bundle to /Applications
+    seed_library_from_extracted_path(tmp_path, version)?;
 
     // Locate the .app bundle (expecting Linggen.app at the tar root)
     let mut app_bundle = tmp_path.join("Linggen.app");
@@ -474,4 +480,100 @@ WantedBy=multi-user.target
         "✅ systemd unit installed/enabled (linggen-server)".green()
     );
     Ok(())
+}
+
+/// Seed library templates from an extracted directory (temporary extraction root).
+fn seed_library_from_extracted_path(extracted_root: &Path, version: Option<&str>) -> Result<()> {
+    // 1. Find the library_templates directory anywhere in the extracted root.
+    let template_src = match find_library_templates_dir(extracted_root)? {
+        Some(path) => path,
+        None => {
+            // Non-fatal, just warn.
+            println!(
+                "{}",
+                "⚠️  Could not find library_templates in extracted package; skipping library seed."
+                    .yellow()
+            );
+            return Ok(());
+        }
+    };
+
+    // 2. Determine target library path (~/.linggen/library/official)
+    let home = dirs::home_dir().context("Could not find home directory")?;
+    let library_root = home.join(".linggen").join("library");
+    let official_dst = library_root.join("official");
+
+    // Ensure library root exists
+    if !library_root.exists() {
+        fs::create_dir_all(&library_root)?;
+    }
+
+    // 3. Update official templates (Wipe and replace to ensure clean state)
+    println!("{}", "🎨 Updating official library templates...".cyan());
+    if official_dst.exists() {
+        let _ = fs::remove_dir_all(&official_dst);
+    }
+    fs::create_dir_all(&official_dst)?;
+
+    let copied = copy_dir_recursive(&template_src, &official_dst)?;
+
+    if copied > 0 {
+        println!(
+            "{}",
+            format!(
+                "✅ Updated {} official library templates in {:?}",
+                copied, official_dst
+            )
+            .green()
+        );
+    }
+
+    // 4. Update seed version marker
+    if let Some(ver) = version {
+        let marker_path = library_root.join(".linggen_library_seed_version");
+        let _ = fs::write(&marker_path, format!("{}\n", ver));
+    }
+
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<usize> {
+    let mut count = 0;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("No filename"))?;
+        let dest_path = dst.join(file_name);
+
+        if path.is_dir() {
+            fs::create_dir_all(&dest_path)?;
+            count += copy_dir_recursive(&path, &dest_path)?;
+        } else {
+            fs::copy(&path, &dest_path)?;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn find_library_templates_dir(root: &Path) -> Result<Option<PathBuf>> {
+    // We do a breadth-first-ish search for a directory named "library_templates"
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().and_then(|n| n.to_str()) == Some("library_templates") {
+                    return Ok(Some(path));
+                }
+                stack.push(path);
+            }
+        }
+    }
+
+    Ok(None)
 }

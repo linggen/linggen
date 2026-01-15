@@ -147,7 +147,11 @@ pub async fn create_memory(
     });
 
     Ok(Json(MemoryCreateResponse {
-        id: mem.meta.id,
+        id: mem
+            .meta
+            .id
+            .clone()
+            .unwrap_or_else(|| mem.path.file_stem().unwrap().to_string_lossy().to_string()),
         path: mem.path.display().to_string(),
     }))
 }
@@ -232,8 +236,13 @@ pub async fn delete_memory(
 
 fn to_summary(mem: MemoryEntry) -> MemorySummary {
     let snippet = mem.body.lines().take(3).collect::<Vec<_>>().join("\n");
+    let id = mem
+        .meta
+        .id
+        .clone()
+        .unwrap_or_else(|| mem.path.file_stem().unwrap().to_string_lossy().to_string());
     MemorySummary {
-        id: mem.meta.id,
+        id,
         title: mem.meta.title,
         tags: mem.meta.tags,
         scope: mem.meta.scope,
@@ -245,8 +254,13 @@ fn to_summary(mem: MemoryEntry) -> MemorySummary {
 }
 
 fn to_read(mem: MemoryEntry) -> MemoryReadResponse {
+    let id = mem
+        .meta
+        .id
+        .clone()
+        .unwrap_or_else(|| mem.path.file_stem().unwrap().to_string_lossy().to_string());
     MemoryReadResponse {
-        id: mem.meta.id,
+        id,
         title: mem.meta.title,
         tags: mem.meta.tags,
         scope: mem.meta.scope,

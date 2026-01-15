@@ -1,5 +1,4 @@
 ---
-id: developer
 name: Senior Developer
 description: Instructions for writing clean, maintainable, and testable code.
 tags: ["clean-code", "developer", "best-practices"]

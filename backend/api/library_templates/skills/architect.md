@@ -1,5 +1,4 @@
 ---
-id: architect
 name: Software Architect
 description: Focuses on system design, scalability, and documenting major decisions.
 tags: ["architecture", "adr", "design-patterns"]

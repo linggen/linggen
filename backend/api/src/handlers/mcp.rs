@@ -504,41 +504,6 @@ fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         serde_json::json!({
-            "name": "create_library_pack",
-            "description": "Create a new library pack markdown file under a folder (e.g. skills/policies). Returns JSON with created pack id and file path.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "folder": { "type": "string", "description": "Destination folder under the library root (e.g. 'skills', 'policies', or 'general')" },
-                    "name": { "type": "string", "description": "Human-friendly name (will become frontmatter name and filename)" }
-                },
-                "required": ["folder", "name"]
-            }
-        }),
-        serde_json::json!({
-            "name": "rename_library_pack",
-            "description": "Rename a library pack file (and update its frontmatter name).",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "pack_id": { "type": "string", "description": "Existing pack id to rename" },
-                    "new_name": { "type": "string", "description": "New display name / filename ('.md' optional)" }
-                },
-                "required": ["pack_id", "new_name"]
-            }
-        }),
-        serde_json::json!({
-            "name": "delete_library_pack",
-            "description": "Delete a library pack file by pack_id.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "pack_id": { "type": "string", "description": "Pack id to delete" }
-                },
-                "required": ["pack_id"]
-            }
-        }),
-        serde_json::json!({
             "name": "search_codebase",
             "description": "Search the Linggen knowledge base for relevant code snippets and documentation. Returns raw context chunks that match the query.",
             "inputSchema": {
@@ -723,23 +688,6 @@ struct GetLibraryPackParams {
     pack_id: String,
 }
 
-#[derive(Deserialize)]
-struct CreateLibraryPackParams {
-    folder: String,
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct RenameLibraryPackParams {
-    pack_id: String,
-    new_name: String,
-}
-
-#[derive(Deserialize)]
-struct DeleteLibraryPackParams {
-    pack_id: String,
-}
-
 /// Execute a tool by name with given arguments
 async fn execute_tool(
     name: &str,
@@ -754,9 +702,6 @@ async fn execute_tool(
     let result = match name {
         "list_library_packs" => execute_list_library_packs(app_state).await,
         "get_library_pack" => execute_get_library_pack(args, app_state).await,
-        "create_library_pack" => execute_create_library_pack(args, app_state).await,
-        "rename_library_pack" => execute_rename_library_pack(args, app_state).await,
-        "delete_library_pack" => execute_delete_library_pack(args, app_state).await,
         "search_codebase" => execute_search_codebase(args, app_state).await,
         "enhance_prompt" => execute_enhance_prompt(args, app_state).await,
         "list_sources" => execute_list_sources(app_state).await,
@@ -791,77 +736,75 @@ fn extract_frontmatter_json(content: &str) -> Option<serde_json::Value> {
     serde_json::to_value(yaml_val).ok()
 }
 
-fn slugify_id(name: &str) -> String {
-    name.trim()
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
+fn find_pack_by_id(root: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
+    // The target_id is now the relative path from the library root
+    let pack_path = root.join(target_id);
 
-fn find_pack_by_id(root: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(p) = find_pack_by_id(&path, id) {
-                    return Some(p);
-                }
-            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Some(meta) = extract_frontmatter_json(&content) {
-                        if meta.get("id").and_then(|v| v.as_str()) == Some(id) {
-                            return Some(path);
-                        }
-                    }
-                }
+    // Security check: ensure the resolved path is still within the library root
+    if let Ok(canonical_root) = root.canonicalize() {
+        if let Ok(canonical_path) = pack_path.canonicalize() {
+            if !canonical_path.starts_with(&canonical_root) {
+                return None;
             }
         }
     }
-    None
+
+    if pack_path.exists() && pack_path.is_file() {
+        Some(pack_path)
+    } else {
+        None
+    }
 }
 
 async fn execute_list_library_packs(app_state: &Arc<AppState>) -> anyhow::Result<String> {
     let library_root = app_state.library_path.as_path();
     let mut packs: Vec<serde_json::Value> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     fn scan_dir(
         dir: &std::path::Path,
-        root: &std::path::Path,
         packs: &mut Vec<serde_json::Value>,
-        seen: &mut std::collections::HashSet<String>,
+        library_path: &std::path::Path,
     ) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    scan_dir(&path, root, packs, seen);
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                        if name == "official" && dir != library_path {
+                            continue;
+                        }
+                    }
+                    scan_dir(&path, packs, library_path);
                 } else if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         if let Some(mut meta) = extract_frontmatter_json(&content) {
-                            if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
-                                if seen.contains(id) {
-                                    continue;
-                                }
-                                seen.insert(id.to_string());
-                            }
+                            let rel_path = path
+                                .strip_prefix(library_path)
+                                .unwrap_or(&path)
+                                .to_string_lossy()
+                                .to_string();
+
+                            let is_official = rel_path.starts_with("official/");
 
                             if let Some(obj) = meta.as_object_mut() {
-                                // folder
-                                if let Some(parent_name) = path
-                                    .parent()
-                                    .and_then(|p| p.file_name())
-                                    .and_then(|n| n.to_str())
-                                {
-                                    if path.parent() != Some(root) {
+                                obj.insert("id".to_string(), serde_json::json!(rel_path));
+                                obj.insert("read_only".to_string(), serde_json::json!(is_official));
+
+                                // Add full relative folder path info
+                                if let Some(parent) = path.parent() {
+                                    let rel_folder = parent
+                                        .strip_prefix(library_path)
+                                        .unwrap_or(parent)
+                                        .to_string_lossy()
+                                        .to_string();
+
+                                    if !rel_folder.is_empty() {
                                         obj.insert(
                                             "folder".to_string(),
-                                            serde_json::json!(parent_name),
+                                            serde_json::json!(rel_folder),
                                         );
                                     }
                                 }
@@ -900,7 +843,8 @@ async fn execute_list_library_packs(app_state: &Arc<AppState>) -> anyhow::Result
         }
     }
 
-    scan_dir(library_root, library_root, &mut packs, &mut seen);
+    scan_dir(library_root, &mut packs, library_root);
+
     let out = serde_json::json!({ "packs": packs });
     Ok(serde_json::to_string_pretty(&out)?)
 }
@@ -919,9 +863,8 @@ async fn execute_get_library_pack(
     let meta = extract_frontmatter_json(&content);
     let folder = pack_path
         .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .map(|s| s.to_string());
+        .and_then(|p| p.strip_prefix(library_root).ok())
+        .map(|p| p.to_string_lossy().to_string());
 
     let out = serde_json::json!({
         "pack_id": params.pack_id,
@@ -932,142 +875,6 @@ async fn execute_get_library_pack(
     });
 
     Ok(serde_json::to_string_pretty(&out)?)
-}
-
-async fn execute_create_library_pack(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: CreateLibraryPackParams = serde_json::from_value(args)?;
-
-    if params.folder.contains(std::path::MAIN_SEPARATOR)
-        || params.folder.contains("..")
-        || params.name.contains(std::path::MAIN_SEPARATOR)
-        || params.name.contains("..")
-    {
-        anyhow::bail!("Invalid folder or file name");
-    }
-
-    let library_root = app_state.library_path.as_path();
-    let folder_path = library_root.join(&params.folder);
-    std::fs::create_dir_all(&folder_path)?;
-
-    let display_name = params.name.trim();
-    let pack_id = slugify_id(display_name);
-
-    let mut file_name = display_name.to_string();
-    if !file_name.ends_with(".md") {
-        file_name.push_str(".md");
-    }
-    let file_path = folder_path.join(&file_name);
-    if file_path.exists() {
-        anyhow::bail!("Pack already exists: {}", file_name);
-    }
-
-    let body = format!(
-        "---\nid: {}\nname: {}\ndescription: New library pack\nscope: Personal\nversion: 1.0.0\nauthor: User\ntags: []\n---\n\n# {}\n\nStart writing...\n",
-        pack_id, display_name, display_name
-    );
-    std::fs::write(&file_path, body)?;
-
-    let out = serde_json::json!({
-        "pack_id": pack_id,
-        "path": file_path.to_string_lossy()
-    });
-    Ok(serde_json::to_string_pretty(&out)?)
-}
-
-async fn execute_rename_library_pack(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: RenameLibraryPackParams = serde_json::from_value(args)?;
-    if params.new_name.contains(std::path::MAIN_SEPARATOR) || params.new_name.contains("..") {
-        anyhow::bail!("Invalid pack name");
-    }
-
-    let library_root = app_state.library_path.as_path();
-    let pack_path = find_pack_by_id(library_root, &params.pack_id)
-        .ok_or_else(|| anyhow::anyhow!("Pack not found: {}", params.pack_id))?;
-
-    let display_name = params
-        .new_name
-        .trim()
-        .trim_end_matches(".md")
-        .trim()
-        .to_string();
-
-    let mut new_file_name = display_name.clone();
-    if !new_file_name.ends_with(".md") {
-        new_file_name.push_str(".md");
-    }
-    let new_path = pack_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Invalid pack path"))?
-        .join(&new_file_name);
-
-    if new_path.exists() {
-        anyhow::bail!("New pack name already exists: {}", new_file_name);
-    }
-
-    let content = std::fs::read_to_string(&pack_path)?;
-
-    fn update_frontmatter_name(content: &str, new_name: &str) -> String {
-        if !content.starts_with("---") {
-            return content.to_string();
-        }
-
-        let mut parts = content.splitn(3, "---");
-        parts.next();
-        let frontmatter = parts.next().unwrap_or("");
-        let rest = parts.next().unwrap_or("");
-
-        let mut replaced = false;
-        let mut out = Vec::new();
-        for line in frontmatter.lines() {
-            if !replaced && line.trim_start().starts_with("name:") {
-                out.push(format!("name: {}", new_name));
-                replaced = true;
-            } else {
-                out.push(line.to_string());
-            }
-        }
-        if !replaced {
-            out.push(format!("name: {}", new_name));
-        }
-
-        format!("---\n{}\n---{}", out.join("\n"), rest)
-    }
-
-    let updated = update_frontmatter_name(&content, &display_name);
-
-    std::fs::rename(&pack_path, &new_path)?;
-    std::fs::write(&new_path, updated)?;
-
-    Ok(format!(
-        "Renamed pack '{}' -> '{}' (file: {})",
-        params.pack_id,
-        display_name,
-        new_path.to_string_lossy()
-    ))
-}
-
-async fn execute_delete_library_pack(
-    args: serde_json::Value,
-    app_state: &Arc<AppState>,
-) -> anyhow::Result<String> {
-    let params: DeleteLibraryPackParams = serde_json::from_value(args)?;
-    let library_root = app_state.library_path.as_path();
-
-    let pack_path = find_pack_by_id(library_root, &params.pack_id)
-        .ok_or_else(|| anyhow::anyhow!("Pack not found: {}", params.pack_id))?;
-
-    std::fs::remove_file(&pack_path)?;
-    Ok(format!(
-        "Deleted pack '{}' (file: {})",
-        params.pack_id,
-        pack_path.to_string_lossy()
-    ))
 }
 
 async fn execute_query_codebase(
@@ -1200,27 +1007,48 @@ async fn execute_memory_fetch_by_meta(
 ) -> anyhow::Result<String> {
     let params: MemoryFetchByMetaParams = serde_json::from_value(args)?;
 
-    // 1. Map 'id' to 'memory_id' for internal consistency
-    let search_key = if params.key == "id" {
-        "memory_id"
+    // 1. Try to find the file path in LanceDB using the metadata
+    // Map 'id' or 'memory_id' to 'file_path' or check them as fallback
+    let search_key = if params.key == "id" || params.key == "memory_id" {
+        "file_path"
     } else {
         &params.key
     };
 
-    // 2. Try to find the file path in LanceDB using the metadata
+    let search_value = if (params.key == "id" || params.key == "memory_id")
+        && !params.value.starts_with("memory/")
+    {
+        format!("memory/{}", params.value)
+    } else {
+        params.value.clone()
+    };
+
     let file_path = app_state
         .internal_index_store
-        .find_path_by_meta(search_key, &params.value)
+        .find_path_by_meta(search_key, &search_value)
         .await?;
 
     let mem = match file_path {
         Some(path) => {
             // Found via index! Read from path
-            let full_path = app_state.memory_store.memory_dir().join(path);
+            // The path in LanceDB is relative to .linggen/
+            // We need to resolve it relative to the memory store's base dir (which is .linggen/memory)
+            // Wait, memory_store.memory_dir() returns .linggen/memory
+            // If path is "memory/my-design.md", then joining with memory_dir() might be wrong if memory_dir is already inside .linggen/memory
+
+            // Let's check where memory_store.memory_dir() points.
+            // Actually, we can just use the project root if we know it.
+            // But execute_memory_fetch_by_meta doesn't have source_id.
+
+            // Let's look at how we normally read memories.
+            let full_path = app_state
+                .memory_store
+                .memory_dir()
+                .join(path.strip_prefix("memory/").unwrap_or(&path));
             app_state.memory_store.read_from_path(&full_path)?
         }
         None => {
-            // Fallback: If it's an 'id' search, try the old-school filesystem scan
+            // Fallback: Try directly by filename in the memory dir
             if params.key == "id" || params.key == "memory_id" {
                 app_state.memory_store.read(&params.value)?
             } else {
@@ -1231,7 +1059,6 @@ async fn execute_memory_fetch_by_meta(
 
     let mut output = String::new();
     output.push_str(&format!("## Memory: {}\n", mem.meta.title));
-    output.push_str(&format!("ID: {}\n", mem.meta.id));
     if !mem.meta.tags.is_empty() {
         output.push_str(&format!("Tags: {}\n", mem.meta.tags.join(", ")));
     }

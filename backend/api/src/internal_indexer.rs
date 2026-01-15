@@ -217,19 +217,8 @@ pub async fn index_internal_file(
     // Extract all metadata from frontmatter
     let frontmatter_json = extract_all_meta_from_content(&content);
 
-    // Extract specific stable ID if available for memories
-    let meta_id = frontmatter_json
-        .as_ref()
-        .and_then(|json| json.get("id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Create unique document_id: {source_id}/{kind}/{path_or_id}
-    let document_id = if kind == "memory" && meta_id.is_some() {
-        format!("{}/{}/id:{}", source_id, kind, meta_id.as_ref().unwrap())
-    } else {
-        format!("{}/{}/{}", source_id, kind, relative_path)
-    };
+    // Create unique document_id: {source_id}/{kind}/{relative_path}
+    let document_id = format!("{}/{}/{}", source_id, kind, relative_path);
 
     // Chunk the content
     let text_chunks = chunker.chunk(&content);

@@ -26,7 +26,8 @@ pub struct MemoryCitation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryMeta {
-    pub id: String,
+    #[serde(default)]
+    pub id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -129,37 +130,43 @@ impl MemoryStore {
 
     pub fn read(&self, id: &str) -> Result<MemoryEntry> {
         // Try direct access first (new format: <id>.md)
-        let direct_path = self.memory_dir().join(format!("{}.md", id));
+        let direct_path = self.memory_dir().join(if id.ends_with(".md") {
+            id.to_string()
+        } else {
+            format!("{}.md", id)
+        });
         if direct_path.exists() {
-            if let Ok(mem) = self.read_from_path(&direct_path) {
-                if mem.meta.id == id {
-                    return Ok(mem);
-                }
-            }
+            return self.read_from_path(&direct_path);
         }
 
-        // Fallback to list search (old format or mismatched filename)
+        // Fallback to list search (search by title or id in metadata)
         let entries = self.list()?;
         entries
             .into_iter()
-            .find(|m| m.meta.id == id)
+            .find(|m| {
+                m.meta.id.as_deref() == Some(id)
+                    || m.path.file_stem().and_then(|s| s.to_str()) == Some(id)
+            })
             .ok_or_else(|| anyhow!("Memory not found: {}", id))
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
         // Try direct access first
-        let direct_path = self.memory_dir().join(format!("{}.md", id));
+        let direct_path = self.memory_dir().join(if id.ends_with(".md") {
+            id.to_string()
+        } else {
+            format!("{}.md", id)
+        });
         if direct_path.exists() {
-            if let Ok(mem) = self.read_from_path(&direct_path) {
-                if mem.meta.id == id {
-                    fs::remove_file(direct_path)?;
-                    return Ok(());
-                }
-            }
+            fs::remove_file(direct_path)?;
+            return Ok(());
         }
 
         let entries = self.list()?;
-        if let Some(mem) = entries.into_iter().find(|m| m.meta.id == id) {
+        if let Some(mem) = entries.into_iter().find(|m| {
+            m.meta.id.as_deref() == Some(id)
+                || m.path.file_stem().and_then(|s| s.to_str()) == Some(id)
+        }) {
             fs::remove_file(mem.path)?;
             return Ok(());
         }
@@ -176,14 +183,20 @@ impl MemoryStore {
         confidence: Option<f64>,
     ) -> Result<MemoryEntry> {
         let now = Utc::now();
-        let uuid = Uuid::new_v4().to_string();
-        let short_id = uuid.chars().take(10).collect::<String>();
-        let id = short_id.clone();
-        let filename = format!("{}.md", short_id);
-        let path = self.memory_dir().join(filename);
+        let slug = Self::make_slug(title);
+        let mut filename = format!("{}.md", slug);
+        let mut path = self.memory_dir().join(&filename);
+
+        // Avoid collision if title is the same
+        if path.exists() {
+            let uuid = Uuid::new_v4().to_string();
+            let short_id = uuid.chars().take(4).collect::<String>();
+            filename = format!("{}-{}.md", slug, short_id);
+            path = self.memory_dir().join(filename);
+        }
 
         let meta = MemoryMeta {
-            id,
+            id: None,
             title: title.to_string(),
             tags,
             scope,
@@ -209,6 +222,9 @@ impl MemoryStore {
     ) -> Result<MemoryEntry> {
         let mem = self.read(id)?;
         let mut meta = mem.meta.clone();
+
+        // Gradually remove ID from files as they are updated
+        meta.id = None;
 
         if let Some(t) = title {
             meta.title = t.to_string();

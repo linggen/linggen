@@ -18,6 +18,7 @@ interface CM6EditorProps {
      */
     scrollMode?: 'editor' | 'container';
     onClose?: () => void;
+    readOnly?: boolean;
 }
 
 // Custom theme to match Linggen dark mode
@@ -117,6 +118,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
     docPath,
     docType = 'notes',
     scrollMode = 'editor',
+    readOnly = false,
 }) => {
     const [value, setValue] = useState<string>('');
     const [loading, setLoading] = useState(false);
@@ -150,7 +152,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
 
     // Save handler
     const handleSave = useCallback(async () => {
-        if (!dirty) return;
+        if (!dirty || readOnly) return;
         setSaving(true);
         try {
             if (docType === 'memory') {
@@ -167,21 +169,22 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
         } finally {
             setSaving(false);
         }
-    }, [dirty, sourceId, docPath, docType, value]);
+    }, [dirty, sourceId, docPath, docType, value, readOnly]);
 
     // Autosave with debounce (1.5 seconds after typing stops)
     useEffect(() => {
-        if (!dirty) return;
+        if (!dirty || readOnly) return;
 
         const timer = setTimeout(() => {
             handleSave();
         }, 1500);
 
         return () => clearTimeout(timer);
-    }, [value, dirty, handleSave]);
+    }, [value, dirty, handleSave, readOnly]);
 
     // Cmd+S support
     useEffect(() => {
+        if (readOnly) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 's') {
                 e.preventDefault();
@@ -190,12 +193,13 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [handleSave]);
+    }, [handleSave, readOnly]);
 
     const handleChange = useCallback((val: string) => {
+        if (readOnly) return;
         setValue(val);
         setDirty(true);
-    }, []);
+    }, [readOnly]);
 
     const [isDarkMode, setIsDarkMode] = useState(() => {
         const rootTheme = document.documentElement.getAttribute('data-theme');
@@ -251,7 +255,9 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
                     {docType === 'memory' ? `Memory: ${docPath}` : docType === 'library' ? `Library: ${docPath}` : docPath}
                 </div>
                 <div className="text-[0.8rem] text-[var(--text-muted)]">
-                    {saving ? (
+                    {readOnly ? (
+                        <span className="bg-[var(--border-color)] px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider">Read Only</span>
+                    ) : saving ? (
                         <span className="text-amber-500">Saving...</span>
                     ) : lastSaved ? (
                         <span className="text-green-500">Saved {lastSaved.toLocaleTimeString()}</span>
@@ -267,6 +273,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
                     ref={editorRef}
                     value={value}
                     onChange={handleChange}
+                    readOnly={readOnly}
                     height={scrollMode === 'editor' ? '100%' : 'auto'}
                     minHeight="200px"
                     className={isContainerScroll ? 'cm-auto-height' : 'h-full'}

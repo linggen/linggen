@@ -86,7 +86,7 @@ export function Sidebar({
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [creatingNote, setCreatingNote] = useState<string | null>(null); // sourceId where we are creating a note
     const [creatingLibraryPack, setCreatingLibraryPack] = useState<string | null>(null); // folder where we are creating a pack
-    const [creatingLibraryFolder, setCreatingLibraryFolder] = useState(false);
+    const [creatingLibraryFolder, setCreatingLibraryFolder] = useState<string | null>(null); // parent folder where we are creating a folder
     
     // renaming: { type: 'note' | 'source' | 'libraryPack' | 'libraryFolder', id: string, oldPath: string }
     const [renamingNote, setRenamingNote] = useState<{ sourceId: string, oldPath: string } | null>(null);
@@ -99,7 +99,7 @@ export function Sidebar({
     const [deleteLibraryFolderConfirmation, setDeleteLibraryFolderConfirmation] = useState<{ name: string } | null>(null);
     const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
     const [expandedMemories, setExpandedMemories] = useState<Set<string>>(new Set());
-    const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<Set<string>>(new Set(['skills', 'policies']));
+    const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<Set<string>>(new Set(['official', 'official/skills', 'official/policies']));
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
     const [sourceMemories, setSourceMemories] = useState<Record<string, MemoryFile[]>>({});
 
@@ -107,19 +107,61 @@ export function Sidebar({
     const [isProjectsCollapsed, setIsProjectsCollapsed] = useState(false);
     const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
 
-    // Group library packs by folder (also include empty folders)
-    const libraryGroups = libraryPacks.reduce((acc, pack) => {
-        const folder = pack.folder || 'general';
-        if (!acc[folder]) acc[folder] = [];
-        acc[folder].push(pack);
-        return acc;
-    }, {} as Record<string, LibraryPack[]>);
-
-    for (const folder of libraryFolders) {
-        if (!libraryGroups[folder]) {
-            libraryGroups[folder] = [];
-        }
+    // Build library tree structure
+    interface LibraryTreeNode {
+        name: string;
+        path: string;
+        children: Record<string, LibraryTreeNode>;
+        packs: LibraryPack[];
+        isOfficial: boolean;
     }
+
+    const buildLibraryTree = () => {
+        const tree: Record<string, LibraryTreeNode> = {};
+
+        const getOrCreateNode = (parts: string[], root: Record<string, LibraryTreeNode>): LibraryTreeNode => {
+            let current = root;
+            let fullPath = '';
+            let node: LibraryTreeNode | undefined;
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i];
+                fullPath = fullPath ? `${fullPath}/${part}` : part;
+                if (!current[part]) {
+                    current[part] = {
+                        name: part,
+                        path: fullPath,
+                        children: {},
+                        packs: [],
+                        isOfficial: fullPath.startsWith('official/') || fullPath === 'official'
+                    };
+                }
+                node = current[part];
+                current = node.children;
+            }
+            return node!;
+        };
+
+        // Initialize folders from the API list
+        libraryFolders.forEach(folderPath => {
+            const parts = folderPath.split('/').filter(Boolean);
+            if (parts.length > 0) {
+                getOrCreateNode(parts, tree);
+            }
+        });
+
+        // Assign packs to nodes
+        libraryPacks.forEach(pack => {
+            const folderPath = pack.folder || 'general';
+            const parts = folderPath.split('/').filter(Boolean);
+            const node = getOrCreateNode(parts, tree);
+            node.packs.push(pack);
+        });
+
+        return tree;
+    };
+
+    const libraryTree = buildLibraryTree();
 
     const toggleLibraryFolder = (folder: string) => {
         const newSet = new Set(expandedLibraryFolders);
@@ -387,6 +429,25 @@ export function Sidebar({
         e.preventDefault();
         e.stopPropagation();
         e.nativeEvent.stopImmediatePropagation();
+
+        // Check if the pack or folder is official
+        const isOfficialPack = packId ? libraryPacks.find(p => p.id === packId)?.read_only : false;
+        const isOfficialFolder = folder === 'official' || folder?.startsWith('official/');
+
+        if (isOfficialPack || isOfficialFolder) {
+            // Option 1: Don't show context menu for official items at all
+            // return;
+            
+            // Option 2: Show restricted menu
+            setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                libraryPackId: packId,
+                libraryFolder: folder
+            });
+            return;
+        }
+
         setContextMenu({
             x: e.clientX,
             y: e.clientY,
@@ -412,20 +473,22 @@ export function Sidebar({
         }
     };
 
-    const handleCreateLibraryFolderSubmit = async (name: string) => {
+    const handleCreateLibraryFolderSubmit = async (parentPath: string | null, name: string) => {
         if (!name.trim()) {
-            setCreatingLibraryFolder(false);
+            setCreatingLibraryFolder(null);
             return;
         }
 
+        const fullPath = parentPath ? `${parentPath}/${name}` : name;
+
         try {
-            await createLibraryFolder(name);
+            await createLibraryFolder(fullPath);
             onRefresh?.();
         } catch (err) {
             console.error("Failed to create library folder:", err);
             alert("Failed to create library folder.");
         } finally {
-            setCreatingLibraryFolder(false);
+            setCreatingLibraryFolder(null);
         }
     };
 
@@ -539,6 +602,181 @@ export function Sidebar({
             )}
         </div>
     );
+
+    const renderLibraryNode = (node: LibraryTreeNode, depth: number) => {
+        const isExpanded = expandedLibraryFolders.has(node.path);
+        const isRenamingFolder = node.path && renamingLibraryFolder?.oldName === node.path;
+        const totalItems = Object.keys(node.children).length + node.packs.length;
+
+        return (
+            <div key={node.path} className="flex flex-col">
+                {isRenamingFolder ? (
+                    <div className="sidebar-item text-[0.85rem] w-full flex items-center gap-1.5" style={{ paddingLeft: `${(depth + 1) * 16}px` }}>
+                        <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                        <input
+                            autoFocus
+                            type="text"
+                            defaultValue={node.name}
+                            className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleRenameLibraryFolderSubmit(e.currentTarget.value);
+                                } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setRenamingLibraryFolder(null);
+                                }
+                            }}
+                            onBlur={() => {
+                                setTimeout(() => setRenamingLibraryFolder(null), 200);
+                            }}
+                        />
+                    </div>
+                ) : (
+                    <button
+                        className="sidebar-item text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90"
+                        style={{ paddingLeft: `${(depth + 1) * 16}px` }}
+                        onClick={() => toggleLibraryFolder(node.path)}
+                        onContextMenu={(e) => handleLibraryContextMenu(e, undefined, node.path)}
+                    >
+                        {isExpanded ? (
+                            <ChevronDownIcon className="w-3 h-3" />
+                        ) : (
+                            <ChevronRightIcon className="w-3 h-3" />
+                        )}
+                        <span className="flex-1 text-left">{node.name}</span>
+                        {totalItems > 0 && (
+                            <span className="text-[0.65rem] opacity-80">
+                                {totalItems}
+                            </span>
+                        )}
+                    </button>
+                )}
+                {isExpanded && (
+                    <div className="flex flex-col">
+                        {/* Recursive children folders */}
+                        {Object.values(node.children)
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map(child => renderLibraryNode(child, depth + 1))}
+
+                        {/* Creating subfolder input */}
+                        {creatingLibraryFolder === node.path && (
+                            <div className="sidebar-item text-[0.85rem] w-full flex items-center gap-1.5" style={{ paddingLeft: `${(depth + 2) * 16}px` }}>
+                                <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    defaultValue="new-folder"
+                                    className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleCreateLibraryFolderSubmit(node.path, e.currentTarget.value);
+                                        } else if (e.key === 'Escape') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCreatingLibraryFolder(null);
+                                        }
+                                    }}
+                                    onBlur={() => {
+                                        // Delay blur to allow Enter key to process first if needed
+                                        // or just ignore if we are about to unmount anyway
+                                        setTimeout(() => setCreatingLibraryFolder(null), 200);
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* Creating pack input */}
+                        {creatingLibraryPack === node.path && (
+                            <div className="sidebar-item text-[0.85rem] w-full flex items-center gap-1.5" style={{ paddingLeft: `${(depth + 2) * 16}px` }}>
+                                <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">L</div>
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    defaultValue="New Pack"
+                                    className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleCreateLibraryPackSubmit(node.path, e.currentTarget.value);
+                                        } else if (e.key === 'Escape') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setCreatingLibraryPack(null);
+                                        }
+                                    }}
+                                    onBlur={() => {
+                                        setTimeout(() => setCreatingLibraryPack(null), 200);
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* Packs in this folder */}
+                        {node.packs.map(pack => {
+                            const isRenaming = pack.id && renamingLibraryPack?.id === pack.id;
+                            const color = pack.color || '#A78BFA';
+                            return isRenaming ? (
+                                <div
+                                    key={pack.id || 'renaming'}
+                                    className="sidebar-item text-[0.85rem] w-full flex items-center gap-1.5"
+                                    style={{ paddingLeft: `${(depth + 2) * 16}px` }}
+                                >
+                                    <div 
+                                        className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
+                                        style={{ color, borderColor: color }}
+                                    >L</div>
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        defaultValue={pack.filename || pack.name}
+                                        className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleRenameLibraryPackSubmit(e.currentTarget.value);
+                                            } else if (e.key === 'Escape') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setRenamingLibraryPack(null);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            setTimeout(() => setRenamingLibraryPack(null), 200);
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    key={pack.id}
+                                    className={`sidebar-item text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${selectedLibraryPackId === pack.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
+                                    style={{ paddingLeft: `${(depth + 2) * 16}px` }}
+                                    onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
+                                    onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
+                                >
+                                    <div
+                                        className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
+                                        style={{ color, borderColor: color }}
+                                    >
+                                        L
+                                    </div>
+                                    <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                                        {pack.filename || pack.name}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -740,7 +978,7 @@ export function Sidebar({
                                     className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        setCreatingLibraryPack('general');
+                                        setCreatingLibraryPack("");
                                         if (isLibraryCollapsed) setIsLibraryCollapsed(false);
                                     }}
                                     title="Add Library File"
@@ -751,7 +989,7 @@ export function Sidebar({
                                     className="btn-ghost p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        setCreatingLibraryFolder(true);
+                                        setCreatingLibraryFolder("");
                                         if (isLibraryCollapsed) setIsLibraryCollapsed(false);
                                     }}
                                     title="Add Library Folder"
@@ -764,7 +1002,7 @@ export function Sidebar({
 
                     {!isLibraryCollapsed && (
                         <div className="px-2">
-                            {creatingLibraryFolder && (
+                            {creatingLibraryFolder === "" && (
                                 <div className="sidebar-item pl-4 text-[0.85rem] w-full flex items-center gap-1.5">
                                     <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                                     <input
@@ -774,127 +1012,48 @@ export function Sidebar({
                                         className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
-                                                handleCreateLibraryFolderSubmit(e.currentTarget.value);
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleCreateLibraryFolderSubmit("", e.currentTarget.value);
                                             } else if (e.key === 'Escape') {
-                                                setCreatingLibraryFolder(false);
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setCreatingLibraryFolder(null);
                                             }
                                         }}
-                                        onBlur={() => setCreatingLibraryFolder(false)}
+                                        onBlur={() => {
+                                            setTimeout(() => setCreatingLibraryFolder(null), 200);
+                                        }}
                                     />
                                 </div>
                             )}
-                            {Object.entries(libraryGroups).map(([folder, packs]) => {
-                                const isRenamingFolder = folder && renamingLibraryFolder?.oldName === folder;
-                                return (
-                                    <div key={folder} className="flex flex-col">
-                                        {isRenamingFolder ? (
-                                            <div className="sidebar-item pl-4 text-[0.85rem] w-full flex items-center gap-1.5">
-                                                <FolderIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                                                <input
-                                                    autoFocus
-                                                    type="text"
-                                                    defaultValue={folder}
-                                                    className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') {
-                                                            handleRenameLibraryFolderSubmit(e.currentTarget.value);
-                                                        } else if (e.key === 'Escape') {
-                                                            setRenamingLibraryFolder(null);
-                                                        }
-                                                    }}
-                                                    onBlur={() => setRenamingLibraryFolder(null)}
-                                                />
-                                            </div>
-                                        ) : (
-                                            <button
-                                                className="sidebar-item pl-4 text-[0.7rem] w-full flex items-center gap-1.5 text-[var(--text-muted)] bg-transparent uppercase tracking-wider opacity-90"
-                                                onClick={() => toggleLibraryFolder(folder)}
-                                                onContextMenu={(e) => handleLibraryContextMenu(e, undefined, folder)}
-                                            >
-                                                {expandedLibraryFolders.has(folder) ? (
-                                                    <ChevronDownIcon className="w-3 h-3" />
-                                                ) : (
-                                                    <ChevronRightIcon className="w-3 h-3" />
-                                                )}
-                                                <span className="flex-1 text-left">{folder}</span>
-                                                <span className="text-[0.65rem] opacity-80">
-                                                    {packs.length}
-                                                </span>
-                                            </button>
-                                        )}
-                                        {expandedLibraryFolders.has(folder) && (
-                                            <div className="pl-2 flex flex-col">
-                                                {creatingLibraryPack === folder && (
-                                                    <div className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5">
-                                                        <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">L</div>
-                                                        <input
-                                                            autoFocus
-                                                            type="text"
-                                                            defaultValue="New Pack"
-                                                            className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
-                                                            onKeyDown={(e) => {
-                                                                if (e.key === 'Enter') {
-                                                                    handleCreateLibraryPackSubmit(folder, e.currentTarget.value);
-                                                                } else if (e.key === 'Escape') {
-                                                                    setCreatingLibraryPack(null);
-                                                                }
-                                                            }}
-                                                            onBlur={() => setCreatingLibraryPack(null)}
-                                                        />
-                                                    </div>
-                                                )}
-                                                {packs.map(pack => {
-                                                    const isRenaming = pack.id && renamingLibraryPack?.id === pack.id;
-                                                    const color = pack.color || '#A78BFA';
-                                                    return isRenaming ? (
-                                                        <div
-                                                            key={pack.id || 'renaming'}
-                                                            className="sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5"
-                                                        >
-                                                            <div 
-                                                                className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
-                                                                style={{ color, borderColor: color }}
-                                                            >L</div>
-                                                            <input
-                                                                autoFocus
-                                                                type="text"
-                                                                defaultValue={pack.filename || pack.name}
-                                                                className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === 'Enter') {
-                                                                        handleRenameLibraryPackSubmit(e.currentTarget.value);
-                                                                    } else if (e.key === 'Escape') {
-                                                                        setRenamingLibraryPack(null);
-                                                                    }
-                                                                }}
-                                                                onBlur={() => setRenamingLibraryPack(null)}
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <button
-                                                            key={pack.id}
-                                                            className={`sidebar-item pl-8 text-[0.85rem] w-full flex items-center gap-1.5 transition-colors ${selectedLibraryPackId === pack.id ? 'active' : 'text-[var(--text-secondary)] opacity-90'}`}
-                                                            onClick={() => pack.id && onSelectLibraryPack?.(pack.id)}
-                                                            onContextMenu={(e) => pack.id && handleLibraryContextMenu(e, pack.id)}
-                                                        >
-                                                            <div
-                                                                className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
-                                                                style={{ color, borderColor: color }}
-                                                            >
-                                                                L
-                                                            </div>
-                                                            <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-                                                                {pack.filename || pack.name}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                            {libraryPacks.length === 0 && !creatingLibraryFolder && (
+                            {creatingLibraryPack === "" && (
+                                <div className="sidebar-item pl-4 text-[0.85rem] w-full flex items-center gap-1.5">
+                                    <div className="text-[10px] font-bold text-blue-400 border border-blue-400 rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none">L</div>
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        defaultValue="New Pack"
+                                        className="bg-[var(--bg-app)] border border-[var(--border-color)] rounded-[2px] text-[var(--text-primary)] text-inherit w-full outline-none px-1 py-0"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleCreateLibraryPackSubmit("", e.currentTarget.value);
+                                            } else if (e.key === 'Escape') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setCreatingLibraryPack(null);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            setTimeout(() => setCreatingLibraryPack(null), 200);
+                                        }}
+                                    />
+                                </div>
+                            )}
+                            {Object.values(libraryTree).sort((a, b) => a.name.localeCompare(b.name)).map(node => renderLibraryNode(node, 0))}
+                            {libraryPacks.length === 0 && !creatingLibraryFolder && Object.keys(libraryTree).length === 0 && (
                                 <div className="px-4 py-2 text-[11px] text-[var(--text-muted)] italic">
                                     No library packs found.
                                 </div>
@@ -930,57 +1089,85 @@ export function Sidebar({
                 >
                     {contextMenu.libraryPackId ? (
                         <>
-                            <ContextMenuItem
-                                label="Rename"
-                                icon={<PencilIcon className="w-3.5 h-3.5" />}
-                                onClick={() => {
-                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
-                                    if (pack) {
-                                        setRenamingLibraryPack({ id: pack.id, oldName: pack.filename || pack.name });
-                                    }
-                                    setContextMenu(null);
-                                }}
-                            />
-                            <ContextMenuItem
-                                label="Delete"
-                                icon={<TrashIcon className="w-3.5 h-3.5" />}
-                                onClick={() => {
-                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
-                                    if (pack) {
-                                        setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.filename || pack.name });
-                                    }
-                                    setContextMenu(null);
-                                }}
-                                danger={true}
-                            />
+                            {!libraryPacks.find(p => p.id === contextMenu.libraryPackId)?.read_only && (
+                                <>
+                                    <ContextMenuItem
+                                        label="Rename"
+                                        icon={<PencilIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                            if (pack) {
+                                                setRenamingLibraryPack({ id: pack.id, oldName: pack.filename || pack.name });
+                                            }
+                                            setContextMenu(null);
+                                        }}
+                                    />
+                                    <ContextMenuItem
+                                        label="Delete"
+                                        icon={<TrashIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                            if (pack) {
+                                                setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.filename || pack.name });
+                                            }
+                                            setContextMenu(null);
+                                        }}
+                                        danger={true}
+                                    />
+                                </>
+                            )}
+                            {libraryPacks.find(p => p.id === contextMenu.libraryPackId)?.read_only && (
+                                <div className="px-3 py-2 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)]">
+                                    Official Template (Read-Only)
+                                </div>
+                            )}
                         </>
                     ) : contextMenu.libraryFolder ? (
                         <>
-                            <ContextMenuItem
-                                label="Add Doc"
-                                icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
-                                onClick={() => {
-                                    setCreatingLibraryPack(contextMenu.libraryFolder!);
-                                    setContextMenu(null);
-                                }}
-                            />
-                            <ContextMenuItem
-                                label="Rename"
-                                icon={<PencilIcon className="w-3.5 h-3.5" />}
-                                onClick={() => {
-                                    setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
-                                    setContextMenu(null);
-                                }}
-                            />
-                            <ContextMenuItem
-                                label="Delete"
-                                icon={<TrashIcon className="w-3.5 h-3.5" />}
-                                onClick={() => {
-                                    setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
-                                    setContextMenu(null);
-                                }}
-                                danger={true}
-                            />
+                            {!(contextMenu.libraryFolder === 'official' || contextMenu.libraryFolder.startsWith('official/')) ? (
+                                <>
+                                    <ContextMenuItem
+                                        label="Add Doc"
+                                        icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            setCreatingLibraryPack(contextMenu.libraryFolder!);
+                                            setContextMenu(null);
+                                        }}
+                                    />
+                                    <ContextMenuItem
+                                        label="Add Folder"
+                                        icon={<FolderPlusIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            setCreatingLibraryFolder(contextMenu.libraryFolder!);
+                                            if (!expandedLibraryFolders.has(contextMenu.libraryFolder!)) {
+                                                toggleLibraryFolder(contextMenu.libraryFolder!);
+                                            }
+                                            setContextMenu(null);
+                                        }}
+                                    />
+                                    <ContextMenuItem
+                                        label="Rename"
+                                        icon={<PencilIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
+                                            setContextMenu(null);
+                                        }}
+                                    />
+                                    <ContextMenuItem
+                                        label="Delete"
+                                        icon={<TrashIcon className="w-3.5 h-3.5" />}
+                                        onClick={() => {
+                                            setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
+                                            setContextMenu(null);
+                                        }}
+                                        danger={true}
+                                    />
+                                </>
+                            ) : (
+                                <div className="px-3 py-2 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)]">
+                                    Official Folder (Read-Only)
+                                </div>
+                            )}
                         </>
                     ) : (
                         <>

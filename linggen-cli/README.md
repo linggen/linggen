@@ -5,6 +5,7 @@ Standalone `linggen` binary that provides developer CLI commands and platform-aw
 ## TEST RUN
 
 ```bash
+cd linggen-cli
 cargo run -p linggen-cli -- --version
 cargo run -p linggen-cli -- install
 ```

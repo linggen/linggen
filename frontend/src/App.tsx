@@ -658,6 +658,7 @@ function App() {
               selectedNotePath={selectedNotePath}
               selectedMemoryPath={selectedMemoryPath}
               selectedLibraryPackId={selectedLibraryPackId}
+              libraryPacks={libraryPacks}
             />
           ) : (
             <SourcesView

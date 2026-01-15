@@ -23,7 +23,10 @@ async fn main() -> Result<()> {
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--port" || arg == "-p" {
+        if arg == "--version" || arg == "-V" {
+            println!("linggen-server {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        } else if arg == "--port" || arg == "-p" {
             if let Some(val) = args.next() {
                 if let Ok(parsed) = val.parse() {
                     port = parsed;

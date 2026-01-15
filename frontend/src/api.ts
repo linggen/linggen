@@ -455,7 +455,7 @@ export interface SaveNoteRequest {
 }
 
 export async function saveNote(sourceId: string, notePath: string, content: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${notePath}`, {
+    const response = await fetch(`${API_BASE}/api/sources/${sourceId}/notes/${encodeURIComponent(notePath)}`, {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
@@ -1009,6 +1009,7 @@ export interface LibraryPack {
     folder?: string;
     created_at?: string;
     updated_at?: string;
+    read_only?: boolean;
 }
 
 export interface ListPacksResponse {
@@ -1052,7 +1053,7 @@ export async function renamePack(packId: string, newName: string): Promise<void>
 }
 
 export async function deletePack(packId: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`, {
+    const response = await fetch(`${API_BASE}/api/library/packs/${encodeURIComponent(packId)}`, {
         method: 'DELETE',
     });
     if (!response.ok) {
@@ -1087,7 +1088,7 @@ export async function renameLibraryFolder(oldName: string, newName: string): Pro
 }
 
 export async function deleteLibraryFolder(folderName: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/library/folders/${folderName}`, {
+    const response = await fetch(`${API_BASE}/api/library/folders/${encodeURIComponent(folderName)}`, {
         method: 'DELETE',
     });
     if (!response.ok) {
@@ -1109,7 +1110,7 @@ export async function listLibraryFolders(): Promise<string[]> {
 }
 
 export async function getPack(packId: string): Promise<{ path: string; content: string }> {
-    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`);
+    const response = await fetch(`${API_BASE}/api/library/packs/${encodeURIComponent(packId)}`);
     if (!response.ok) {
         throw new Error(`Failed to get pack: ${response.statusText}`);
     }
@@ -1117,7 +1118,7 @@ export async function getPack(packId: string): Promise<{ path: string; content: 
 }
 
 export async function savePack(packId: string, content: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/library/packs/${packId}`, {
+    const response = await fetch(`${API_BASE}/api/library/packs/${encodeURIComponent(packId)}`, {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
@@ -1131,7 +1132,7 @@ export async function savePack(packId: string, content: string): Promise<void> {
 }
 
 export async function applyPack(packId: string, projectId: string): Promise<{ success: boolean; destination: string }> {
-    const response = await fetch(`${API_BASE}/api/library/packs/${packId}/apply`, {
+    const response = await fetch(`${API_BASE}/api/library/packs/${encodeURIComponent(packId)}/apply`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

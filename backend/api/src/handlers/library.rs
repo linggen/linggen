@@ -12,43 +12,24 @@ use tracing::info;
 
 use crate::handlers::AppState;
 
-fn find_pack_by_id(dir: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(p) = find_pack_by_id(&path, target_id) {
-                    return Some(p);
-                }
-            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let meta = extract_all_meta_from_content(&content);
+fn find_pack_by_id(root: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
+    // The target_id is now the relative path from the library root
+    let pack_path = root.join(target_id);
 
-                    // Extract ID using the same logic as list_packs
-                    let id = if let Some(ref m) = meta {
-                        if let Some(id_val) = m.get("id").and_then(|v| v.as_str()) {
-                            id_val.to_string()
-                        } else {
-                            path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string()
-                        }
-                    } else {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("unknown")
-                            .to_string()
-                    };
-
-                    if id == target_id {
-                        return Some(path);
-                    }
-                }
+    // Security check: ensure the resolved path is still within the library root
+    if let Ok(canonical_root) = root.canonicalize() {
+        if let Ok(canonical_path) = pack_path.canonicalize() {
+            if !canonical_path.starts_with(&canonical_root) {
+                return None;
             }
         }
     }
-    None
+
+    if pack_path.exists() && pack_path.is_file() {
+        Some(pack_path)
+    } else {
+        None
+    }
 }
 
 #[derive(Deserialize)]
@@ -88,20 +69,42 @@ pub async fn list_folders(State(state): State<Arc<AppState>>) -> Json<serde_json
     let library_root = &state.library_path;
     let mut folders: Vec<String> = Vec::new();
 
-    if let Ok(entries) = std::fs::read_dir(library_root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    // Hide dot folders; optionally hide legacy "packs" folder.
-                    if name.starts_with('.') || name == "packs" {
-                        continue;
+    fn scan_folders_recursive(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        prefix: &str,
+        folders: &mut Vec<String>,
+    ) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with('.') || name == "packs" {
+                            continue;
+                        }
+
+                        // Prevent nested 'official' folders from appearing in the tree
+                        if name == "official" && dir != root {
+                            continue;
+                        }
+
+                        let rel_path = path
+                            .strip_prefix(root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
+
+                        folders.push(format!("{}{}", prefix, rel_path));
+                        scan_folders_recursive(&path, root, prefix, folders);
                     }
-                    folders.push(name.to_string());
                 }
             }
         }
     }
+
+    // Scan everything from library root
+    scan_folders_recursive(library_root, library_root, "", &mut folders);
 
     folders.sort();
     folders.dedup();
@@ -112,55 +115,55 @@ pub async fn list_folders(State(state): State<Arc<AppState>>) -> Json<serde_json
 pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let library_root = &state.library_path;
     let mut packs = Vec::new();
-    let mut seen_ids = HashSet::new();
 
     fn scan_dir(
         dir: &std::path::Path,
-        root: &std::path::Path,
         packs: &mut Vec<serde_json::Value>,
-        seen_ids: &mut HashSet<String>,
+        library_path: &std::path::Path,
     ) {
+        if !dir.exists() {
+            return;
+        }
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    scan_dir(&path, root, packs, seen_ids);
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                        if name == "official" && dir != library_path {
+                            continue;
+                        }
+                    }
+                    scan_dir(&path, packs, library_path);
                 } else if path.extension().map(|e| e == "md").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         let mut meta = extract_all_meta_from_content(&content)
                             .unwrap_or_else(|| serde_json::json!({}));
 
-                        // Extract or default the ID
-                        let id = if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
-                            id.to_string()
-                        } else {
-                            // Default to filename slug
-                            path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string()
-                        };
+                        // Use relative path from the library root as the ID
+                        let rel_path = path
+                            .strip_prefix(library_path)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
 
-                        if seen_ids.contains(&id) {
-                            continue;
-                        }
-                        seen_ids.insert(id.clone());
+                        let is_official = rel_path.starts_with("official/");
 
                         if let Some(obj) = meta.as_object_mut() {
-                            // Ensure ID is in the object
-                            obj.insert("id".to_string(), serde_json::json!(id));
+                            obj.insert("id".to_string(), serde_json::json!(rel_path));
+                            obj.insert("read_only".to_string(), serde_json::json!(is_official));
 
-                            // Add filename (without extension) for sidebar display
                             let filename = path
                                 .file_stem()
                                 .and_then(|s| s.to_str())
-                                .unwrap_or(&id)
+                                .unwrap_or("unknown")
                                 .to_string();
                             obj.insert("filename".to_string(), serde_json::json!(filename));
 
-                            // Ensure Name is in the object (default to ID if missing)
                             if !obj.contains_key("name") {
-                                obj.insert("name".to_string(), serde_json::json!(id));
+                                obj.insert("name".to_string(), serde_json::json!(filename));
                             }
 
                             // Add file metadata
@@ -183,18 +186,16 @@ pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::
                                 }
                             }
 
-                            // Add folder info to metadata if possible
-                            if let Some(parent_name) = path
-                                .parent()
-                                .and_then(|p| p.file_name())
-                                .and_then(|n| n.to_str())
-                            {
-                                // If the parent is the root itself, we don't add a folder name (or use "general")
-                                if path.parent() != Some(root) {
-                                    obj.insert(
-                                        "folder".to_string(),
-                                        serde_json::json!(parent_name),
-                                    );
+                            // Add full relative folder path info
+                            if let Some(parent) = path.parent() {
+                                let rel_folder = parent
+                                    .strip_prefix(library_path)
+                                    .unwrap_or(parent)
+                                    .to_string_lossy()
+                                    .to_string();
+
+                                if !rel_folder.is_empty() {
+                                    obj.insert("folder".to_string(), serde_json::json!(rel_folder));
                                 }
                             }
                         }
@@ -205,7 +206,7 @@ pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::
         }
     }
 
-    scan_dir(library_root, library_root, &mut packs, &mut seen_ids);
+    scan_dir(library_root, &mut packs, &state.library_path);
 
     Json(serde_json::json!({ "packs": packs }))
 }
@@ -214,9 +215,14 @@ pub async fn create_folder(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if req.name.contains(std::path::MAIN_SEPARATOR) || req.name.contains("..") {
+    if req.name.contains("..")
+        || req.name.starts_with('/')
+        || req.name == "official"
+        || req.name.starts_with("official/")
+    {
         return Err((StatusCode::BAD_REQUEST, "Invalid folder name".to_string()));
     }
+    // Create folders directly in library root (user managed)
     let folder_path = state.library_path.join(&req.name);
     if folder_path.exists() {
         return Err((StatusCode::CONFLICT, "Folder already exists".to_string()));
@@ -234,15 +240,30 @@ pub async fn rename_folder(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RenameFolderRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if req.old_name.contains(std::path::MAIN_SEPARATOR)
-        || req.new_name.contains(std::path::MAIN_SEPARATOR)
-        || req.old_name.contains("..")
+    if req.old_name.contains("..")
         || req.new_name.contains("..")
+        || req.old_name.starts_with('/')
+        || req.new_name.starts_with('/')
+        || req.new_name == "official"
+        || req.new_name.starts_with("official/")
     {
         return Err((StatusCode::BAD_REQUEST, "Invalid folder name".to_string()));
     }
-    let old_path = state.library_path.join(&req.old_name);
-    let new_path = state.library_path.join(&req.new_name);
+
+    // Resolve paths - assume user is renaming something they can see
+    let library_root = &state.library_path;
+    let old_path = if req.old_name.starts_with("official/") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Cannot rename official folders".to_string(),
+        ));
+    } else {
+        library_root.join(&req.old_name)
+    };
+
+    // Determine new path - preserve parent directory of the old path
+    let parent = old_path.parent().unwrap_or(library_root);
+    let new_path = parent.join(&req.new_name);
 
     if !old_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Folder not found".to_string()));
@@ -267,10 +288,20 @@ pub async fn delete_folder(
     State(state): State<Arc<AppState>>,
     Path(folder_name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if folder_name.contains(std::path::MAIN_SEPARATOR) || folder_name.contains("..") {
+    if folder_name.contains("..") || folder_name.starts_with('/') {
         return Err((StatusCode::BAD_REQUEST, "Invalid folder name".to_string()));
     }
-    let folder_path = state.library_path.join(&folder_name);
+
+    let library_root = &state.library_path;
+    let folder_path = if folder_name.starts_with("official/") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Cannot delete official folders".to_string(),
+        ));
+    } else {
+        library_root.join(&folder_name)
+    };
+
     if !folder_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Folder not found".to_string()));
     }
@@ -288,8 +319,7 @@ pub async fn create_pack(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreatePackRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    if req.folder.contains(std::path::MAIN_SEPARATOR)
-        || req.folder.contains("..")
+    if req.folder.contains("..")
         || req.name.contains(std::path::MAIN_SEPARATOR)
         || req.name.contains("..")
     {
@@ -298,6 +328,7 @@ pub async fn create_pack(
             "Invalid folder or file name".to_string(),
         ));
     }
+    // Create pack in the specified folder relative to library root
     let folder_path = state.library_path.join(&req.folder);
     if !folder_path.exists() {
         std::fs::create_dir_all(&folder_path).map_err(|e| {
@@ -318,10 +349,9 @@ pub async fn create_pack(
         return Err((StatusCode::CONFLICT, "Pack already exists".to_string()));
     }
 
-    let pack_id = req.name.to_lowercase().replace(' ', "-");
     let content = format!(
-        "---\nid: {}\nname: {}\ndescription: New library pack\nscope: Personal\nversion: 1.0.0\nauthor: User\ntags: []\n---\n\n# {}\n\nStart writing...",
-        pack_id, req.name, req.name
+        "---\nname: {}\ndescription: New library pack\nscope: Personal\nversion: 1.0.0\nauthor: User\ntags: []\n---\n\n# {}\n\nStart writing...",
+        req.name, req.name
     );
 
     std::fs::write(&file_path, content).map_err(|e| {
@@ -331,8 +361,14 @@ pub async fn create_pack(
         )
     })?;
 
+    let rel_path = file_path
+        .strip_prefix(&state.library_path)
+        .unwrap_or(&file_path)
+        .to_string_lossy()
+        .to_string();
+
     Ok(Json(
-        serde_json::json!({ "id": pack_id, "path": file_path.to_string_lossy() }),
+        serde_json::json!({ "id": rel_path, "path": file_path.to_string_lossy() }),
     ))
 }
 
@@ -347,6 +383,15 @@ pub async fn rename_pack(
 
     let pack_path = find_pack_by_id(library_root, &req.pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
+
+    // If it's official, we don't allow renaming it directly (must save/edit first to move to user space)
+    if pack_path.starts_with(library_root.join("official")) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Cannot rename official packs. Edit and save it first to create your own version."
+                .to_string(),
+        ));
+    }
 
     let display_name = req
         .new_name
@@ -388,7 +433,12 @@ pub async fn rename_pack(
         let mut replaced = false;
         let mut out = Vec::new();
         for line in frontmatter.lines() {
-            if !replaced && line.trim_start().starts_with("name:") {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("id:") {
+                // Skip ID line to remove it
+                continue;
+            }
+            if !replaced && trimmed.starts_with("name:") {
                 out.push(format!("name: {}", new_name));
                 replaced = true;
             } else {
@@ -429,6 +479,14 @@ pub async fn delete_pack(
 
     let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
+
+    // Cannot delete official packs
+    if pack_path.starts_with(library_root.join("official")) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Cannot delete official packs.".to_string(),
+        ));
+    }
 
     std::fs::remove_file(pack_path).map_err(|e| {
         (
@@ -540,6 +598,15 @@ pub async fn save_pack(
 
     let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
+
+    // Check if the file is in official
+    if pack_path.starts_with(library_root.join("official")) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Official templates are read-only. Please create your own pack to save changes."
+                .to_string(),
+        ));
+    }
 
     std::fs::write(&pack_path, &req.content).map_err(|e| {
         (

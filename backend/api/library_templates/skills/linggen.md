@@ -1,5 +1,4 @@
 ---
-id: linggen-pack
 name: Linggen Expert
 description: Entry skill for using Linggen effectively (MCP tools, memory, skills, and policies).
 scope: Curated

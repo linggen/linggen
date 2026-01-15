@@ -22,14 +22,14 @@ pub struct Artifact {
     pub kind: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Mac,
     Linux,
     Other,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
     Cli,
     App,

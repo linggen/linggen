@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { type Resource, type IndexMode } from '../api';
+import { type Resource, type IndexMode, type LibraryPack } from '../api';
 import { GraphView } from '../components/GraphView';
 import { CM6Editor } from '../components/CM6Editor';
 
@@ -24,6 +24,7 @@ interface WorkspaceViewProps {
     selectedNotePath?: string | null;
     selectedMemoryPath?: string | null;
     selectedLibraryPackId?: string | null;
+    libraryPacks?: LibraryPack[];
 }
 
 export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
@@ -35,7 +36,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     onUpdateSource,
     selectedNotePath,
     selectedMemoryPath,
-    selectedLibraryPackId
+    selectedLibraryPackId,
+    libraryPacks = []
 }) => {
     // We don't need local state for source if it's passed as prop. 
     // If we were fetching it ourselves, we might need it, but typically we rely on the prop.
@@ -90,6 +92,9 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
     const isIndexing = currentSource && indexingResourceId === currentSource.id;
     const showingEditor = Boolean(selectedNotePath || selectedMemoryPath || selectedLibraryPackId);
+
+    const selectedPack = libraryPacks.find(p => p.id === selectedLibraryPackId);
+    const isPackReadOnly = selectedPack?.read_only;
 
     return (
         // Root container for the right-hand panel.
@@ -244,7 +249,13 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     <div
                         className={showingEditor ? 'block' : 'flex-1 flex flex-col min-h-0 overflow-hidden'}
                     >
-                        <CM6Editor sourceId="library" docPath={selectedLibraryPackId} docType="library" scrollMode="container" />
+                        <CM6Editor 
+                            sourceId="library" 
+                            docPath={selectedLibraryPackId} 
+                            docType="library" 
+                            scrollMode="container" 
+                            readOnly={isPackReadOnly}
+                        />
                     </div>
                 ) : (
                     <div

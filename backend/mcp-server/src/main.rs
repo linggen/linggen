@@ -547,6 +547,15 @@ async fn main() -> Result<()> {
 
     info!("Starting Linggen MCP Server...");
 
+    // Basic CLI argument parsing
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--version" || arg == "-V" {
+            println!("mcp-server {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+    }
+
     let api_url =
         std::env::var("LINGGEN_API_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 

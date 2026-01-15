@@ -102,8 +102,11 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
                                                 MD
                                             </div>
                                             <div className="min-w-0">
-                                                <div className="truncate font-medium text-[var(--text-active)] group-hover:text-[var(--accent)] transition-colors">
+                                                <div className="truncate font-medium text-[var(--text-active)] group-hover:text-[var(--accent)] transition-colors flex items-center gap-2">
                                                     {pack.filename || pack.name}
+                                                    {pack.read_only && (
+                                                        <span className="bg-[var(--border-color)] px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider text-[var(--text-secondary)]">Read Only</span>
+                                                    )}
                                                 </div>
                                                 <div className="truncate text-[11px] text-[var(--text-secondary)] font-mono">
                                                     {pack.name !== pack.filename ? pack.name : pack.id}

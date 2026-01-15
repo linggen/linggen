@@ -419,11 +419,6 @@ impl InternalIndexStore {
         Ok(None)
     }
 
-    /// Find an internal document path by memory ID
-    pub async fn find_path_by_memory_id(&self, memory_id: &str) -> Result<Option<String>> {
-        self.find_path_by_meta("memory_id", memory_id).await
-    }
-
     /// List all documents in the internal index
     pub async fn list_documents(&self) -> Result<Vec<String>> {
         let table_names = self.conn.table_names().execute().await?;

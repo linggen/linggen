@@ -203,6 +203,9 @@ fn spawn_backend_via_std_process(
 async fn ensure_backend_running(app_handle: AppHandle, force_restart: bool) {
     let backend_state = app_handle.state::<BackendProcess>();
 
+    // Seed library templates before starting backend
+    seed_library_from_resources(&app_handle);
+
     // If force restart, kill existing child first
     if force_restart {
         log_to_file("[Tauri] Force restarting backend...");
@@ -467,6 +470,74 @@ async fn ensure_backend_running(app_handle: AppHandle, force_restart: bool) {
             let _ = window.show();
         }
     });
+}
+
+fn seed_library_from_resources(app_handle: &AppHandle) {
+    let resource_dir = match app_handle.path().resource_dir() {
+        Ok(dir) => dir,
+        Err(_) => return,
+    };
+
+    let template_src = resource_dir.join("resources").join("library_templates");
+    if !template_src.exists() {
+        return;
+    }
+
+    let home = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => return,
+    };
+
+    let library_root = home.join(".linggen").join("library");
+    let official_dst = library_root.join("official");
+
+    // Version check
+    let current_version = app_handle.package_info().version.to_string();
+    let marker_path = library_root.join(".linggen_library_seed_version");
+    let previous_version = std::fs::read_to_string(&marker_path)
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    if previous_version.as_deref() == Some(&current_version) && official_dst.exists() {
+        return;
+    }
+
+    log_to_file(&format!("[Tauri] Seeding library templates (v{})", current_version));
+
+    // Ensure library root exists
+    if !library_root.exists() {
+        let _ = std::fs::create_dir_all(&library_root);
+    }
+
+    // Wipe and replace official templates
+    if official_dst.exists() {
+        let _ = std::fs::remove_dir_all(&official_dst);
+    }
+    let _ = std::fs::create_dir_all(&official_dst);
+
+    fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_name = path.file_name().unwrap();
+            let dest_path = dst.join(file_name);
+
+            if path.is_dir() {
+                std::fs::create_dir_all(&dest_path)?;
+                copy_dir_recursive(&path, &dest_path)?;
+            } else {
+                std::fs::copy(&path, &dest_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    if let Err(e) = copy_dir_recursive(&template_src, &official_dst) {
+        log_to_file(&format!("[Tauri] Failed to seed library: {}", e));
+    } else {
+        let _ = std::fs::write(&marker_path, format!("{}\n", current_version));
+        log_to_file("[Tauri] Library templates seeded successfully");
+    }
 }
 
 fn main() {

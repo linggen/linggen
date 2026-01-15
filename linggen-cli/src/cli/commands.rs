@@ -130,10 +130,16 @@ pub async fn handle_update() -> Result<()> {
     let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
+    let app_label = if platform == Platform::Linux {
+        "Server"
+    } else {
+        "App"
+    };
+
     println!("Local CLI: {}", local_cli);
     println!("Latest CLI: {}", latest);
-    println!("Local App: {}", local_app);
-    println!("Latest App: {}", latest);
+    println!("Local {}: {}", app_label, local_app);
+    println!("Latest {}: {}", app_label, latest);
 
     if local_cli == latest && local_app == latest {
         println!("{}", "✓ Already up to date!".green());
@@ -157,6 +163,7 @@ pub async fn handle_update() -> Result<()> {
 
 pub async fn handle_check() -> Result<()> {
     println!("{}", "🔎 Checking versions...".cyan());
+    let platform = current_platform();
     let manifest = fetch_manifest(None).await?;
     let latest = manifest.version.clone().unwrap_or_else(|| "unknown".into());
     let local_cli_raw =
@@ -164,10 +171,16 @@ pub async fn handle_check() -> Result<()> {
     let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
+    let app_label = if platform == Platform::Linux {
+        "Server"
+    } else {
+        "App"
+    };
+
     println!("Local CLI: {}", local_cli);
     println!("Latest CLI: {}", latest);
-    println!("Local App: {}", local_app);
-    println!("Latest App: {}", latest);
+    println!("Local {}: {}", app_label, local_app);
+    println!("Latest {}: {}", app_label, latest);
     Ok(())
 }
 
@@ -196,8 +209,27 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
         );
     }
 
+    // Server install check (Linux/macOS fallback)
+    #[cfg(not(target_os = "macos"))]
+    {
+        use crate::cli::util::command_exists;
+        println!(
+            "Server:      {}",
+            if command_exists("linggen-server") {
+                "installed".green().to_string()
+            } else {
+                "not found".yellow().to_string()
+            }
+        );
+    }
+
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
-    println!("App version: {}", local_app);
+    let app_label = if current_platform() == Platform::Linux {
+        "Server version"
+    } else {
+        "App version"
+    };
+    println!("{}: {}", app_label, local_app);
 
     // Backend reachability
     println!("API URL:     {}", api_url);
