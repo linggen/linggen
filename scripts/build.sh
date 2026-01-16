@@ -26,8 +26,14 @@ if [ "$VERSION" = "--skip-linux" ]; then
   fi
 fi
 
+VERSION_NUM="${VERSION#v}"
+
 echo "🏗️  Building Linggen ${VERSION}"
 echo "=============================="
+
+# 0. Sync version to all project files
+echo "🔄 Syncing version $VERSION_NUM to all project files..."
+"$ROOT_DIR/scripts/sync-version.sh" "$VERSION_NUM"
 
 # 1. Build local platform artifacts
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -50,7 +56,7 @@ else
   if command -v docker >/dev/null && docker buildx version >/dev/null 2>&1; then
     echo ""
     echo "🐳 Step 2: Building multi-arch Linux packages via Docker..."
-    "$ROOT_DIR/scripts/build-linux.sh"
+    "$ROOT_DIR/scripts/build-linux.sh" "$VERSION"
   else
     echo ""
     echo "⚠️  Docker or Buildx not found. Skipping multi-arch Linux build."

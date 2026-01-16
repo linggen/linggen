@@ -57,13 +57,24 @@ pub fn get_local_app_version() -> Option<String> {
 
     // 2. Try to get version from linggen-server (Linux/macOS fallback)
     // On Linux, the "app" is the server.
-    if let Some(raw) = run_and_capture_version("linggen-server", &["--version"]) {
-        // Expected: "linggen-server 0.5.1"
-        for token in raw.split_whitespace() {
-            let t = token.trim_start_matches('v');
-            if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '.') && t.contains('.')
-            {
-                return Some(t.to_string());
+    // Try both the bare command and absolute paths.
+    let candidates = [
+        "linggen-server",
+        "/usr/local/bin/linggen-server",
+        "/usr/bin/linggen-server",
+    ];
+
+    for cmd in candidates {
+        if let Some(raw) = run_and_capture_version(cmd, &["--version"]) {
+            // Expected: "linggen-server 0.5.1"
+            for token in raw.split_whitespace() {
+                let t = token.trim_start_matches('v');
+                if !t.is_empty()
+                    && t.chars().all(|c| c.is_ascii_digit() || c == '.')
+                    && t.contains('.')
+                {
+                    return Some(t.to_string());
+                }
             }
         }
     }

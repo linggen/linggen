@@ -1130,20 +1130,3 @@ export async function savePack(packId: string, content: string): Promise<void> {
         throw new Error(`Failed to save pack: ${response.statusText}`);
     }
 }
-
-export async function applyPack(packId: string, projectId: string): Promise<{ success: boolean; destination: string }> {
-    const response = await fetch(`${API_BASE}/api/library/packs/${encodeURIComponent(packId)}/apply`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ project_id: projectId }),
-    });
-
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to apply pack: ${text}`);
-    }
-
-    return response.json();
-}

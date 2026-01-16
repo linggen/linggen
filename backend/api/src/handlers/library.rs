@@ -33,11 +33,6 @@ fn find_pack_by_id(root: &std::path::Path, target_id: &str) -> Option<std::path:
 }
 
 #[derive(Deserialize)]
-pub struct ApplyPackRequest {
-    pub project_id: String,
-}
-
-#[derive(Deserialize)]
 pub struct SavePackRequest {
     pub content: String,
 }
@@ -495,76 +490,6 @@ pub async fn delete_pack(
         )
     })?;
     Ok(StatusCode::OK)
-}
-
-pub async fn apply_pack(
-    State(state): State<Arc<AppState>>,
-    Path(pack_id): Path<String>,
-    Json(req): Json<ApplyPackRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // 1. Find the pack file
-    let library_root = &state.library_path;
-
-    let pack_path = match find_pack_by_id(library_root, &pack_id) {
-        Some(p) => p,
-        None => return Err((StatusCode::NOT_FOUND, "Pack not found".to_string())),
-    };
-
-    // 2. Find the project
-    let projects = state
-        .metadata_store
-        .get_sources()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let project = projects
-        .into_iter()
-        .find(|p| p.id == req.project_id)
-        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
-
-    // 3. Determine destination directory
-    let project_root = std::path::PathBuf::from(&project.path);
-    let linggen_dir = project_root.join(".linggen");
-
-    // Check if the pack was in a folder like 'skills' or 'policies'
-    let folder_name = pack_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("general");
-    let dest_dir = linggen_dir.join(folder_name);
-
-    if !dest_dir.exists() {
-        std::fs::create_dir_all(&dest_dir).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create destination directory: {}", e),
-            )
-        })?;
-    }
-
-    let file_name = pack_path.file_name().ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Invalid pack filename".to_string(),
-    ))?;
-    let dest_path = dest_dir.join(file_name);
-
-    // 4. Copy the file
-    std::fs::copy(&pack_path, &dest_path).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to copy pack: {}", e),
-        )
-    })?;
-
-    info!(
-        "Applied pack {} to project {} at {:?}",
-        pack_id, project.name, dest_path
-    );
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "destination": dest_path.to_string_lossy()
-    })))
 }
 
 pub async fn get_pack(

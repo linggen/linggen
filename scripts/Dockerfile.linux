@@ -6,6 +6,7 @@ FROM rust:bookworm AS builder
 
 # TARGETARCH is automatically set by Docker Buildx (amd64, arm64, etc.)
 ARG TARGETARCH
+ARG BUILD_VERSION=0.0.0
 
 # Install essential system dependencies for backend (PDF extraction, SSL, etc.)
 RUN apt-get update && apt-get install -y \
@@ -65,6 +66,10 @@ RUN cargo build --release
 # 3. Now copy the whole project and build the real binaries
 WORKDIR /app
 COPY . .
+
+# Invalidate cache for final builds if version changes
+ARG BUILD_VERSION
+ENV LINGGEN_BUILD_VERSION=$BUILD_VERSION
 
 # Build the real backend binary
 WORKDIR /app/backend

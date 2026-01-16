@@ -18,9 +18,6 @@ VERSION_NUM="${VERSION#v}"
 DIST_DIR="$ROOT_DIR/dist"
 mkdir -p "$DIST_DIR"
 
-echo "🔄 Syncing version $VERSION_NUM to all project files..."
-"$ROOT_DIR/scripts/sync-version.sh" "$VERSION_NUM"
-
 SLUG=$(detect_platform)
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"

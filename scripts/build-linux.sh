@@ -32,9 +32,13 @@ fi
 mkdir -p dist/linux
 
 # Run the build
-echo "🚀 Starting build process..."
+VERSION="${1:-0.0.0}"
+VERSION_NUM="${VERSION#v}"
+
+echo "🚀 Starting build process for version ${VERSION_NUM}..."
 docker buildx build \
     --platform linux/amd64,linux/arm64 \
+    --build-arg "BUILD_VERSION=${VERSION_NUM}" \
     --target artifacts \
     --output type=local,dest=./dist/linux \
     -f scripts/Dockerfile.linux \

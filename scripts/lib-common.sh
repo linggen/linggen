@@ -18,7 +18,7 @@ detect_platform() {
     linux)
       case "$ARCH" in
         x86_64|amd64) SLUG="linux-x86_64" ;;
-        arm64|aarch64) SLUG="linux-arm64" ;;
+        arm64|aarch64) SLUG="linux-aarch64" ;;
         *) echo "Unsupported Linux arch: $ARCH" >&2; return 1 ;;
       esac
       ;;

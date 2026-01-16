@@ -75,6 +75,12 @@ pub struct MemoryDeleteRequest {
     pub id: String,
 }
 
+#[derive(Deserialize)]
+pub struct MemoryFetchByMetaRequest {
+    pub key: String,
+    pub value: String,
+}
+
 pub async fn list_memories(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MemorySearchRequest>,
@@ -102,6 +108,62 @@ pub async fn read_memory(
         .memory_store
         .read(&params.id)
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    Ok(Json(to_read(mem)))
+}
+
+pub async fn fetch_memory_by_meta(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MemoryFetchByMetaRequest>,
+) -> Result<Json<MemoryReadResponse>, (StatusCode, String)> {
+    // 1. Try to find the file path in internal index using metadata
+    let search_key = if req.key == "id" || req.key == "memory_id" {
+        "file_path"
+    } else {
+        &req.key
+    };
+
+    let search_value = if (req.key == "id" || req.key == "memory_id")
+        && !req.value.starts_with("memory/")
+    {
+        format!("memory/{}", req.value)
+    } else {
+        req.value.clone()
+    };
+
+    let file_path = state
+        .internal_index_store
+        .find_path_by_meta(search_key, &search_value)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mem = match file_path {
+        Some(path) => {
+            // Found via index!
+            let full_path = state
+                .memory_store
+                .memory_dir()
+                .join(path.strip_prefix("memory/").unwrap_or(&path));
+            state
+                .memory_store
+                .read_from_path(&full_path)
+                .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?
+        }
+        None => {
+            // Fallback: Try directly by filename (id) in memory dir
+            if req.key == "id" || req.key == "memory_id" {
+                state
+                    .memory_store
+                    .read(&req.value)
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?
+            } else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!("Memory not found with {}='{}'", req.key, req.value),
+                ));
+            }
+        }
+    };
 
     Ok(Json(to_read(mem)))
 }

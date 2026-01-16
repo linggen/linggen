@@ -125,18 +125,19 @@ pub async fn handle_update() -> Result<()> {
         .context("Failed to fetch manifest")?;
 
     let latest = manifest.version.clone().unwrap_or_else(|| "unknown".into());
-    let local_cli_raw =
-        run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
-    let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
+    let local_cli = env!("CARGO_PKG_VERSION").to_string();
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-    let app_label = if platform == Platform::Linux {
+    let app_label = if std::env::consts::OS == "linux" {
         "Server"
     } else {
         "App"
     };
 
     println!("Local CLI: {}", local_cli);
+    if let Ok(exe) = std::env::current_exe() {
+        println!("  (running from: {})", exe.display().to_string().dimmed());
+    }
     println!("Latest CLI: {}", latest);
     println!("Local {}: {}", app_label, local_app);
     println!("Latest {}: {}", app_label, latest);
@@ -163,21 +164,21 @@ pub async fn handle_update() -> Result<()> {
 
 pub async fn handle_check() -> Result<()> {
     println!("{}", "🔎 Checking versions...".cyan());
-    let platform = current_platform();
     let manifest = fetch_manifest(None).await?;
     let latest = manifest.version.clone().unwrap_or_else(|| "unknown".into());
-    let local_cli_raw =
-        run_and_capture_version("linggen", &["--version"]).unwrap_or_else(|| "unknown".into());
-    let local_cli = parse_cli_version(&local_cli_raw).unwrap_or_else(|| "unknown".into());
+    let local_cli = env!("CARGO_PKG_VERSION").to_string();
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-    let app_label = if platform == Platform::Linux {
+    let app_label = if std::env::consts::OS == "linux" {
         "Server"
     } else {
         "App"
     };
 
     println!("Local CLI: {}", local_cli);
+    if let Ok(exe) = std::env::current_exe() {
+        println!("  (running from: {})", exe.display().to_string().dimmed());
+    }
     println!("Latest CLI: {}", latest);
     println!("Local {}: {}", app_label, local_app);
     println!("Latest {}: {}", app_label, latest);
@@ -224,7 +225,7 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
     }
 
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
-    let app_label = if current_platform() == Platform::Linux {
+    let app_label = if std::env::consts::OS == "linux" {
         "Server version"
     } else {
         "App version"
