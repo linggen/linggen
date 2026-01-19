@@ -14,9 +14,8 @@ import {
   type Resource,
   type ResourceType,
   type IndexMode,
-  listPacks,
+  getLibrary,
   type LibraryPack,
-  listLibraryFolders,
 } from './api'
 import { WorkspaceView } from './views/WorkspaceView'
 import { SourcesView } from './views/SourcesView'
@@ -149,9 +148,8 @@ function App() {
 
     const fetchLibrary = async () => {
       try {
-        const packs = await listPacks()
+        const { packs, folders } = await getLibrary()
         setLibraryPacks(packs)
-        const folders = await listLibraryFolders()
         setLibraryFolders(folders)
       } catch (err) {
         console.error('Failed to load library packs:', err)
@@ -626,57 +624,57 @@ function App() {
   }
 
   return (
-      <MainLayout
-        currentView={currentView}
-        onChangeView={setCurrentView}
-        resources={resources}
-        libraryPacks={libraryPacks}
-        libraryFolders={libraryFolders}
-        resourcesVersion={resourcesVersion}
-        selectedSourceId={selectedSourceId}
-        onSelectSource={handleSelectSource}
-        selectedNotePath={selectedNotePath}
-        onSelectNote={handleSelectNote}
-        selectedMemoryPath={selectedMemoryPath}
-        onSelectMemory={handleSelectMemory}
-        selectedLibraryPackId={selectedLibraryPackId}
-        onSelectLibraryPack={handleSelectLibraryPack}
-        onAddSource={() => setIsAddSourceModalOpen(true)}
-        onRefresh={() => setResourcesVersion(v => v + 1)}
-        statusElement={renderStatusElement()}
-      >
-        {currentView === 'sources' && (
-          (selectedSourceId || selectedLibraryPackId) ? (
-            <WorkspaceView
-              sourceId={selectedSourceId || 'library'}
-              source={resources.find(r => r.id === selectedSourceId)}
-              onIndexComplete={() => setResourcesVersion(v => v + 1)}
-              onIndexResource={handleIndexResource}
-              indexingResourceId={indexingResourceId}
-              indexingProgress={indexingProgress}
-              onUpdateSource={handleEditResource}
-              selectedNotePath={selectedNotePath}
-              selectedMemoryPath={selectedMemoryPath}
-              selectedLibraryPackId={selectedLibraryPackId}
-              libraryPacks={libraryPacks}
-            />
-          ) : (
-            <SourcesView
-              onIndexResource={handleIndexResource}
-              indexingResourceId={indexingResourceId}
-              indexingProgress={indexingProgress}
-              onCancelJob={handleCancelJob}
-              onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
-              resourcesVersion={resourcesVersion}
-              onAddSource={() => setIsAddSourceModalOpen(true)}
-            />
-          )
-        )}
-        {currentView === 'library' && (
-          <LibraryView 
-            onSelectPack={handleSelectLibraryPack}
+    <MainLayout
+      currentView={currentView}
+      onChangeView={setCurrentView}
+      resources={resources}
+      libraryPacks={libraryPacks}
+      libraryFolders={libraryFolders}
+      resourcesVersion={resourcesVersion}
+      selectedSourceId={selectedSourceId}
+      onSelectSource={handleSelectSource}
+      selectedNotePath={selectedNotePath}
+      onSelectNote={handleSelectNote}
+      selectedMemoryPath={selectedMemoryPath}
+      onSelectMemory={handleSelectMemory}
+      selectedLibraryPackId={selectedLibraryPackId}
+      onSelectLibraryPack={handleSelectLibraryPack}
+      onAddSource={() => setIsAddSourceModalOpen(true)}
+      onRefresh={() => setResourcesVersion(v => v + 1)}
+      statusElement={renderStatusElement()}
+    >
+      {currentView === 'sources' && (
+        (selectedSourceId || selectedLibraryPackId) ? (
+          <WorkspaceView
+            sourceId={selectedSourceId || 'library'}
+            source={resources.find(r => r.id === selectedSourceId)}
+            onIndexComplete={() => setResourcesVersion(v => v + 1)}
+            onIndexResource={handleIndexResource}
+            indexingResourceId={indexingResourceId}
+            indexingProgress={indexingProgress}
+            onUpdateSource={handleEditResource}
+            selectedNotePath={selectedNotePath}
+            selectedMemoryPath={selectedMemoryPath}
+            selectedLibraryPackId={selectedLibraryPackId}
+            libraryPacks={libraryPacks}
           />
-        )}
+        ) : (
+          <SourcesView
+            onIndexResource={handleIndexResource}
+            indexingResourceId={indexingResourceId}
+            indexingProgress={indexingProgress}
+            onCancelJob={handleCancelJob}
+            onViewProfile={(sourceId) => setSelectedSourceId(sourceId)}
+            resourcesVersion={resourcesVersion}
+            onAddSource={() => setIsAddSourceModalOpen(true)}
+          />
+        )
+      )}
+      {currentView === 'library' && (
+        <LibraryView
+          onSelectPack={handleSelectLibraryPack}
+        />
+      )}
       {currentView === 'activity' && <ActivityView jobs={jobs} />}
       {currentView === 'assistant' && <AssistantView />}
       {currentView === 'settings' && <SettingsView />}

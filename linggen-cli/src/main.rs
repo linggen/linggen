@@ -7,8 +7,8 @@ mod cli;
 mod manifest;
 
 use cli::{
-    handle_check, handle_doctor, handle_index, handle_install, handle_start, handle_status,
-    handle_update, ApiClient,
+    find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_start,
+    handle_status, handle_update, is_in_path, ApiClient,
 };
 
 #[derive(Parser)]
@@ -177,7 +177,7 @@ fn try_launch_desktop_app() -> Result<()> {
 }
 
 /// Start the Linggen backend as a separate background process.
-/// This assumes a `linggen-server` binary is available on PATH.
+/// This assumes a `linggen-server` binary is available on PATH or in standard locations.
 fn start_backend_subprocess(port: u16) -> Result<()> {
     use std::fs::OpenOptions;
     use std::process::{Command, Stdio};
@@ -194,22 +194,38 @@ fn start_backend_subprocess(port: u16) -> Result<()> {
         .append(true)
         .open(&log_file)?;
 
-    // Spawn `linggen-server --port <port>` and do not wait for it.
-    Command::new("linggen-server")
+    // Determine the server binary to run
+    let server_bin = find_server_binary();
+
+    // Spawn the server and do not wait for it.
+    let spawn_result = Command::new(&server_bin)
         .arg("--port")
         .arg(port.to_string())
         .stdin(Stdio::null())
         .stdout(log_handle.try_clone()?)
         .stderr(log_handle)
-        .spawn()?;
+        .spawn();
 
-    println!(
-        "🚀 Starting Linggen backend in background on port {} (logs: {})",
-        port,
-        log_file.display()
-    );
-
-    Ok(())
+    match spawn_result {
+        Ok(_) => {
+            println!(
+                "🚀 Starting Linggen backend in background on port {} (logs: {})",
+                port,
+                log_file.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            // If we failed to spawn, provide a more helpful message
+            Err(anyhow::anyhow!(
+                "Failed to start Linggen backend server (tried '{}'): {}\n\n\
+                 Please ensure linggen-server is installed and in your PATH,\n\
+                 or that Linggen.app is installed in /Applications.",
+                server_bin,
+                e
+            ))
+        }
+    }
 }
 
 /// Best-effort extraction of a port number from an API URL string.

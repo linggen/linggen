@@ -89,7 +89,7 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
         extract_tarball(&tar, tmp_extract.path().to_str().unwrap())?;
 
         // Seed library before moving contents to /usr/local/share
-        seed_library_from_extracted_path(tmp_extract.path(), manifest.version.as_deref())?;
+        seed_library_from_extracted_path(tmp_extract.path())?;
 
         // Find the extracted folder (it will be linggen-server-linux-*)
         let entries = fs::read_dir(tmp_extract.path())?;
@@ -252,7 +252,7 @@ fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn install_app_bundle(tar_path: &PathBuf, version: Option<&str>) -> Result<()> {
+fn install_app_bundle(tar_path: &PathBuf, _version: Option<&str>) -> Result<()> {
     let tmp_dir = tempdir().context("Failed to create temp dir for app extraction")?;
     let tmp_path = tmp_dir.path();
 
@@ -262,7 +262,7 @@ fn install_app_bundle(tar_path: &PathBuf, version: Option<&str>) -> Result<()> {
     extract_tarball(tar_path, dest_str)?;
 
     // Seed library before moving bundle to /Applications
-    seed_library_from_extracted_path(tmp_path, version)?;
+    seed_library_from_extracted_path(tmp_path)?;
 
     // Locate the .app bundle (expecting Linggen.app at the tar root)
     let mut app_bundle = tmp_path.join("Linggen.app");
@@ -483,7 +483,7 @@ WantedBy=multi-user.target
 }
 
 /// Seed library templates from an extracted directory (temporary extraction root).
-fn seed_library_from_extracted_path(extracted_root: &Path, version: Option<&str>) -> Result<()> {
+fn seed_library_from_extracted_path(extracted_root: &Path) -> Result<()> {
     // 1. Find the library_templates directory anywhere in the extracted root.
     let template_src = match find_library_templates_dir(extracted_root)? {
         Some(path) => path,
@@ -526,12 +526,6 @@ fn seed_library_from_extracted_path(extracted_root: &Path, version: Option<&str>
             )
             .green()
         );
-    }
-
-    // 4. Update seed version marker
-    if let Some(ver) = version {
-        let marker_path = library_root.join(".linggen_library_seed_version");
-        let _ = fs::write(&marker_path, format!("{}\n", ver));
     }
 
     Ok(())

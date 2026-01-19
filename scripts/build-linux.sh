@@ -44,6 +44,17 @@ docker buildx build \
     -f scripts/Dockerfile.linux \
     .
 
+# Flatten the multi-arch output from buildx
+echo "📂 Flattening multi-arch artifacts..."
+if [ -d "dist/linux/linux_amd64" ]; then
+    mv dist/linux/linux_amd64/*.tar.gz dist/linux/ 2>/dev/null || true
+    rmdir dist/linux/linux_amd64 2>/dev/null || true
+fi
+if [ -d "dist/linux/linux_arm64" ]; then
+    mv dist/linux/linux_arm64/*.tar.gz dist/linux/ 2>/dev/null || true
+    rmdir dist/linux/linux_arm64 2>/dev/null || true
+fi
+
 echo ""
 echo "✅ Headless Linux build complete! Packages are in dist/linux/"
 echo ""

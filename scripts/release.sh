@@ -2,22 +2,35 @@
 set -euo pipefail
 
 # Release orchestrator script for Linggen
-# Usage: ./scripts/release.sh <version> [--draft]
+# Usage: ./scripts/release.sh <version> [--draft] [--skip-linux]
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
 
 REPO="linggen/linggen"
-VERSION="${1:-}"
+VERSION=""
 KEEP_DRAFT=false
+PASS_ARGS=()
 
-if [ "$1" = "--draft" ]; then
-  KEEP_DRAFT=true
-  VERSION="${2:-}"
-fi
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --draft)
+      KEEP_DRAFT=true
+      shift ;;
+    --skip-linux)
+      PASS_ARGS+=("--skip-linux")
+      shift ;;
+    *)
+      if [ -z "$VERSION" ]; then
+        VERSION="$1"
+      fi
+      shift ;;
+  esac
+done
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: $0 <version> [--draft]" >&2
+  echo "Usage: $0 <version> [--draft] [--skip-linux]" >&2
   exit 1
 fi
 
@@ -26,7 +39,7 @@ DIST_DIR="$ROOT_DIR/dist"
 
 # Step 1: Build everything
 echo "📦 Step 1: Building all artifacts..."
-"$ROOT_DIR/scripts/build.sh" "$VERSION"
+"$ROOT_DIR/scripts/build.sh" "$VERSION" ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}
 
 SLUG=$(detect_platform)
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"

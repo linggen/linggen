@@ -5,7 +5,7 @@ import {
     CalendarIcon,
     ClockIcon
 } from '@heroicons/react/24/outline';
-import { type LibraryPack, listPacks } from '../api';
+import { type LibraryPack, getLibrary } from '../api';
 
 interface LibraryViewProps {
     onSelectPack?: (id: string) => void;
@@ -19,7 +19,7 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
     useEffect(() => {
         const fetchPacks = async () => {
             try {
-                const data = await listPacks();
+                const { packs: data } = await getLibrary();
                 setPacks(data);
             } catch (err) {
                 console.error('Failed to load packs:', err);
@@ -32,8 +32,8 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
 
     const filteredPacks = packs.filter(pack => {
         const matchesSearch = (pack.filename || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                             pack.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                             (pack.folder || '').toLowerCase().includes(searchQuery.toLowerCase());
+            pack.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (pack.folder || '').toLowerCase().includes(searchQuery.toLowerCase());
         return matchesSearch;
     });
 
@@ -54,8 +54,8 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
         <div className="flex flex-1 flex-col gap-6 overflow-hidden p-6 bg-[var(--bg-content)] text-[var(--text-primary)]">
             <div className="flex flex-col gap-2">
                 <div className="relative max-w-xl">
-                    <MagnifyingGlassIcon 
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] w-4 h-4" 
+                    <MagnifyingGlassIcon
+                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] w-4 h-4"
                     />
                     <input
                         type="text"

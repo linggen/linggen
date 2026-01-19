@@ -964,9 +964,8 @@ export async function getGraphWithStatus(
     if (query?.focus) params.set('focus', query.focus);
     if (query?.hops) params.set('hops', query.hops.toString());
 
-    const url = `${API_BASE}/api/sources/${sourceId}/graph/with_status${
-        params.toString() ? '?' + params.toString() : ''
-    }`;
+    const url = `${API_BASE}/api/sources/${sourceId}/graph/with_status${params.toString() ? '?' + params.toString() : ''
+        }`;
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Failed to get graph with status: ${response.statusText}`);
@@ -1016,13 +1015,17 @@ export interface ListPacksResponse {
     packs: LibraryPack[];
 }
 
-export async function listPacks(): Promise<LibraryPack[]> {
-    const response = await fetch(`${API_BASE}/api/library/packs`);
+export interface LibraryData {
+    packs: LibraryPack[];
+    folders: string[];
+}
+
+export async function getLibrary(): Promise<LibraryData> {
+    const response = await fetch(`${API_BASE}/api/library`);
     if (!response.ok) {
-        throw new Error(`Failed to list library packs: ${response.statusText}`);
+        throw new Error(`Failed to load library: ${response.statusText}`);
     }
-    const data: ListPacksResponse = await response.json();
-    return data.packs;
+    return response.json();
 }
 
 export async function createPack(folder: string, name: string): Promise<{ id: string; path: string }> {
@@ -1094,19 +1097,6 @@ export async function deleteLibraryFolder(folderName: string): Promise<void> {
     if (!response.ok) {
         throw new Error(`Failed to delete library folder: ${response.statusText}`);
     }
-}
-
-export interface ListLibraryFoldersResponse {
-    folders: string[];
-}
-
-export async function listLibraryFolders(): Promise<string[]> {
-    const response = await fetch(`${API_BASE}/api/library/folders`);
-    if (!response.ok) {
-        throw new Error(`Failed to list library folders: ${response.statusText}`);
-    }
-    const data: ListLibraryFoldersResponse = await response.json();
-    return data.folders || [];
 }
 
 export async function getPack(packId: string): Promise<{ path: string; content: string }> {

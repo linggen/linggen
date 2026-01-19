@@ -5,6 +5,7 @@ mod installer;
 mod jobs;
 mod signature;
 mod util;
+pub use util::{command_exists, find_server_binary, is_in_path};
 
 pub use client::ApiClient;
 pub use commands::{

@@ -28,16 +28,32 @@ echo "=========================================="
 # Step 1: Build CLI
 echo "1️⃣  Building CLI..."
 cd "$ROOT_DIR/linggen-cli"
+# Force a rebuild of the CLI to ensure the version string (compiled from Cargo.toml) is updated.
+cargo clean -p linggen-cli
 cargo build --release
+# Verify the version of the binary we just built
+BUILT_VER=$(target/release/linggen --version | awk '{print $2}')
+if [ "$BUILT_VER" != "$VERSION_NUM" ]; then
+  echo "❌ Error: Built CLI version ($BUILT_VER) does not match target version ($VERSION_NUM)" >&2
+  exit 1
+fi
 tar -C target/release -czf "$DIST_DIR/linggen-cli-${SLUG}.tar.gz" linggen
-echo "✅ CLI built: dist/linggen-cli-${SLUG}.tar.gz"
+echo "✅ CLI built: dist/linggen-cli-${SLUG}.tar.gz (Version: $BUILT_VER)"
 
 # Step 2: Build Backend
 echo ""
 echo "2️⃣  Building Server..."
 cd "$ROOT_DIR/backend"
+# Force rebuild of the server binary
+cargo clean -p api
 cargo build --release --bin linggen-server
-echo "✅ Backend built"
+# Verify server version
+SRV_VER=$(target/release/linggen-server --version | awk '{print $2}')
+if [ "$SRV_VER" != "$VERSION_NUM" ]; then
+  echo "❌ Error: Built server version ($SRV_VER) does not match target version ($VERSION_NUM)" >&2
+  exit 1
+fi
+echo "✅ Backend built (Version: $SRV_VER)"
 
 # Verify LINGGEN_FRONTEND_DIR support
 if ! LC_ALL=C grep -a -q "LINGGEN_FRONTEND_DIR" "$ROOT_DIR/backend/target/release/linggen-server"; then

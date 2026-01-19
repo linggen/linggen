@@ -6,7 +6,6 @@ use axum::{
 };
 use chrono;
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::info;
 
@@ -60,150 +59,170 @@ pub struct RenamePackRequest {
     pub new_name: String,
 }
 
-pub async fn list_folders(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let library_root = &state.library_path;
-    let mut folders: Vec<String> = Vec::new();
-
-    fn scan_folders_recursive(
-        dir: &std::path::Path,
-        root: &std::path::Path,
-        prefix: &str,
-        folders: &mut Vec<String>,
-    ) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with('.') || name == "packs" {
-                            continue;
-                        }
-
-                        // Prevent nested 'official' folders from appearing in the tree
-                        if name == "official" && dir != root {
-                            continue;
-                        }
-
-                        let rel_path = path
-                            .strip_prefix(root)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .to_string();
-
-                        folders.push(format!("{}{}", prefix, rel_path));
-                        scan_folders_recursive(&path, root, prefix, folders);
+fn scan_folders_recursive(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    prefix: &str,
+    folders: &mut Vec<String>,
+) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with('.') || name == "packs" {
+                        continue;
                     }
+
+                    // Prevent nested 'official' folders from appearing in the tree
+                    if name == "official" {
+                        let is_root_official = if let (Ok(dir_can), Ok(root_can)) =
+                            (dir.canonicalize(), root.canonicalize())
+                        {
+                            dir_can == root_can
+                        } else {
+                            // Fallback to string comparison
+                            let dir_str = dir.to_string_lossy();
+                            let root_str = root.to_string_lossy();
+                            dir_str == root_str || dir_str.ends_with(&format!("/{}", root_str))
+                        };
+
+                        if !is_root_official {
+                            continue;
+                        }
+                    }
+
+                    let rel_path = path
+                        .strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .to_string();
+
+                    folders.push(format!("{}{}", prefix, rel_path));
+                    scan_folders_recursive(&path, root, prefix, folders);
                 }
             }
         }
     }
+}
 
-    // Scan everything from library root
+pub async fn list_library(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let library_root = &state.library_path;
+    let mut folders = Vec::new();
     scan_folders_recursive(library_root, library_root, "", &mut folders);
-
     folders.sort();
     folders.dedup();
 
-    Json(serde_json::json!({ "folders": folders }))
+    let mut packs = Vec::new();
+    scan_dir(library_root, &mut packs, library_root);
+
+    Json(serde_json::json!({
+        "folders": folders,
+        "packs": packs
+    }))
 }
 
-pub async fn list_packs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let library_root = &state.library_path;
-    let mut packs = Vec::new();
+fn scan_dir(
+    dir: &std::path::Path,
+    packs: &mut Vec<serde_json::Value>,
+    library_path: &std::path::Path,
+) {
+    if !dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    if name == "official" {
+                        let is_root_official = if let (Ok(dir_can), Ok(root_can)) =
+                            (dir.canonicalize(), library_path.canonicalize())
+                        {
+                            dir_can == root_can
+                        } else {
+                            // Fallback to string comparison if canonicalization fails
+                            let dir_str = dir.to_string_lossy();
+                            let lib_str = library_path.to_string_lossy();
+                            dir_str == lib_str || dir_str.ends_with(&format!("/{}", lib_str))
+                        };
 
-    fn scan_dir(
-        dir: &std::path::Path,
-        packs: &mut Vec<serde_json::Value>,
-        library_path: &std::path::Path,
-    ) {
-        if !dir.exists() {
-            return;
-        }
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with('.') {
-                            continue;
-                        }
-                        if name == "official" && dir != library_path {
+                        if !is_root_official {
                             continue;
                         }
                     }
-                    scan_dir(&path, packs, library_path);
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        let mut meta = extract_all_meta_from_content(&content)
-                            .unwrap_or_else(|| serde_json::json!({}));
+                }
+                scan_dir(&path, packs, library_path);
+            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let mut meta = extract_all_meta_from_content(&content)
+                        .unwrap_or_else(|| serde_json::json!({}));
 
-                        // Use relative path from the library root as the ID
-                        let rel_path = path
-                            .strip_prefix(library_path)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
+                    // Use relative path from the library root as the ID
+                    let rel_path = path
+                        .strip_prefix(library_path)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .to_string();
+
+                    let is_official = rel_path.starts_with("official/");
+
+                    if let Some(obj) = meta.as_object_mut() {
+                        obj.insert("id".to_string(), serde_json::json!(rel_path));
+                        obj.insert("read_only".to_string(), serde_json::json!(is_official));
+
+                        let filename = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
                             .to_string();
+                        obj.insert("filename".to_string(), serde_json::json!(filename));
 
-                        let is_official = rel_path.starts_with("official/");
+                        if !obj.contains_key("name") {
+                            obj.insert("name".to_string(), serde_json::json!(filename));
+                        }
 
-                        if let Some(obj) = meta.as_object_mut() {
-                            obj.insert("id".to_string(), serde_json::json!(rel_path));
-                            obj.insert("read_only".to_string(), serde_json::json!(is_official));
-
-                            let filename = path
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            obj.insert("filename".to_string(), serde_json::json!(filename));
-
-                            if !obj.contains_key("name") {
-                                obj.insert("name".to_string(), serde_json::json!(filename));
+                        // Add file metadata
+                        if let Ok(metadata) = std::fs::metadata(&path) {
+                            if let Ok(created) = metadata.created() {
+                                obj.insert(
+                                    "created_at".to_string(),
+                                    serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                        created
+                                    )),
+                                );
                             }
-
-                            // Add file metadata
-                            if let Ok(metadata) = std::fs::metadata(&path) {
-                                if let Ok(created) = metadata.created() {
-                                    obj.insert(
-                                        "created_at".to_string(),
-                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
-                                            created
-                                        )),
-                                    );
-                                }
-                                if let Ok(modified) = metadata.modified() {
-                                    obj.insert(
-                                        "updated_at".to_string(),
-                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
-                                            modified
-                                        )),
-                                    );
-                                }
-                            }
-
-                            // Add full relative folder path info
-                            if let Some(parent) = path.parent() {
-                                let rel_folder = parent
-                                    .strip_prefix(library_path)
-                                    .unwrap_or(parent)
-                                    .to_string_lossy()
-                                    .to_string();
-
-                                if !rel_folder.is_empty() {
-                                    obj.insert("folder".to_string(), serde_json::json!(rel_folder));
-                                }
+                            if let Ok(modified) = metadata.modified() {
+                                obj.insert(
+                                    "updated_at".to_string(),
+                                    serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                        modified
+                                    )),
+                                );
                             }
                         }
-                        packs.push(meta);
+
+                        // Add full relative folder path info
+                        if let Some(parent) = path.parent() {
+                            let rel_folder = parent
+                                .strip_prefix(library_path)
+                                .unwrap_or(parent)
+                                .to_string_lossy()
+                                .to_string();
+
+                            if !rel_folder.is_empty() {
+                                obj.insert("folder".to_string(), serde_json::json!(rel_folder));
+                            }
+                        }
                     }
+                    packs.push(meta);
                 }
             }
         }
     }
-
-    scan_dir(library_root, &mut packs, &state.library_path);
-
-    Json(serde_json::json!({ "packs": packs }))
 }
 
 pub async fn create_folder(

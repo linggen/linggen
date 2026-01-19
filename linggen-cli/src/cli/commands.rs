@@ -8,7 +8,7 @@ use super::client::{ApiClient, CreateSourceRequest};
 use super::installer::{install_linux, install_macos};
 use super::jobs::wait_for_job;
 use super::signature::LINGGEN_PUBLIC_KEY;
-use super::util::{format_timestamp, get_local_app_version, run_and_capture_version};
+use super::util::{format_timestamp, get_local_app_version};
 use crate::manifest::{current_platform, fetch_manifest, Platform};
 
 /// Returns the user-facing current directory when possible.
@@ -62,17 +62,6 @@ fn logical_absolute(path: &PathBuf) -> PathBuf {
     } else {
         out
     }
-}
-
-fn parse_cli_version(raw: &str) -> Option<String> {
-    // Expected output is typically "linggen X.Y.Z" but keep it resilient.
-    for token in raw.split_whitespace() {
-        let t = token.trim_start_matches('v');
-        if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '.') && t.contains('.') {
-            return Some(t.to_string());
-        }
-    }
-    None
 }
 
 /// Install using manifest (preferred); fall back to package manager when available.
@@ -210,8 +199,7 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
         );
     }
 
-    // Server install check (Linux/macOS fallback)
-    #[cfg(not(target_os = "macos"))]
+    // Server install check (Linux/macOS)
     {
         use crate::cli::util::command_exists;
         println!(

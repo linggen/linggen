@@ -18,8 +18,8 @@ use crate::analytics;
 use crate::handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, create_folder,
     create_pack, delete_folder, delete_pack, delete_uploaded_file, enhance_prompt, get_app_status,
-    get_graph, get_graph_status, get_graph_with_status, get_pack, index_source, list_folders,
-    list_jobs, list_packs, list_resources, list_uploaded_files,
+    get_graph, get_graph_status, get_graph_with_status, get_pack, index_source, list_library,
+    list_jobs, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
     rebuild_graph, remove_resource, rename_folder, rename_pack, rename_resource, retry_init,
     save_pack, update_resource_patterns, upload_file, upload_file_stream, AppState,
@@ -612,16 +612,14 @@ pub async fn start_server(port: u16, parent_pid: Option<u32>) -> anyhow::Result<
         .route("/api/resources/remove", post(remove_resource))
         .route("/api/resources/rename", post(rename_resource))
         .route("/api/resources/patterns", post(update_resource_patterns))
-        .route("/api/library/packs", get(list_packs).post(create_pack))
+        .route("/api/library", get(list_library))
+        .route("/api/library/packs", post(create_pack))
         .route("/api/library/packs/rename", post(rename_pack))
         .route(
             "/api/library/packs/*pack_id",
             get(get_pack).put(save_pack).delete(delete_pack),
         )
-        .route(
-            "/api/library/folders",
-            get(list_folders).post(create_folder),
-        )
+        .route("/api/library/folders", post(create_folder))
         .route("/api/library/folders/rename", post(rename_folder))
         .route("/api/library/folders/:folder_name", delete(delete_folder))
         .route(

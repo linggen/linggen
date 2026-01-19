@@ -73,11 +73,13 @@ ENV LINGGEN_BUILD_VERSION=$BUILD_VERSION
 
 # Build the real backend binary
 WORKDIR /app/backend
-RUN cargo build --release -p api
+# Force rebuild all workspace members by touching all source files. 
+# This prevents Cargo from using stale metadata from the dummy build phase.
+RUN find . -name "*.rs" -exec touch {} + && cargo build --release -p api
 
 # Build the real CLI binary
 WORKDIR /app/linggen-cli
-RUN cargo build --release
+RUN find src -name "*.rs" -exec touch {} + && cargo build --release
 
 # 4. Build the frontend assets
 WORKDIR /app/frontend
@@ -86,20 +88,28 @@ COPY frontend/package.json ./
 # Remove lockfile to avoid architecture mismatches during multi-arch builds
 RUN rm -f package-lock.json && npm install
 COPY frontend/ .
-RUN npm run build
+RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: Frontend build produced no assets" && exit 1)
 
 # 5. Prepare portable artifacts
 WORKDIR /app
 RUN mkdir -p /app/dist-temp && \
     if [ "$TARGETARCH" = "amd64" ]; then SLUG="x86_64"; else SLUG="aarch64"; fi && \
+    # CLI validation
+    CLI_BIN="/app/linggen-cli/target/release/linggen" && \
+    CLI_SIZE=$(stat -c%s "$CLI_BIN") && \
+    if [ "$CLI_SIZE" -lt 1000000 ]; then echo "❌ Error: CLI binary too small ($CLI_SIZE bytes)" && exit 1; fi && \
     # CLI Tarball (Flat)
     mkdir -p /app/dist-temp/cli-flat && \
-    cp /app/linggen-cli/target/release/linggen /app/dist-temp/cli-flat/ && \
+    cp "$CLI_BIN" /app/dist-temp/cli-flat/ && \
     cd /app/dist-temp/cli-flat && tar -czf /app/dist-temp/linggen-cli-linux-${SLUG}.tar.gz linggen && \
+    # Server validation
+    SRV_BIN="/app/backend/target/release/linggen-server" && \
+    SRV_SIZE=$(stat -c%s "$SRV_BIN") && \
+    if [ "$SRV_SIZE" -lt 10000000 ]; then echo "❌ Error: Server binary too small ($SRV_SIZE bytes)" && exit 1; fi && \
     # Server Tarball (Portable with root folder)
     mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/frontend && \
     mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/library_templates && \
-    cp /app/backend/target/release/linggen-server /app/dist-temp/linggen-server-linux-${SLUG}/ && \
+    cp "$SRV_BIN" /app/dist-temp/linggen-server-linux-${SLUG}/ && \
     cp -r /app/frontend/dist/* /app/dist-temp/linggen-server-linux-${SLUG}/frontend/ && \
     cp -r /app/backend/api/library_templates/* /app/dist-temp/linggen-server-linux-${SLUG}/library_templates/ && \
     cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz linggen-server-linux-${SLUG}

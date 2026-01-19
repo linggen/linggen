@@ -38,8 +38,8 @@ pub use jobs::{cancel_job, list_jobs};
 pub use internal_rescan::rescan_internal_index;
 // pub use memory::{create_memory, delete_memory, list_memories, read_memory, update_memory};
 pub use library::{
-    create_folder, create_pack, delete_folder, delete_pack, get_pack, list_folders, list_packs,
-    rename_folder, rename_pack, save_pack,
+    create_folder, create_pack, delete_folder, delete_pack, get_pack, list_library, rename_folder,
+    rename_pack, save_pack,
 };
 pub use memory_semantic::search_semantic as memory_search_semantic;
 pub use prompts::{delete_prompt, get_prompt, list_prompts, rename_prompt, save_prompt};

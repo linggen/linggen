@@ -7,23 +7,26 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
 
-VERSION="${1:-}"
+VERSION=""
 SKIP_LINUX=false
 
-# Check if arguments were provided at all
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-linux)
+      SKIP_LINUX=true
+      shift ;;
+    *)
+      if [ -z "$VERSION" ]; then
+        VERSION="$1"
+      fi
+      shift ;;
+  esac
+done
+
 if [ -z "$VERSION" ]; then
   echo "Usage: $0 <version> [--skip-linux]" >&2
   exit 1
-fi
-
-if [ "$VERSION" = "--skip-linux" ]; then
-  SKIP_LINUX=true
-  VERSION="${2:-}"
-  if [ -z "$VERSION" ]; then
-    echo "Error: Version required when using --skip-linux" >&2
-    echo "Usage: $0 <version> [--skip-linux]" >&2
-    exit 1
-  fi
 fi
 
 VERSION_NUM="${VERSION#v}"
@@ -44,8 +47,8 @@ else
   echo "📦 Step 1: Building local Linux artifacts (CLI & Server)..."
   # On Linux, the multi-arch docker build covers most needs, 
   # but we can do a local build here if needed.
-  cd "$ROOT_DIR/linggen-cli" && cargo build --release
-  cd "$ROOT_DIR/backend" && cargo build --release --bin linggen-server
+  cd "$ROOT_DIR/linggen-cli" && cargo clean -p linggen-cli && cargo build --release
+  cd "$ROOT_DIR/backend" && cargo clean -p api && cargo build --release --bin linggen-server
 fi
 
 # 2. Build multi-arch Linux artifacts (requires Docker)
