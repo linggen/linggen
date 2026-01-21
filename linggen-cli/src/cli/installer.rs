@@ -12,6 +12,69 @@ use crate::manifest::{select_artifact, ArtifactKind, Platform};
 use super::download::{default_http_client, download_to_temp};
 use super::util::run_cmd;
 
+fn resolve_human_home_dir() -> Result<PathBuf> {
+    // Normal case: not running under sudo/root.
+    #[cfg(unix)]
+    {
+        if !is_root_unix() {
+            return dirs::home_dir()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"));
+        }
+
+        // If we're root (e.g. `sudo linggen install`), prefer the invoking human user's home.
+        let sudo_user = std::env::var("SUDO_USER").unwrap_or_default();
+        if !sudo_user.trim().is_empty() && sudo_user != "root" {
+            // macOS: prefer dscl; fallback to /Users/<name>
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(out) = Command::new("dscl")
+                    .args([
+                        ".",
+                        "-read",
+                        &format!("/Users/{}", sudo_user),
+                        "NFSHomeDirectory",
+                    ])
+                    .output()
+                {
+                    if out.status.success() {
+                        if let Ok(s) = String::from_utf8(out.stdout) {
+                            // Example: "NFSHomeDirectory: /Users/lianghuang\n"
+                            if let Some(path) = s.split(':').nth(1).map(|v| v.trim()) {
+                                if !path.is_empty() {
+                                    return Ok(PathBuf::from(path));
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(PathBuf::from("/Users").join(sudo_user));
+            }
+
+            // Linux/other Unix: try passwd DB via getent; fallback to /home/<name>
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Ok(out) = Command::new("getent").args(["passwd", &sudo_user]).output() {
+                    if out.status.success() {
+                        if let Ok(s) = String::from_utf8(out.stdout) {
+                            let home = s.split(':').nth(5).unwrap_or("").trim();
+                            if !home.is_empty() {
+                                return Ok(PathBuf::from(home));
+                            }
+                        }
+                    }
+                }
+                return Ok(PathBuf::from("/home").join(sudo_user));
+            }
+        }
+    }
+
+    // Non-unix or root with no sudo context: fall back to dirs.
+    dirs::home_dir()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))
+}
+
 pub async fn install_macos(manifest: &crate::manifest::Manifest) -> Result<()> {
     let client = default_http_client()?;
 
@@ -406,8 +469,14 @@ fn install_app_bundle(tar_path: &PathBuf, _version: Option<&str>) -> Result<()> 
 
     let dest_app = applications_dir.join("Linggen.app");
     if dest_app.exists() {
-        fs::remove_dir_all(&dest_app)
-            .context("Failed to remove existing /Applications/Linggen.app")?;
+        if let Err(e) = fs::remove_dir_all(&dest_app) {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow::bail!(
+                    "Failed to remove existing /Applications/Linggen.app (permission denied). Try:\n  sudo linggen install"
+                );
+            }
+            return Err(e).context("Failed to remove existing /Applications/Linggen.app");
+        }
     }
 
     // Copy the bundle. (On macOS, we retry with sudo if permissions fail.)
@@ -637,23 +706,46 @@ fn seed_library_from_extracted_path(extracted_root: &Path) -> Result<()> {
     //   /var/lib/linggen/library/official
     //
     // (This matches the systemd unit Environment=LINGGEN_LIBRARY_DIR=/var/lib/linggen/library)
-    let library_root = PathBuf::from("/var/lib/linggen/library");
+    //
+    // On macOS, the CLI install is typically run without root and should seed into the
+    // per-user library path instead of /var/lib.
+    let library_root = if cfg!(target_os = "linux") {
+        PathBuf::from("/var/lib/linggen/library")
+    } else {
+        let home = resolve_human_home_dir()
+            .context("Could not determine home directory for library seed")?;
+        home.join(".linggen").join("library")
+    };
     let official_dst = library_root.join("official");
 
     // 3. Update official templates (wipe + replace)
-    println!("{}", "🎨 Updating official library templates...".cyan());
+    println!(
+        "{}",
+        format!(
+            "🎨 Updating official library templates in {:?}...",
+            official_dst
+        )
+        .cyan()
+    );
 
     // Ensure base dirs exist and are writable for the service (systemd will chown StateDirectory,
     // but we create/populate it at install time).
-    run_cmd("mkdir", &["-p", "/var/lib/linggen/library"])?;
+    let library_root_str = library_root
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid library path: {:?}", library_root))?;
+    let official_dst_str = official_dst
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid library path: {:?}", official_dst))?;
+
+    run_cmd("mkdir", &["-p", library_root_str])?;
     // Wipe old official templates if present
-    run_cmd("rm", &["-rf", "/var/lib/linggen/library/official"])?;
-    run_cmd("mkdir", &["-p", "/var/lib/linggen/library/official"])?;
+    run_cmd("rm", &["-rf", official_dst_str])?;
+    run_cmd("mkdir", &["-p", official_dst_str])?;
 
     // Copy templates into place (requires root).
     // Note: copy contents of template_src into official_dst.
     let src = format!("{}/.", template_src.display());
-    run_cmd("cp", &["-rf", &src, "/var/lib/linggen/library/official"])?;
+    run_cmd("cp", &["-rf", &src, official_dst_str])?;
 
     println!(
         "{}",

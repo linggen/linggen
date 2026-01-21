@@ -29,29 +29,30 @@ Install the CLI in seconds and start indexing:
 
 ```bash
 curl -sSL https://linggen.dev/install-cli.sh | bash
-linggen start
-linggen index .
-```
-
-On Linux, you can set up the background server as a systemd service:
-
-```bash
 sudo linggen install
+sudo linggen
+cd path/to/project
+sudo linggen index
 ```
+
 
 ---
 
 ## 💬 How to use it with your AI
 
-Linggen provides a Model Context Protocol (MCP) server that connects your local "brain" to MCP-enabled IDEs like **Cursor**, **Zed**, or **Claude Desktop**.
+Linggen provides skills server by default and a optional Model Context Protocol (MCP) server that connects your local "brain" to MCP-enabled IDEs like **Cursor**, **Zed**, or **Claude code**.
+
+Install linggen extension in VSCODE or Cursor, that will inject linggen into your AI.
 
 ### Example Prompts:
 
-> "Call Linggen MCP, find out how project-sender sends out messages, and summarize the architecture."
+> "Call Linggen SKILLS, find out how project-sender sends out messages, and summarize the architecture."
 
-> "Load the 'Senior Developer' skill from Linggen and refactor this component to follow our clean code standards."
+> "Using Linggen's default skills, refactor this component to follow clean code standards and our existing patterns."
 
 > "Check Linggen memory for any ADRs related to our database choice before suggesting a schema change."
+
+> "Use the 'Senior Developer' skill for this task and propose a safe refactor plan with small, reviewable commits."
 
 ---
 
@@ -59,7 +60,7 @@ Linggen provides a Model Context Protocol (MCP) server that connects your local 
 
 - **[linggen](https://github.com/linggen/linggen):** The core engine, CLI, and local server.
 - **[linggen-vscode](https://github.com/linggen/linggen-vscode):** VS Code extension for Graph View and automatic MCP setup.
-- **[Library Templates](backend/api/library_templates):** Pre-defined skills and policies to align your AI's behavior.
+
 
 ---
 
