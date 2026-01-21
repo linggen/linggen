@@ -81,8 +81,24 @@ pub async fn index_source(
 
     // 3. Validate path
     let path = PathBuf::from(&source.path);
-    if !path.exists() {
-        let error_msg = format!("Path does not exist: {}", source.path);
+    match std::fs::metadata(&path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let error_msg = format!(
+                "Permission denied reading path: {}. Ensure the linggen-server service user can access it.",
+                source.path
+            );
+            let failed_job = IndexingJob {
+                status: JobStatus::Failed,
+                finished_at: Some(Utc::now().to_rfc3339()),
+                error: Some(error_msg.clone()),
+                ..job
+            };
+            let _ = state.metadata_store.update_job(&failed_job);
+            return Err((StatusCode::FORBIDDEN, error_msg));
+        }
+        Err(_) => {
+            let error_msg = format!("Path does not exist: {}", source.path);
         let failed_job = IndexingJob {
             status: JobStatus::Failed,
             finished_at: Some(Utc::now().to_rfc3339()),
@@ -91,6 +107,7 @@ pub async fn index_source(
         };
         let _ = state.metadata_store.update_job(&failed_job);
         return Err((StatusCode::BAD_REQUEST, error_msg));
+        }
     }
 
     // 4. Spawn background task for ingestion and indexing

@@ -65,6 +65,11 @@ fn scan_folders_recursive(
     prefix: &str,
     folders: &mut Vec<String>,
 ) {
+    let root_can = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    info!(
+        "DEBUG: scan_folders_recursive in {:?} (root_can: {:?})",
+        dir, root_can
+    );
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -76,28 +81,32 @@ fn scan_folders_recursive(
 
                     // Prevent nested 'official' folders from appearing in the tree
                     if name == "official" {
-                        let is_root_official = if let (Ok(dir_can), Ok(root_can)) =
-                            (dir.canonicalize(), root.canonicalize())
-                        {
-                            dir_can == root_can
-                        } else {
-                            // Fallback to string comparison
-                            let dir_str = dir.to_string_lossy();
-                            let root_str = root.to_string_lossy();
-                            dir_str == root_str || dir_str.ends_with(&format!("/{}", root_str))
-                        };
+                        let dir_can = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                        let is_root_official = dir_can == root_can
+                            || dir_can.to_string_lossy() == root_can.to_string_lossy();
 
                         if !is_root_official {
+                            info!(
+                                "DEBUG: skipping nested official folder in tree at {:?} (dir_can: {:?}, root_can: {:?})",
+                                path, dir_can, root_can
+                            );
                             continue;
                         }
                     }
 
-                    let rel_path = path
-                        .strip_prefix(root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .to_string();
+                    let rel_path = match path.strip_prefix(&root_can) {
+                        Ok(p) => p.to_string_lossy().to_string(),
+                        Err(_) => {
+                            // Try canonicalizing path too
+                            let path_can = path.canonicalize().unwrap_or_else(|_| path.clone());
+                            path_can
+                                .strip_prefix(&root_can)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|_| name.to_string())
+                        }
+                    };
 
+                    info!("DEBUG: adding folder: {}{}", prefix, rel_path);
                     folders.push(format!("{}{}", prefix, rel_path));
                     scan_folders_recursive(&path, root, prefix, folders);
                 }
@@ -108,13 +117,21 @@ fn scan_folders_recursive(
 
 pub async fn list_library(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let library_root = &state.library_path;
+    let library_root_can = library_root
+        .canonicalize()
+        .unwrap_or_else(|_| library_root.to_path_buf());
+    info!(
+        "DEBUG: list_library scanning root: {:?} (can: {:?})",
+        library_root, library_root_can
+    );
+
     let mut folders = Vec::new();
-    scan_folders_recursive(library_root, library_root, "", &mut folders);
+    scan_folders_recursive(&library_root_can, &library_root_can, "", &mut folders);
     folders.sort();
     folders.dedup();
 
     let mut packs = Vec::new();
-    scan_dir(library_root, &mut packs, library_root);
+    scan_dir(&library_root_can, &mut packs, &library_root_can);
 
     Json(serde_json::json!({
         "folders": folders,
@@ -127,46 +144,57 @@ fn scan_dir(
     packs: &mut Vec<serde_json::Value>,
     library_path: &std::path::Path,
 ) {
+    let library_path_can = library_path
+        .canonicalize()
+        .unwrap_or_else(|_| library_path.to_path_buf());
+    info!(
+        "DEBUG: scan_dir in {:?} (library_path_can: {:?})",
+        dir, library_path_can
+    );
     if !dir.exists() {
+        info!("DEBUG: dir does not exist: {:?}", dir);
         return;
     }
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
+            info!("DEBUG: found entry {:?}", path);
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if name.starts_with('.') {
                         continue;
                     }
                     if name == "official" {
-                        let is_root_official = if let (Ok(dir_can), Ok(root_can)) =
-                            (dir.canonicalize(), library_path.canonicalize())
-                        {
-                            dir_can == root_can
-                        } else {
-                            // Fallback to string comparison if canonicalization fails
-                            let dir_str = dir.to_string_lossy();
-                            let lib_str = library_path.to_string_lossy();
-                            dir_str == lib_str || dir_str.ends_with(&format!("/{}", lib_str))
-                        };
+                        let dir_can = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                        let is_root_official = dir_can == library_path_can
+                            || dir_can.to_string_lossy() == library_path_can.to_string_lossy();
 
                         if !is_root_official {
+                            info!("DEBUG: skipping nested official folder at {:?} (dir_can: {:?}, lib_can: {:?})", path, dir_can, library_path_can);
                             continue;
                         }
                     }
                 }
                 scan_dir(&path, packs, library_path);
             } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                info!("DEBUG: found markdown file {:?}", path);
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     let mut meta = extract_all_meta_from_content(&content)
                         .unwrap_or_else(|| serde_json::json!({}));
 
                     // Use relative path from the library root as the ID
-                    let rel_path = path
-                        .strip_prefix(library_path)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .to_string();
+                    let rel_path = match path.strip_prefix(&library_path_can) {
+                        Ok(p) => p.to_string_lossy().to_string(),
+                        Err(_) => {
+                            let path_can = path.canonicalize().unwrap_or_else(|_| path.clone());
+                            path_can
+                                .strip_prefix(&library_path_can)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|_| {
+                                    path.file_name().unwrap().to_string_lossy().to_string()
+                                })
+                        }
+                    };
 
                     let is_official = rel_path.starts_with("official/");
 
@@ -207,11 +235,18 @@ fn scan_dir(
 
                         // Add full relative folder path info
                         if let Some(parent) = path.parent() {
-                            let rel_folder = parent
-                                .strip_prefix(library_path)
-                                .unwrap_or(parent)
-                                .to_string_lossy()
-                                .to_string();
+                            let rel_folder = match parent.strip_prefix(&library_path_can) {
+                                Ok(p) => p.to_string_lossy().to_string(),
+                                Err(_) => {
+                                    let parent_can = parent
+                                        .canonicalize()
+                                        .unwrap_or_else(|_| parent.to_path_buf());
+                                    parent_can
+                                        .strip_prefix(&library_path_can)
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|_| "".to_string())
+                                }
+                            };
 
                             if !rel_folder.is_empty() {
                                 obj.insert("folder".to_string(), serde_json::json!(rel_folder));

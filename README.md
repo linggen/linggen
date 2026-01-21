@@ -2,24 +2,24 @@
   <img src="frontend/public/logo.svg" width="120" alt="Linggen Logo">
 </p>
 
-# Linggen: Stop re-explaining to AI.
+# Linggen: Design Anchors for AI Coding.
 
-**The free and local app for your AI’s memory.**
+**The alignment layer for your AI workflows.**
 
-Linggen indexes your codebases and tribal knowledge so your AI (Cursor, Zed, Claude, etc.) can actually understand your architecture, cross-project dependencies, and long-term decisions.
+Linggen anchors your design decisions directly into your codebase so humans and AI can evolve it without losing its original shape. It bridges the "context gap" by providing persistent memory, a system-wide map, and a library of shared skills.
 
-[Website](https://linggen.dev) • [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=linggen.linggen-vscode) • [Documentation](https://linggen.dev/docs)
+[Website](https://linggen.dev) • [Wiki](https://linggen.dev/wiki) • [Documentation](https://linggen.dev/docs)
 
 ---
 
 ## 🌀 Why Linggen?
 
-Traditional AI chat is "blind" to anything you haven't manually copy-pasted. Linggen bridges this "context gap" by providing:
+Traditional AI chat is "blind" to anything you haven't manually copy-pasted. Linggen turns your codebase from a "black box" into a structured system that AI can actually understand:
 
-- **🧠 Persistent Memory:** Store architectural decisions in `.linggen/memory` as Markdown. AI recalls them via semantic search.
-- **🌐 Cross-Project Intelligence:** Work on Project A while your AI learns design patterns or auth logic from Project B.
-- **📊 System Map (Graph):** Visualize file dependencies and "blast radius" before you refactor.
-- **🔒 Local-First & Private:** All indexing and vector search (via LanceDB) happens on your machine. Your code and embeddings never leave your side. No accounts required.
+- **🧠 Design Anchors (Memory):** Store architectural decisions, ADRs, and "tribal knowledge" in `.linggen/memory` as Markdown. AI recalls them via semantic search.
+- **📊 System Map (Graph):** An Obsidian-like, zoomable dependency graph. Visualize file relationships and "blast radius" before you refactor.
+- **🛠️ Shared Library & Skills:** Ingest pre-defined skills (e.g., `Software Architect`, `Senior Developer`, `React Expert`) to enforce consistency across projects and teams.
+- **🔒 Local-First & Private:** All indexing and vector search (via LanceDB) happens on your machine. Your code and embeddings never leave your side.
 
 ---
 
@@ -33,7 +33,7 @@ linggen start
 linggen index .
 ```
 
-On Linux, you can set up the background server and systemd service after CLI installation:
+On Linux, you can set up the background server as a systemd service:
 
 ```bash
 sudo linggen install
@@ -43,22 +43,23 @@ sudo linggen install
 
 ## 💬 How to use it with your AI
 
-Once Linggen is running and your project is indexed, simply talk to your MCP-enabled IDE (like Cursor or Zed):
+Linggen provides a Model Context Protocol (MCP) server that connects your local "brain" to MCP-enabled IDEs like **Cursor**, **Zed**, or **Claude Desktop**.
 
-> "Call Linggen MCP, find out how project-sender sends out messages, and ingest it."
+### Example Prompts:
 
-> "Call Linggen MCP, load memory from Project-B, learn its code style and design pattern."
+> "Call Linggen MCP, find out how project-sender sends out messages, and summarize the architecture."
 
-> "Load memory from Linggen, find out what is the goal of this piece of code."
+> "Load the 'Senior Developer' skill from Linggen and refactor this component to follow our clean code standards."
+
+> "Check Linggen memory for any ADRs related to our database choice before suggesting a schema change."
 
 ---
 
 ## 📂 The Linggen Ecosystem
 
-- **[linggen](https://github.com/linggen/linggen):** The core engine and CLI runtime.
+- **[linggen](https://github.com/linggen/linggen):** The core engine, CLI, and local server.
 - **[linggen-vscode](https://github.com/linggen/linggen-vscode):** VS Code extension for Graph View and automatic MCP setup.
-- **[linggensite](https://github.com/linggen/linggensite):** (This Repo) The landing page and documentation site.
-- **linggen:** The core engine, CLI, and published releases.
+- **[Library Templates](backend/api/library_templates):** Pre-defined skills and policies to align your AI's behavior.
 
 ---
 
@@ -67,10 +68,9 @@ Once Linggen is running and your project is indexed, simply talk to your MCP-ena
 Linggen is open-source under the **[MIT License](LICENSE)**.
 
 - **100% Free for Individuals:** Use it for all your personal and open-source projects.
-- **Local-First:** Your code and your "memory" never leave your machine.
-- **Commercial Support:** If you are a team (5+ users) or a company using Linggen in a professional environment, we ask that you support the project's development by purchasing a **Commercial License**.
+- **Commercial Support:** For teams (5+ users) or companies, please support development by purchasing a **Commercial License**.
 
-For more details on future enterprise features (SSO, Team Sync, RBAC), visit our [Pricing Page](https://linggen.dev/pricing) or [get in touch via email](mailto:linggen77@gmail.com).
+For more details, visit our [Pricing Page](https://linggen.dev/pricing) or [get in touch via email](mailto:linggen77@gmail.com).
 
 ---
 
@@ -78,9 +78,10 @@ For more details on future enterprise features (SSO, Team Sync, RBAC), visit our
 
 - [x] **Core Engine:** Local indexing and semantic search (LanceDB).
 - [x] **MCP Support:** Use with Cursor, Zed, and Claude.
-- [x] **Visual System Map:** Graph visualization of your codebase.
+- [x] **Visual System Map:** Obsidian-like graph visualization of your codebase.
+- [x] **Library System:** Shared skills and architecture policies.
 - [ ] **Team Memory Sync:** Share architectural decisions across your team.
 - [ ] **Deep Integration:** More IDEs and specialized agents.
 - [ ] **Windows Support:** Bringing the local engine to more platforms.
 
-MIT © 2025 [Linggen](https://linggen.dev)
+MIT © 2026 [Linggen](https://linggen.dev)

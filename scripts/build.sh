@@ -38,6 +38,12 @@ echo "=============================="
 echo "🔄 Syncing version $VERSION_NUM to all project files..."
 "$ROOT_DIR/scripts/sync-version.sh" "$VERSION_NUM"
 
+# 0.5 Clean dist/ to avoid uploading stale artifacts if a later step doesn't produce a new file.
+# (release.sh uploads whatever exists in dist/, so a missing build output could accidentally ship an old binary)
+echo "🧹 Cleaning dist/..."
+rm -rf "$ROOT_DIR/dist"
+mkdir -p "$ROOT_DIR/dist"
+
 # 1. Build local platform artifacts
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 if [ "$OS" = "darwin" ]; then

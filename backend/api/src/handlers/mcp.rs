@@ -1260,7 +1260,7 @@ async fn execute_get_status(app_state: &Arc<AppState>) -> anyhow::Result<String>
     // Check if model is initialized
     let model_initialized = app_state
         .metadata_store
-        .get_setting("model_initialized")
+        .get_setting("embedding_model_initialized")
         .unwrap_or(None)
         .map(|v| v == "true")
         .unwrap_or(false);
@@ -1268,7 +1268,7 @@ async fn execute_get_status(app_state: &Arc<AppState>) -> anyhow::Result<String>
     // Check for error state
     let is_error = app_state
         .metadata_store
-        .get_setting("model_initialized")
+        .get_setting("embedding_model_initialized")
         .unwrap_or(None)
         .map(|v| v == "error")
         .unwrap_or(false);
@@ -1276,14 +1276,14 @@ async fn execute_get_status(app_state: &Arc<AppState>) -> anyhow::Result<String>
     let (status, message, progress) = if is_error {
         let error_msg = app_state
             .metadata_store
-            .get_setting("init_error")
+            .get_setting("embedding_init_error")
             .unwrap_or(None)
             .unwrap_or_else(|| "Model initialization failed".to_string());
         ("error".to_string(), Some(error_msg), None)
     } else if !model_initialized {
         let progress = app_state
             .metadata_store
-            .get_setting("init_progress")
+            .get_setting("embedding_init_progress")
             .unwrap_or(None);
         let msg = progress
             .clone()

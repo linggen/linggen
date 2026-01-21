@@ -53,18 +53,42 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
     let client = default_http_client()?;
     let platform = Platform::Linux;
 
+    // Linux install sets up a system-wide shared server (systemd unit, /usr/local, /var/lib).
+    // Require root. We intentionally do NOT invoke `sudo` inside the CLI; users should run:
+    //   sudo linggen install
+    #[cfg(unix)]
+    if !is_root_unix() {
+        anyhow::bail!("Linux install requires root. Please run: sudo linggen install");
+    }
+
+    // Best-effort: configure shared indexing permissions so the system service (DynamicUser)
+    // can index projects under /home/<user>/... without requiring users to chmod their home.
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = setup_shared_indexing_permissions_linux() {
+            println!(
+                "{}",
+                format!(
+                    "⚠️  Could not fully configure shared indexing permissions automatically: {}",
+                    e
+                )
+                .yellow()
+            );
+        }
+    }
+
     // 1. Install CLI
     if let Some(cli_art) = select_artifact(manifest, platform, ArtifactKind::Cli) {
         println!("{}", "⬇️  Downloading CLI tarball...".cyan());
         let tar = download_to_temp(&client, &cli_art.url, cli_art.signature.as_deref()).await?;
 
-        // Extract to /usr/local/bin (requires sudo)
+        // Extract to /usr/local/bin (requires root)
         println!("{}", "🔧 Installing CLI to /usr/local/bin...".cyan());
-        let status = Command::new("sudo")
-            .args(["tar", "-xzf", tar.to_str().unwrap(), "-C", "/usr/local/bin"])
+        let status = Command::new("tar")
+            .args(["-xzf", tar.to_str().unwrap(), "-C", "/usr/local/bin"])
             .status()?;
         if !status.success() {
-            anyhow::bail!("Failed to extract CLI tarball with sudo");
+            anyhow::bail!("Failed to extract CLI tarball to /usr/local/bin");
         }
         println!("{}", "✅ CLI installed to /usr/local/bin/linggen".green());
     }
@@ -81,7 +105,7 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
         );
 
         // Ensure share dir exists
-        run_cmd("sudo", &["mkdir", "-p", share_dir])?;
+        run_cmd("mkdir", &["-p", share_dir])?;
 
         // Extract to share dir. Note: tarball has a root folder like linggen-server-linux-x86_64/
         // We want the contents of that folder to be in /usr/local/share/linggen/
@@ -106,7 +130,7 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
             {
                 // Copy contents to /usr/local/share/linggen
                 let src = format!("{}/.", path.to_str().unwrap());
-                run_cmd("sudo", &["cp", "-rf", &src, share_dir])?;
+                run_cmd("cp", &["-rf", &src, share_dir])?;
             }
         }
 
@@ -116,9 +140,8 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
             "🔗 Creating symlink /usr/local/bin/linggen-server...".cyan()
         );
         run_cmd(
-            "sudo",
+            "ln",
             &[
-                "ln",
                 "-sf",
                 "/usr/local/share/linggen/linggen-server",
                 "/usr/local/bin/linggen-server",
@@ -216,21 +239,119 @@ fn try_replace_binary(src: &Path, dest: &Path) -> Result<bool> {
         }
     }
 
-    // If direct replace failed, try sudo (will fail in GUI contexts; succeeds in terminal).
-    let (Some(src_str), Some(dest_str)) = (src.to_str(), dest.to_str()) else {
+    // We intentionally do NOT invoke sudo inside the CLI.
+    // If the destination is not writable, instruct the user to re-run with sudo.
+    let Some(dest_str) = dest.to_str() else {
         return Ok(false);
     };
-    let sudo_result = Command::new("sudo")
-        .args(["cp", src_str, dest_str])
-        .status();
-    if sudo_result.as_ref().map(|s| s.success()).unwrap_or(false) {
-        let _ = Command::new("sudo")
-            .args(["chmod", "755", dest_str])
-            .status();
-        return Ok(true);
-    }
+    eprintln!(
+        "⚠️  Failed to replace binary at {} (permission denied?). Try re-running with sudo: sudo linggen update",
+        dest_str
+    );
 
     Ok(false)
+}
+
+#[cfg(unix)]
+fn is_root_unix() -> bool {
+    // Avoid adding extra deps; use `id -u`.
+    let out = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    out.trim() == "0"
+}
+
+#[cfg(target_os = "linux")]
+fn setup_shared_indexing_permissions_linux() -> Result<()> {
+    // Opt-out switch for locked-down environments.
+    if std::env::var("LINGGEN_SKIP_HOST_PERMISSIONS")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        return Ok(());
+    }
+
+    // Determine which *human* user invoked the install.
+    //
+    // NOTE: `SUDO_USER`/`SUDO_UID` are only visible *inside* the sudo'd process.
+    // Users can't see it via `sudo echo $SUDO_USER` because the shell expands `$SUDO_USER`
+    // before sudo runs.
+    let sudo_user = std::env::var("SUDO_USER").unwrap_or_default();
+    let sudo_uid = std::env::var("SUDO_UID").unwrap_or_default();
+
+    // Prefer SUDO_USER when present; otherwise fall back to SUDO_UID -> passwd lookup.
+    let target_user = if !sudo_user.trim().is_empty() && sudo_user != "root" {
+        Some(sudo_user)
+    } else if !sudo_uid.trim().is_empty() {
+        // getent passwd <uid> -> name:x:uid:gid:gecos:home:shell
+        let out = Command::new("getent")
+            .args(["passwd", sudo_uid.trim()])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+        let name = out.split(':').next().unwrap_or("").trim().to_string();
+        if name.is_empty() || name == "root" {
+            None
+        } else {
+            Some(name)
+        }
+    } else {
+        None
+    };
+
+    let Some(target_user) = target_user else {
+        return Ok(());
+    };
+
+    // Create stable group `linggen` and add invoking user to it.
+    // These are best-effort and typically idempotent.
+    let _ = run_cmd("groupadd", &["-f", "linggen"]);
+    let _ = run_cmd("usermod", &["-aG", "linggen", &target_user]);
+
+    // Grant the group traverse permissions on /home/<user> so the service can reach
+    // /home/<user>/workspace/... without opening the home dir to "others".
+    // Do not assume /home/<user>; resolve from passwd database.
+    let passwd = Command::new("getent")
+        .args(["passwd", &target_user])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    let home_path = passwd.split(':').nth(5).unwrap_or("").trim().to_string();
+
+    if !home_path.is_empty() && std::path::Path::new(&home_path).exists() {
+        // `setfacl` may not be installed.
+        let has_setfacl = Command::new("setfacl")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok();
+
+        if has_setfacl {
+            let _ = run_cmd("setfacl", &["-m", "g:linggen:--x", &home_path]);
+            println!(
+                "{}",
+                format!(
+                    "✅ Granted linggen group traverse access to {} (via ACL).",
+                    home_path
+                )
+                .green()
+            );
+        } else {
+            println!(
+                "{}",
+                "⚠️  'setfacl' not found; linggen-server may not be able to index projects under /home/<user>.\n    Install ACL tools (e.g. `sudo apt install acl`) or move projects under a shared directory (e.g. /srv)."
+                    .yellow()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_tarball(tar_path: &PathBuf, dest_dir: &str) -> Result<()> {
@@ -289,26 +410,17 @@ fn install_app_bundle(tar_path: &PathBuf, _version: Option<&str>) -> Result<()> 
             .context("Failed to remove existing /Applications/Linggen.app")?;
     }
 
-    // Copy the bundle; retry with sudo if permissions fail
+    // Copy the bundle. (On macOS, we retry with sudo if permissions fail.)
     let copy_result = Command::new("cp")
         .args(["-R", app_src, "/Applications/"])
         .status();
 
-    let mut success = copy_result.as_ref().map(|s| s.success()).unwrap_or(false);
-    if !success {
-        println!(
-            "{}",
-            "⚠️ Copy to /Applications failed; retrying with sudo (may prompt for password)..."
-                .yellow()
-        );
-        let sudo_result = Command::new("sudo")
-            .args(["cp", "-R", app_src, "/Applications/"])
-            .status();
-        success = sudo_result.as_ref().map(|s| s.success()).unwrap_or(false);
-    }
+    let success = copy_result.as_ref().map(|s| s.success()).unwrap_or(false);
 
     if !success {
-        anyhow::bail!("Failed to copy app bundle to /Applications");
+        anyhow::bail!(
+            "Failed to copy app bundle to /Applications (permission denied?). Try:\n  sudo linggen install"
+        );
     }
 
     println!(
@@ -442,6 +554,12 @@ fn restart_app() -> Result<()> {
 }
 
 fn install_systemd_unit() -> Result<()> {
+    // System-wide shared indexing server for multiple users.
+    //
+    // We use systemd's DynamicUser + StateDirectory so:
+    // - we don't need to create a persistent `linggen` user
+    // - state is stored under /var/lib/linggen (shared, persistent)
+    // - logs go to journald by default (tail with `journalctl -u linggen-server -f`)
     let unit = r#"[Unit]
 Description=Linggen Server
 After=network.target
@@ -449,13 +567,28 @@ After=network.target
 [Service]
 ExecStart=/usr/local/bin/linggen-server
 Restart=on-failure
+
+# Shared, persistent state for the service
+DynamicUser=yes
+StateDirectory=linggen
+
+# Allow the service to read user projects when admins grant access via group/ACL.
+SupplementaryGroups=linggen
+
+# Explicitly set paths so we never depend on HOME (avoids /root surprises)
+Environment=LINGGEN_DATA_DIR=/var/lib/linggen
+Environment=LINGGEN_LIBRARY_DIR=/var/lib/linggen/library
 Environment=LINGGEN_FRONTEND_DIR=/usr/local/share/linggen/frontend
-# Ensure it can create its own data directory in ~/.linggen or /var/lib/linggen
-# By default it uses ~/Library/Application Support/Linggen on Mac 
-# and ~/.local/share/Linggen on Linux (via dirs crate).
-# We might want to fix the user it runs as, but for a simple install,
-# running as the user who ran 'linggen install' (via sudo) might be tricky.
-# For now, it will run as root if installed via sudo, which is okay for a simple server.
+
+# Make sure common "home/cache" locations are writable even when HOME is unset.
+Environment=HOME=/var/lib/linggen
+Environment=XDG_CACHE_HOME=/var/lib/linggen/cache
+
+# HuggingFace hub cache (embedding model downloads). Without this, services may try to write
+# under / (read-only) or another non-writable location when HOME is unset.
+Environment=HF_HOME=/var/lib/linggen/hf
+Environment=HF_HUB_CACHE=/var/lib/linggen/hf/hub
+Environment=HUGGINGFACE_HUB_CACHE=/var/lib/linggen/hf/hub
 
 [Install]
 WantedBy=multi-user.target
@@ -470,11 +603,11 @@ WantedBy=multi-user.target
         .to_string();
 
     run_cmd(
-        "sudo",
-        &["cp", &tmp_str, "/etc/systemd/system/linggen-server.service"],
+        "cp",
+        &["-f", &tmp_str, "/etc/systemd/system/linggen-server.service"],
     )?;
-    run_cmd("sudo", &["systemctl", "daemon-reload"])?;
-    run_cmd("sudo", &["systemctl", "enable", "--now", "linggen-server"])?;
+    run_cmd("systemctl", &["daemon-reload"])?;
+    run_cmd("systemctl", &["enable", "--now", "linggen-server"])?;
     println!(
         "{}",
         "✅ systemd unit installed/enabled (linggen-server)".green()
@@ -498,59 +631,45 @@ fn seed_library_from_extracted_path(extracted_root: &Path) -> Result<()> {
         }
     };
 
-    // 2. Determine target library path (~/.linggen/library/official)
-    let home = dirs::home_dir().context("Could not find home directory")?;
-    let library_root = home.join(".linggen").join("library");
+    // 2. Determine target library path.
+    //
+    // For the shared Linux server install, library is system-wide:
+    //   /var/lib/linggen/library/official
+    //
+    // (This matches the systemd unit Environment=LINGGEN_LIBRARY_DIR=/var/lib/linggen/library)
+    let library_root = PathBuf::from("/var/lib/linggen/library");
     let official_dst = library_root.join("official");
 
-    // Ensure library root exists
-    if !library_root.exists() {
-        fs::create_dir_all(&library_root)?;
-    }
-
-    // 3. Update official templates (Wipe and replace to ensure clean state)
+    // 3. Update official templates (wipe + replace)
     println!("{}", "🎨 Updating official library templates...".cyan());
-    if official_dst.exists() {
-        let _ = fs::remove_dir_all(&official_dst);
-    }
-    fs::create_dir_all(&official_dst)?;
 
-    let copied = copy_dir_recursive(&template_src, &official_dst)?;
+    // Ensure base dirs exist and are writable for the service (systemd will chown StateDirectory,
+    // but we create/populate it at install time).
+    run_cmd("mkdir", &["-p", "/var/lib/linggen/library"])?;
+    // Wipe old official templates if present
+    run_cmd("rm", &["-rf", "/var/lib/linggen/library/official"])?;
+    run_cmd("mkdir", &["-p", "/var/lib/linggen/library/official"])?;
 
-    if copied > 0 {
-        println!(
-            "{}",
-            format!(
-                "✅ Updated {} official library templates in {:?}",
-                copied, official_dst
-            )
-            .green()
-        );
-    }
+    // Copy templates into place (requires root).
+    // Note: copy contents of template_src into official_dst.
+    let src = format!("{}/.", template_src.display());
+    run_cmd("cp", &["-rf", &src, "/var/lib/linggen/library/official"])?;
+
+    println!(
+        "{}",
+        format!(
+            "✅ Updated official library templates in {:?}",
+            official_dst
+        )
+        .green()
+    );
 
     Ok(())
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<usize> {
-    let mut count = 0;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = path
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("No filename"))?;
-        let dest_path = dst.join(file_name);
-
-        if path.is_dir() {
-            fs::create_dir_all(&dest_path)?;
-            count += copy_dir_recursive(&path, &dest_path)?;
-        } else {
-            fs::copy(&path, &dest_path)?;
-            count += 1;
-        }
-    }
-    Ok(count)
-}
+// We previously used a Rust recursive copy helper for seeding packs into a per-user directory.
+// For the shared Linux system install we seed to /var/lib/linggen via root-owned operations, so we no
+// longer need this helper.
 
 fn find_library_templates_dir(root: &Path) -> Result<Option<PathBuf>> {
     // We do a breadth-first-ish search for a directory named "library_templates"

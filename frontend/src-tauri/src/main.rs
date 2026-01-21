@@ -126,32 +126,59 @@ struct BackendProcess {
 }
 
 #[cfg(target_os = "macos")]
-fn bundled_sidecar_path() -> Option<std::path::PathBuf> {
-    // In a packaged macOS app, the main executable lives at:
-    //   Linggen.app/Contents/MacOS/Linggen
-    // and the sidecar is typically alongside it:
-    //   Linggen.app/Contents/MacOS/linggen-server
+fn bundled_sidecar_path(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
+    // In Tauri 2.0, sidecars are located in the Resources/bin directory
+    // and they have the target triple appended.
+    let resource_dir = app_handle.path().resource_dir().ok()?;
+    
+    // We need the target triple. Since this is a build-time thing for the binary,
+    // we can use a compile-time detection or just look for the file.
+    // However, Tauri's sidecar name is "linggen-server".
+    // For macOS, we usually have aarch64-apple-darwin or x86_64-apple-darwin.
+    
+    let patterns = [
+        "linggen-server-aarch64-apple-darwin",
+        "linggen-server-x86_64-apple-darwin",
+        "linggen-server"
+    ];
+
+    for pattern in patterns {
+        let p = resource_dir.join("bin").join(pattern);
+        if p.exists() {
+            return Some(p);
+        }
+        // Also check directly in bin/ (some older Tauri versions/configs)
+        let p = resource_dir.join(pattern);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Fallback to alongside executable (standard for non-Tauri sidecars)
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    Some(dir.join("linggen-server"))
+    let p = dir.join("linggen-server");
+    if p.exists() {
+        return Some(p);
+    }
+    
+    None
 }
 
 #[cfg(target_os = "macos")]
 fn extracted_sidecar_path() -> Option<std::path::PathBuf> {
-    // Copying out of the app bundle can avoid macOS quarantine/permission issues
-    // for embedded auxiliary binaries.
-    let mut dir = dirs::data_dir()?;
-    dir.push("Linggen");
-    dir.push("bin");
-    let _ = std::fs::create_dir_all(&dir);
-    dir.push("linggen-server");
-    Some(dir)
+    let mut path = dirs::data_dir()?;
+    path.push("Linggen");
+    path.push("bin");
+    let _ = std::fs::create_dir_all(&path);
+    path.push("linggen-server");
+    Some(path)
 }
 
 #[cfg(target_os = "macos")]
-fn copy_sidecar_out_of_bundle_if_needed() -> Option<std::path::PathBuf> {
+fn copy_sidecar_out_of_bundle_if_needed(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
     use std::os::unix::fs::PermissionsExt;
-    let src = bundled_sidecar_path()?;
+    let src = bundled_sidecar_path(app_handle)?;
     let dest = extracted_sidecar_path()?;
 
     // Best-effort: if the extracted file exists and is newer or same size, reuse it.
@@ -229,16 +256,39 @@ async fn ensure_backend_running(app_handle: AppHandle, force_restart: bool) {
     } else {
         match client.get("http://127.0.0.1:8787/api/status").send().await {
             Ok(response) if response.status().is_success() => {
-                log_to_file("[Tauri] Backend already running, will use it");
-                true
+                let app_version = app_handle.package_info().version.to_string();
+                if let Ok(status) = response.json::<serde_json::Value>().await {
+                    let backend_version = status["version"].as_str().unwrap_or("");
+                    if backend_version == app_version {
+                        log_to_file(&format!(
+                            "[Tauri] Backend already running with correct version ({}), will use it",
+                            backend_version
+                        ));
+                        true
+                    } else {
+                        log_to_file(&format!(
+                            "[Tauri] Backend running but version mismatch (backend: {}, app: {}). Will force restart.",
+                            backend_version, app_version
+                        ));
+                        false
+                    }
+                } else {
+                    log_to_file("[Tauri] Backend already running but could not parse status. Will force restart.");
+                    false
+                }
             }
             _ => false,
         }
     };
 
     if !backend_already_running {
-        // Backend not running, spawn the sidecar
-        log_to_file("[Tauri] Starting backend sidecar...");
+        // If we found an old version, kill it before spawning new one
+        #[cfg(target_os = "macos")]
+        {
+            log_to_file("[Tauri] Killing any legacy linggen-server processes...");
+            kill_linggen_server_by_bundle_path();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
 
         // Useful diagnostics for Finder-launched apps.
         #[cfg(target_os = "macos")]
@@ -257,7 +307,7 @@ async fn ensure_backend_running(app_handle: AppHandle, force_restart: bool) {
             log_to_file(&format!("[Tauri] Diagnostics: exe={}", exe));
             log_to_file(&format!("[Tauri] Diagnostics: resource_dir={}", resource_dir));
             log_to_file(&format!("[Tauri] Diagnostics: PATH={}", path_env));
-            if let Some(p) = bundled_sidecar_path() {
+            if let Some(p) = bundled_sidecar_path(&app_handle) {
                 log_to_file(&format!(
                     "[Tauri] Diagnostics: bundled_sidecar={} exists={}",
                     p.display(),
@@ -356,7 +406,7 @@ async fn ensure_backend_running(app_handle: AppHandle, force_restart: bool) {
                             {
                                 let is_dev = std::env::var("LINGGEN_DEV").is_ok() || cfg!(debug_assertions);
                                 if !is_dev {
-                                    if let Some(extracted) = copy_sidecar_out_of_bundle_if_needed() {
+                                    if let Some(extracted) = copy_sidecar_out_of_bundle_if_needed(&app_handle) {
                                         log_to_file(&format!(
                                             "[Tauri] Attempting fallback spawn from extracted sidecar: {}",
                                             extracted.display()

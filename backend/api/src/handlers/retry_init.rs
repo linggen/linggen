@@ -29,21 +29,21 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
     }
 
     // Clear error state
-    if let Err(e) = state.metadata_store.set_setting("model_initialized", "") {
+    if let Err(e) = state.metadata_store.set_setting("llm_model_initialized", "") {
         return Json(RetryInitResponse {
             success: false,
             message: format!("Failed to clear error state: {}", e),
         });
     }
 
-    if let Err(e) = state.metadata_store.set_setting("init_error", "") {
+    if let Err(e) = state.metadata_store.set_setting("llm_init_error", "") {
         return Json(RetryInitResponse {
             success: false,
             message: format!("Failed to clear error message: {}", e),
         });
     }
 
-    if let Err(e) = state.metadata_store.set_setting("init_progress", "") {
+    if let Err(e) = state.metadata_store.set_setting("llm_init_progress", "") {
         return Json(RetryInitResponse {
             success: false,
             message: format!("Failed to clear progress: {}", e),
@@ -59,7 +59,7 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
         // Progress callback that saves to redb
         let progress_callback = move |msg: &str| {
             info!("Model init progress: {}", msg);
-            if let Err(e) = metadata_store_for_progress.set_setting("init_progress", msg) {
+            if let Err(e) = metadata_store_for_progress.set_setting("llm_init_progress", msg) {
                 info!("Failed to save progress: {}", e);
             }
         };
@@ -85,20 +85,20 @@ pub async fn retry_init(State(state): State<Arc<AppState>>) -> Json<RetryInitRes
                 }
 
                 // Mark as initialized in redb
-                if let Err(e) = metadata_store_clone.set_setting("model_initialized", "true") {
+                if let Err(e) = metadata_store_clone.set_setting("llm_model_initialized", "true") {
                     info!("Failed to save model initialization state: {}", e);
                 }
-                if let Err(e) = metadata_store_clone.set_setting("init_progress", "") {
+                if let Err(e) = metadata_store_clone.set_setting("llm_init_progress", "") {
                     info!("Failed to clear progress: {}", e);
                 }
             }
             Err(e) => {
                 let error_msg = format!("Failed to initialize LLM model: {}", e);
                 info!("{}", error_msg);
-                if let Err(e) = metadata_store_clone.set_setting("init_error", &error_msg) {
+                if let Err(e) = metadata_store_clone.set_setting("llm_init_error", &error_msg) {
                     info!("Failed to save error: {}", e);
                 }
-                if let Err(e) = metadata_store_clone.set_setting("model_initialized", "error") {
+                if let Err(e) = metadata_store_clone.set_setting("llm_model_initialized", "error") {
                     info!("Failed to save model error state: {}", e);
                 }
             }

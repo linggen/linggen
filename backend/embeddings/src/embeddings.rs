@@ -71,6 +71,28 @@ impl EmbeddingModel {
     }
 
     fn load_model(device: Device) -> Result<Self> {
+        // Ensure HuggingFace hub cache is writable in headless/systemd environments.
+        //
+        // On Linux, when running as a system service (e.g. systemd DynamicUser), `HOME` can be unset
+        // or point to a non-writable location. hf_hub then may try to write into a read-only
+        // filesystem and fail with "Read-only file system (os error 30)".
+        //
+        // We prefer explicit env vars if already set; otherwise derive from LINGGEN_DATA_DIR.
+        if std::env::var_os("HF_HOME").is_none()
+            && std::env::var_os("HF_HUB_CACHE").is_none()
+            && std::env::var_os("HUGGINGFACE_HUB_CACHE").is_none()
+        {
+            if let Ok(base) = std::env::var("LINGGEN_DATA_DIR") {
+                let base = std::path::PathBuf::from(base);
+                let hf_home = base.join("hf");
+                let hub = hf_home.join("hub");
+                let _ = std::fs::create_dir_all(&hub);
+                std::env::set_var("HF_HOME", &hf_home);
+                std::env::set_var("HF_HUB_CACHE", &hub);
+                std::env::set_var("HUGGINGFACE_HUB_CACHE", &hub);
+            }
+        }
+
         // Download model from HuggingFace Hub
         let api = Api::new()?;
         let repo = api.repo(Repo::new(
@@ -209,14 +231,6 @@ impl EmbeddingModel {
         Ok(embeddings)
     }
 
-    /// Mean pooling over token embeddings (legacy, for single items)
-    fn mean_pooling(&self, tensor: &Tensor) -> Result<Tensor> {
-        // tensor shape: [batch_size, seq_len, hidden_size]
-        // Mean over seq_len dimension
-        let pooled = tensor.mean(1)?;
-        Ok(pooled)
-    }
-
     /// Mean pooling with attention mask (for batches)
     fn mean_pooling_with_mask(&self, tensor: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
         // tensor shape: [batch_size, seq_len, hidden_size]
@@ -250,18 +264,6 @@ impl EmbeddingModel {
         let pooled = summed.div(&mask_sum_safe)?;
 
         Ok(pooled)
-    }
-
-    /// L2 normalize embeddings (legacy, for single embedding)
-    fn normalize(&self, tensor: &Tensor) -> Result<Tensor> {
-        // tensor shape after squeeze: [384]
-        // Calculate L2 norm as a scalar
-        let norm_squared: f32 = tensor.sqr()?.sum_all()?.to_scalar()?;
-        let norm = norm_squared.sqrt();
-
-        // Divide each element by the norm (multiply by 1/norm)
-        let scale = 1.0f64 / norm as f64;
-        Ok(tensor.affine(scale, 0.0)?)
     }
 
     /// L2 normalize batch of embeddings

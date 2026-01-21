@@ -25,6 +25,11 @@ ARCH="$(uname -m)"
 echo "🚀 Packaging Linggen ${VERSION} for ${SLUG}"
 echo "=========================================="
 
+# Avoid accidentally reusing stale artifacts from a previous run.
+rm -f "$DIST_DIR/Linggen.app.tar.gz" \
+      "$DIST_DIR/Linggen.app.tar.gz.sig" \
+      "$DIST_DIR/Linggen.app.tar.gz.sig.txt" || true
+
 # Step 1: Build CLI
 echo "1️⃣  Building CLI..."
 cd "$ROOT_DIR/linggen-cli"
@@ -129,11 +134,15 @@ if [ "$OS" = "darwin" ]; then
 
   # Copy artifacts to dist
   UPDATER_BUNDLE_PATH="$ROOT_DIR/frontend/src-tauri/target/release/bundle/macos/Linggen.app.tar.gz"
-  if [ -f "$UPDATER_BUNDLE_PATH" ]; then
-    cp "$UPDATER_BUNDLE_PATH" "$DIST_DIR/"
-    if [ -f "${UPDATER_BUNDLE_PATH}.sig" ]; then
-      cp "${UPDATER_BUNDLE_PATH}.sig" "$DIST_DIR/$(basename "$UPDATER_BUNDLE_PATH").sig"
-    fi
+  if [ ! -f "$UPDATER_BUNDLE_PATH" ]; then
+    echo "❌ Error: Tauri build finished but did not produce updater tarball at:" >&2
+    echo "   $UPDATER_BUNDLE_PATH" >&2
+    exit 1
+  fi
+
+  cp "$UPDATER_BUNDLE_PATH" "$DIST_DIR/"
+  if [ -f "${UPDATER_BUNDLE_PATH}.sig" ]; then
+    cp "${UPDATER_BUNDLE_PATH}.sig" "$DIST_DIR/$(basename "$UPDATER_BUNDLE_PATH").sig"
   fi
 fi
 
