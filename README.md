@@ -21,6 +21,9 @@ Traditional AI chat is "blind" to anything you haven't manually copy-pasted. Lin
 - **🛠️ Shared Library & Skills:** Ingest pre-defined skills (e.g., `Software Architect`, `Senior Developer`, `React Expert`) to enforce consistency across projects and teams.
 - **🔒 Local-First & Private:** All indexing and vector search (via LanceDB) happens on your machine. Your code and embeddings never leave your side.
 
+
+[Why design intent drifts in AI-written code](https://linggen.dev/wiki/2026-01-19-wiki-design-intent)
+
 ---
 
 ## 🚀 Quick Start (macOS & Linux)
