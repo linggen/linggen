@@ -87,7 +87,7 @@ export function Sidebar({
     const [creatingNote, setCreatingNote] = useState<string | null>(null); // sourceId where we are creating a note
     const [creatingLibraryPack, setCreatingLibraryPack] = useState<string | null>(null); // folder where we are creating a pack
     const [creatingLibraryFolder, setCreatingLibraryFolder] = useState<string | null>(null); // parent folder where we are creating a folder
-    
+
     // renaming: { type: 'note' | 'source' | 'libraryPack' | 'libraryFolder', id: string, oldPath: string }
     const [renamingNote, setRenamingNote] = useState<{ sourceId: string, oldPath: string } | null>(null);
     const [renamingLibraryPack, setRenamingLibraryPack] = useState<{ id: string, oldName: string } | null>(null);
@@ -371,7 +371,7 @@ export function Sidebar({
         const { sourceId } = contextMenu;
         const resource = resources.find(r => r.id === sourceId);
         setContextMenu(null);
-        
+
         if (resource) {
             setDeleteSourceConfirmation({
                 sourceId,
@@ -386,20 +386,38 @@ export function Sidebar({
 
         try {
             await removeResource(sourceId);
-            
+
             // Deselect if currently selected
             if (selectedSourceId === sourceId) {
                 onSelectSource?.(null);
             }
-            
+
             // Collapse if expanded
             if (expandedSources.has(sourceId)) {
                 const newExpanded = new Set(expandedSources);
                 newExpanded.delete(sourceId);
                 setExpandedSources(newExpanded);
             }
-            
-            // Note: The parent App.tsx will re-fetch resources automatically
+
+            // Clean up local caches for removed source
+            setSourceNotes(prev => {
+                const next = { ...prev };
+                delete next[sourceId];
+                return next;
+            });
+            setSourceMemories(prev => {
+                const next = { ...prev };
+                delete next[sourceId];
+                return next;
+            });
+            setExpandedMemories(prev => {
+                const next = new Set(prev);
+                next.delete(sourceId);
+                return next;
+            });
+
+            // Refresh resources list so UI updates immediately (no manual reload needed)
+            onRefresh?.();
         } catch (err) {
             console.error("Failed to remove source:", err);
             alert(`Failed to remove source: ${err instanceof Error ? err.message : String(err)}`);
@@ -437,7 +455,7 @@ export function Sidebar({
         if (isOfficialPack || isOfficialFolder) {
             // Option 1: Don't show context menu for official items at all
             // return;
-            
+
             // Option 2: Show restricted menu
             setContextMenu({
                 x: e.clientX,
@@ -565,20 +583,20 @@ export function Sidebar({
         }
     };
 
-    const SidebarSectionHeader = ({ 
-        label, 
-        isCollapsed, 
-        onToggle, 
+    const SidebarSectionHeader = ({
+        label,
+        isCollapsed,
+        onToggle,
         actions,
         isActive
-    }: { 
-        label: string, 
-        isCollapsed: boolean, 
-        onToggle: () => void, 
+    }: {
+        label: string,
+        isCollapsed: boolean,
+        onToggle: () => void,
         actions?: React.ReactNode,
         isActive?: boolean
     }) => (
-        <div 
+        <div
             className={`px-4 py-1.5 flex justify-between items-center mt-2 mb-1 cursor-pointer select-none group transition-colors ${isActive ? 'bg-[var(--item-hover)] shadow-[inset_3px_0_0_0_var(--accent)]' : 'hover:bg-[var(--item-hover)]/50'}`}
             onClick={onToggle}
         >
@@ -727,7 +745,7 @@ export function Sidebar({
                                     className="sidebar-item text-[0.85rem] w-full flex items-center gap-1.5"
                                     style={{ paddingLeft: `${(depth + 2) * 16}px` }}
                                 >
-                                    <div 
+                                    <div
                                         className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
                                         style={{ color, borderColor: color }}
                                     >L</div>
@@ -782,7 +800,7 @@ export function Sidebar({
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto py-2.5 flex flex-col min-h-0">
                 <div className="flex flex-col mb-4">
-                    <SidebarSectionHeader 
+                    <SidebarSectionHeader
                         label="PROJECTS"
                         isCollapsed={isProjectsCollapsed}
                         onToggle={() => {
@@ -963,7 +981,7 @@ export function Sidebar({
                 </div>
 
                 <div className="flex flex-col mb-4">
-                    <SidebarSectionHeader 
+                    <SidebarSectionHeader
                         label="LIBRARY"
                         isCollapsed={isLibraryCollapsed}
                         onToggle={() => {

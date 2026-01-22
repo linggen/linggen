@@ -1,11 +1,6 @@
 #!/bin/bash
 # backend/api/library_templates/skills/linggen/scripts/memory_fetch_by_meta.sh
-
-if [ -f ".linggen/config.json" ]; then
-    PROJECT_URL=$(jq -r '.api_url // empty' .linggen/config.json 2>/dev/null)
-fi
-API_URL=${LINGGEN_API_URL:-${PROJECT_URL:-"http://localhost:7000"}}
-
+source "$(dirname "$0")/config.sh"
 KEY="$1"
 VALUE="$2"
 

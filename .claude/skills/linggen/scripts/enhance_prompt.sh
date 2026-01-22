@@ -1,11 +1,6 @@
 #!/bin/bash
 # backend/api/library_templates/skills/linggen/scripts/enhance_prompt.sh
-
-if [ -f ".linggen/config.json" ]; then
-    PROJECT_URL=$(jq -r '.api_url // empty' .linggen/config.json 2>/dev/null)
-fi
-API_URL=${LINGGEN_API_URL:-${PROJECT_URL:-"http://localhost:7000"}}
-
+source "$(dirname "$0")/config.sh"
 QUERY="$1"
 STRATEGY="${2:-full_code}"
 SOURCE_ID="$3"
@@ -15,16 +10,11 @@ if [ -z "$QUERY" ]; then
     exit 1
 fi
 
-DATA=$(cat <<EOF
-{
-  "query": "$QUERY",
-  "strategy": "$STRATEGY",
-  "source_id": ${SOURCE_ID:+"$SOURCE_ID"}
-}
-EOF
-)
-
-DATA=$(echo "$DATA" | jq 'with_entries(select(.value != null))')
+DATA=$(jq -n \
+  --arg query "$QUERY" \
+  --arg strategy "$STRATEGY" \
+  --arg source_id "$SOURCE_ID" \
+  '{query: $query, strategy: $strategy, source_id: (if $source_id == "" then null else $source_id end)} | with_entries(select(.value != null))')
 
 RESPONSE=$(curl -s -X POST "$API_URL/api/enhance" \
   -H "Content-Type: application/json" \
