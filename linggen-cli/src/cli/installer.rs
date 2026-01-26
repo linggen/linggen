@@ -432,7 +432,7 @@ fn install_server_macos(tar_path: &PathBuf) -> Result<()> {
     // Atomic replacement
     let tmp_dest = install_dir.join(".linggen-server.tmp");
     fs::copy(&server_bin_src, &tmp_dest).context("Failed to copy server binary")?;
-
+    
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -479,11 +479,8 @@ fn is_server_running() -> bool {
 
 fn restart_server(bin_path: &Path) -> Result<()> {
     // Kill existing server
-    let _ = Command::new("pkill")
-        .arg("-x")
-        .arg("linggen-server")
-        .status();
-
+    let _ = Command::new("pkill").arg("-x").arg("linggen-server").status();
+    
     // Wait a bit for it to die
     std::thread::sleep(Duration::from_millis(500));
 
@@ -552,80 +549,4 @@ WantedBy=multi-user.target
         "✅ systemd unit installed/enabled (linggen-server)".green()
     );
     Ok(())
-}
-
-fn seed_library_from_extracted_path(extracted_root: &Path) -> Result<()> {
-    let template_src = match find_library_templates_dir(extracted_root)? {
-        Some(path) => path,
-        None => {
-            println!(
-                "{}",
-                "⚠️  Could not find library_templates in extracted package; skipping library seed."
-                    .yellow()
-            );
-            return Ok(());
-        }
-    };
-
-    let library_root = if cfg!(target_os = "linux") {
-        PathBuf::from("/var/lib/linggen/library")
-    } else {
-        let home = resolve_human_home_dir()
-            .context("Could not determine home directory for library seed")?;
-        home.join(".linggen").join("library")
-    };
-    let official_dst = library_root.join("official");
-
-    println!(
-        "{}",
-        format!(
-            "🎨 Updating official library templates in {:?}...",
-            official_dst
-        )
-        .cyan()
-    );
-
-    let library_root_str = library_root
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid library path: {:?}", library_root))?;
-    let official_dst_str = official_dst
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid library path: {:?}", official_dst))?;
-
-    run_cmd("mkdir", &["-p", library_root_str])?;
-    run_cmd("rm", &["-rf", official_dst_str])?;
-    run_cmd("mkdir", &["-p", official_dst_str])?;
-
-    let src = format!("{}/.", template_src.display());
-    run_cmd("cp", &["-rf", &src, official_dst_str])?;
-
-    println!(
-        "{}",
-        format!(
-            "✅ Updated official library templates in {:?}",
-            official_dst
-        )
-        .green()
-    );
-
-    Ok(())
-}
-
-fn find_library_templates_dir(root: &Path) -> Result<Option<PathBuf>> {
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(current) = stack.pop() {
-        for entry in fs::read_dir(current)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().and_then(|n| n.to_str()) == Some("library_templates") {
-                    return Ok(Some(path));
-                }
-                stack.push(path);
-            }
-        }
-    }
-
-    Ok(None)
 }

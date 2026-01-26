@@ -79,21 +79,6 @@ fn scan_folders_recursive(
                         continue;
                     }
 
-                    // Prevent nested 'official' folders from appearing in the tree
-                    if name == "official" {
-                        let dir_can = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-                        let is_root_official = dir_can == root_can
-                            || dir_can.to_string_lossy() == root_can.to_string_lossy();
-
-                        if !is_root_official {
-                            info!(
-                                "DEBUG: skipping nested official folder in tree at {:?} (dir_can: {:?}, root_can: {:?})",
-                                path, dir_can, root_can
-                            );
-                            continue;
-                        }
-                    }
-
                     let rel_path = match path.strip_prefix(&root_can) {
                         Ok(p) => p.to_string_lossy().to_string(),
                         Err(_) => {
@@ -160,21 +145,6 @@ fn scan_dir(
             let path = entry.path();
             info!("DEBUG: found entry {:?}", path);
             if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with('.') {
-                        continue;
-                    }
-                    if name == "official" {
-                        let dir_can = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-                        let is_root_official = dir_can == library_path_can
-                            || dir_can.to_string_lossy() == library_path_can.to_string_lossy();
-
-                        if !is_root_official {
-                            info!("DEBUG: skipping nested official folder at {:?} (dir_can: {:?}, lib_can: {:?})", path, dir_can, library_path_can);
-                            continue;
-                        }
-                    }
-                }
                 scan_dir(&path, packs, library_path);
             } else if path.extension().map(|e| e == "md").unwrap_or(false) {
                 info!("DEBUG: found markdown file {:?}", path);
@@ -196,11 +166,9 @@ fn scan_dir(
                         }
                     };
 
-                    let is_official = rel_path.starts_with("official/");
-
                     if let Some(obj) = meta.as_object_mut() {
                         obj.insert("id".to_string(), serde_json::json!(rel_path));
-                        obj.insert("read_only".to_string(), serde_json::json!(is_official));
+                        obj.insert("read_only".to_string(), serde_json::json!(false));
 
                         let filename = path
                             .file_stem()
@@ -264,11 +232,7 @@ pub async fn create_folder(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if req.name.contains("..")
-        || req.name.starts_with('/')
-        || req.name == "official"
-        || req.name.starts_with("official/")
-    {
+    if req.name.contains("..") || req.name.starts_with('/') {
         return Err((StatusCode::BAD_REQUEST, "Invalid folder name".to_string()));
     }
     // Create folders directly in library root (user managed)
@@ -293,22 +257,13 @@ pub async fn rename_folder(
         || req.new_name.contains("..")
         || req.old_name.starts_with('/')
         || req.new_name.starts_with('/')
-        || req.new_name == "official"
-        || req.new_name.starts_with("official/")
     {
         return Err((StatusCode::BAD_REQUEST, "Invalid folder name".to_string()));
     }
 
     // Resolve paths - assume user is renaming something they can see
     let library_root = &state.library_path;
-    let old_path = if req.old_name.starts_with("official/") {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Cannot rename official folders".to_string(),
-        ));
-    } else {
-        library_root.join(&req.old_name)
-    };
+    let old_path = library_root.join(&req.old_name);
 
     // Determine new path - preserve parent directory of the old path
     let parent = old_path.parent().unwrap_or(library_root);
@@ -342,14 +297,7 @@ pub async fn delete_folder(
     }
 
     let library_root = &state.library_path;
-    let folder_path = if folder_name.starts_with("official/") {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Cannot delete official folders".to_string(),
-        ));
-    } else {
-        library_root.join(&folder_name)
-    };
+    let folder_path = library_root.join(&folder_name);
 
     if !folder_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Folder not found".to_string()));
@@ -432,15 +380,6 @@ pub async fn rename_pack(
 
     let pack_path = find_pack_by_id(library_root, &req.pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
-
-    // If it's official, we don't allow renaming it directly (must save/edit first to move to user space)
-    if pack_path.starts_with(library_root.join("official")) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Cannot rename official packs. Edit and save it first to create your own version."
-                .to_string(),
-        ));
-    }
 
     let display_name = req
         .new_name
@@ -529,14 +468,6 @@ pub async fn delete_pack(
     let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
 
-    // Cannot delete official packs
-    if pack_path.starts_with(library_root.join("official")) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Cannot delete official packs.".to_string(),
-        ));
-    }
-
     std::fs::remove_file(pack_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -577,15 +508,6 @@ pub async fn save_pack(
 
     let pack_path = find_pack_by_id(library_root, &pack_id)
         .ok_or((StatusCode::NOT_FOUND, "Pack not found".to_string()))?;
-
-    // Check if the file is in official
-    if pack_path.starts_with(library_root.join("official")) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Official templates are read-only. Please create your own pack to save changes."
-                .to_string(),
-        ));
-    }
 
     std::fs::write(&pack_path, &req.content).map_err(|e| {
         (

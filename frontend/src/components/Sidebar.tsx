@@ -7,7 +7,8 @@ import {
     ChevronRightIcon,
     ChevronDownIcon,
     PencilIcon,
-    TrashIcon
+    TrashIcon,
+    QuestionMarkCircleIcon
 } from '@heroicons/react/24/outline'
 import { useState, useEffect } from 'react';
 import {
@@ -99,7 +100,7 @@ export function Sidebar({
     const [deleteLibraryFolderConfirmation, setDeleteLibraryFolderConfirmation] = useState<{ name: string } | null>(null);
     const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
     const [expandedMemories, setExpandedMemories] = useState<Set<string>>(new Set());
-    const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<Set<string>>(new Set(['official', 'official/skills', 'official/policies']));
+    const [expandedLibraryFolders, setExpandedLibraryFolders] = useState<Set<string>>(new Set(['skills', 'policies']));
     const [sourceNotes, setSourceNotes] = useState<Record<string, Note[]>>({});
     const [sourceMemories, setSourceMemories] = useState<Record<string, MemoryFile[]>>({});
 
@@ -133,7 +134,7 @@ export function Sidebar({
                         path: fullPath,
                         children: {},
                         packs: [],
-                        isOfficial: fullPath.startsWith('official/') || fullPath === 'official'
+                        isOfficial: false
                     };
                 }
                 node = current[part];
@@ -447,24 +448,6 @@ export function Sidebar({
         e.preventDefault();
         e.stopPropagation();
         e.nativeEvent.stopImmediatePropagation();
-
-        // Check if the pack or folder is official
-        const isOfficialPack = packId ? libraryPacks.find(p => p.id === packId)?.read_only : false;
-        const isOfficialFolder = folder === 'official' || folder?.startsWith('official/');
-
-        if (isOfficialPack || isOfficialFolder) {
-            // Option 1: Don't show context menu for official items at all
-            // return;
-
-            // Option 2: Show restricted menu
-            setContextMenu({
-                x: e.clientX,
-                y: e.clientY,
-                libraryPackId: packId,
-                libraryFolder: folder
-            });
-            return;
-        }
 
         setContextMenu({
             x: e.clientX,
@@ -1093,7 +1076,7 @@ export function Sidebar({
                 </div>
             </div>
 
-            <div className="mt-auto flex flex-col py-2 border-t border-[var(--border-color)]/30">
+                <div className="mt-auto flex flex-col py-2 border-t border-[var(--border-color)]/30">
                 <div className="px-4 pb-1 text-[11px] font-bold text-[var(--text-secondary)] tracking-wider uppercase opacity-60">TOOLS</div>
                 <button
                     className={`sidebar-item flex items-center gap-2 ${currentView === 'activity' ? 'active' : ''}`}
@@ -1109,6 +1092,15 @@ export function Sidebar({
                     <Cog6ToothIcon className="w-4 h-4" />
                     <span>Settings</span>
                 </button>
+                <a
+                    href="https://linggen.dev/docs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="sidebar-item flex items-center gap-2 mt-1 no-underline"
+                >
+                    <QuestionMarkCircleIcon className="w-4 h-4" />
+                    <span>Help</span>
+                </a>
             </div>
 
             {contextMenu && (
@@ -1119,85 +1111,68 @@ export function Sidebar({
                 >
                     {contextMenu.libraryPackId ? (
                         <>
-                            {!libraryPacks.find(p => p.id === contextMenu.libraryPackId)?.read_only && (
-                                <>
-                                    <ContextMenuItem
-                                        label="Rename"
-                                        icon={<PencilIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
-                                            if (pack) {
-                                                setRenamingLibraryPack({ id: pack.id, oldName: pack.filename || pack.name });
-                                            }
-                                            setContextMenu(null);
-                                        }}
-                                    />
-                                    <ContextMenuItem
-                                        label="Delete"
-                                        icon={<TrashIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
-                                            if (pack) {
-                                                setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.filename || pack.name });
-                                            }
-                                            setContextMenu(null);
-                                        }}
-                                        danger={true}
-                                    />
-                                </>
-                            )}
-                            {libraryPacks.find(p => p.id === contextMenu.libraryPackId)?.read_only && (
-                                <div className="px-3 py-2 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)]">
-                                    Official Template (Read-Only)
-                                </div>
-                            )}
+                            <ContextMenuItem
+                                label="Rename"
+                                icon={<PencilIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                    if (pack) {
+                                        setRenamingLibraryPack({ id: pack.id, oldName: pack.filename || pack.name });
+                                    }
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Delete"
+                                icon={<TrashIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    const pack = libraryPacks.find(p => p.id === contextMenu.libraryPackId);
+                                    if (pack) {
+                                        setDeleteLibraryPackConfirmation({ id: pack.id, name: pack.filename || pack.name });
+                                    }
+                                    setContextMenu(null);
+                                }}
+                                danger={true}
+                            />
                         </>
                     ) : contextMenu.libraryFolder ? (
                         <>
-                            {!(contextMenu.libraryFolder === 'official' || contextMenu.libraryFolder.startsWith('official/')) ? (
-                                <>
-                                    <ContextMenuItem
-                                        label="Add Doc"
-                                        icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            setCreatingLibraryPack(contextMenu.libraryFolder!);
-                                            setContextMenu(null);
-                                        }}
-                                    />
-                                    <ContextMenuItem
-                                        label="Add Folder"
-                                        icon={<FolderPlusIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            setCreatingLibraryFolder(contextMenu.libraryFolder!);
-                                            if (!expandedLibraryFolders.has(contextMenu.libraryFolder!)) {
-                                                toggleLibraryFolder(contextMenu.libraryFolder!);
-                                            }
-                                            setContextMenu(null);
-                                        }}
-                                    />
-                                    <ContextMenuItem
-                                        label="Rename"
-                                        icon={<PencilIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
-                                            setContextMenu(null);
-                                        }}
-                                    />
-                                    <ContextMenuItem
-                                        label="Delete"
-                                        icon={<TrashIcon className="w-3.5 h-3.5" />}
-                                        onClick={() => {
-                                            setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
-                                            setContextMenu(null);
-                                        }}
-                                        danger={true}
-                                    />
-                                </>
-                            ) : (
-                                <div className="px-3 py-2 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)]">
-                                    Official Folder (Read-Only)
-                                </div>
-                            )}
+                            <ContextMenuItem
+                                label="Add Doc"
+                                icon={<DocumentPlusIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    setCreatingLibraryPack(contextMenu.libraryFolder!);
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Add Folder"
+                                icon={<FolderPlusIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    setCreatingLibraryFolder(contextMenu.libraryFolder!);
+                                    if (!expandedLibraryFolders.has(contextMenu.libraryFolder!)) {
+                                        toggleLibraryFolder(contextMenu.libraryFolder!);
+                                    }
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Rename"
+                                icon={<PencilIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    setRenamingLibraryFolder({ oldName: contextMenu.libraryFolder! });
+                                    setContextMenu(null);
+                                }}
+                            />
+                            <ContextMenuItem
+                                label="Delete"
+                                icon={<TrashIcon className="w-3.5 h-3.5" />}
+                                onClick={() => {
+                                    setDeleteLibraryFolderConfirmation({ name: contextMenu.libraryFolder! });
+                                    setContextMenu(null);
+                                }}
+                                danger={true}
+                            />
                         </>
                     ) : (
                         <>

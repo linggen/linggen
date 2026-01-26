@@ -773,9 +773,6 @@ async fn execute_list_library_packs(app_state: &Arc<AppState>) -> anyhow::Result
                         if name.starts_with('.') {
                             continue;
                         }
-                        if name == "official" && dir != library_path {
-                            continue;
-                        }
                     }
                     scan_dir(&path, packs, library_path);
                 } else if path.extension().map(|e| e == "md").unwrap_or(false) {
@@ -787,11 +784,9 @@ async fn execute_list_library_packs(app_state: &Arc<AppState>) -> anyhow::Result
                                 .to_string_lossy()
                                 .to_string();
 
-                            let is_official = rel_path.starts_with("official/");
-
                             if let Some(obj) = meta.as_object_mut() {
                                 obj.insert("id".to_string(), serde_json::json!(rel_path));
-                                obj.insert("read_only".to_string(), serde_json::json!(is_official));
+                                obj.insert("read_only".to_string(), serde_json::json!(false));
 
                                 // Add full relative folder path info
                                 if let Some(parent) = path.parent() {
