@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash:*)",
+      "Skill(linggen)",
+      "Skill(linggen:*)",
+      "Read(//Users/lianghuang/workspace/linggen/linggen-vscode/**)",
+      "Bash(gh repo view:*)",
+      "Bash(gh pr:*)"
+    ]
+  }
+}

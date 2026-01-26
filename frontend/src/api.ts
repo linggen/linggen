@@ -1,6 +1,5 @@
 
 // Determine the API base URL:
-// - In Tauri desktop app (any non-http/https protocol or Tauri UA), always use localhost:8787
 // - In browser on localhost:8787, use localhost:8787
 // - In browser on remote IP (http://linggen-ip:8787), use that IP
 function getApiBase(): string {
@@ -9,30 +8,6 @@ function getApiBase(): string {
     }
 
     const origin = window.location.origin;
-    const protocol = window.location.protocol;
-
-    // Detect Tauri more robustly
-    const isTauriProtocol =
-        protocol !== 'http:' && protocol !== 'https:'; // e.g. app://, tauri://, file://
-
-    // @ts-expect-error - __TAURI__ is injected by Tauri
-    const hasTauriGlobal = typeof window.__TAURI__ !== 'undefined';
-
-    const ua = navigator.userAgent.toLowerCase();
-    const isTauriUA = ua.includes('tauri');
-
-    const isTauriEnv =
-        isTauriProtocol ||
-        hasTauriGlobal ||
-        isTauriUA ||
-        origin.startsWith('tauri://') ||
-        origin.startsWith('app://') ||
-        origin === 'null';
-
-    if (isTauriEnv) {
-        // Prefer IPv4 loopback to avoid WebView/OS choosing ::1 while backend listens on IPv4.
-        return 'http://127.0.0.1:8787';
-    }
 
     // In Vite dev server (localhost:5173), point to backend
     if (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173')) {
@@ -869,6 +844,37 @@ export async function clearAllData(): Promise<void> {
         const text = await response.text();
         throw new Error(`Failed to clear data: ${text}`);
     }
+}
+
+// Cloudflare Worker Skills Registry API
+export interface RemoteSkill {
+    skill_id: string;
+    url: string;
+    skill: string;
+    ref: string;
+    content?: string;
+    install_count: number;
+    updated_at: string;
+}
+
+export interface ListRemoteSkillsResponse {
+    success: boolean;
+    skills: RemoteSkill[];
+    pagination: {
+        total: number;
+        page: number;
+        limit: number;
+        total_pages: number;
+    };
+}
+
+export async function listRemoteSkills(page = 1, limit = 20): Promise<ListRemoteSkillsResponse> {
+    const url = `https://linggen-analytics.liangatbc.workers.dev/skills?page=${page}&limit=${limit}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch remote skills: ${response.statusText}`);
+    }
+    return response.json();
 }
 
 

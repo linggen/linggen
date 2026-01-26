@@ -273,6 +273,7 @@ pub fn select_artifact(
 
     let key = match (platform, kind) {
         (Platform::Mac, ArtifactKind::Cli) => format!("cli-macos-{}", arch),
+        (Platform::Mac, ArtifactKind::Server) => "server-macos".to_string(),
         (Platform::Mac, ArtifactKind::App) => "app-macos-tarball".to_string(),
         (Platform::Linux, ArtifactKind::Cli) => format!("cli-linux-{}", arch),
         (Platform::Linux, ArtifactKind::Server) => format!("server-linux-{}", arch),

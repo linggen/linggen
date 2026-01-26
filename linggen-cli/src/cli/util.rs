@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<()> {
@@ -28,12 +29,16 @@ pub fn command_exists(cmd: &str) -> bool {
         return true;
     }
 
-    // 2. On macOS, check the standard app bundle location for linggen-server
+    // 2. On macOS, check the user-local install location
     #[cfg(target_os = "macos")]
     if cmd == "linggen-server" {
-        if std::path::Path::new("/Applications/Linggen.app/Contents/MacOS/linggen-server").exists()
-        {
-            return true;
+        if let Some(home) = dirs::home_dir() {
+            if home
+                .join("Library/Application Support/Linggen/bin/linggen-server")
+                .exists()
+            {
+                return true;
+            }
         }
     }
 
@@ -44,46 +49,13 @@ pub fn command_exists(cmd: &str) -> bool {
 pub fn find_server_binary() -> String {
     let base_name = "linggen-server";
 
-    // 1. On macOS, prioritize the standard app bundle location.
-    // This ensures we use the version the user likely just installed/updated,
-    // rather than potentially stale binaries in /usr/local/bin or elsewhere.
+    // 1. On macOS, prioritize the user-local install location.
     #[cfg(target_os = "macos")]
     {
-        let mut bundle_paths = Vec::new();
-
-        // 1. Prioritize Tauri sidecar paths (most likely to be the correct, fresh version in prod)
-        let target_triple = match std::env::consts::ARCH {
-            "aarch64" => "aarch64-apple-darwin",
-            "x86_64" => "x86_64-apple-darwin",
-            _ => "",
-        };
-
-        if !target_triple.is_empty() {
-            // Check Resources/bin first (Tauri standard sidecar location)
-            bundle_paths.push(format!(
-                "/Applications/Linggen.app/Contents/Resources/bin/linggen-server-{}",
-                target_triple
-            ));
-        }
-
-        // 2. Fallback to standard names in bundle folders
-        bundle_paths.push("/Applications/Linggen.app/Contents/MacOS/linggen-server".to_string());
-
-        if std::env::consts::ARCH == "aarch64" {
-            bundle_paths.push(
-                "/Applications/Linggen.app/Contents/MacOS/linggen-server-aarch64-apple-darwin"
-                    .to_string(),
-            );
-        } else {
-            bundle_paths.push(
-                "/Applications/Linggen.app/Contents/MacOS/linggen-server-x86_64-apple-darwin"
-                    .to_string(),
-            );
-        }
-
-        for path in bundle_paths {
-            if std::path::Path::new(&path).exists() {
-                return path;
+        if let Some(home) = dirs::home_dir() {
+            let user_local = home.join("Library/Application Support/Linggen/bin/linggen-server");
+            if user_local.exists() {
+                return user_local.to_string_lossy().to_string();
             }
         }
     }
@@ -120,31 +92,7 @@ pub fn is_in_path(name: &str) -> bool {
 }
 
 pub fn get_local_app_version() -> Option<String> {
-    // 1. Try to read version from installed Linggen.app (macOS)
-    #[cfg(target_os = "macos")]
-    {
-        use std::path::Path;
-        let plist_path = Path::new("/Applications/Linggen.app/Contents/Info.plist");
-        if plist_path.exists() {
-            if let Ok(output) = Command::new("defaults")
-                .args([
-                    "read",
-                    "/Applications/Linggen.app/Contents/Info",
-                    "CFBundleShortVersionString",
-                ])
-                .output()
-            {
-                if output.status.success() {
-                    return String::from_utf8(output.stdout)
-                        .ok()
-                        .map(|s| s.trim().to_string());
-                }
-            }
-        }
-    }
-
-    // 2. Try to get version from linggen-server (Linux/macOS fallback)
-    // On Linux, the "app" is the server.
+    // Try to get version from linggen-server
     // Try both the bare command and absolute paths.
     let mut candidates = vec![
         "linggen-server".to_string(),
@@ -154,7 +102,13 @@ pub fn get_local_app_version() -> Option<String> {
 
     #[cfg(target_os = "macos")]
     {
-        candidates.push("/Applications/Linggen.app/Contents/MacOS/linggen-server".to_string());
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(
+                home.join("Library/Application Support/Linggen/bin/linggen-server")
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
     }
 
     for cmd in candidates {

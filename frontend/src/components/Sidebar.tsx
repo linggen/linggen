@@ -44,7 +44,7 @@ interface SidebarProps {
     selectedMemoryPath?: string | null
     onSelectMemory?: (sourceId: string, path: string) => void
     selectedLibraryPackId?: string | null
-    onSelectLibraryPack?: (packId: string) => void
+    onSelectLibraryPack?: (packId: string | null) => void
     onAddSource?: () => void
     libraryPacks?: LibraryPack[]
     libraryFolders?: string[]
@@ -587,21 +587,31 @@ export function Sidebar({
         label,
         isCollapsed,
         onToggle,
+        onClick,
         actions,
         isActive
     }: {
         label: string,
         isCollapsed: boolean,
         onToggle: () => void,
+        onClick?: () => void,
         actions?: React.ReactNode,
         isActive?: boolean
     }) => (
         <div
             className={`px-4 py-1.5 flex justify-between items-center mt-2 mb-1 cursor-pointer select-none group transition-colors ${isActive ? 'bg-[var(--item-hover)] shadow-[inset_3px_0_0_0_var(--accent)]' : 'hover:bg-[var(--item-hover)]/50'}`}
-            onClick={onToggle}
+            onClick={onClick || onToggle}
         >
             <div className="flex items-center gap-1.5">
-                <div className="w-3 h-3 flex items-center justify-center">
+                <div 
+                    className="w-3 h-3 flex items-center justify-center hover:text-[var(--text-active)] transition-colors"
+                    onClick={(e) => {
+                        if (onClick) {
+                            e.stopPropagation();
+                            onToggle();
+                        }
+                    }}
+                >
                     {isCollapsed ? (
                         <ChevronRightIcon className="w-2.5 h-2.5 text-[var(--text-secondary)]" />
                     ) : (
@@ -986,8 +996,10 @@ export function Sidebar({
                         isCollapsed={isLibraryCollapsed}
                         onToggle={() => {
                             setIsLibraryCollapsed(!isLibraryCollapsed);
+                        }}
+                        onClick={() => {
                             onChangeView('library');
-                            onSelectLibraryPack?.('');
+                            onSelectLibraryPack?.(null);
                         }}
                         isActive={currentView === 'library' && !selectedLibraryPackId}
                         actions={

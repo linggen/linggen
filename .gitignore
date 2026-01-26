@@ -15,24 +15,11 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
-# Tauri sidecar binaries (build artifacts)
-frontend/src-tauri/linggen-*-apple-darwin
-frontend/src-tauri/linggen-*-pc-windows-*
-frontend/src-tauri/linggen-*-unknown-linux-*
-frontend/src-tauri/binaries/
-
-linggensite/node_modules/
-linggensite/dist/
-linggensite/.env
-linggensite/.env.local
-linggensite/old_static/
-
-
 # IDE
-.vscode/*
-!.vscode/launch.json
-!.vscode/tasks.json
-!.vscode/extensions.json
+/.vscode/*
+!/.vscode/launch.json
+!/.vscode/tasks.json
+!/.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -45,9 +32,6 @@ linggensite/old_static/
 *.sqlite
 data/
 .cache/
-
-# HuggingFace model cache (optional - uncomment if you want to exclude)
-# .cache/huggingface/
 
 # macOS
 .DS_Store
@@ -75,12 +59,13 @@ backend/assets/
 frontend/assets/
 dist/
 
-# Signing configuration (contains sensitive passwords)
-.tauri-signing.conf
-frontend/src-tauri/resources/
-
+# Project Memory
 .linggen/memory/
 
-# MCP Registry tokens
+# Registry/CLI secrets
 .mcpregistry_github_token
 .mcpregistry_registry_token
+linggen-cli/.env
+.env
+.env.local
+

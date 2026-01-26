@@ -47,14 +47,23 @@ npm run db:migrate
 npm run db:migrate:prod
 ```
 
-### 4. (Optional) Set API Key
+### 4. Set API_KEY (Required)
 
-For basic authentication:
+This worker requires an API key for **all** endpoints (analytics + skill registry).
 
 ```bash
-npx wrangler secret put ANALYTICS_API_KEY
+npx wrangler secret put API_KEY
 # Enter your secret key when prompted
 ```
+
+### 5. Security Note
+
+The `linggen-cli` can have an `API_KEY` baked in at compile time using the `LINGGEN_BUILD_API_KEY` environment variable. This allows the CLI to work out-of-the-box for users while still providing basic protection against unauthorized access.
+
+To prevent abuse, the worker implements:
+- **IP-based Rate Limiting**: Maximum 100 requests per hour per IP.
+- **Privacy-focused Hashing**: IP addresses are salted and hashed before storage.
+
 
 ## Development
 
@@ -67,6 +76,7 @@ Test with curl:
 
 ```bash
 curl -X POST http://localhost:8787/track \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "installation_id": "test-uuid-1234",
@@ -111,6 +121,39 @@ Record an analytics event.
 {
   "success": true,
   "event_id": "123"
+}
+```
+
+### GET /skills
+
+List all recorded skills (public). Supports pagination.
+
+**Query Parameters:**
+- `page`: Page number (default: 1)
+- `limit`: Items per page (default: 20, max: 100)
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "skills": [
+    {
+      "skill_id": "https://github.com/owner/repo/skill-name",
+      "url": "https://github.com/owner/repo",
+      "skill": "skill-name",
+      "ref": "main",
+      "content": "...",
+      "install_count": 5,
+      "updated_at": "2024-01-15T10:30:00.000Z"
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "page": 1,
+    "limit": 20,
+    "total_pages": 1
+  }
 }
 ```
 

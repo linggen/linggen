@@ -1,40 +1,104 @@
 import { useState, useEffect } from 'react';
+import MDEditor from '@uiw/react-md-editor';
 import {
     MagnifyingGlassIcon,
     FolderIcon,
     CalendarIcon,
-    ClockIcon
+    ClockIcon,
+    ArrowPathIcon,
+    ClipboardIcon,
+    CheckIcon,
+    ArrowLeftIcon,
+    TrophyIcon,
+    CommandLineIcon,
+    DocumentTextIcon
 } from '@heroicons/react/24/outline';
-import { type LibraryPack, getLibrary } from '../api';
+import { type LibraryPack, getLibrary, listRemoteSkills, type RemoteSkill } from '../api';
 
 interface LibraryViewProps {
-    onSelectPack?: (id: string) => void;
+    onSelectPack?: (id: string | null) => void;
+    selectedLibraryPackId?: string | null;
 }
 
-export function LibraryView({ onSelectPack }: LibraryViewProps) {
-    const [packs, setPacks] = useState<LibraryPack[]>([]);
+export function LibraryView({ onSelectPack, selectedLibraryPackId }: LibraryViewProps) {
+    const [remoteSkills, setRemoteSkills] = useState<RemoteSkill[]>([]);
+    const [selectedRemoteSkill, setSelectedRemoteSkill] = useState<RemoteSkill | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [totalSkills, setTotalSkills] = useState(0);
+    const pageSize = 24;
+
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        const rootTheme = document.documentElement.getAttribute('data-theme');
+        if (rootTheme === 'dark') return true;
+        if (rootTheme === 'light') return false;
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    });
 
     useEffect(() => {
-        const fetchPacks = async () => {
-            try {
-                const { packs: data } = await getLibrary();
-                setPacks(data);
-            } catch (err) {
-                console.error('Failed to load packs:', err);
-            } finally {
-                setIsLoading(false);
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                    const newTheme = document.documentElement.getAttribute('data-theme');
+                    if (newTheme === 'dark') setIsDarkMode(true);
+                    else if (newTheme === 'light') setIsDarkMode(false);
+                    else setIsDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches);
+                }
             }
-        };
-        fetchPacks();
+        });
+
+        observer.observe(document.documentElement, { attributes: true });
+        return () => observer.disconnect();
     }, []);
 
-    const filteredPacks = packs.filter(pack => {
-        const matchesSearch = (pack.filename || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            pack.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (pack.folder || '').toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesSearch;
+    // Reset selected remote skill when selectedLibraryPackId becomes null
+    useEffect(() => {
+        if (selectedLibraryPackId === null) {
+            setSelectedRemoteSkill(null);
+        }
+    }, [selectedLibraryPackId]);
+
+    const fetchSkills = async (page: number) => {
+        setIsRefreshing(true);
+        try {
+            const data = await listRemoteSkills(page, pageSize);
+            if (data.success) {
+                setRemoteSkills(data.skills);
+                setTotalPages(data.pagination.total_pages);
+                setTotalSkills(data.pagination.total);
+                setCurrentPage(data.pagination.page);
+            }
+        } catch (err) {
+            console.error('Failed to load remote skills:', err);
+        } finally {
+            setIsLoading(false);
+            setIsRefreshing(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchSkills(1);
+    }, []);
+
+    const handlePageChange = (newPage: number) => {
+        if (newPage >= 1 && newPage <= totalPages) {
+            fetchSkills(newPage);
+            // Scroll to top of skills list
+            const container = document.querySelector('.custom-scrollbar');
+            if (container) container.scrollTop = 0;
+        }
+    };
+
+    const filteredRemoteSkills = remoteSkills.filter(skill => {
+        const query = searchQuery.toLowerCase();
+        return skill.skill.toLowerCase().includes(query) ||
+            skill.url.toLowerCase().includes(query);
     });
 
     const formatDate = (dateStr?: string) => {
@@ -42,109 +106,259 @@ export function LibraryView({ onSelectPack }: LibraryViewProps) {
         return new Date(dateStr).toLocaleString();
     };
 
+    const handleCopyInstall = (e: React.MouseEvent, skill: RemoteSkill) => {
+        e.stopPropagation();
+        const command = `linggen skills add ${skill.url} --skill ${skill.skill}`;
+        navigator.clipboard.writeText(command);
+        setCopiedId(skill.skill_id);
+        setTimeout(() => setCopiedId(null), 2000);
+    };
+
     if (isLoading) {
         return (
             <div className="flex h-full items-center justify-center bg-[var(--bg-content)]">
-                <div className="text-sm text-[var(--text-secondary)]">Loading library...</div>
+                <div className="flex flex-col items-center gap-3">
+                    <ArrowPathIcon className="w-6 h-6 text-[var(--accent)] animate-spin" />
+                    <div className="text-sm text-[var(--text-secondary)] font-bold tracking-widest uppercase opacity-50">Loading library...</div>
+                </div>
+            </div>
+        );
+    }
+
+    if (selectedRemoteSkill) {
+        return (
+            <div className="flex-1 flex flex-col min-h-0 gap-6 p-8 bg-[var(--bg-content)] text-[var(--text-primary)]">
+                <div className="flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => setSelectedRemoteSkill(null)}
+                            className="p-2.5 hover:bg-[var(--item-hover)] rounded-xl transition-all border border-transparent hover:border-[var(--border-color)] active:scale-95"
+                        >
+                            <ArrowLeftIcon className="w-5 h-5" />
+                        </button>
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <h2 className="text-2xl font-black text-[var(--text-active)] tracking-tight">
+                                    {selectedRemoteSkill.skill}
+                                </h2>
+                                <span className="text-[10px] bg-[var(--accent)]/10 text-[var(--accent)] px-2.5 py-1 rounded-lg border border-[var(--accent)]/20 font-black uppercase tracking-wider">Remote Skill</span>
+                            </div>
+                            <p className="text-sm text-[var(--text-secondary)] font-mono opacity-60 mt-0.5">{selectedRemoteSkill.url}</p>
+                        </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                        <div className="flex flex-col items-end">
+                            <span className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Total Installs</span>
+                            <span className="text-xl font-black text-[var(--accent)] leading-none">{selectedRemoteSkill.install_count}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto min-h-0 pr-2 custom-scrollbar flex flex-col gap-6">
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl p-6 shadow-sm flex flex-col gap-4 flex-shrink-0">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--text-secondary)] flex items-center gap-2">
+                                <CommandLineIcon className="w-4 h-4 text-[var(--accent)]" />
+                                Install via CLI
+                            </h3>
+                            <span className="text-[10px] font-bold text-[var(--text-muted)] font-mono opacity-50">Ref: {selectedRemoteSkill.ref}</span>
+                        </div>
+                        <div className="relative group">
+                            <code className="block bg-[var(--bg-app)] p-5 rounded-xl border-2 border-[var(--border-color)] text-sm font-mono text-[var(--accent)] break-all pr-14 shadow-inner">
+                                linggen skills add {selectedRemoteSkill.url} --skill {selectedRemoteSkill.skill}
+                            </code>
+                            <button
+                                onClick={(e) => handleCopyInstall(e, selectedRemoteSkill)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 bg-[var(--bg-sidebar)] hover:bg-[var(--item-hover)] rounded-lg transition-all border border-[var(--border-color)] shadow-sm active:scale-90"
+                                title="Copy to clipboard"
+                            >
+                                {copiedId === selectedRemoteSkill.skill_id ? (
+                                    <CheckIcon className="w-4.5 h-4.5 text-green-500" />
+                                ) : (
+                                    <ClipboardIcon className="w-4.5 h-4.5 text-[var(--text-secondary)]" />
+                                )}
+                            </button>
+                        </div>
+                    </section>
+
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden flex flex-col flex-shrink-0">
+                        <div className="px-6 py-4 border-b border-[var(--border-color)] bg-[var(--item-hover)]/30 flex items-center gap-2">
+                            <DocumentTextIcon className="w-4 h-4 text-[var(--accent)]" />
+                            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--text-secondary)]">Skill.md Preview</h3>
+                        </div>
+                        <div className="p-8 bg-[var(--bg-sidebar)]" data-color-mode={isDarkMode ? 'dark' : 'light'}>
+                            {selectedRemoteSkill.content ? (
+                                <div className="markdown-preview-container">
+                                    <MDEditor.Markdown 
+                                        source={selectedRemoteSkill.content} 
+                                        style={{ 
+                                            backgroundColor: 'transparent',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '14px',
+                                            lineHeight: '1.6'
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="py-12 text-center text-sm text-[var(--text-muted)] italic">
+                                    No preview content available for this skill.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                    
+                    <div className="flex justify-between items-center px-2 pb-4 flex-shrink-0">
+                        <span className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
+                            Last Updated: {formatDate(selectedRemoteSkill.updated_at)}
+                        </span>
+                        <a 
+                            href={`${selectedRemoteSkill.url}/tree/${selectedRemoteSkill.ref}/${selectedRemoteSkill.skill}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-black text-[var(--accent)] uppercase tracking-widest hover:underline"
+                        >
+                            View on GitHub ↗
+                        </a>
+                    </div>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className="flex flex-1 flex-col gap-6 overflow-hidden p-6 bg-[var(--bg-content)] text-[var(--text-primary)]">
-            <div className="flex flex-col gap-2">
-                <div className="relative max-w-xl">
-                    <MagnifyingGlassIcon
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] w-4 h-4"
-                    />
-                    <input
-                        type="text"
-                        placeholder="Search files by name or folder..."
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        className="w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-app)] py-2 pl-10 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] shadow-none outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30"
-                    />
+        <div className="flex-1 flex flex-col min-h-0 gap-6 p-6 bg-[var(--bg-content)] text-[var(--text-primary)]">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
+                <div className="flex flex-col gap-1">
+                    <h2 className="text-2xl font-black text-[var(--text-active)] tracking-tight">Library</h2>
+                    <p className="text-xs text-[var(--text-secondary)] opacity-70">Browse local skills and popular community skills.</p>
                 </div>
-                <p className="text-[11px] text-[var(--text-secondary)] px-1 uppercase tracking-wider font-medium">
-                    {filteredPacks.length} / {packs.length} files
-                </p>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => fetchSkills(currentPage)}
+                        disabled={isRefreshing}
+                        className="p-2 hover:bg-[var(--item-hover)] rounded-lg transition-all text-[var(--text-secondary)] hover:text-[var(--text-active)]"
+                        title="Refresh library"
+                    >
+                        <ArrowPathIcon className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    </button>
+                    <div className="relative w-64">
+                        <MagnifyingGlassIcon
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] w-3.5 h-3.5"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Search skills..."
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            className="w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-app)] py-1.5 pl-9 pr-3 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] shadow-none outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30 transition-all"
+                        />
+                    </div>
+                </div>
             </div>
 
-            <div className="flex-1 overflow-auto rounded-lg border border-[var(--border-color)] bg-[var(--bg-sidebar)] shadow-none">
-                <table className="w-full border-collapse text-sm">
-                    <thead className="sticky top-0 z-10 bg-[var(--bg-sidebar)] border-b border-[var(--border-color)]">
-                        <tr>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-wider text-[var(--text-secondary)] uppercase">
-                                NAME
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-wider text-[var(--text-secondary)] uppercase">
-                                FOLDER
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-wider text-[var(--text-secondary)] uppercase">
-                                CREATED TIME
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-wider text-[var(--text-secondary)] uppercase">
-                                UPDATED TIME
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--border-color)]">
-                        {filteredPacks.length > 0 ? (
-                            filteredPacks.map(pack => (
-                                <tr
-                                    key={pack.id}
-                                    onClick={() => onSelectPack?.(pack.id)}
-                                    className="group cursor-pointer hover:bg-[var(--item-hover)] transition-colors"
-                                >
-                                    <td className="px-4 py-3">
-                                        <div className="flex items-center gap-3">
-                                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-[var(--accent)]/10 text-[10px] font-bold text-[var(--accent)] border border-[var(--accent)]/20">
-                                                MD
+            <div className="flex-1 overflow-y-auto min-h-0 flex flex-col gap-8 pr-2 custom-scrollbar">
+                {/* Remote Skills Leaderboard */}
+                <section className="flex flex-col gap-4">
+                    <div className="flex items-center gap-2 px-1">
+                        <TrophyIcon className="w-4 h-4 text-yellow-500" />
+                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-active)]">Community Skills</h3>
+                        <span className="h-px flex-1 bg-[var(--border-color)] opacity-30"></span>
+                        <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
+                            {totalSkills} total
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredRemoteSkills.length > 0 ? (
+                            filteredRemoteSkills.map((skill, index) => {
+                                const globalIndex = (currentPage - 1) * pageSize + index;
+                                return (
+                                    <div
+                                        key={skill.skill_id}
+                                        onClick={() => setSelectedRemoteSkill(skill)}
+                                        className="group bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl p-5 cursor-pointer hover:border-[var(--accent)] hover:shadow-lg hover:shadow-[var(--accent)]/5 transition-all relative overflow-hidden"
+                                    >
+                                        {globalIndex < 3 && currentPage === 1 && (
+                                            <div className="absolute top-0 right-0 w-12 h-12 bg-[var(--accent)]/10 flex items-center justify-center rounded-bl-2xl border-b border-l border-[var(--accent)]/20">
+                                                <span className="text-[10px] font-black text-[var(--accent)]">#{globalIndex + 1}</span>
                                             </div>
-                                            <div className="min-w-0">
-                                                <div className="truncate font-medium text-[var(--text-active)] group-hover:text-[var(--accent)] transition-colors flex items-center gap-2">
-                                                    {pack.filename || pack.name}
-                                                    {pack.read_only && (
-                                                        <span className="bg-[var(--border-color)] px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider text-[var(--text-secondary)]">Read Only</span>
+                                        )}
+                                        <div className="flex flex-col gap-3">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] font-black text-xs">
+                                                    {skill.skill.substring(0, 2).toUpperCase()}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <h4 className="text-sm font-bold text-[var(--text-active)] truncate group-hover:text-[var(--accent)] transition-colors">
+                                                        {skill.skill}
+                                                    </h4>
+                                                    <p className="text-[10px] text-[var(--text-muted)] font-mono truncate">{skill.url.replace('https://github.com/', '')}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center justify-between mt-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <div className="flex -space-x-1">
+                                                        {[1, 2, 3].map(i => (
+                                                            <div key={i} className="w-4 h-4 rounded-full border border-[var(--bg-sidebar)] bg-[var(--border-color)] flex items-center justify-center overflow-hidden">
+                                                                <div className="w-full h-full bg-gradient-to-br from-gray-400 to-gray-600 opacity-50"></div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                                                        {skill.install_count} installs
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    onClick={(e) => handleCopyInstall(e, skill)}
+                                                    className="p-1.5 hover:bg-[var(--bg-app)] rounded-lg transition-all border border-transparent hover:border-[var(--border-color)]"
+                                                    title="Copy install command"
+                                                >
+                                                    {copiedId === skill.skill_id ? (
+                                                        <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                                                    ) : (
+                                                        <CommandLineIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                                                     )}
-                                                </div>
-                                                <div className="truncate text-[11px] text-[var(--text-secondary)] font-mono">
-                                                    {pack.name !== pack.filename ? pack.name : pack.id}
-                                                </div>
+                                                </button>
                                             </div>
                                         </div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-                                            <FolderIcon className="w-3.5 h-3.5 opacity-70" />
-                                            <span className="truncate text-[11px] font-medium uppercase tracking-wider">
-                                                {pack.folder || 'general'}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-[var(--text-secondary)] text-[11px]">
-                                        <div className="flex items-center gap-2">
-                                            <CalendarIcon className="w-3.5 h-3.5 opacity-70" />
-                                            <span className="truncate">{formatDate(pack.created_at)}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-[var(--text-secondary)] text-[11px]">
-                                        <div className="flex items-center gap-2">
-                                            <ClockIcon className="w-3.5 h-3.5 opacity-70" />
-                                            <span className="truncate">{formatDate(pack.updated_at)}</span>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
+                                    </div>
+                                );
+                            })
                         ) : (
-                            <tr>
-                                <td colSpan={4} className="px-6 py-12 text-center text-sm text-[var(--text-secondary)]">
-                                    No files found matching your search.
-                                </td>
-                            </tr>
+                            <div className="col-span-full py-12 text-center text-xs text-[var(--text-muted)] italic bg-[var(--bg-sidebar)]/50 border border-dashed border-[var(--border-color)] rounded-2xl">
+                                No remote skills found matching your search.
+                            </div>
                         )}
-                    </tbody>
-                </table>
+                    </div>
+                </section>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 py-4 flex-shrink-0">
+                        <button
+                            onClick={() => handlePageChange(currentPage - 1)}
+                            disabled={currentPage === 1 || isRefreshing}
+                            className="btn-secondary !px-4 !py-2 disabled:opacity-30 active:scale-95 transition-all"
+                        >
+                            Previous
+                        </button>
+                        
+                        <div className="flex items-center gap-1 px-4">
+                            <span className="text-xs font-black text-[var(--text-active)]">{currentPage}</span>
+                            <span className="text-xs font-bold text-[var(--text-muted)]">/</span>
+                            <span className="text-xs font-bold text-[var(--text-muted)]">{totalPages}</span>
+                        </div>
+
+                        <button
+                            onClick={() => handlePageChange(currentPage + 1)}
+                            disabled={currentPage === totalPages || isRefreshing}
+                            className="btn-secondary !px-4 !py-2 disabled:opacity-30 active:scale-95 transition-all"
+                        >
+                            Next
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

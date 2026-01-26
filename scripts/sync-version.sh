@@ -35,16 +35,6 @@ if [ -f "$ROOT_DIR/linggen-cli/Cargo.toml" ]; then
   echo "  ✅ Updated linggen-cli/Cargo.lock"
 fi
 
-# Update frontend/src-tauri/Cargo.toml
-if [ -f "$ROOT_DIR/frontend/src-tauri/Cargo.toml" ]; then
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" "$ROOT_DIR/frontend/src-tauri/Cargo.toml"
-  else
-    sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" "$ROOT_DIR/frontend/src-tauri/Cargo.toml"
-  fi
-  echo "  ✅ Updated frontend/src-tauri/Cargo.toml"
-fi
-
 # Update frontend/package.json
 if [ -f "$ROOT_DIR/frontend/package.json" ]; then
   if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -53,16 +43,6 @@ if [ -f "$ROOT_DIR/frontend/package.json" ]; then
     sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT_DIR/frontend/package.json"
   fi
   echo "  ✅ Updated frontend/package.json"
-fi
-
-# Update frontend/src-tauri/tauri.conf.json
-if [ -f "$ROOT_DIR/frontend/src-tauri/tauri.conf.json" ]; then
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT_DIR/frontend/src-tauri/tauri.conf.json"
-  else
-    sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT_DIR/frontend/src-tauri/tauri.conf.json"
-  fi
-  echo "  ✅ Updated frontend/src-tauri/tauri.conf.json"
 fi
 
 # Update backend/Cargo.toml (workspace version)

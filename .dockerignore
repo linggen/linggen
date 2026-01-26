@@ -11,13 +11,10 @@
 **/.DS_Store
 **/.linggen/
 
-# Specific Rust/Tauri noise
-frontend/src-tauri/target/
-frontend/src-tauri/binaries/
+
 backend/target/
 linggen-cli/target/
 
 # Local configuration
 .env
-.tauri-signing.conf
 *.key

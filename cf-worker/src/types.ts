@@ -77,5 +77,33 @@ export interface ErrorResponse {
  */
 export interface Env {
   DB: D1Database;
-  ANALYTICS_API_KEY?: string;
+  /**
+   * Shared API key required for all endpoints.
+   * Provided via Wrangler secrets: `wrangler secret put API_KEY`.
+   */
+  API_KEY?: string;
+  IP_HASH_SALT?: string;
+}
+
+/**
+ * Skill install request
+ */
+export interface SkillInstallPayload {
+  url: string;
+  skill: string;
+  ref: string;
+  content?: string;
+  installer: string;
+  installer_version: string;
+  timestamp: string;
+}
+
+/**
+ * Skill install response
+ */
+export interface SkillInstallResponse {
+  ok: boolean;
+  counted: boolean;
+  skill_id: string;
+  cooldown_seconds: number;
 }

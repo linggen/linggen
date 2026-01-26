@@ -12,14 +12,22 @@ cargo run -p linggen-cli -- install
 
 ## Build from source
 
-```bash
-# quick build
-cargo build --release
-./target/release/linggen --help
+To build the CLI with a built-in `API_KEY` for the skill registry and analytics:
 
-# or use helper
-../scripts/build-cli.sh
-# tarball emitted to dist/linggen-cli-<arch>-<os>.tar.gz
+```bash
+# Bake in the API key at compile time
+LINGGEN_BUILD_API_KEY=your-secret-key cargo build --release
+
+# The binary will now work without needing an API_KEY environment variable
+./target/release/linggen skills add ...
+```
+
+Alternatively, you can provide the key at runtime:
+
+```bash
+export API_KEY=your-secret-key
+cargo build --release
+./target/release/linggen skills add ...
 ```
 
 ## Commands (current)

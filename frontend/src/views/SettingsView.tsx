@@ -1,12 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { getAppSettings, updateAppSettings, clearAllData, type AppSettings } from '../api'
-import { check } from '@tauri-apps/plugin-updater'
-import { relaunch } from '@tauri-apps/plugin-process'
-import { getVersion } from '@tauri-apps/api/app'
-
-type UpdaterDownloadEvent = {
-    event: 'Started' | 'Progress' | 'Finished'
-}
 
 export function SettingsView() {
     const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -16,20 +9,6 @@ export function SettingsView() {
     const [clearing, setClearing] = useState(false)
     const [showClearConfirm, setShowClearConfirm] = useState(false)
     const isMountedRef = useRef(true)
-
-    const isTauriApp =
-        typeof window !== 'undefined' &&
-        (!!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ ||
-            !!(window as unknown as { __TAURI__?: unknown }).__TAURI__)
-
-    const [appVersion, setAppVersion] = useState<string | null>(null)
-    const [checkingUpdate, setCheckingUpdate] = useState(false)
-    const [updateAvailable, setUpdateAvailable] = useState(false)
-    const [updateInfo, setUpdateInfo] = useState<{version?: string, date?: string, body?: string} | null>(null)
-    const [downloading, setDownloading] = useState(false)
-    const [downloadProgress, setDownloadProgress] = useState(0)
-    const [restartReady, setRestartReady] = useState(false)
-    const [restarting, setRestarting] = useState(false)
 
     useEffect(() => {
         isMountedRef.current = true
@@ -52,17 +31,12 @@ export function SettingsView() {
         return () => { isMountedRef.current = false }
     }, [])
 
-    useEffect(() => {
-        if (!isTauriApp) return
-        getVersion().then(setAppVersion).catch(console.error)
-    }, [isTauriApp])
-
     const handleThemeChange = async (theme: 'dark' | 'light' | 'system') => {
         if (!settings || saving) return
-        
+
         setSettings(prev => prev ? { ...prev, theme } : null)
         setSaving(true)
-        
+
         try {
             await updateAppSettings({ ...settings, theme })
             const root = document.documentElement
@@ -78,51 +52,6 @@ export function SettingsView() {
             setSaving(false)
             setTimeout(() => setMessage(null), 3000)
         }
-    }
-
-    const handleCheckForUpdates = async () => {
-        setCheckingUpdate(true)
-        try {
-            const update = await check()
-            if (update) {
-                setUpdateAvailable(true)
-                setUpdateInfo({ version: update.version, date: update.date, body: update.body })
-                setMessage(`✓ Update available: v${update.version}`)
-            } else {
-                setMessage('✓ You are up to date')
-            }
-        } catch (err) {
-            console.error(err)
-            setMessage('✗ Update check failed')
-        } finally {
-            setCheckingUpdate(false)
-            setTimeout(() => setMessage(null), 5000)
-        }
-    }
-
-    const handleInstallUpdate = async () => {
-        setDownloading(true)
-        try {
-            const update = await check()
-            if (update) {
-                await update.downloadAndInstall((event: UpdaterDownloadEvent) => {
-                    if (event.event === 'Progress') setDownloadProgress((prev) => Math.min(prev + 5, 95))
-                    else if (event.event === 'Finished') setDownloadProgress(100)
-                })
-                setRestartReady(true)
-                setMessage('✓ Update installed')
-            }
-        } catch (err) {
-            console.error(err)
-            setMessage('✗ Installation failed')
-        } finally {
-            setDownloading(false)
-        }
-    }
-
-    const handleRestartNow = async () => {
-        setRestarting(true)
-        try { await relaunch() } catch { setRestarting(false) }
     }
 
     const handleClearAllData = () => setShowClearConfirm(true)
@@ -144,7 +73,6 @@ export function SettingsView() {
 
     // Mark loading as used if needed for spinners in future
     void loading;
-    void restarting;
 
     return (
         <div className="flex-1 overflow-y-auto w-full bg-[var(--bg-app)]">
@@ -180,11 +108,10 @@ export function SettingsView() {
                                             <button
                                                 key={mode}
                                                 onClick={() => handleThemeChange(mode)}
-                                                className={`px-6 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all relative z-10 ${
-                                                    isSelected
-                                                        ? 'text-white'
-                                                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                                                }`}
+                                                className={`px-6 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all relative z-10 ${isSelected
+                                                    ? 'text-white'
+                                                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                                                    }`}
                                             >
                                                 {isSelected && (
                                                     <div className="absolute inset-0 bg-[var(--accent)] rounded-xl shadow-[0_2px_8px_rgba(113,55,241,0.4)] border border-[#c084fc]/50 z-[-1] animate-in fade-in zoom-in-95 duration-200"></div>
@@ -288,67 +215,22 @@ export function SettingsView() {
                     </section>
 
                     {/* Software Update */}
-                    {isTauriApp && (
-                        <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden transition-all hover:shadow-md">
-                            <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
-                                <span className="text-lg">🔄</span>
-                                <h3 className="text-sm font-bold text-[var(--text-active)]">Software Update</h3>
-                                {appVersion && <span className="ml-auto px-3 py-1 bg-[var(--bg-app)] text-[10px] font-black text-[var(--accent)] rounded-full border border-[var(--accent)]/30 shadow-sm">v{appVersion}</span>}
+                    <section className="bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl shadow-sm overflow-hidden transition-all hover:shadow-md">
+                        <div className="flex items-center gap-3 px-6 py-4 bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
+                            <span className="text-lg">🔄</span>
+                            <h3 className="text-sm font-bold text-[var(--text-active)]">Software Update</h3>
+                        </div>
+                        <div className="p-8">
+                            <div className="flex flex-col gap-4">
+                                <p className="text-sm text-[var(--text-primary)]">
+                                    To update Linggen to the latest version, run the following command in your terminal:
+                                </p>
+                                <code className="text-[12px] text-[var(--accent)] font-mono bg-black/5 dark:bg-white/5 p-4 rounded-xl border border-[var(--border-color)]/30">
+                                    linggen update
+                                </code>
                             </div>
-                            <div className="p-8">
-                                <div className="flex flex-col gap-8">
-                                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-6">
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-sm font-bold text-[var(--text-primary)]">Application Updates</span>
-                                            <span className="text-xs text-[var(--text-muted)]">Stay current with the latest features</span>
-                                        </div>
-                                        <button
-                                            className="btn-secondary !py-2.5 !px-8 !text-[10px] !font-black !rounded-xl !border-2 hover:!border-[var(--accent)] transition-all active:scale-95"
-                                            onClick={handleCheckForUpdates}
-                                            disabled={checkingUpdate || downloading}
-                                        >
-                                            {checkingUpdate ? 'CHECKING...' : 'CHECK FOR UPDATES'}
-                                        </button>
-                                    </div>
-
-                                    {updateAvailable && updateInfo && (
-                                        <div className="p-6 bg-[var(--accent)]/[0.03] border-2 border-[var(--accent)]/20 rounded-2xl animate-in zoom-in-95 duration-300">
-                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6">
-                                                <div className="flex flex-col gap-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
-                                                        <span className="text-sm font-black text-blue-500 tracking-tight">NEW VERSION READY</span>
-                                                    </div>
-                                                    <span className="text-[10px] font-bold text-[var(--text-muted)]">VERSION {updateInfo.version} • {updateInfo.date ? new Date(updateInfo.date).toLocaleDateString() : 'LATEST'}</span>
-                                                </div>
-                                                {!restartReady && (
-                                                    <button className="btn-primary !py-2.5 !px-8 !text-[10px] !font-black !rounded-xl shadow-lg shadow-[var(--accent)]/20 hover:scale-105 active:scale-95 transition-all" onClick={handleInstallUpdate} disabled={downloading}>
-                                                        {downloading ? 'DOWNLOADING...' : 'INSTALL UPDATE'}
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            {downloading && (
-                                                <div className="relative w-full h-2 bg-[var(--bg-app)] rounded-full overflow-hidden mb-2 shadow-inner">
-                                                    <div className="absolute inset-0 bg-blue-500/10 animate-pulse"></div>
-                                                    <div className="relative h-full bg-[var(--accent)] transition-all duration-500" style={{ width: `${downloadProgress}%` }} />
-                                                </div>
-                                            )}
-
-                                            {restartReady && (
-                                                <div className="flex justify-end pt-2">
-                                                    <button className="bg-green-500 hover:bg-green-600 text-white px-10 py-3.5 rounded-xl text-[10px] font-black tracking-[0.1em] transition-all shadow-xl shadow-green-500/20 hover:scale-105 active:scale-95 flex items-center gap-2" onClick={handleRestartNow}>
-                                                        <span>RESTART NOW</span>
-                                                        <span className="text-lg">🚀</span>
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </section>
-                    )}
+                        </div>
+                    </section>
 
                     {/* Danger Zone */}
                     <section className="border border-red-500/20 rounded-2xl shadow-sm overflow-hidden bg-red-500/[0.02]">
@@ -402,3 +284,4 @@ export function SettingsView() {
         </div>
     )
 }
+

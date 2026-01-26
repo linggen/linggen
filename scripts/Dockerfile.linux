@@ -1,4 +1,4 @@
-# Dockerfile for Headless Linux builds (CLI and Server with Web UI)
+# Dockerfile for Headless Linux builds (CLI and Server with embedded Web UI)
 # This Dockerfile is designed to be used with docker buildx
 
 # Stage 1: Build the backend and frontend
@@ -63,34 +63,30 @@ RUN mkdir -p linggen-cli/src && echo "fn main() {}" > linggen-cli/src/main.rs
 WORKDIR /app/linggen-cli
 RUN cargo build --release
 
-# 3. Now copy the whole project and build the real binaries
+# 3. Now copy the whole project
 WORKDIR /app
 COPY . .
 
+# 4. Build the frontend assets (MUST happen before server build for embedding)
+WORKDIR /app/frontend
+# Remove lockfile to avoid architecture mismatches during multi-arch builds
+RUN rm -f package-lock.json && npm install
+RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: Frontend build produced no assets" && exit 1)
+
+# 5. Build the real binaries
 # Invalidate cache for final builds if version changes
 ARG BUILD_VERSION
 ENV LINGGEN_BUILD_VERSION=$BUILD_VERSION
 
-# Build the real backend binary
+# Build the real backend binary (with embedded UI)
 WORKDIR /app/backend
-# Force rebuild all workspace members by touching all source files. 
-# This prevents Cargo from using stale metadata from the dummy build phase.
 RUN find . -name "*.rs" -exec touch {} + && cargo build --release -p api
 
 # Build the real CLI binary
 WORKDIR /app/linggen-cli
 RUN find src -name "*.rs" -exec touch {} + && cargo build --release
 
-# 4. Build the frontend assets
-WORKDIR /app/frontend
-# Copy package files first for caching
-COPY frontend/package.json ./
-# Remove lockfile to avoid architecture mismatches during multi-arch builds
-RUN rm -f package-lock.json && npm install
-COPY frontend/ .
-RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: Frontend build produced no assets" && exit 1)
-
-# 5. Prepare portable artifacts
+# 6. Prepare portable artifacts
 WORKDIR /app
 RUN mkdir -p /app/dist-temp && \
     if [ "$TARGETARCH" = "amd64" ]; then SLUG="x86_64"; else SLUG="aarch64"; fi && \
@@ -107,12 +103,10 @@ RUN mkdir -p /app/dist-temp && \
     SRV_SIZE=$(stat -c%s "$SRV_BIN") && \
     if [ "$SRV_SIZE" -lt 10000000 ]; then echo "❌ Error: Server binary too small ($SRV_SIZE bytes)" && exit 1; fi && \
     # Server Tarball (Portable with root folder)
-    mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/frontend && \
-    mkdir -p /app/dist-temp/linggen-server-linux-${SLUG}/library_templates && \
-    cp "$SRV_BIN" /app/dist-temp/linggen-server-linux-${SLUG}/ && \
-    cp -r /app/frontend/dist/* /app/dist-temp/linggen-server-linux-${SLUG}/frontend/ && \
-    cp -r /app/backend/api/library_templates/* /app/dist-temp/linggen-server-linux-${SLUG}/library_templates/ && \
-    cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz linggen-server-linux-${SLUG}
+    SRV_DIST_NAME="linggen-server-linux-${SLUG}" && \
+    mkdir -p /app/dist-temp/${SRV_DIST_NAME} && \
+    cp "$SRV_BIN" /app/dist-temp/${SRV_DIST_NAME}/ && \
+    cd /app/dist-temp && tar -czf /app/dist-temp/linggen-server-linux-${SLUG}.tar.gz ${SRV_DIST_NAME}
 
 # Stage 2: Artifact extraction
 FROM scratch AS artifacts

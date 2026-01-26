@@ -39,5 +39,7 @@ libc = "0.2"
 slug = "0.1"
 regex = "1"
 serde_yaml = "0.9"
+rust-embed = "8.0"
+mime_guess = "2.0"
 
 # CLI dependencies were moved to the standalone linggen-cli crate

@@ -23,9 +23,3 @@ dist-ssr
 *.sln
 *.sw?
 
-# Tauri build artifacts
-src-tauri/target/
-src-tauri/binaries/
-src-tauri/target/release/bundle/**
-src-tauri/linggen-backend-*
-src-tauri/icons/icon.icns

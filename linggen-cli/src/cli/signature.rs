@@ -4,7 +4,6 @@ use std::fs::File;
 use std::path::Path;
 
 // Public key for signature verification (base64-encoded minisign public key text).
-// This must match the key embedded in the desktop app's `tauri.conf.json`.
 pub const LINGGEN_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NkVGNURDQzExNkE1OEEKUldTS3BSYkIzUFZ1R2YzVUVaQkZPQ0V1TXIzbzhPakhzaUM5SWo3dTVVeUxra3lhVmZ2MzhTVzMK";
 
 /// Verify a file's signature using minisign.

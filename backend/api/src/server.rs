@@ -1,8 +1,18 @@
 use anyhow::Context;
-use axum::{extract::DefaultBodyLimit, routing::delete, routing::get, routing::post, Router};
+use axum::{
+    body::Body,
+    extract::DefaultBodyLimit,
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::delete,
+    routing::get,
+    routing::post,
+    Router,
+};
 use dashmap::DashMap;
 use dirs::data_dir;
 use embeddings::{EmbeddingModel, TextChunker};
+use rust_embed::RustEmbed;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{
@@ -11,8 +21,48 @@ use std::{
 };
 use storage::{MetadataStore, VectorStore};
 use tokio::sync::RwLock;
-use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, warn};
+
+#[derive(RustEmbed)]
+#[folder = "../../frontend/dist/"]
+struct Assets;
+
+async fn static_handler(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let path = path.trim_start_matches('/');
+
+    if path.is_empty() || path == "index.html" {
+        return index_handler().await;
+    }
+
+    match Assets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data))
+                .unwrap()
+        }
+        None => {
+            if path.contains('.') {
+                StatusCode::NOT_FOUND.into_response()
+            } else {
+                index_handler().await
+            }
+        }
+    }
+}
+
+async fn index_handler() -> Response {
+    match Assets::get("index.html") {
+        Some(content) => Response::builder()
+            .header(header::CONTENT_TYPE, "text/html")
+            .body(Body::from(content.data))
+            .unwrap(),
+        None => (StatusCode::NOT_FOUND, "Frontend assets not found").into_response(),
+    }
+}
 
 use crate::analytics;
 use crate::handlers::{
@@ -748,16 +798,9 @@ fn create_router(app_state: Arc<AppState>) -> Router {
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
 
-    let frontend_dir = find_frontend_dir();
-    if let Some(frontend_dir) = frontend_dir {
-        info!("Serving frontend from: {:?}", frontend_dir);
-        let index = frontend_dir.join("index.html");
-        combined_routes
-            .fallback_service(ServeDir::new(frontend_dir).not_found_service(ServeFile::new(index)))
-    } else {
-        info!("Frontend assets not found, serving API only");
-        combined_routes.route("/", get(root_handler))
-    }
+    combined_routes
+        .route("/", get(index_handler))
+        .route("/*path", get(static_handler))
 }
 
 async fn root_handler() -> &'static str {
@@ -911,53 +954,4 @@ fn migrate_memory_files(from_dir: &Path, to_dir: &Path) -> anyhow::Result<()> {
         let _ = std::fs::remove_dir(parent);
     }
     Ok(())
-}
-
-fn find_frontend_dir() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    // 0) Explicit override (useful for debugging / custom packaging).
-    if let Ok(dir) = std::env::var("LINGGEN_FRONTEND_DIR") {
-        candidates.push(PathBuf::from(dir));
-    }
-
-    // 0.5) Tauri provides the resources directory at runtime in some environments.
-    // Prefer it if available.
-    if let Ok(dir) = std::env::var("TAURI_RESOURCE_DIR") {
-        let base = PathBuf::from(dir);
-        candidates.push(base.join("frontend"));
-        candidates.push(base.join("resources/frontend"));
-    }
-
-    // 1) Resolve relative to the server executable (best for release apps / Finder launches).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("../Resources/frontend"));
-            // Tauri bundles `bundle.resources` under `Contents/Resources/resources/...` by default.
-            candidates.push(exe_dir.join("../Resources/resources/frontend"));
-            candidates.push(exe_dir.join("../../Resources/frontend")); // extra safety for odd layouts
-            candidates.push(exe_dir.join("../../Resources/resources/frontend"));
-        }
-    }
-
-    // 2) Resolve relative to this crate (useful for local dev builds).
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../frontend/dist"));
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../frontend/dist"));
-
-    // 3) Conventional Linux locations (for tarball/installer use).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // If binary is in /usr/local/bin, look for /usr/local/share/linggen/frontend
-            candidates.push(exe_dir.join("../share/linggen/frontend"));
-        }
-    }
-    candidates.push(PathBuf::from("/usr/local/share/linggen/frontend"));
-    candidates.push(PathBuf::from("./frontend"));
-
-    // 4) Legacy relative paths (kept for compatibility).
-    candidates.push(PathBuf::from("../Resources/frontend"));
-    candidates.push(PathBuf::from("./frontend"));
-    candidates.push(PathBuf::from("../frontend/dist"));
-
-    candidates.into_iter().find(|p| p.exists())
 }

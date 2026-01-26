@@ -8,7 +8,7 @@ mod manifest;
 
 use cli::{
     find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_start,
-    handle_status, handle_update, is_in_path, ApiClient,
+    handle_status, handle_update, ApiClient,
 };
 
 #[derive(Parser)]
@@ -89,6 +89,61 @@ enum Commands {
 
     /// Diagnose installation, backend connectivity, and update configuration
     Doctor,
+
+    /// Manage AI agent skills
+    Skills {
+        #[command(subcommand)]
+        subcommand: SkillsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SkillsCommands {
+    /// Add a skill from a GitHub repository
+    Add {
+        /// GitHub repository URL or owner/repo shorthand
+        repo_url: String,
+
+        /// Name of the skill to install from the repository
+        #[arg(long)]
+        skill: String,
+
+        /// Git reference (branch, tag, or commit SHA)
+        #[arg(long, default_value = "main")]
+        git_ref: String,
+
+        /// Force overwrite if the skill is already installed
+        #[arg(long)]
+        force: bool,
+
+        /// Registry URL to record the install
+        #[arg(
+            long,
+            env = "LINGGEN_CF_WORKER_URL",
+            default_value = "https://analytics.linggen.dev",
+            alias = "registry-url"
+        )]
+        registry_url: String,
+
+        /// API key for calling the registry/analytics worker
+        ///
+        /// If not provided via flag or env var, uses the key baked in at compile time.
+        #[arg(long, env = "API_KEY")]
+        api_key: Option<String>,
+
+        /// Do not record the install in the registry
+        #[arg(long)]
+        no_record: bool,
+    },
+}
+
+/// The API key baked into the binary at compile time via LINGGEN_BUILD_API_KEY environment variable.
+const BUILTIN_API_KEY: Option<&str> = option_env!("LINGGEN_BUILD_API_KEY");
+
+fn resolve_api_key(cli_value: Option<String>) -> Option<String> {
+    cli_value
+        .or_else(|| std::env::var("API_KEY").ok())
+        .or_else(|| BUILTIN_API_KEY.map(String::from))
 }
 
 /// Ensure the Linggen backend is running at the given API URL.
@@ -106,22 +161,19 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
     // Try to derive the port from the URL, fall back to default 8787
     let port = extract_port_from_url(api_url).unwrap_or(8787);
 
-    // 1. Start backend first (headless) - this is fast
+    // Start backend first (headless) - this is fast
     start_backend_subprocess(port)?;
 
-    // 2. On macOS, launch the desktop app (Tauri) in parallel.
-    // Since backend is already starting, the app will connect to it.
-    #[cfg(target_os = "macos")]
-    {
-        let _ = try_launch_desktop_app();
-    }
-
-    // 3. Poll until backend becomes available, with a timeout.
+    // Poll until backend becomes available, with a timeout.
     // Use smaller intervals for a faster "feeling".
     let max_attempts = 40; // 40 * 250ms = 10 seconds
     for i in 0..max_attempts {
         if api_client.get_status().await.is_ok() {
             println!("✅ Backend is ready at {}", api_url);
+
+            // Auto-open browser to the server URL
+            let _ = open::that(api_url);
+
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -135,45 +187,6 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
         "Timed out waiting for Linggen backend to start at {}",
         api_url
     )))
-}
-
-#[cfg(target_os = "macos")]
-fn try_launch_desktop_app() -> Result<()> {
-    use std::process::{Command, Stdio};
-
-    eprintln!("🚀 Launching Linggen desktop app (Linggen.app)...");
-
-    // Prefer app name lookup first (works if installed normally).
-    let ok = Command::new("open")
-        .args(["-a", "Linggen"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok {
-        return Ok(());
-    }
-
-    // Fallback to explicit path.
-    let ok = Command::new("open")
-        .arg("/Applications/Linggen.app")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok {
-        return Ok(());
-    }
-
-    Err(anyhow::anyhow!(
-        "Failed to launch Linggen.app (is it installed in /Applications?)"
-    ))
 }
 
 /// Start the Linggen backend as a separate background process.
@@ -219,8 +232,7 @@ fn start_backend_subprocess(port: u16) -> Result<()> {
             // If we failed to spawn, provide a more helpful message
             Err(anyhow::anyhow!(
                 "Failed to start Linggen backend server (tried '{}'): {}\n\n\
-                 Please ensure linggen-server is installed and in your PATH,\n\
-                 or that Linggen.app is installed in /Applications.",
+                 Please ensure linggen-server is installed and in your PATH.",
                 server_bin,
                 e
             ))
@@ -250,6 +262,9 @@ fn extract_port_from_url(api_url: &str) -> Option<u16> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file if it exists
+    let _ = dotenvy::dotenv();
+
     let cli_args = Cli::parse();
 
     match cli_args.command {
@@ -313,6 +328,29 @@ async fn main() -> Result<()> {
         Some(Commands::Doctor) => {
             handle_doctor(&cli_args.api_url).await?;
         }
+
+        Some(Commands::Skills { subcommand }) => match subcommand {
+            SkillsCommands::Add {
+                repo_url,
+                skill,
+                git_ref,
+                force,
+                registry_url,
+                api_key,
+                no_record,
+            } => {
+                cli::handle_skills_add(
+                    repo_url,
+                    skill,
+                    git_ref,
+                    force,
+                    registry_url,
+                    resolve_api_key(api_key),
+                    no_record,
+                )
+                .await?;
+            }
+        },
     }
 
     Ok(())

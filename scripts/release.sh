@@ -43,6 +43,7 @@ echo "📦 Step 1: Building all artifacts..."
 
 SLUG=$(detect_platform)
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
 
 # Step 2: Create GitHub Release
 echo ""
@@ -75,13 +76,13 @@ if [ -f "$CLI_TARBALL" ]; then
   gh release upload "$VERSION" "$CLI_TARBALL" --repo "$REPO"
 fi
 
-# Updater Tarball (macOS)
+# Server Tarball (macOS)
 if [ "$OS" = "darwin" ]; then
-  UPDATER_TARBALL="$DIST_DIR/Linggen.app.tar.gz"
-  if [ -f "$UPDATER_TARBALL" ]; then
-    echo "  Uploading Updater: $(basename "$UPDATER_TARBALL")"
-    delete_asset "$(basename "$UPDATER_TARBALL")"
-    gh release upload "$VERSION" "$UPDATER_TARBALL" --repo "$REPO"
+  SRV_TARBALL="$DIST_DIR/linggen-server-macos.tar.gz"
+  if [ -f "$SRV_TARBALL" ]; then
+    echo "  Uploading Server: $(basename "$SRV_TARBALL")"
+    delete_asset "$(basename "$SRV_TARBALL")"
+    gh release upload "$VERSION" "$SRV_TARBALL" --repo "$REPO"
   fi
 fi
 
@@ -116,17 +117,21 @@ MANIFEST_JSON=$(jq -n \
   --arg cli_sig "$CLI_SIG" \
   '{version: $version, artifacts: {($cli_key): {url: $cli_url, signature: (if $cli_sig != "" then $cli_sig else null end)}}}')
 
-# Add app-macos-tarball if it exists (macOS only)
-if [ -f "$DIST_DIR/Linggen.app.tar.gz" ]; then
-  UPDATER_SIG=""
-  if [ -f "$DIST_DIR/Linggen.app.tar.gz.sig.txt" ]; then
-    UPDATER_SIG=$(cat "$DIST_DIR/Linggen.app.tar.gz.sig.txt")
-  fi
+# Add server-macos if it exists (macOS only)
+if [ "$OS" = "darwin" ]; then
+  SRV_TAR="linggen-server-macos.tar.gz"
+  if [ -f "$DIST_DIR/$SRV_TAR" ]; then
+    SRV_SIG=""
+    if [ -f "$DIST_DIR/${SRV_TAR}.sig.txt" ]; then
+      SRV_SIG=$(cat "$DIST_DIR/${SRV_TAR}.sig.txt")
+    fi
 
-  MANIFEST_JSON=$(echo "$MANIFEST_JSON" | jq \
-    --arg app_url "${BASE_URL}/Linggen.app.tar.gz" \
-    --arg app_sig "$UPDATER_SIG" \
-    '.artifacts["app-macos-tarball"] = {url: $app_url, signature: (if $app_sig != "" then $app_sig else null end)}')
+    MANIFEST_JSON=$(echo "$MANIFEST_JSON" | jq \
+      --arg url "${BASE_URL}/$SRV_TAR" \
+      --arg key "server-macos" \
+      --arg sig "$SRV_SIG" \
+      '.artifacts[$key] = {url: $url, signature: (if $sig != "" then $sig else null end)}')
+  fi
 fi
 
 # Add Linux artifacts if they exist
@@ -153,43 +158,8 @@ fi
 
 echo "$MANIFEST_JSON" > "$DIST_DIR/manifest.json"
 
-# Generate latest.json (for Tauri)
-UPDATER_SIG=""
-if [ -f "$DIST_DIR/Linggen.app.tar.gz.sig.txt" ]; then
-  UPDATER_SIG=$(cat "$DIST_DIR/Linggen.app.tar.gz.sig.txt")
-fi
-
-if [ -n "$UPDATER_SIG" ]; then
-  TAURI_PLATFORM="darwin-aarch64"
-  if [[ "$SLUG" == *"x86_64"* ]]; then TAURI_PLATFORM="darwin-x86_64"; fi
-
-  jq -n \
-    --arg version "$VERSION_NUM" \
-    --arg notes "See release notes at https://github.com/${REPO}/releases/tag/${VERSION}" \
-    --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg platform "${TAURI_PLATFORM}" \
-    --arg signature "$UPDATER_SIG" \
-    --arg url "${BASE_URL}/Linggen.app.tar.gz" \
-    '{
-      version: $version,
-      notes: $notes,
-      pub_date: $pub_date,
-      platforms: {
-        ($platform): {
-          signature: $signature,
-          url: $url
-        }
-      }
-    }' > "$DIST_DIR/latest.json"
-fi
-
 delete_asset "manifest.json"
 gh release upload "$VERSION" "$DIST_DIR/manifest.json" --repo "$REPO"
-
-if [ -f "$DIST_DIR/latest.json" ]; then
-  delete_asset "latest.json"
-  gh release upload "$VERSION" "$DIST_DIR/latest.json" --repo "$REPO"
-fi
 
 # Step 5: Finalize
 if [ "$KEEP_DRAFT" = "true" ]; then

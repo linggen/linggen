@@ -87,12 +87,14 @@ function App() {
     setSelectedLibraryPackId(null)
   }
 
-  const handleSelectLibraryPack = (packId: string) => {
+  const handleSelectLibraryPack = (packId: string | null) => {
     setSelectedLibraryPackId(packId)
     setSelectedSourceId(null)
     setSelectedMemoryPath(null)
     setSelectedNotePath(null)
-    setCurrentView('sources') // Switch to sources view to use WorkspaceView for editing
+    if (packId) {
+      setCurrentView('sources') // Switch to sources view to use WorkspaceView for editing
+    }
   }
 
 
@@ -673,6 +675,7 @@ function App() {
       {currentView === 'library' && (
         <LibraryView
           onSelectPack={handleSelectLibraryPack}
+          selectedLibraryPackId={selectedLibraryPackId}
         />
       )}
       {currentView === 'activity' && <ActivityView jobs={jobs} />}

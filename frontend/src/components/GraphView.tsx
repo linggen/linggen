@@ -133,15 +133,14 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
 
   // Keep the graph canvas in sync with its container size.
   // Use both ResizeObserver (for flex/layout changes) and a window
-  // resize fallback, since some environments (e.g. certain Tauri/
-  // WebView combinations) can be finicky about firing resize events
+  // resize fallback, since some environments can be finicky about firing resize events
   // through the observer alone.
   useEffect(() => {
     const updateSize = () => {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      
+
       // Only update if dimensions are valid (not 0)
       if (rect.width > 0 && rect.height > 0) {
         setDimensions({
@@ -244,7 +243,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
         if (graphWithStatus.nodes.length === 0 && (focusNodeId || folderFilter)) {
           console.log('Focused/filtered graph returned 0 nodes, fetching full graph...');
           const fullGraph = await getGraphWithStatus(sourceId, {});
-          
+
           // Transform full graph to force graph format
           const graphNodes: GraphNodeObject[] = fullGraph.nodes.map((n: GraphNode) => ({
             id: n.id,
@@ -284,7 +283,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       setError(err instanceof Error ? err.message : 'Failed to load graph');
     } finally {
       setLoading(false);
-      
+
       // Remeasure one more time after loading completes
       window.setTimeout(() => {
         const el = containerRef.current;
@@ -318,14 +317,14 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
             hops: focusNodeId ? 2 : undefined,
             folder: folderFilter || undefined,
           });
-          
+
           setStatus({
             status: graphWithStatus.status as 'missing' | 'stale' | 'ready' | 'building' | 'error',
             node_count: graphWithStatus.node_count,
             edge_count: graphWithStatus.edge_count,
             built_at: graphWithStatus.built_at || undefined,
           });
-          
+
           if (graphWithStatus.status === 'ready' || graphWithStatus.status === 'error') {
             clearInterval(poll);
             if (graphWithStatus.status === 'ready') {
@@ -346,19 +345,19 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
   const buildNodeInfo = useCallback((nodeId: string): SelectedNodeInfo | null => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return null;
-    
+
     const connections: SelectedNodeInfo['connections'] = [];
     links.forEach((link) => {
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      
+
       if (sourceId === nodeId) {
         connections.push({ id: targetId, kind: link.kind, direction: 'out' });
       } else if (targetId === nodeId) {
         connections.push({ id: sourceId, kind: link.kind, direction: 'in' });
       }
     });
-    
+
     return {
       id: node.id,
       label: node.label,
@@ -372,7 +371,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
   const handleNodeClick = useCallback((node: GraphNodeObject) => {
     const newSelectedId = node.id === selectedNode ? null : node.id;
     setSelectedNode(newSelectedId);
-    
+
     if (onNodeSelect) {
       if (newSelectedId) {
         const nodeInfo = buildNodeInfo(newSelectedId);
@@ -391,7 +390,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
         graphRef.current.centerAt(node.x, node.y, 1000);
         graphRef.current.zoom(2, 1000);
         setSelectedNode(focusNodeId);
-        
+
         if (onNodeSelect) {
           const nodeInfo = buildNodeInfo(focusNodeId);
           onNodeSelect(nodeInfo);
@@ -453,7 +452,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
       ctx.fillStyle = nodeColor(n);
       ctx.fill();
 
-          // Emphasize highlighted nodes with a stroke
+      // Emphasize highlighted nodes with a stroke
       if (highlightNodes.size === 0 || highlightNodes.has(n.id)) {
         ctx.lineWidth = 1.5;
         const rootTheme = document.documentElement.getAttribute('data-theme');
@@ -651,7 +650,7 @@ export function GraphView({ sourceId, onNodeSelect, focusNodeId }: GraphViewProp
             <h4 className="m-0 text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">Selected File</h4>
             <p className="m-0 font-mono text-[11px] text-blue-400 break-all">{selectedNode}</p>
           </div>
-          
+
           <div className="flex flex-col gap-2">
             <h5 className="m-0 text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Connections</h5>
             <ul className="list-none p-0 m-0 max-h-[150px] overflow-y-auto flex flex-col gap-1">
