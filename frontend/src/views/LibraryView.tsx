@@ -13,7 +13,7 @@ import {
     DocumentTextIcon,
     ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
-import { type LibraryPack, getLibrary, listRemoteSkills, type RemoteSkill, downloadSkill, recordSkillInstall } from '../api';
+import { type LibraryPack, getLibrary, listRemoteSkills, searchRemoteSkills, type RemoteSkill, downloadSkill, recordSkillInstall } from '../api';
 
 interface LibraryViewProps {
     onSelectPack?: (id: string | null) => void;
@@ -69,15 +69,16 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
         }
     }, [selectedLibraryPackId]);
 
-    const fetchData = async (page: number) => {
+    const fetchData = async (page: number, query?: string) => {
         setIsRefreshing(true);
         try {
-            const [localData, remoteData] = await Promise.all([
-                getLibrary(),
-                listRemoteSkills(page, pageSize)
-            ]);
-
+            const localData = await getLibrary();
             setLocalPacks(localData.packs);
+
+            // Use search API if query is provided, otherwise list all skills
+            const remoteData = query?.trim()
+                ? await searchRemoteSkills(query.trim(), page, pageSize)
+                : await listRemoteSkills(page, pageSize);
 
             if (remoteData.success) {
                 setRemoteSkills(remoteData.skills);
@@ -97,15 +98,27 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
         fetchData(1);
     }, []);
 
+    // Debounced search for remote skills
+    useEffect(() => {
+        if (activeTab !== 'community') return;
+
+        const timeoutId = setTimeout(() => {
+            fetchData(1, searchQuery);
+        }, 300); // 300ms debounce
+
+        return () => clearTimeout(timeoutId);
+    }, [searchQuery, activeTab]);
+
     const handlePageChange = (newPage: number) => {
         if (newPage >= 1 && newPage <= totalPages) {
-            fetchData(newPage);
+            fetchData(newPage, searchQuery);
             // Scroll to top of skills list
             const container = document.querySelector('.custom-scrollbar');
             if (container) container.scrollTop = 0;
         }
     };
 
+    // Client-side filtering for local packs only
     const filteredLocalPacks = localPacks.filter(pack => {
         const query = searchQuery.toLowerCase();
         return (pack.filename || '').toLowerCase().includes(query) ||
@@ -113,11 +126,8 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
             (pack.folder || '').toLowerCase().includes(query);
     });
 
-    const filteredRemoteSkills = remoteSkills.filter(skill => {
-        const query = searchQuery.toLowerCase();
-        return skill.skill.toLowerCase().includes(query) ||
-            skill.url.toLowerCase().includes(query);
-    });
+    // Remote skills are already filtered server-side, no need for client-side filtering
+    const filteredRemoteSkills = remoteSkills;
 
     const getSkillColor = (name: string) => {
         const colors = [

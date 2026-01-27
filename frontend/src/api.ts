@@ -20,6 +20,9 @@ function getApiBase(): string {
 
 export const API_BASE = getApiBase();
 
+// Skills registry URL (CF Worker)
+const REGISTRY_URL = import.meta.env.VITE_LINGGEN_CF_WORKER_URL || 'https://linggen-analytics.liangatbc.workers.dev';
+
 /** Indexing mode: "full" rebuilds everything, "incremental" only updates changed files */
 export type IndexMode = 'full' | 'incremental';
 
@@ -869,10 +872,24 @@ export interface ListRemoteSkillsResponse {
 }
 
 export async function listRemoteSkills(page = 1, limit = 20): Promise<ListRemoteSkillsResponse> {
-    const url = `https://linggen-analytics.liangatbc.workers.dev/skills?page=${page}&limit=${limit}`;
+    const url = `${REGISTRY_URL}/skills?page=${page}&limit=${limit}`;
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Failed to fetch remote skills: ${response.statusText}`);
+    }
+    return response.json();
+}
+
+export interface SearchRemoteSkillsResponse extends ListRemoteSkillsResponse {
+    query: string;
+}
+
+export async function searchRemoteSkills(query: string, page = 1, limit = 20): Promise<SearchRemoteSkillsResponse> {
+    const encodedQuery = encodeURIComponent(query);
+    const url = `${REGISTRY_URL}/skills/search?q=${encodedQuery}&page=${page}&limit=${limit}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to search remote skills: ${response.statusText}`);
     }
     return response.json();
 }
@@ -1157,7 +1174,6 @@ export async function downloadSkill(url: string, skill: string, ref: string = 'm
     return response.json();
 }
 
-const REGISTRY_URL = 'https://linggen-analytics.liangatbc.workers.dev';
 const INSTALL_COOLDOWN_MINUTES = 5;
 
 interface RecordInstallResponse {

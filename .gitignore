@@ -69,3 +69,4 @@ linggen-cli/.env
 .env
 .env.local
 
+.claude/skills/

@@ -2,12 +2,14 @@ import type { Env, TrackEventPayload, TrackResponse, ErrorResponse, SkillInstall
 
 /**
  * Linggen Analytics & Skills Registry Worker
- * 
+ *
  * Receives anonymous usage events and skill install records.
- * 
+ *
  * Endpoints:
  *   POST /track - Record an analytics event
  *   POST /skills/install - Record a skill install
+ *   GET /skills - List all skills (paginated, sorted by install_count)
+ *   GET /skills/search - Search skills by name, url, or content
  *   GET /health - Health check endpoint
  */
 
@@ -225,6 +227,57 @@ async function handleListSkills(request: Request, env: Env): Promise<Response> {
 }
 
 /**
+ * Handle GET /skills/search - Search skills by name, url, or content (Public)
+ */
+async function handleSearchSkills(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const query = url.searchParams.get('q')?.trim();
+
+  if (!query) {
+    return jsonResponse({ success: false, error: 'Missing search query parameter "q"' }, { status: 400 });
+  }
+
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1'));
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '20')));
+  const offset = (page - 1) * limit;
+
+  try {
+    // Create search pattern for LIKE queries
+    const searchPattern = `%${query}%`;
+
+    // 1. Get total count of matching skills
+    const totalResult = await env.DB.prepare(
+      'SELECT COUNT(*) as total FROM skills WHERE skill LIKE ? OR url LIKE ? OR content LIKE ?'
+    )
+      .bind(searchPattern, searchPattern, searchPattern)
+      .first<{ total: number }>();
+    const total = totalResult?.total || 0;
+
+    // 2. Get paginated search results, ordered by install_count DESC
+    const { results } = await env.DB.prepare(
+      'SELECT skill_id, url, skill, ref, content, install_count, updated_at FROM skills WHERE skill LIKE ? OR url LIKE ? OR content LIKE ? ORDER BY install_count DESC LIMIT ? OFFSET ?'
+    )
+      .bind(searchPattern, searchPattern, searchPattern, limit, offset)
+      .all();
+
+    return jsonResponse({
+      success: true,
+      query,
+      skills: results,
+      pagination: {
+        total,
+        page,
+        limit,
+        total_pages: Math.ceil(total / limit),
+      }
+    }, { status: 200 });
+  } catch (err) {
+    console.error('Search skills error:', err);
+    return jsonResponse({ success: false, error: 'Internal error' }, { status: 500 });
+  }
+}
+
+/**
  * Handle POST /skills/install - Record a skill install
  */
 async function handleSkillInstall(request: Request, env: Env): Promise<Response> {
@@ -352,6 +405,10 @@ export default {
 
     if (url.pathname === '/skills' && method === 'GET') {
       return handleListSkills(request, env);
+    }
+
+    if (url.pathname === '/skills/search' && method === 'GET') {
+      return handleSearchSkills(request, env);
     }
 
     if (url.pathname === '/health' && method === 'GET') {
