@@ -614,6 +614,32 @@ export function Sidebar({
         </div>
     );
 
+    // Helper to get file type icon text and color
+    const getFileTypeIcon = (pack: LibraryPack): { text: string, color: string } => {
+        const fileType = pack.file_type?.toLowerCase();
+
+        switch (fileType) {
+            case 'md':
+                return { text: 'M', color: '#60a5fa' }; // blue
+            case 'py':
+                return { text: 'PY', color: '#fbbf24' }; // yellow/amber
+            case 'js':
+                return { text: 'JS', color: '#facc15' }; // yellow
+            case 'jsx':
+                return { text: 'JSX', color: '#facc15' }; // yellow
+            case 'ts':
+                return { text: 'TS', color: '#3b82f6' }; // blue
+            case 'tsx':
+                return { text: 'TSX', color: '#3b82f6' }; // blue
+            case 'sh':
+            case 'bash':
+            case 'zsh':
+                return { text: 'SH', color: '#10b981' }; // green
+            default:
+                return { text: 'L', color: pack.color || '#A78BFA' }; // fallback to library purple
+        }
+    };
+
     const renderLibraryNode = (node: LibraryTreeNode, depth: number) => {
         const isExpanded = expandedLibraryFolders.has(node.path);
         const isRenamingFolder = node.path && renamingLibraryFolder?.oldName === node.path;
@@ -731,7 +757,7 @@ export function Sidebar({
                         {/* Packs in this folder */}
                         {node.packs.map(pack => {
                             const isRenaming = pack.id && renamingLibraryPack?.id === pack.id;
-                            const color = pack.color || '#A78BFA';
+                            const iconInfo = getFileTypeIcon(pack);
                             return isRenaming ? (
                                 <div
                                     key={pack.id || 'renaming'}
@@ -740,8 +766,8 @@ export function Sidebar({
                                 >
                                     <div
                                         className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
-                                        style={{ color, borderColor: color }}
-                                    >L</div>
+                                        style={{ color: iconInfo.color, borderColor: iconInfo.color, fontSize: iconInfo.text.length > 1 ? '7px' : '10px' }}
+                                    >{iconInfo.text}</div>
                                     <input
                                         autoFocus
                                         type="text"
@@ -773,9 +799,9 @@ export function Sidebar({
                                 >
                                     <div
                                         className="text-[10px] font-bold border rounded-[2px] w-3.5 h-3.5 flex items-center justify-center leading-none"
-                                        style={{ color, borderColor: color }}
+                                        style={{ color: iconInfo.color, borderColor: iconInfo.color, fontSize: iconInfo.text.length > 1 ? '7px' : '10px' }}
                                     >
-                                        L
+                                        {iconInfo.text}
                                     </div>
                                     <span className="overflow-hidden text-ellipsis whitespace-nowrap">
                                         {pack.filename || pack.name}

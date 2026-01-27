@@ -67,9 +67,9 @@ async fn index_handler() -> Response {
 use crate::analytics;
 use crate::handlers::{
     add_resource, cancel_job, chat_stream, classify_intent, clear_all_data, create_folder,
-    create_pack, delete_folder, delete_pack, delete_uploaded_file, enhance_prompt, get_app_status,
-    get_graph, get_graph_status, get_graph_with_status, get_pack, index_source, list_jobs,
-    list_library, list_resources, list_uploaded_files,
+    create_pack, delete_folder, delete_pack, delete_uploaded_file, download_skill, enhance_prompt,
+    get_app_status, get_graph, get_graph_status, get_graph_with_status, get_pack, index_source,
+    list_jobs, list_library, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
     rebuild_graph, remove_resource, rename_folder, rename_pack, rename_resource, retry_init,
     save_pack, update_resource_patterns, upload_file, upload_file_stream, AppState,
@@ -709,6 +709,7 @@ fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/library/folders", post(create_folder))
         .route("/api/library/folders/rename", post(rename_folder))
         .route("/api/library/folders/:folder_name", delete(delete_folder))
+        .route("/api/library/download_skill", post(download_skill))
         .route(
             "/api/settings",
             get(crate::handlers::settings::get_settings)

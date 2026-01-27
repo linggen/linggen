@@ -6,7 +6,11 @@
       "Skill(linggen:*)",
       "Read(//Users/lianghuang/workspace/linggen/linggen-vscode/**)",
       "Bash(gh repo view:*)",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(npm install:*)",
+      "Bash(curl:*)"
     ]
   }
 }

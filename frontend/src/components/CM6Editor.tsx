@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { javascript } from '@codemirror/lang-javascript';
+import { python } from '@codemirror/lang-python';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
@@ -112,6 +114,34 @@ const linggenAutoHeightTheme = EditorView.theme(
         '.cm-scroller': { overflow: 'visible' },
     }
 );
+
+// Helper function to get language extension based on file path
+function getLanguageExtension(docPath: string) {
+    const ext = docPath.split('.').pop()?.toLowerCase();
+
+    switch (ext) {
+        case 'js':
+        case 'jsx':
+            return javascript({ jsx: true });
+        case 'ts':
+        case 'tsx':
+            return javascript({ jsx: true, typescript: true });
+        case 'py':
+            return python();
+        case 'sh':
+        case 'bash':
+        case 'zsh':
+            // For shell scripts, use basic syntax highlighting
+            // We can add a dedicated shell language later if needed
+            return javascript(); // Fallback to JS for basic highlighting
+        case 'md':
+        default:
+            return markdown({
+                base: markdownLanguage,
+                codeLanguages: languages
+            });
+    }
+}
 
 export const CM6Editor: React.FC<CM6EditorProps> = ({
     sourceId,
@@ -246,6 +276,7 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
     }
 
     const isContainerScroll = scrollMode === 'container';
+    const isMarkdown = docPath.toLowerCase().endsWith('.md');
 
     return (
         <div className={`flex flex-col h-full min-h-0 bg-[var(--bg-content)] overflow-hidden ${isContainerScroll ? 'h-auto overflow-visible' : ''}`}>
@@ -279,18 +310,15 @@ export const CM6Editor: React.FC<CM6EditorProps> = ({
                     className={isContainerScroll ? 'cm-auto-height' : 'h-full'}
                     theme={isDarkMode ? oneDark : 'light'}
                     extensions={[
-                        markdown({
-                            base: markdownLanguage,
-                            codeLanguages: languages
-                        }),
+                        getLanguageExtension(docPath),
                         linggenBaseTheme,
                         scrollMode === 'editor' ? linggenFillHeightTheme : linggenAutoHeightTheme,
-                        livePreviewPlugin,
-                        livePreviewTheme,
+                        // Only include live preview for markdown files
+                        ...(isMarkdown ? [livePreviewPlugin, livePreviewTheme] : []),
                         EditorView.lineWrapping,
                     ]}
                     basicSetup={{
-                        lineNumbers: false,
+                        lineNumbers: !isMarkdown, // Show line numbers for code files
                         foldGutter: true,
                         highlightActiveLineGutter: true,
                         highlightActiveLine: true,

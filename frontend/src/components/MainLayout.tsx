@@ -25,7 +25,7 @@ interface MainLayoutProps {
     selectedMemoryPath?: string | null
     onSelectMemory?: (sourceId: string, path: string) => void
     selectedLibraryPackId?: string | null
-    onSelectLibraryPack?: (packId: string) => void
+    onSelectLibraryPack?: (packId: string | null) => void
     onAddSource?: () => void
     libraryPacks?: LibraryPack[]
     libraryFolders?: string[]

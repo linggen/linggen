@@ -59,6 +59,14 @@ pub struct RenamePackRequest {
     pub new_name: String,
 }
 
+#[derive(Deserialize)]
+pub struct DownloadSkillRequest {
+    pub url: String,
+    pub skill: String,
+    #[serde(rename = "ref")]
+    pub git_ref: String,
+}
+
 fn scan_folders_recursive(
     dir: &std::path::Path,
     root: &std::path::Path,
@@ -146,82 +154,103 @@ fn scan_dir(
             info!("DEBUG: found entry {:?}", path);
             if path.is_dir() {
                 scan_dir(&path, packs, library_path);
-            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                info!("DEBUG: found markdown file {:?}", path);
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let mut meta = extract_all_meta_from_content(&content)
-                        .unwrap_or_else(|| serde_json::json!({}));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                // Support markdown and script files
+                let is_supported = matches!(
+                    ext,
+                    "md" | "py" | "js" | "ts" | "jsx" | "tsx" | "sh" | "bash" | "zsh"
+                );
 
-                    // Use relative path from the library root as the ID
-                    let rel_path = match path.strip_prefix(&library_path_can) {
-                        Ok(p) => p.to_string_lossy().to_string(),
-                        Err(_) => {
-                            let path_can = path.canonicalize().unwrap_or_else(|_| path.clone());
-                            path_can
-                                .strip_prefix(&library_path_can)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_else(|_| {
-                                    path.file_name().unwrap().to_string_lossy().to_string()
-                                })
-                        }
-                    };
+                if is_supported {
+                    info!("DEBUG: found supported file {:?}", path);
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        // For markdown files, try to extract frontmatter metadata
+                        // For script files, create basic metadata
+                        let mut meta = if ext == "md" {
+                            extract_all_meta_from_content(&content)
+                                .unwrap_or_else(|| serde_json::json!({}))
+                        } else {
+                            serde_json::json!({})
+                        };
 
-                    if let Some(obj) = meta.as_object_mut() {
-                        obj.insert("id".to_string(), serde_json::json!(rel_path));
-                        obj.insert("read_only".to_string(), serde_json::json!(false));
-
-                        let filename = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        obj.insert("filename".to_string(), serde_json::json!(filename));
-
-                        if !obj.contains_key("name") {
-                            obj.insert("name".to_string(), serde_json::json!(filename));
-                        }
-
-                        // Add file metadata
-                        if let Ok(metadata) = std::fs::metadata(&path) {
-                            if let Ok(created) = metadata.created() {
-                                obj.insert(
-                                    "created_at".to_string(),
-                                    serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
-                                        created
-                                    )),
-                                );
+                        // Use relative path from the library root as the ID
+                        let rel_path = match path.strip_prefix(&library_path_can) {
+                            Ok(p) => p.to_string_lossy().to_string(),
+                            Err(_) => {
+                                let path_can = path.canonicalize().unwrap_or_else(|_| path.clone());
+                                path_can
+                                    .strip_prefix(&library_path_can)
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| {
+                                        path.file_name().unwrap().to_string_lossy().to_string()
+                                    })
                             }
-                            if let Ok(modified) = metadata.modified() {
-                                obj.insert(
-                                    "updated_at".to_string(),
-                                    serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
-                                        modified
-                                    )),
-                                );
-                            }
-                        }
+                        };
 
-                        // Add full relative folder path info
-                        if let Some(parent) = path.parent() {
-                            let rel_folder = match parent.strip_prefix(&library_path_can) {
-                                Ok(p) => p.to_string_lossy().to_string(),
-                                Err(_) => {
-                                    let parent_can = parent
-                                        .canonicalize()
-                                        .unwrap_or_else(|_| parent.to_path_buf());
-                                    parent_can
-                                        .strip_prefix(&library_path_can)
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| "".to_string())
+                        if let Some(obj) = meta.as_object_mut() {
+                            obj.insert("id".to_string(), serde_json::json!(rel_path));
+                            obj.insert("read_only".to_string(), serde_json::json!(false));
+                            obj.insert("file_type".to_string(), serde_json::json!(ext));
+
+                            let filename = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            obj.insert("filename".to_string(), serde_json::json!(filename));
+
+                            if !obj.contains_key("name") {
+                                // For script files, use filename with extension
+                                let display_name = if ext == "md" {
+                                    filename.clone()
+                                } else {
+                                    format!("{}.{}", filename, ext)
+                                };
+                                obj.insert("name".to_string(), serde_json::json!(display_name));
+                            }
+
+                            // Add file metadata
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                if let Ok(created) = metadata.created() {
+                                    obj.insert(
+                                        "created_at".to_string(),
+                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                            created
+                                        )),
+                                    );
                                 }
-                            };
+                                if let Ok(modified) = metadata.modified() {
+                                    obj.insert(
+                                        "updated_at".to_string(),
+                                        serde_json::json!(chrono::DateTime::<chrono::Utc>::from(
+                                            modified
+                                        )),
+                                    );
+                                }
+                            }
 
-                            if !rel_folder.is_empty() {
-                                obj.insert("folder".to_string(), serde_json::json!(rel_folder));
+                            // Add full relative folder path info
+                            if let Some(parent) = path.parent() {
+                                let rel_folder = match parent.strip_prefix(&library_path_can) {
+                                    Ok(p) => p.to_string_lossy().to_string(),
+                                    Err(_) => {
+                                        let parent_can = parent
+                                            .canonicalize()
+                                            .unwrap_or_else(|_| parent.to_path_buf());
+                                        parent_can
+                                            .strip_prefix(&library_path_can)
+                                            .map(|p| p.to_string_lossy().to_string())
+                                            .unwrap_or_else(|_| "".to_string())
+                                    }
+                                };
+
+                                if !rel_folder.is_empty() {
+                                    obj.insert("folder".to_string(), serde_json::json!(rel_folder));
+                                }
                             }
                         }
+                        packs.push(meta);
                     }
-                    packs.push(meta);
                 }
             }
         }
@@ -519,6 +548,188 @@ pub async fn save_pack(
     info!("Saved library pack: {} at {:?}", pack_id, pack_path);
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+pub async fn download_skill(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DownloadSkillRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+
+    // Validate skill name
+    if req.skill.contains("..") || req.skill.contains('/') || req.skill.contains('\\') {
+        return Err((StatusCode::BAD_REQUEST, "Invalid skill name".to_string()));
+    }
+
+    // Parse GitHub URL
+    let url = req.url.trim().trim_end_matches(".git").trim_end_matches('/');
+    let (owner, repo) = parse_github_url(url)?;
+
+    info!(
+        "Downloading skill {} from {}/{} (ref: {})",
+        req.skill, owner, repo, req.git_ref
+    );
+
+    // Download zipball from GitHub
+    let zip_url = format!(
+        "https://codeload.github.com/{}/{}/zip/{}",
+        owner, repo, req.git_ref
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&zip_url)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to download from GitHub: {}", e),
+            )
+        })?;
+
+    if !response.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("GitHub returned status: {}", response.status()),
+        ));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read download: {}", e),
+        )
+    })?;
+
+    // Extract skill from zip
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to open zip archive: {}", e),
+        )
+    })?;
+
+    // Find skill directory in zip
+    let mut skill_root_in_zip = None;
+    for i in 0..archive.len() {
+        let file = archive.by_index(i).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read zip entry: {}", e),
+            )
+        })?;
+        let name = file.name();
+
+        // Look for SKILL.md inside a directory named skill_name
+        if (name.ends_with("/SKILL.md") || name.ends_with("/skill.md"))
+            && name.contains(&format!("/{}/", req.skill))
+        {
+            let path = std::path::Path::new(name);
+            if let Some(parent) = path.parent() {
+                skill_root_in_zip = Some(parent.to_path_buf());
+                break;
+            }
+        }
+    }
+
+    let skill_root = skill_root_in_zip.ok_or((
+        StatusCode::NOT_FOUND,
+        format!(
+            "Could not find skill '{}' in repository. Make sure it contains a SKILL.md file.",
+            req.skill
+        ),
+    ))?;
+
+    // Create target directory: library/skills/{skill_name}
+    let target_dir = state
+        .library_path
+        .join("skills")
+        .join(&req.skill);
+
+    // Remove existing if present
+    if target_dir.exists() {
+        std::fs::remove_dir_all(&target_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to remove existing skill: {}", e),
+            )
+        })?;
+    }
+
+    std::fs::create_dir_all(&target_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create skill directory: {}", e),
+        )
+    })?;
+
+    // Extract files
+    let skill_root_str = skill_root.to_str().unwrap();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read zip entry: {}", e),
+            )
+        })?;
+        let name = file.name().to_string();
+
+        if name.starts_with(skill_root_str) && !file.is_dir() {
+            let rel_path = &name[skill_root_str.len()..].trim_start_matches('/');
+            if rel_path.is_empty() {
+                continue;
+            }
+
+            // Security check
+            if rel_path.contains("..") || rel_path.starts_with('/') {
+                continue;
+            }
+
+            let dest_path = target_dir.join(rel_path);
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to create directory: {}", e),
+                    )
+                })?;
+            }
+
+            let mut outfile = std::fs::File::create(&dest_path).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to create file: {}", e),
+                )
+            })?;
+            std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to write file: {}", e),
+                )
+            })?;
+        }
+    }
+
+    info!("Skill {} downloaded to {:?}", req.skill, target_dir);
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "skill": req.skill,
+        "path": target_dir.to_string_lossy()
+    })))
+}
+
+fn parse_github_url(url: &str) -> Result<(String, String), (StatusCode, String)> {
+    let stripped = url.trim_start_matches("https://github.com/");
+    let parts: Vec<&str> = stripped.split('/').collect();
+    if parts.len() >= 2 {
+        return Ok((parts[0].to_string(), parts[1].to_string()));
+    }
+    Err((
+        StatusCode::BAD_REQUEST,
+        format!("Could not parse GitHub repository from '{}'", url),
+    ))
 }
 
 mod ax_extract {

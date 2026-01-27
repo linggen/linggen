@@ -676,6 +676,7 @@ function App() {
         <LibraryView
           onSelectPack={handleSelectLibraryPack}
           selectedLibraryPackId={selectedLibraryPackId}
+          onRefresh={() => setResourcesVersion(v => v + 1)}
         />
       )}
       {currentView === 'activity' && <ActivityView jobs={jobs} />}

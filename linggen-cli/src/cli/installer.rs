@@ -161,7 +161,7 @@ pub async fn install_linux(manifest: &crate::manifest::Manifest) -> Result<()> {
         let tmp_extract = tempdir()?;
         extract_tarball(&tar, tmp_extract.path().to_str().unwrap())?;
 
-        seed_library_from_extracted_path(tmp_extract.path())?;
+        // seed_library_from_extracted_path(tmp_extract.path())?;
 
         let entries = fs::read_dir(tmp_extract.path())?;
         for entry in entries {
@@ -397,7 +397,7 @@ fn install_server_macos(tar_path: &PathBuf) -> Result<()> {
     extract_tarball(tar_path, dest_str)?;
 
     // Seed library
-    seed_library_from_extracted_path(tmp_path)?;
+    // seed_library_from_extracted_path(tmp_path)?;
 
     // Find the server binary (expecting it inside a folder named linggen-server-macos)
     let mut server_bin_src = None;

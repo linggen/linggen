@@ -1015,6 +1015,7 @@ export interface LibraryPack {
     created_at?: string;
     updated_at?: string;
     read_only?: boolean;
+    file_type?: string; // File extension (md, py, js, ts, etc.)
 }
 
 export interface ListPacksResponse {
@@ -1124,5 +1125,100 @@ export async function savePack(packId: string, content: string): Promise<void> {
 
     if (!response.ok) {
         throw new Error(`Failed to save pack: ${response.statusText}`);
+    }
+}
+
+export interface DownloadSkillRequest {
+    url: string;
+    skill: string;
+    ref: string;
+}
+
+export interface DownloadSkillResponse {
+    success: boolean;
+    skill: string;
+    path: string;
+}
+
+export async function downloadSkill(url: string, skill: string, ref: string = 'main'): Promise<DownloadSkillResponse> {
+    const response = await fetch(`${API_BASE}/api/library/download_skill`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url, skill, ref }),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to download skill: ${errorText || response.statusText}`);
+    }
+
+    return response.json();
+}
+
+const REGISTRY_URL = 'https://linggen-analytics.liangatbc.workers.dev';
+const INSTALL_COOLDOWN_MINUTES = 5;
+
+interface RecordInstallResponse {
+    counted: boolean;
+}
+
+function getLastInstallTime(skillId: string): Date | null {
+    const key = `linggen_skill_install_${skillId}`;
+    const timestamp = localStorage.getItem(key);
+    if (!timestamp) return null;
+    return new Date(timestamp);
+}
+
+function saveInstallTime(skillId: string): void {
+    const key = `linggen_skill_install_${skillId}`;
+    localStorage.setItem(key, new Date().toISOString());
+}
+
+export async function recordSkillInstall(url: string, skill: string, ref: string, skillId: string): Promise<boolean> {
+    // Check local cooldown to prevent spam
+    const lastInstall = getLastInstallTime(skillId);
+    if (lastInstall) {
+        const elapsed = Date.now() - lastInstall.getTime();
+        const cooldownMs = INSTALL_COOLDOWN_MINUTES * 60 * 1000;
+        if (elapsed < cooldownMs) {
+            console.log(`[Install Tracking] Cooldown active for skill ${skill}. Skipping.`);
+            return false;
+        }
+    }
+
+    try {
+        const response = await fetch(`${REGISTRY_URL}/skills/install`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                url: url,
+                skill: skill,
+                ref: ref,
+                installer: 'linggen-web',
+                installer_version: '1.0.0',
+                timestamp: new Date().toISOString(),
+            }),
+        });
+
+        if (!response.ok) {
+            console.warn('[Install Tracking] Failed to record install:', response.statusText);
+            return false;
+        }
+
+        const result: RecordInstallResponse = await response.json();
+        if (result.counted) {
+            saveInstallTime(skillId);
+            console.log(`[Install Tracking] Install recorded and counted for ${skill}`);
+        } else {
+            console.log(`[Install Tracking] Install recorded but not counted (recently counted by server)`);
+        }
+        return result.counted;
+    } catch (error) {
+        console.warn('[Install Tracking] Failed to record install:', error);
+        return false;
     }
 }
