@@ -7,8 +7,8 @@ mod cli;
 mod manifest;
 
 use cli::{
-    find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_start,
-    handle_status, handle_update, ApiClient,
+    find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_restart,
+    handle_start, handle_status, handle_stop, handle_update, ApiClient,
 };
 
 #[derive(Parser)]
@@ -33,6 +33,12 @@ struct Cli {
 enum Commands {
     /// Start the Linggen server if needed and show status
     Start,
+
+    /// Stop the Linggen server
+    Stop,
+
+    /// Restart the Linggen server
+    Restart,
 
     /// Index a local directory
     Index {
@@ -65,13 +71,6 @@ enum Commands {
         /// Number of recent jobs to show
         #[arg(long, default_value = "10")]
         limit: usize,
-    },
-
-    /// Start or ensure the Linggen backend server is running
-    Serve {
-        /// Port to listen on
-        #[arg(short, long, default_value = "8787")]
-        port: u16,
     },
 
     /// Install Linggen components for this platform
@@ -262,7 +261,7 @@ fn extract_port_from_url(api_url: &str) -> Option<u16> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env file if it exists
+    // Load .env file if it exists (searches current dir and parent dirs)
     let _ = dotenvy::dotenv();
 
     let cli_args = Cli::parse();
@@ -275,14 +274,12 @@ async fn main() -> Result<()> {
             handle_start(&api_client).await?;
         }
 
-        Some(Commands::Serve { port }) => {
-            let check_url = format!("http://127.0.0.1:{}", port);
-            ensure_backend_running(&check_url).await?;
-            println!(
-                "✅ Linggen backend is running in background on {}",
-                check_url
-            );
-            println!("   Use your system tools to stop the linggen-server process if needed.");
+        Some(Commands::Stop) => {
+            handle_stop(&cli_args.api_url).await?;
+        }
+
+        Some(Commands::Restart) => {
+            handle_restart(&cli_args.api_url).await?;
         }
 
         Some(Commands::Index {

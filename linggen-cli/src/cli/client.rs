@@ -111,6 +111,24 @@ impl ApiClient {
             .await
             .context("Failed to parse jobs response")
     }
+
+    /// Shutdown the server gracefully
+    pub async fn shutdown(&self) -> Result<()> {
+        let url = format!("{}/api/shutdown", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .context("Failed to send shutdown request")?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to shutdown server: {}", error_text);
+        }
+
+        Ok(())
+    }
 }
 
 // API request/response types

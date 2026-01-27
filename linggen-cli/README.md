@@ -32,9 +32,10 @@ cargo build --release
 
 ## Commands (current)
 
-- `linggen start` / `linggen status` — check backend status
+- `linggen start` / `linggen status` — check backend status and start if needed
+- `linggen stop` — stop the running Linggen server
+- `linggen restart` — restart the Linggen server
 - `linggen index` — index a local directory (auto/full/incremental)
-- `linggen serve` — ensure a local backend is running (spawns `linggen-server`)
 - `linggen install` — platform-aware install (manifest-driven: macOS DMG, Linux tarball)
 - `linggen update` — platform-aware update (manifest-driven)
 - `linggen check` — local vs manifest comparison

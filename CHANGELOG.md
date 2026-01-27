@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.2] - 2026-01-27
+
+### Added
+
+- **Online Skills Registry**: Introduced `linggen skills add` command to install skills from GitHub repositories directly.
+- **CLI Server Management**: Added `linggen stop` and `linggen restart` commands for better server lifecycle control.
+
+### Changed
+
+- **macOS Distribution**: Removed Tauri desktop app for macOS. Users should now use the web UI at `http://localhost:8787` instead.
+- **Skills Installation**: Shifted from local file-based skills to online registry with automatic version tracking and installation recording.
+
+### Fixed
+
+- **CLI Terminology**: Updated `linggen check` and `linggen doctor` commands to refer to "Server" instead of "App" for clarity.
+- **Graceful Shutdown**: Server now supports graceful shutdown via HTTP endpoint for reliable cross-platform operation.
+
 ## [0.5.0] - 2026-01-13
 
 ### Added

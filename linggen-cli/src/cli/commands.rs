@@ -9,6 +9,7 @@ use super::installer::{install_linux, install_macos};
 use super::jobs::wait_for_job;
 use super::signature::LINGGEN_PUBLIC_KEY;
 use super::util::{format_timestamp, get_local_app_version};
+use crate::ensure_backend_running;
 use crate::manifest::{current_platform, fetch_manifest, Platform};
 
 /// Returns the user-facing current directory when possible.
@@ -117,11 +118,7 @@ pub async fn handle_update() -> Result<()> {
     let local_cli = env!("CARGO_PKG_VERSION").to_string();
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-    let app_label = if std::env::consts::OS == "linux" {
-        "Server"
-    } else {
-        "App"
-    };
+    let app_label = "Server";
 
     println!("Local CLI: {}", local_cli);
     if let Ok(exe) = std::env::current_exe() {
@@ -158,11 +155,7 @@ pub async fn handle_check() -> Result<()> {
     let local_cli = env!("CARGO_PKG_VERSION").to_string();
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
 
-    let app_label = if std::env::consts::OS == "linux" {
-        "Server"
-    } else {
-        "App"
-    };
+    let app_label = "Server";
 
     println!("Local CLI: {}", local_cli);
     if let Ok(exe) = std::env::current_exe() {
@@ -185,20 +178,6 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
         println!("CLI path:    {}", p.display());
     }
 
-    // Desktop app install + version (macOS best effort)
-    #[cfg(target_os = "macos")]
-    {
-        let app_path = std::path::Path::new("/Applications/Linggen.app");
-        println!(
-            "Linggen.app: {}",
-            if app_path.exists() {
-                "installed".green().to_string()
-            } else {
-                "not found".yellow().to_string()
-            }
-        );
-    }
-
     // Server install check (Linux/macOS)
     {
         use crate::cli::util::command_exists;
@@ -213,11 +192,7 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
     }
 
     let local_app = get_local_app_version().unwrap_or_else(|| "not installed".into());
-    let app_label = if std::env::consts::OS == "linux" {
-        "Server version"
-    } else {
-        "App version"
-    };
+    let app_label = "Server version";
     println!("{}: {}", app_label, local_app);
 
     // Backend reachability
@@ -231,7 +206,7 @@ pub async fn handle_doctor(api_url: &str) -> Result<()> {
         Err(e) => {
             println!("Backend:     {}", "not reachable".red());
             println!("Error:       {}", e);
-            println!("Tip:         run `linggen start` (will launch Linggen.app on macOS)");
+            println!("Tip:         run `linggen start` to start the backend server");
         }
     }
 
@@ -299,12 +274,66 @@ pub async fn handle_start(api_client: &ApiClient) -> Result<()> {
         Err(e) => {
             println!("{}", "❌ Linggen backend is not running".red().bold());
             println!("\n{}", "To start Linggen backend:".yellow());
-            println!("  - If you installed the desktop app, open Linggen.app");
-            println!("  - Or run: linggen serve");
+            println!("  - Run: linggen start");
             println!("\nError details: {}", e);
             anyhow::bail!("Backend not reachable");
         }
     }
+}
+
+/// Handle the `stop` command
+pub async fn handle_stop(api_url: &str) -> Result<()> {
+    println!("{}", "🛑 Stopping Linggen server...".cyan());
+
+    let api_client = ApiClient::new(api_url.to_string());
+
+    // Check if server is running
+    if api_client.get_status().await.is_err() {
+        println!("{}", "   Server is not running".yellow());
+        return Ok(());
+    }
+
+    // Send shutdown request
+    match api_client.shutdown().await {
+        Ok(_) => {
+            // Wait a moment for graceful shutdown
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            println!("{}", "✅ Server stopped successfully".green().bold());
+            Ok(())
+        }
+        Err(e) => {
+            // If the request fails, it might be because the server already shut down
+            // Check if it's actually down now
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if api_client.get_status().await.is_err() {
+                println!("{}", "✅ Server stopped successfully".green().bold());
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Handle the `restart` command
+pub async fn handle_restart(api_url: &str) -> Result<()> {
+    println!("{}", "🔄 Restarting Linggen server...".cyan());
+
+    // Stop the server
+    handle_stop(api_url).await?;
+
+    // Wait a moment
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    // Start the server
+    println!("{}", "\n🚀 Starting server...".cyan());
+    ensure_backend_running(api_url).await?;
+
+    // Check status
+    let api_client = ApiClient::new(api_url.to_string());
+    handle_start(&api_client).await?;
+
+    Ok(())
 }
 
 /// Handle the `index` command

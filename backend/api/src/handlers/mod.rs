@@ -20,6 +20,7 @@ pub mod resources;
 pub mod retry_init;
 pub mod search;
 pub mod settings;
+pub mod shutdown;
 pub mod source_memory;
 pub mod status;
 pub mod upload;
@@ -47,6 +48,7 @@ pub use resources::{
     add_resource, list_resources, remove_resource, rename_resource, update_resource_patterns,
 };
 pub use retry_init::retry_init;
+pub use shutdown::shutdown_server;
 pub use source_memory::{
     delete_memory_file, get_memory_file, list_memory_files, rename_memory_file, save_memory_file,
 };

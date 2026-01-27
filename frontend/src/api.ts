@@ -1193,6 +1193,7 @@ export async function recordSkillInstall(url: string, skill: string, ref: string
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-API-Key': 'dd55d4c93490bf9d6e45124351838ea9',
             },
             body: JSON.stringify({
                 url: url,

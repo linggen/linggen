@@ -72,7 +72,8 @@ use crate::handlers::{
     list_jobs, list_library, list_resources, list_uploaded_files,
     mcp::{mcp_health_handler, mcp_message_handler, mcp_sse_handler, McpAppState, McpState},
     rebuild_graph, remove_resource, rename_folder, rename_pack, rename_resource, retry_init,
-    save_pack, update_resource_patterns, upload_file, upload_file_stream, AppState,
+    save_pack, shutdown_server, update_resource_patterns, upload_file, upload_file_stream,
+    AppState,
 };
 use crate::job_manager::JobManager;
 
@@ -657,6 +658,7 @@ fn create_router(app_state: Arc<AppState>) -> Router {
     let api_routes = Router::new()
         .route("/api/events", get(crate::handlers::events_handler))
         .route("/api/status", get(get_app_status))
+        .route("/api/shutdown", post(shutdown_server))
         .route("/api/retry_init", post(retry_init))
         .route("/api/index_source", post(index_source))
         .route("/api/classify", post(classify_intent))
