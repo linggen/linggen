@@ -35,6 +35,7 @@ cargo build --release
 - `linggen start` / `linggen status` — check backend status and start if needed
 - `linggen stop` — stop the running Linggen server
 - `linggen restart` — restart the Linggen server
+- `linggen init` — bootstrap Linggen skills from GitHub (prompts for AI provider; default Claude)
 - `linggen index` — index a local directory (auto/full/incremental)
 - `linggen install` — platform-aware install (manifest-driven: macOS DMG, Linux tarball)
 - `linggen update` — platform-aware update (manifest-driven)

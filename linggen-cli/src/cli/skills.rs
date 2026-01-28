@@ -1,9 +1,10 @@
 use anyhow::Result;
 use colored::*;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use super::download::{default_http_client, download_to_temp};
@@ -24,7 +25,7 @@ pub async fn handle_skills_add(
     repo_url: String,
     skill_name: String,
     git_ref: String,
-    _force: bool,
+    force: bool,
     registry_url: String,
     api_key: Option<String>,
     no_record: bool,
@@ -58,17 +59,27 @@ pub async fn handle_skills_add(
         format!("📂 Target directory: {}", target_dir.display()).dimmed()
     );
 
-    // 2. Download zipball
-    let zip_url = format!(
-        "https://codeload.github.com/{}/{}/zip/{}",
-        owner, repo, git_ref
-    );
+    // 2. Ensure target directory is safe to write
+    if target_dir.exists() {
+        if force {
+            fs::remove_dir_all(&target_dir)?;
+        } else {
+            anyhow::bail!(
+                "Skill '{}' is already installed at {}. Re-run with --force to overwrite.",
+                skill_name,
+                target_dir.display()
+            );
+        }
+    }
+
+    // 3. Download zipball
+    let zip_url = build_github_zip_url(&owner, &repo, &git_ref);
     println!("{}", format!("⬇️  Downloading from GitHub...").dimmed());
 
     let client = default_http_client()?;
     let temp_zip = download_to_temp(&client, &zip_url, None).await?;
 
-    // 3. Extract selectively
+    // 4. Extract selectively
     println!("{}", format!("📦 Extracting skill...").dimmed());
     let skill_content = extract_skill_from_zip(&temp_zip, &skill_name, &target_dir)?;
 
@@ -144,6 +155,209 @@ pub async fn handle_skills_add(
     Ok(())
 }
 
+pub async fn handle_skills_init(
+    ai: Option<String>,
+    repo_url: String,
+    git_ref: String,
+    local: bool,
+    force: bool,
+    skills: Vec<String>,
+) -> Result<()> {
+    let ai_choice = resolve_ai_choice(ai)?;
+    let normalized_url = normalize_github_url(&repo_url)?;
+    let (owner, repo) = parse_github_url(&normalized_url)?;
+
+    let base_skills_dir = resolve_skills_dir(ai_choice, local)?;
+    fs::create_dir_all(&base_skills_dir)?;
+
+    println!(
+        "{}",
+        format!(
+            "🔧 Initializing Linggen skills for {} from {} (ref: {})",
+            ai_choice.label(),
+            normalized_url,
+            git_ref
+        )
+        .cyan()
+    );
+    println!(
+        "{}",
+        format!("📂 Skills directory: {}", base_skills_dir.display()).dimmed()
+    );
+
+    let zip_url = build_github_zip_url(&owner, &repo, &git_ref);
+    println!("{}", "⬇️  Downloading skills repo from GitHub...".dimmed());
+
+    let client = default_http_client()?;
+    let temp_zip = download_to_temp(&client, &zip_url, None).await?;
+
+    println!("{}", "📦 Detecting skills...".dimmed());
+    let detected = detect_skills_in_zip(&temp_zip)?;
+    if detected.is_empty() {
+        anyhow::bail!(
+            "No skills found in repository {} at ref {} (expected SKILL.md).",
+            normalized_url,
+            git_ref
+        );
+    }
+
+    let requested: BTreeSet<String> = skills.into_iter().collect();
+    let to_install: BTreeMap<String, String> = if requested.is_empty() {
+        detected
+    } else {
+        let mut filtered = BTreeMap::new();
+        for skill in &requested {
+            if let Some(prefix) = detected.get(skill) {
+                filtered.insert(skill.clone(), prefix.clone());
+            }
+        }
+        let missing: Vec<String> = requested
+            .into_iter()
+            .filter(|s| !filtered.contains_key(s))
+            .collect();
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "Requested skill(s) not found in repo: {}",
+                missing.join(", ")
+            );
+        }
+        filtered
+    };
+
+    println!(
+        "{}",
+        format!(
+            "🧩 Installing {} skill(s): {}",
+            to_install.len(),
+            to_install.keys().cloned().collect::<Vec<_>>().join(", ")
+        )
+        .dimmed()
+    );
+
+    let mut installed = 0usize;
+    for (skill_name, zip_prefix) in to_install {
+        let target_dir = base_skills_dir.join(&skill_name);
+        if target_dir.exists() {
+            if force || skill_name == "linggen" {
+                fs::remove_dir_all(&target_dir)?;
+            } else {
+                println!(
+                    "{}",
+                    format!(
+                        "ℹ️  Skill '{}' already exists at {}; skipping (use --force to overwrite).",
+                        skill_name,
+                        target_dir.display()
+                    )
+                    .yellow()
+                );
+                continue;
+            }
+        }
+
+        extract_dir_from_zip(&temp_zip, &zip_prefix, &target_dir)?;
+        println!(
+            "{}",
+            format!("✅ Installed skill '{}' to {}", skill_name, target_dir.display()).green()
+        );
+        installed += 1;
+    }
+
+    let _ = fs::remove_file(temp_zip);
+
+    if installed == 0 {
+        println!(
+            "{}",
+            "ℹ️  No skills were installed (everything already present).".yellow()
+        );
+    } else {
+        println!(
+            "{}",
+            format!(
+                "✨ Done. {} skill(s) installed into {}",
+                installed,
+                base_skills_dir.display()
+            )
+            .green()
+        );
+    }
+
+    Ok(())
+}
+
+#[derive(Copy, Clone)]
+enum AiChoice {
+    Claude,
+    Codex,
+}
+
+impl AiChoice {
+    fn label(self) -> &'static str {
+        match self {
+            AiChoice::Claude => "Claude",
+            AiChoice::Codex => "Codex",
+        }
+    }
+}
+
+fn resolve_ai_choice(ai: Option<String>) -> Result<AiChoice> {
+    match ai.as_deref().map(|s| s.trim().to_lowercase()) {
+        Some(ref s) if s == "claude" => Ok(AiChoice::Claude),
+        Some(ref s) if s == "codex" => Ok(AiChoice::Codex),
+        Some(other) => anyhow::bail!("Unsupported AI provider '{}'. Use 'claude' or 'codex'.", other),
+        None => prompt_ai_choice(),
+    }
+}
+
+fn prompt_ai_choice() -> Result<AiChoice> {
+    use std::io::{self, IsTerminal};
+
+    if !io::stdin().is_terminal() {
+        println!("ℹ️  No --ai provided and stdin is not interactive; defaulting to Claude.");
+        return Ok(AiChoice::Claude);
+    }
+
+    println!("Select AI:");
+    println!("1) Claude (default)");
+    println!("2) Codex");
+    print!("Enter choice [1-2]: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let choice = input.trim().to_lowercase();
+
+    if choice.is_empty() || choice == "1" || choice == "claude" {
+        Ok(AiChoice::Claude)
+    } else if choice == "2" || choice == "codex" {
+        Ok(AiChoice::Codex)
+    } else {
+        anyhow::bail!("Invalid choice '{}'. Use 1 (Claude) or 2 (Codex).", input.trim())
+    }
+}
+
+fn resolve_skills_dir(ai: AiChoice, local: bool) -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    let path = match ai {
+        AiChoice::Claude => {
+            if local {
+                PathBuf::from(".claude").join("skills")
+            } else {
+                home.join(".claude").join("skills")
+            }
+        }
+        AiChoice::Codex => {
+            if local {
+                PathBuf::from(".codex").join("skills")
+            } else if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+                PathBuf::from(codex_home).join("skills")
+            } else {
+                home.join(".codex").join("skills")
+            }
+        }
+    };
+    Ok(path)
+}
+
 fn get_last_install_time(skill_name: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     let state_dir = dirs::data_local_dir()
         .ok_or_else(|| anyhow::anyhow!("No local data dir"))?
@@ -198,6 +412,25 @@ fn parse_github_url(url: &str) -> Result<(String, String)> {
     anyhow::bail!("Could not parse GitHub repository from '{}'.", url)
 }
 
+fn build_github_zip_url(owner: &str, repo: &str, git_ref: &str) -> String {
+    if git_ref.starts_with("refs/") {
+        format!(
+            "https://github.com/{}/{}/archive/{}.zip",
+            owner, repo, git_ref
+        )
+    } else if git_ref.starts_with("heads/") || git_ref.starts_with("tags/") {
+        format!(
+            "https://github.com/{}/{}/archive/refs/{}.zip",
+            owner, repo, git_ref
+        )
+    } else {
+        format!(
+            "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+            owner, repo, git_ref
+        )
+    }
+}
+
 fn extract_skill_from_zip(
     zip_path: &Path,
     skill_name: &str,
@@ -247,9 +480,6 @@ fn extract_skill_from_zip(
     }
 
     // 2. Extract files
-    if target_dir.exists() {
-        fs::remove_dir_all(target_dir)?;
-    }
     fs::create_dir_all(target_dir)?;
 
     let skill_root_str = skill_root.to_str().unwrap();
@@ -280,6 +510,89 @@ fn extract_skill_from_zip(
     }
 
     Ok(skill_md_content)
+}
+
+fn detect_skills_in_zip(zip_path: &Path) -> Result<BTreeMap<String, String>> {
+    let file = fs::File::open(zip_path)?;
+    let mut archive = ZipArchive::new(file)?;
+
+    // Map: skill_name -> zip path prefix for that skill directory
+    let mut skills: BTreeMap<String, String> = BTreeMap::new();
+
+    for i in 0..archive.len() {
+        let file = archive.by_index(i)?;
+        let name = file.name();
+
+        if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
+            continue;
+        }
+
+        let path = Path::new(name);
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+
+        let Some(skill_name_os) = parent.file_name() else {
+            continue;
+        };
+        let Some(skill_name) = skill_name_os.to_str() else {
+            continue;
+        };
+
+        // Only treat direct folders (i.e. .../<skill>/SKILL.md) as skills
+        let Some(prefix) = parent.to_str() else {
+            continue;
+        };
+
+        // Normalize to a prefix that matches zip file names (GitHub zips use forward slashes)
+        let mut prefix = prefix.replace('\\', "/");
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+
+        skills.entry(skill_name.to_string()).or_insert(prefix);
+    }
+
+    Ok(skills)
+}
+
+fn extract_dir_from_zip(zip_path: &Path, zip_prefix: &str, target_dir: &Path) -> Result<()> {
+    let file = fs::File::open(zip_path)?;
+    let mut archive = ZipArchive::new(file)?;
+
+    fs::create_dir_all(target_dir)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        if file.is_dir() {
+            continue;
+        }
+
+        let name = file.name().to_string();
+        if !name.starts_with(zip_prefix) {
+            continue;
+        }
+
+        let rel_path = &name[zip_prefix.len()..].trim_start_matches('/');
+        if rel_path.is_empty() {
+            continue;
+        }
+
+        // Security check
+        if rel_path.contains("..") || rel_path.starts_with('/') {
+            continue;
+        }
+
+        let dest_path = target_dir.join(rel_path);
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut outfile = fs::File::create(&dest_path)?;
+        std::io::copy(&mut file, &mut outfile)?;
+    }
+
+    Ok(())
 }
 
 async fn record_install(

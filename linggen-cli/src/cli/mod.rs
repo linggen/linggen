@@ -13,4 +13,4 @@ pub use commands::{
     handle_check, handle_doctor, handle_index, handle_install, handle_restart, handle_start,
     handle_status, handle_stop, handle_update,
 };
-pub use skills::handle_skills_add;
+pub use skills::{handle_skills_add, handle_skills_init};

@@ -8,7 +8,7 @@ mod manifest;
 
 use cli::{
     find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_restart,
-    handle_start, handle_status, handle_stop, handle_update, ApiClient,
+    handle_skills_init, handle_start, handle_status, handle_stop, handle_update, ApiClient,
 };
 
 #[derive(Parser)]
@@ -31,6 +31,34 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize Linggen AI skills (downloads from GitHub into your skills directory)
+    #[command(alias = "bootstrap")]
+    Init {
+        /// Select AI provider (default: claude)
+        #[arg(long, value_parser = ["claude", "codex"])]
+        ai: Option<String>,
+
+        /// GitHub repository URL or owner/repo shorthand (default: linggen/skills)
+        #[arg(long, default_value = "https://github.com/linggen/skills")]
+        repo_url: String,
+
+        /// Git reference (branch, tag, or commit SHA)
+        #[arg(long, default_value = "main")]
+        git_ref: String,
+
+        /// Install into a local ./.claude/skills or ./.codex/skills directory (instead of home)
+        #[arg(long)]
+        local: bool,
+
+        /// Force overwrite if a skill is already installed
+        #[arg(long)]
+        force: bool,
+
+        /// Install only specific skill(s). If omitted, installs all skills found in the repo.
+        #[arg(long = "skill")]
+        skills: Vec<String>,
+    },
+
     /// Start the Linggen server if needed and show status
     Start,
 
@@ -348,6 +376,17 @@ async fn main() -> Result<()> {
                 .await?;
             }
         },
+
+        Some(Commands::Init {
+            ai,
+            repo_url,
+            git_ref,
+            local,
+            force,
+            skills,
+        }) => {
+            handle_skills_init(ai, repo_url, git_ref, local, force, skills).await?;
+        }
     }
 
     Ok(())
