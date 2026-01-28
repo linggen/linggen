@@ -30,129 +30,189 @@ pub async fn handle_skills_add(
     api_key: Option<String>,
     no_record: bool,
 ) -> Result<()> {
-    let normalized_url = normalize_github_url(&repo_url)?;
-    let (owner, repo) = parse_github_url(&normalized_url)?;
+    handle_skills_add_impl(
+        repo_url,
+        skill_name,
+        git_ref,
+        force,
+        registry_url,
+        api_key,
+        no_record,
+        true,
+    )
+    .await
+}
 
-    println!(
-        "{}",
-        format!(
-            "🔧 Installing skill: {} from {} (ref: {})",
-            skill_name, normalized_url, git_ref
-        )
-        .cyan()
-    );
+async fn handle_skills_add_impl(
+    repo_url: String,
+    skill_name: String,
+    git_ref: String,
+    force: bool,
+    registry_url: String,
+    api_key: Option<String>,
+    no_record: bool,
+    allow_fallback: bool,
+) -> Result<()> {
+    let mut current_repo_url = repo_url;
+    let mut current_skill_name = skill_name;
+    let mut current_git_ref = git_ref;
+    let mut can_fallback = allow_fallback;
 
-    // 1. Determine target directory
-    let local_claude = Path::new(".claude");
-    let target_dir = if local_claude.exists() && local_claude.is_dir() {
-        local_claude.join("skills").join(&skill_name)
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
-            .join(".claude")
-            .join("skills")
-            .join(&skill_name)
-    };
+    loop {
+        let normalized_url = normalize_github_url(&current_repo_url)?;
+        let (owner, repo) = parse_github_url(&normalized_url)?;
 
-    println!(
-        "{}",
-        format!("📂 Target directory: {}", target_dir.display()).dimmed()
-    );
-
-    // 2. Ensure target directory is safe to write
-    if target_dir.exists() {
-        if force {
-            fs::remove_dir_all(&target_dir)?;
-        } else {
-            anyhow::bail!(
-                "Skill '{}' is already installed at {}. Re-run with --force to overwrite.",
-                skill_name,
-                target_dir.display()
-            );
-        }
-    }
-
-    // 3. Download zipball
-    let zip_url = build_github_zip_url(&owner, &repo, &git_ref);
-    println!("{}", format!("⬇️  Downloading from GitHub...").dimmed());
-
-    let client = default_http_client()?;
-    let temp_zip = download_to_temp(&client, &zip_url, None).await?;
-
-    // 4. Extract selectively
-    println!("{}", format!("📦 Extracting skill...").dimmed());
-    let skill_content = extract_skill_from_zip(&temp_zip, &skill_name, &target_dir)?;
-
-    println!(
-        "{}",
-        format!("✅ Skill installed to {}", target_dir.display()).green()
-    );
-
-    // 4. Record install in registry
-    if !no_record {
-        if let Some(key) = api_key {
-            // Check local cooldown
-            if let Ok(last_install) = get_last_install_time(&skill_name) {
-                let elapsed = chrono::Utc::now().signed_duration_since(last_install);
-                if elapsed < chrono::Duration::minutes(5) {
-                    let wait_mins = 5 - elapsed.num_minutes();
-                    println!(
-                        "{}",
-                        format!(
-                            "ℹ️  Skill installed locally. Registry update skipped (cooldown: wait {} more minutes).",
-                            wait_mins
-                        )
-                        .yellow()
-                    );
-                    return Ok(());
-                }
-            }
-
-            println!(
-                "{}",
-                format!("📝 Recording install in registry...").dimmed()
-            );
-            match record_install(
-                &client,
-                &registry_url,
-                &key,
-                &normalized_url,
-                &skill_name,
-                &git_ref,
-                skill_content,
+        println!(
+            "{}",
+            format!(
+                "🔧 Installing skill: {} from {} (ref: {})",
+                current_skill_name, normalized_url, current_git_ref
             )
-            .await
-            {
-                Ok(counted) => {
-                    if counted {
-                        println!("{}", "✨ Install recorded and counted!".green());
-                        let _ = save_install_time(&skill_name);
-                    } else {
+            .cyan()
+        );
+
+        // 1. Determine target directory
+        let local_claude = Path::new(".claude");
+        let target_dir = if local_claude.exists() && local_claude.is_dir() {
+            local_claude.join("skills").join(&current_skill_name)
+        } else {
+            dirs::home_dir()
+                .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
+                .join(".claude")
+                .join("skills")
+                .join(&current_skill_name)
+        };
+
+        println!(
+            "{}",
+            format!("📂 Target directory: {}", target_dir.display()).dimmed()
+        );
+
+        // 2. Ensure target directory is safe to write
+        if target_dir.exists() {
+            if force {
+                fs::remove_dir_all(&target_dir)?;
+            } else {
+                anyhow::bail!(
+                    "Skill '{}' is already installed at {}. Re-run with --force to overwrite.",
+                    current_skill_name,
+                    target_dir.display()
+                );
+            }
+        }
+
+        // 3. Download zipball
+        let zip_url = build_github_zip_url(&owner, &repo, &current_git_ref);
+        println!("{}", "⬇️  Downloading from GitHub...".dimmed());
+
+        let client = default_http_client()?;
+        let temp_zip = download_to_temp(&client, &zip_url, None).await?;
+
+        // 4. Extract selectively
+        println!("{}", "📦 Extracting skill...".dimmed());
+        let skill_content = match extract_skill_from_zip(&temp_zip, &current_skill_name, &target_dir) {
+            Ok(content) => content,
+            Err(err) => {
+                let _ = fs::remove_file(&temp_zip);
+
+                if can_fallback
+                    && is_skill_not_found_error(&err)
+                    && is_linggen_skills_repo(&normalized_url, &owner, &repo)
+                {
+                    if let Some(fallback) = search_skills_sh(&current_skill_name).await? {
+                        if fallback.top_source == "linggen/skills" {
+                            return Err(err);
+                        }
+
+                        let fallback_repo = format!("https://github.com/{}", fallback.top_source);
                         println!(
                             "{}",
-                            "ℹ️  Install recorded (already counted recently).".yellow()
+                            format!(
+                                "🔎 Not found in linggen/skills. Using skills.sh result '{}' from {}.",
+                                fallback.id, fallback.top_source
+                            )
+                            .yellow()
+                        );
+
+                        current_repo_url = fallback_repo;
+                        current_skill_name = fallback.id;
+                        current_git_ref = "main".to_string();
+                        can_fallback = false;
+                        continue;
+                    }
+                }
+
+                return Err(err);
+            }
+        };
+
+        println!(
+            "{}",
+            format!("✅ Skill installed to {}", target_dir.display()).green()
+        );
+
+        // 4. Record install in registry
+        if !no_record {
+            if let Some(key) = api_key {
+                if let Ok(last_install) = get_last_install_time(&current_skill_name) {
+                    let elapsed = chrono::Utc::now().signed_duration_since(last_install);
+                    if elapsed < chrono::Duration::minutes(5) {
+                        let wait_mins = 5 - elapsed.num_minutes();
+                        println!(
+                            "{}",
+                            format!(
+                                "ℹ️  Skill installed locally. Registry update skipped (cooldown: wait {} more minutes).",
+                                wait_mins
+                            )
+                            .yellow()
+                        );
+                        return Ok(());
+                    }
+                }
+
+                println!("{}", "📝 Recording install in registry...".dimmed());
+                match record_install(
+                    &client,
+                    &registry_url,
+                    &key,
+                    &normalized_url,
+                    &current_skill_name,
+                    &current_git_ref,
+                    skill_content,
+                )
+                .await
+                {
+                    Ok(counted) => {
+                        if counted {
+                            println!("{}", "✨ Install recorded and counted!".green());
+                            let _ = save_install_time(&current_skill_name);
+                        } else {
+                            println!(
+                                "{}",
+                                "ℹ️  Install recorded (already counted recently).".yellow()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!(
+                            "{}",
+                            format!("⚠️  Failed to record install: {}", e).yellow()
                         );
                     }
                 }
-                Err(e) => {
-                    println!(
-                        "{}",
-                        format!("⚠️  Failed to record install: {}", e).yellow()
-                    );
-                }
+            } else {
+                println!(
+                    "{}",
+                    "⚠️  No API_KEY provided; skipping registry recording. Set API_KEY.".yellow()
+                );
             }
-        } else {
-            println!(
-                "{}",
-                "⚠️  No API_KEY provided; skipping registry recording. Set API_KEY.".yellow()
-            );
         }
+
+        // Cleanup temp zip
+        let _ = fs::remove_file(temp_zip);
+
+        return Ok(());
     }
-
-    // Cleanup temp zip
-    let _ = fs::remove_file(temp_zip);
-
-    Ok(())
 }
 
 pub async fn handle_skills_init(
@@ -412,6 +472,16 @@ fn parse_github_url(url: &str) -> Result<(String, String)> {
     anyhow::bail!("Could not parse GitHub repository from '{}'.", url)
 }
 
+fn is_skill_not_found_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("Could not find skill") && msg.contains("SKILL.md")
+}
+
+fn is_linggen_skills_repo(normalized_url: &str, owner: &str, repo: &str) -> bool {
+    normalized_url == "https://github.com/linggen/skills"
+        || (owner == "linggen" && repo == "skills")
+}
+
 fn build_github_zip_url(owner: &str, repo: &str, git_ref: &str) -> String {
     if git_ref.starts_with("refs/") {
         format!(
@@ -429,6 +499,40 @@ fn build_github_zip_url(owner: &str, repo: &str, git_ref: &str) -> String {
             owner, repo, git_ref
         )
     }
+}
+
+#[derive(Deserialize)]
+struct SkillsShResponse {
+    skills: Vec<SkillsShSkill>,
+}
+
+#[derive(Clone, Deserialize)]
+struct SkillsShSkill {
+    id: String,
+    #[serde(rename = "topSource")]
+    top_source: String,
+}
+
+async fn search_skills_sh(query: &str) -> Result<Option<SkillsShSkill>> {
+    let client = default_http_client()?;
+    let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+    let url = format!("https://skills.sh/api/search?q={}&limit=50", encoded);
+
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let payload: SkillsShResponse = resp.json().await?;
+
+    if payload.skills.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(found) = payload.skills.iter().find(|s| s.id == query) {
+        return Ok(Some(found.clone()));
+    }
+
+    Ok(payload.skills.into_iter().next())
 }
 
 fn extract_skill_from_zip(

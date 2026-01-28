@@ -894,6 +894,30 @@ export async function searchRemoteSkills(query: string, page = 1, limit = 20): P
     return response.json();
 }
 
+// skills.sh API
+export interface SkillsShSkill {
+    id: string;
+    name: string;
+    installs: number;
+    topSource: string;
+}
+
+export interface SkillsShResponse {
+    query: string;
+    searchType: string;
+    skills: SkillsShSkill[];
+}
+
+export async function searchSkillsSh(query: string, limit = 50): Promise<SkillsShResponse> {
+    const encodedQuery = encodeURIComponent(query);
+    const url = `${API_BASE}/api/skills_sh/search?q=${encodedQuery}&limit=${limit}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to search skills.sh: ${response.statusText}`);
+    }
+    return response.json();
+}
+
 
 
 // Graph (Architect) API

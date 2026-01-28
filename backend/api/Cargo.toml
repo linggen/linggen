@@ -35,6 +35,7 @@ dirs = "5.0"
 futures = "0.3.31"
 tokio-stream = "0.1.17"
 reqwest = { version = "0.11", features = ["json"] }
+urlencoding = "2.1"
 libc = "0.2"
 slug = "0.1"
 regex = "1"

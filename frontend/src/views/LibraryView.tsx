@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import MDEditor from '@uiw/react-md-editor';
 import {
     MagnifyingGlassIcon,
-    FolderIcon,
-    ClockIcon,
     ArrowPathIcon,
     ClipboardIcon,
     CheckIcon,
@@ -13,7 +11,7 @@ import {
     DocumentTextIcon,
     ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
-import { type LibraryPack, getLibrary, listRemoteSkills, searchRemoteSkills, type RemoteSkill, downloadSkill, recordSkillInstall } from '../api';
+import { listRemoteSkills, searchRemoteSkills, type RemoteSkill, downloadSkill, recordSkillInstall, searchSkillsSh, type SkillsShSkill } from '../api';
 
 interface LibraryViewProps {
     onSelectPack?: (id: string | null) => void;
@@ -21,11 +19,10 @@ interface LibraryViewProps {
     onRefresh?: () => void;
 }
 
-export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: LibraryViewProps) {
-    const [activeTab, setActiveTab] = useState<'community' | 'local'>('community');
-    const [localPacks, setLocalPacks] = useState<LibraryPack[]>([]);
+export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewProps) {
     const [remoteSkills, setRemoteSkills] = useState<RemoteSkill[]>([]);
     const [selectedRemoteSkill, setSelectedRemoteSkill] = useState<RemoteSkill | null>(null);
+    const [skillsShSkills, setSkillsShSkills] = useState<SkillsShSkill[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -38,6 +35,7 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
     const [totalPages, setTotalPages] = useState(1);
     const [totalSkills, setTotalSkills] = useState(0);
     const pageSize = 24;
+    const isSearching = searchQuery.trim().length > 0;
 
     const [isDarkMode, setIsDarkMode] = useState(() => {
         const rootTheme = document.documentElement.getAttribute('data-theme');
@@ -72,9 +70,6 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
     const fetchData = async (page: number, query?: string) => {
         setIsRefreshing(true);
         try {
-            const localData = await getLibrary();
-            setLocalPacks(localData.packs);
-
             // Use search API if query is provided, otherwise list all skills
             const remoteData = query?.trim()
                 ? await searchRemoteSkills(query.trim(), page, pageSize)
@@ -86,8 +81,36 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
                 setTotalSkills(remoteData.pagination.total);
                 setCurrentPage(remoteData.pagination.page);
             }
+            setSkillsShSkills([]);
         } catch (err) {
             console.error('Failed to load library data:', err);
+        } finally {
+            setIsLoading(false);
+            setIsRefreshing(false);
+        }
+    };
+
+    const fetchSearchResults = async (query: string) => {
+        setIsRefreshing(true);
+        try {
+            const remoteData = await searchRemoteSkills(query, 1, pageSize);
+            if (remoteData.success) {
+                setRemoteSkills(remoteData.skills);
+                setTotalPages(1);
+                setTotalSkills(remoteData.skills.length);
+                setCurrentPage(1);
+            }
+
+            if (remoteData.success && remoteData.skills.length < 10) {
+                const skillsShData = await searchSkillsSh(query, 10);
+                setSkillsShSkills(skillsShData.skills || []);
+            } else {
+                setSkillsShSkills([]);
+            }
+        } catch (err) {
+            console.error('Failed to load search results:', err);
+            setRemoteSkills([]);
+            setSkillsShSkills([]);
         } finally {
             setIsLoading(false);
             setIsRefreshing(false);
@@ -100,14 +123,19 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
 
     // Debounced search for remote skills
     useEffect(() => {
-        if (activeTab !== 'community') return;
+        if (!isSearching) {
+            const timeoutId = setTimeout(() => {
+                fetchData(1, searchQuery);
+            }, 300); // 300ms debounce
+            return () => clearTimeout(timeoutId);
+        }
 
         const timeoutId = setTimeout(() => {
-            fetchData(1, searchQuery);
-        }, 300); // 300ms debounce
+            fetchSearchResults(searchQuery.trim());
+        }, 300);
 
         return () => clearTimeout(timeoutId);
-    }, [searchQuery, activeTab]);
+    }, [searchQuery]);
 
     const handlePageChange = (newPage: number) => {
         if (newPage >= 1 && newPage <= totalPages) {
@@ -118,16 +146,21 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
         }
     };
 
-    // Client-side filtering for local packs only
-    const filteredLocalPacks = localPacks.filter(pack => {
-        const query = searchQuery.toLowerCase();
-        return (pack.filename || '').toLowerCase().includes(query) ||
-            pack.name.toLowerCase().includes(query) ||
-            (pack.folder || '').toLowerCase().includes(query);
-    });
-
     // Remote skills are already filtered server-side, no need for client-side filtering
     const filteredRemoteSkills = remoteSkills;
+    const filteredSkillsSh = skillsShSkills;
+    const combinedSearchResults = [
+        ...filteredRemoteSkills.map(skill => ({
+            source: 'linggen' as const,
+            key: `linggen-${skill.skill_id}`,
+            remote: skill,
+        })),
+        ...filteredSkillsSh.map(skill => ({
+            source: 'skillsSh' as const,
+            key: `skillsSh-${skill.topSource}-${skill.id}`,
+            skillsSh: skill,
+        })),
+    ];
 
     const getSkillColor = (name: string) => {
         const colors = [
@@ -154,12 +187,24 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
         return skill.url;
     };
 
-    const handleCopyInstall = (e: React.MouseEvent, skill: RemoteSkill) => {
+    const handleCopyInstallCommand = (e: React.MouseEvent, command: string, key: string) => {
         e.stopPropagation();
-        const command = `linggen skills add ${skill.url} --skill ${skill.skill}`;
         navigator.clipboard.writeText(command);
-        setCopiedId(skill.skill_id);
+        setCopiedId(key);
         setTimeout(() => setCopiedId(null), 2000);
+    };
+
+    const handleCopyInstall = (e: React.MouseEvent, skill: RemoteSkill) => {
+        const command = `linggen skills add ${skill.url} --skill ${skill.skill}`;
+        handleCopyInstallCommand(e, command, skill.skill_id);
+    };
+
+    const getSkillsShKey = (skill: SkillsShSkill) => `skillsSh-${skill.topSource}-${skill.id}`;
+
+    const handleCopyInstallSkillsSh = (e: React.MouseEvent, skill: SkillsShSkill) => {
+        const repoUrl = `https://github.com/${skill.topSource}`;
+        const command = `linggen skills add ${repoUrl} --skill ${skill.id}`;
+        handleCopyInstallCommand(e, command, getSkillsShKey(skill));
     };
 
     const handleDownloadSkill = async (e: React.MouseEvent, skill: RemoteSkill) => {
@@ -185,6 +230,39 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
                 setDownloadedIds(prev => {
                     const next = new Set(prev);
                     next.delete(skill.skill_id);
+                    return next;
+                });
+            }, 3000);
+        } catch (error) {
+            console.error('Failed to download skill:', error);
+            alert(`Failed to download skill: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setDownloadingId(null);
+        }
+    };
+
+    const handleDownloadSkillsSh = async (e: React.MouseEvent, skill: SkillsShSkill) => {
+        e.stopPropagation();
+        const key = getSkillsShKey(skill);
+        if (downloadingId === key) return;
+
+        setDownloadingId(key);
+        try {
+            const repoUrl = `https://github.com/${skill.topSource}`;
+            await downloadSkill(repoUrl, skill.id, 'main');
+            setDownloadedIds(prev => new Set(prev).add(key));
+
+            recordSkillInstall(repoUrl, skill.id, 'main', key).catch(err => {
+                console.warn('Failed to record install:', err);
+            });
+
+            onRefresh?.();
+            await fetchData(currentPage);
+
+            setTimeout(() => {
+                setDownloadedIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(key);
                     return next;
                 });
             }, 3000);
@@ -230,7 +308,7 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
                                         <h2 className="text-3xl font-black text-[var(--text-active)] tracking-tight">
                                             {selectedRemoteSkill.skill}
                                         </h2>
-                                        <span className="text-[10px] bg-[var(--accent)]/10 text-[var(--accent)] px-2.5 py-1 rounded-lg border border-[var(--accent)]/20 font-black uppercase tracking-widest shadow-sm">Community</span>
+                                        <span className="text-[10px] bg-[var(--accent)]/10 text-[var(--accent)] px-2.5 py-1 rounded-lg border border-[var(--accent)]/20 font-black uppercase tracking-widest shadow-sm">Linggen</span>
                                     </div>
                                     <div className="flex items-center gap-2 mt-1.5">
                                         <p className="text-sm text-[var(--text-secondary)] font-mono opacity-60">{selectedRemoteSkill.url}</p>
@@ -381,9 +459,9 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
                                 <div className="w-10 h-10 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)]">
                                     <TrophyIcon className="w-5 h-5" />
                                 </div>
-                                <h3 className="text-sm font-black text-[var(--text-active)]">Community Choice</h3>
+                                <h3 className="text-sm font-black text-[var(--text-active)]">Linggen Choice</h3>
                                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed font-medium">
-                                    This skill is part of the Linggen community registry. It has been verified and used by other developers.
+                                    This skill is part of the Linggen online registry. It has been verified and used by other developers.
                                 </p>
                             </section>
                         </div>
@@ -398,24 +476,16 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
                 <div className="flex flex-col gap-3">
                     <h2 className="text-2xl font-black text-[var(--text-active)] tracking-tight">Library</h2>
-                    <div className="flex gap-2 bg-[var(--bg-app)] p-1.5 rounded-xl border border-[var(--border-color)] w-fit shadow-inner">
-                        <button
-                            onClick={() => setActiveTab('community')}
-                            className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'community' ? 'bg-gradient-to-br from-[var(--accent)] to-[var(--accent-hover)] text-white shadow-lg scale-[1.02]' : 'bg-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-sidebar)]'}`}
-                        >
-                            Community
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('local')}
-                            className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'local' ? 'bg-gradient-to-br from-[var(--accent)] to-[var(--accent-hover)] text-white shadow-lg scale-[1.02]' : 'bg-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-sidebar)]'}`}
-                        >
-                            Local
-                        </button>
-                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={() => fetchData(currentPage)}
+                        onClick={() => {
+                            if (isSearching) {
+                                fetchSearchResults(searchQuery.trim());
+                            } else {
+                                fetchData(currentPage, searchQuery);
+                            }
+                        }}
                         disabled={isRefreshing}
                         className="p-2 hover:bg-[var(--item-hover)] rounded-lg transition-all text-[var(--text-secondary)] hover:text-[var(--text-active)]"
                         title="Refresh library"
@@ -440,13 +510,181 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
             </div>
 
             <div className="flex-1 overflow-y-auto min-h-0 flex flex-col gap-8 pr-2 custom-scrollbar">
-                {activeTab === 'community' ? (
+                {isSearching ? (
+                    <section className="flex flex-col gap-6">
+                        <div className="flex items-center gap-2 px-1">
+                            <TrophyIcon className="w-4 h-4 text-[var(--accent)]" />
+                            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-active)]">Search Results</h3>
+                            <span className="h-px flex-1 bg-[var(--border-color)] opacity-30"></span>
+                            <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
+                                {combinedSearchResults.length} results
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {combinedSearchResults.length > 0 ? (
+                                combinedSearchResults.map((item) => {
+                                    if (item.source === 'linggen' && item.remote) {
+                                        const skill = item.remote;
+                                        return (
+                                            <div
+                                                key={item.key}
+                                                onClick={() => setSelectedRemoteSkill(skill)}
+                                                className="group bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl p-5 cursor-pointer hover:border-[var(--accent)] hover:shadow-lg hover:shadow-[var(--accent)]/5 transition-all relative overflow-hidden"
+                                            >
+                                                <div className="absolute top-3 right-3 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
+                                                    Linggen
+                                                </div>
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] font-black text-xs">
+                                                            {skill.skill.substring(0, 2).toUpperCase()}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="text-sm font-bold text-[var(--text-active)] truncate group-hover:text-[var(--accent)] transition-colors">
+                                                                {skill.skill}
+                                                            </h4>
+                                                            <p className="text-[var(--text-muted)] text-[10px] font-mono truncate">{skill.url.replace('https://github.com/', '')}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <div className="flex -space-x-1">
+                                                                {[1, 2, 3].map(i => (
+                                                                    <div key={i} className="w-4 h-4 rounded-full border border-[var(--bg-sidebar)] bg-[var(--border-color)] flex items-center justify-center overflow-hidden">
+                                                                        <div className="w-full h-full bg-gradient-to-br from-gray-400 to-gray-600 opacity-50"></div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                                                                {skill.install_count} installs
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1">
+                                                            <button
+                                                                onClick={(e) => handleDownloadSkill(e, skill)}
+                                                                disabled={downloadingId === skill.skill_id}
+                                                                className="p-1.5 hover:bg-[var(--bg-app)] rounded-lg transition-all border border-transparent hover:border-[var(--border-color)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                title="Download to library"
+                                                            >
+                                                                {downloadingId === skill.skill_id ? (
+                                                                    <ArrowPathIcon className="w-3.5 h-3.5 text-[var(--accent)] animate-spin" />
+                                                                ) : downloadedIds.has(skill.skill_id) ? (
+                                                                    <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                                                                ) : (
+                                                                    <ArrowDownTrayIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                                                )}
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => handleCopyInstall(e, skill)}
+                                                                className="p-1.5 hover:bg-[var(--bg-app)] rounded-lg transition-all border border-transparent hover:border-[var(--border-color)]"
+                                                                title="Copy install command"
+                                                            >
+                                                                {copiedId === skill.skill_id ? (
+                                                                    <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                                                                ) : (
+                                                                    <ClipboardIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    if (item.source === 'skillsSh' && item.skillsSh) {
+                                        const skill = item.skillsSh;
+                                        const key = getSkillsShKey(skill);
+                                        return (
+                                            <div
+                                                key={item.key}
+                                                className="group bg-[var(--bg-sidebar)] border border-[var(--border-color)] rounded-2xl p-5 transition-all relative overflow-hidden hover:border-[var(--accent)] hover:shadow-lg hover:shadow-[var(--accent)]/5"
+                                            >
+                                                <div className="absolute top-3 right-3 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
+                                                    GitHub
+                                                </div>
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[var(--accent)] font-black text-xs">
+                                                            {skill.id.substring(0, 2).toUpperCase()}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <a
+                                                                href={`https://github.com/${skill.topSource}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="text-sm font-bold text-[var(--text-active)] truncate group-hover:text-[var(--accent)] transition-colors block"
+                                                                title="Open GitHub repository"
+                                                            >
+                                                                {skill.name || skill.id}
+                                                            </a>
+                                                            <p className="text-[var(--text-muted)] text-[10px] font-mono truncate">{skill.topSource}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <div className="flex -space-x-1">
+                                                                {[1, 2, 3].map(i => (
+                                                                    <div key={i} className="w-4 h-4 rounded-full border border-[var(--bg-sidebar)] bg-[var(--border-color)] flex items-center justify-center overflow-hidden">
+                                                                        <div className="w-full h-full bg-gradient-to-br from-gray-400 to-gray-600 opacity-50"></div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                                                                {skill.installs} installs
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1">
+                                                            <button
+                                                                onClick={(e) => handleDownloadSkillsSh(e, skill)}
+                                                                disabled={downloadingId === key}
+                                                                className="p-1.5 hover:bg-[var(--bg-app)] rounded-lg transition-all border border-transparent hover:border-[var(--border-color)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                title="Download to library"
+                                                            >
+                                                                {downloadingId === key ? (
+                                                                    <ArrowPathIcon className="w-3.5 h-3.5 text-[var(--accent)] animate-spin" />
+                                                                ) : downloadedIds.has(key) ? (
+                                                                    <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                                                                ) : (
+                                                                    <ArrowDownTrayIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                                                )}
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => handleCopyInstallSkillsSh(e, skill)}
+                                                                className="p-1.5 hover:bg-[var(--bg-app)] rounded-lg transition-all border border-transparent hover:border-[var(--border-color)]"
+                                                                title="Copy install command"
+                                                            >
+                                                                {copiedId === key ? (
+                                                                    <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                                                                ) : (
+                                                                    <ClipboardIcon className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    return null;
+                                })
+                            ) : (
+                                <div className="col-span-full py-8 text-center text-xs text-[var(--text-muted)] italic bg-[var(--bg-sidebar)]/50 border border-dashed border-[var(--border-color)] rounded-2xl">
+                                    No skills found matching your search.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                ) : (
                     <>
                         {/* Remote Skills Leaderboard */}
                         <section className="flex flex-col gap-4">
                             <div className="flex items-center gap-2 px-1">
                                 <TrophyIcon className="w-4 h-4 text-yellow-500" />
-                                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-active)]">Community Skills</h3>
+                                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-active)]">Linggen Online Skills</h3>
                                 <span className="h-px flex-1 bg-[var(--border-color)] opacity-30"></span>
                                 <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
                                     {totalSkills} total
@@ -560,77 +798,6 @@ export function LibraryView({ onSelectPack, selectedLibraryPackId, onRefresh }: 
                             </div>
                         )}
                     </>
-                ) : (
-                    /* Local Files Table */
-                    <section className="flex flex-col gap-4">
-                        <div className="flex items-center gap-2 px-1">
-                            <FolderIcon className="w-4 h-4 text-blue-500" />
-                            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-active)]">Local Library Files</h3>
-                            <span className="h-px flex-1 bg-[var(--border-color)] opacity-30"></span>
-                        </div>
-
-                        <div className="overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--bg-sidebar)] shadow-sm">
-                            <table className="w-full border-collapse text-left text-xs">
-                                <thead>
-                                    <tr className="bg-[var(--item-hover)]/30 border-b border-[var(--border-color)]">
-                                        <th className="px-6 py-3 font-black text-[var(--text-secondary)] uppercase tracking-widest">Name</th>
-                                        <th className="px-6 py-3 font-black text-[var(--text-secondary)] uppercase tracking-widest">Folder</th>
-                                        <th className="px-6 py-3 font-black text-[var(--text-secondary)] uppercase tracking-widest hidden md:table-cell">Updated</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-[var(--border-color)]/50">
-                                    {filteredLocalPacks.length > 0 ? (
-                                        filteredLocalPacks.map(pack => (
-                                            <tr
-                                                key={pack.id}
-                                                onClick={() => onSelectPack?.(pack.id)}
-                                                className="group cursor-pointer hover:bg-[var(--item-hover)]/50 transition-colors"
-                                            >
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/10 text-[9px] font-black text-[var(--accent)] border border-[var(--accent)]/20">
-                                                            MD
-                                                        </div>
-                                                        <div className="min-w-0">
-                                                            <div className="font-bold text-[var(--text-active)] group-hover:text-[var(--accent)] transition-colors flex items-center gap-2">
-                                                                {pack.filename || pack.name}
-                                                                {pack.read_only && (
-                                                                    <span className="bg-[var(--border-color)] px-1.5 py-0.5 rounded-[4px] text-[8px] uppercase font-black tracking-tighter text-[var(--text-secondary)]">System</span>
-                                                                )}
-                                                            </div>
-                                                            <div className="truncate text-[10px] text-[var(--text-muted)] font-mono opacity-60">
-                                                                {pack.name !== pack.filename ? pack.name : pack.id}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-                                                        <FolderIcon className="w-3 h-3 opacity-50" />
-                                                        <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">
-                                                            {pack.folder || 'general'}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-[var(--text-muted)] text-[10px] hidden md:table-cell">
-                                                    <div className="flex items-center gap-2">
-                                                        <ClockIcon className="w-3 h-3 opacity-50" />
-                                                        <span>{formatDate(pack.updated_at)}</span>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    ) : (
-                                        <tr>
-                                            <td colSpan={3} className="px-6 py-12 text-center text-xs text-[var(--text-muted)] italic">
-                                                No local files found matching your search.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </section>
                 )}
             </div>
         </div>

@@ -2,7 +2,7 @@ use anyhow::Context;
 use axum::{
     body::Body,
     extract::DefaultBodyLimit,
-    http::{header, HeaderValue, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::delete,
     routing::get,
@@ -712,6 +712,7 @@ fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/api/library/folders/rename", post(rename_folder))
         .route("/api/library/folders/:folder_name", delete(delete_folder))
         .route("/api/library/download_skill", post(download_skill))
+        .route("/api/skills_sh/search", get(crate::handlers::skills_sh::search_skills_sh))
         .route(
             "/api/settings",
             get(crate::handlers::settings::get_settings)

@@ -21,6 +21,7 @@ pub mod retry_init;
 pub mod search;
 pub mod settings;
 pub mod shutdown;
+pub mod skills_sh;
 pub mod source_memory;
 pub mod status;
 pub mod upload;
