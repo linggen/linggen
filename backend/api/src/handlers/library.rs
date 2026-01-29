@@ -6,6 +6,7 @@ use axum::{
 };
 use chrono;
 use serde::Deserialize;
+use std::io::Read;
 use std::sync::Arc;
 use tracing::info;
 
@@ -612,6 +613,7 @@ pub async fn download_skill(
 
     // Find skill directory in zip
     let mut skill_root_in_zip = None;
+    let mut skill_candidates: Vec<(usize, String, std::path::PathBuf, String)> = Vec::new();
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| {
             (
@@ -621,25 +623,132 @@ pub async fn download_skill(
         })?;
         let name = file.name();
 
-        // Look for SKILL.md inside a directory named skill_name
-        if (name.ends_with("/SKILL.md") || name.ends_with("/skill.md"))
-            && name.contains(&format!("/{}/", req.skill))
-        {
-            let path = std::path::Path::new(name);
-            if let Some(parent) = path.parent() {
-                skill_root_in_zip = Some(parent.to_path_buf());
-                break;
-            }
+        // Look for SKILL.md / skill.md entries and record candidates.
+        if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
+            continue;
+        }
+
+        let path = std::path::Path::new(name);
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+
+        let dir_name = parent
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        skill_candidates.push((i, name.to_string(), parent.to_path_buf(), dir_name.clone()));
+
+        // Fast-path: exact folder match (previous behavior)
+        if name.contains(&format!("/{}/", req.skill)) {
+            skill_root_in_zip = Some(parent.to_path_buf());
+            break;
         }
     }
 
-    let skill_root = skill_root_in_zip.ok_or((
-        StatusCode::NOT_FOUND,
-        format!(
+    if skill_root_in_zip.is_none() {
+        // Fallback: allow skill ids that include a prefix (e.g. "vendor-skill") to map to the
+        // underlying repo folder ("skill") when unambiguous.
+        let mut suffix_matches: Vec<std::path::PathBuf> = skill_candidates
+            .iter()
+            .filter_map(|(_, _, root, dir_name)| {
+                if !dir_name.is_empty() && req.skill.ends_with(&format!("-{}", dir_name)) {
+                    Some(root.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Fallback: match on SKILL.md frontmatter name (and prefixed variants) if present.
+        if suffix_matches.is_empty() {
+            for (idx, _md_path, root, _dir_name) in &skill_candidates {
+                let mut file = archive.by_index(*idx).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to read zip entry: {}", e),
+                    )
+                })?;
+
+                let mut content = String::new();
+                if file.read_to_string(&mut content).is_err() {
+                    continue;
+                }
+
+                let Some(meta) = extract_all_meta_from_content(&content) else {
+                    continue;
+                };
+                let Some(name) = meta.get("name").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+
+                if name == req.skill || req.skill.ends_with(&format!("-{}", name)) {
+                    suffix_matches.push(root.clone());
+                }
+            }
+        }
+
+        suffix_matches.sort();
+        suffix_matches.dedup();
+
+        if suffix_matches.len() == 1 {
+            skill_root_in_zip = Some(suffix_matches.remove(0));
+        }
+    }
+
+    let skill_root = skill_root_in_zip.ok_or_else(|| {
+        let mut available: Vec<String> = skill_candidates
+            .iter()
+            .map(|(_, _, _, dir_name)| dir_name.clone())
+            .filter(|s| !s.is_empty())
+            .collect();
+        available.sort();
+        available.dedup();
+
+        let mut msg = format!(
             "Could not find skill '{}' in repository. Make sure it contains a SKILL.md file.",
             req.skill
-        ),
-    ))?;
+        );
+        if !available.is_empty() {
+            let shown: Vec<String> = available.into_iter().take(10).collect();
+            msg.push_str(&format!(
+                " Available skills (by folder): {}{}",
+                shown.join(", "),
+                if shown.len() == 10 { ", ..." } else { "" }
+            ));
+        }
+
+        (StatusCode::NOT_FOUND, msg)
+    })?;
+
+    // Extract SKILL.md content for preview/registry (best-effort).
+    let skill_root_str = skill_root.to_str().unwrap_or("");
+    let mut skill_md_content: Option<String> = None;
+    if !skill_root_str.is_empty() {
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to read zip entry: {}", e),
+                )
+            })?;
+            let name = file.name().to_string();
+            if !name.starts_with(skill_root_str) {
+                continue;
+            }
+            if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
+                continue;
+            }
+
+            let mut content = String::new();
+            if file.read_to_string(&mut content).is_ok() {
+                skill_md_content = Some(content);
+            }
+            break;
+        }
+    }
 
     // Create target directory: library/skills/{skill_name}
     let target_dir = state
@@ -716,7 +825,8 @@ pub async fn download_skill(
     Ok(Json(serde_json::json!({
         "success": true,
         "skill": req.skill,
-        "path": target_dir.to_string_lossy()
+        "path": target_dir.to_string_lossy(),
+        "content": skill_md_content
     })))
 }
 

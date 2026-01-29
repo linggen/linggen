@@ -543,7 +543,10 @@ WantedBy=multi-user.target
         &["-f", &tmp_str, "/etc/systemd/system/linggen-server.service"],
     )?;
     run_cmd("systemctl", &["daemon-reload"])?;
-    run_cmd("systemctl", &["enable", "--now", "linggen-server"])?;
+    run_cmd("systemctl", &["enable", "linggen-server"])?;
+    // Always restart to ensure the running service picks up the newly installed binary/UI.
+    // `restart` also starts the service if it's not running yet.
+    run_cmd("systemctl", &["restart", "linggen-server"])?;
     println!(
         "{}",
         "✅ systemd unit installed/enabled (linggen-server)".green()

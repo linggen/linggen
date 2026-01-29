@@ -7,8 +7,9 @@ mod cli;
 mod manifest;
 
 use cli::{
-    find_server_binary, handle_check, handle_doctor, handle_index, handle_install, handle_restart,
-    handle_skills_init, handle_start, handle_status, handle_stop, handle_update, ApiClient,
+    command_exists, find_server_binary, handle_check, handle_doctor, handle_index, handle_install,
+    handle_restart, handle_skills_init, handle_start, handle_status, handle_stop, handle_update,
+    ApiClient,
 };
 
 #[derive(Parser)]
@@ -188,8 +189,35 @@ async fn ensure_backend_running(api_url: &str) -> Result<()> {
     // Try to derive the port from the URL, fall back to default 8787
     let port = extract_port_from_url(api_url).unwrap_or(8787);
 
-    // Start backend first (headless) - this is fast
-    start_backend_subprocess(port)?;
+    // Start backend first (headless) - platform dependent
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+        use std::process::Command;
+
+        let unit_exists = Path::new("/etc/systemd/system/linggen-server.service").exists()
+            || Path::new("/usr/lib/systemd/system/linggen-server.service").exists()
+            || Path::new("/lib/systemd/system/linggen-server.service").exists();
+
+        if unit_exists && command_exists("systemctl") {
+            println!("🧩 Detected systemd-managed linggen-server; starting via systemctl...");
+            let status = Command::new("systemctl")
+                .args(["start", "linggen-server"])
+                .status()?;
+            if !status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to start systemd service. Try: sudo systemctl start linggen-server"
+                ));
+            }
+        } else {
+            start_backend_subprocess(port)?;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        start_backend_subprocess(port)?;
+    }
 
     // Poll until backend becomes available, with a timeout.
     // Use smaller intervals for a faster "feeling".

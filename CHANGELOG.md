@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.3] - 2026-01-29
+
+- Enhanced skills, more skills in online registry.
+- Bootstap Linggen by skill.
+
 ## [0.6.2] - 2026-01-27
 
 ### Added

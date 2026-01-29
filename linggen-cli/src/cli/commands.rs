@@ -12,6 +12,9 @@ use super::util::{format_timestamp, get_local_app_version};
 use crate::ensure_backend_running;
 use crate::manifest::{current_platform, fetch_manifest, Platform};
 
+#[cfg(target_os = "linux")]
+use super::util::command_exists;
+
 /// Returns the user-facing current directory when possible.
 ///
 /// On macOS `/tmp` is a symlink to `/private/tmp`, and `std::env::current_dir()`
@@ -285,6 +288,31 @@ pub async fn handle_start(api_client: &ApiClient) -> Result<()> {
 pub async fn handle_stop(api_url: &str) -> Result<()> {
     println!("{}", "🛑 Stopping Linggen server...".cyan());
 
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+        use std::process::Command;
+
+        let unit_exists = Path::new("/etc/systemd/system/linggen-server.service").exists()
+            || Path::new("/usr/lib/systemd/system/linggen-server.service").exists()
+            || Path::new("/lib/systemd/system/linggen-server.service").exists();
+
+        if unit_exists && command_exists("systemctl") {
+            let status = Command::new("systemctl")
+                .args(["stop", "linggen-server"])
+                .status()
+                .context("Failed to run systemctl stop linggen-server")?;
+
+            if !status.success() {
+                anyhow::bail!(
+                    "Failed to stop systemd service. Try: sudo systemctl stop linggen-server"
+                );
+            }
+            println!("{}", "✅ Server stopped successfully (systemd)".green().bold());
+            return Ok(());
+        }
+    }
+
     let api_client = ApiClient::new(api_url.to_string());
 
     // Check if server is running
@@ -318,6 +346,35 @@ pub async fn handle_stop(api_url: &str) -> Result<()> {
 /// Handle the `restart` command
 pub async fn handle_restart(api_url: &str) -> Result<()> {
     println!("{}", "🔄 Restarting Linggen server...".cyan());
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+        use std::process::Command;
+
+        let unit_exists = Path::new("/etc/systemd/system/linggen-server.service").exists()
+            || Path::new("/usr/lib/systemd/system/linggen-server.service").exists()
+            || Path::new("/lib/systemd/system/linggen-server.service").exists();
+
+        if unit_exists && command_exists("systemctl") {
+            let status = Command::new("systemctl")
+                .args(["restart", "linggen-server"])
+                .status()
+                .context("Failed to run systemctl restart linggen-server")?;
+
+            if !status.success() {
+                anyhow::bail!(
+                    "Failed to restart systemd service. Try: sudo systemctl restart linggen-server"
+                );
+            }
+
+            // Wait until it's reachable again (also avoids spawning a second instance)
+            ensure_backend_running(api_url).await?;
+            let api_client = ApiClient::new(api_url.to_string());
+            handle_start(&api_client).await?;
+            return Ok(());
+        }
+    }
 
     // Stop the server
     handle_stop(api_url).await?;

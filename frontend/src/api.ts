@@ -1179,6 +1179,7 @@ export interface DownloadSkillResponse {
     success: boolean;
     skill: string;
     path: string;
+    content?: string | null;
 }
 
 export async function downloadSkill(url: string, skill: string, ref: string = 'main'): Promise<DownloadSkillResponse> {
@@ -1216,7 +1217,13 @@ function saveInstallTime(skillId: string): void {
     localStorage.setItem(key, new Date().toISOString());
 }
 
-export async function recordSkillInstall(url: string, skill: string, ref: string, skillId: string): Promise<boolean> {
+export async function recordSkillInstall(
+    url: string,
+    skill: string,
+    ref: string,
+    skillId: string,
+    content?: string | null
+): Promise<boolean> {
     // Check local cooldown to prevent spam
     const lastInstall = getLastInstallTime(skillId);
     if (lastInstall) {
@@ -1229,20 +1236,23 @@ export async function recordSkillInstall(url: string, skill: string, ref: string
     }
 
     try {
+        const payload: Record<string, unknown> = {
+            url: url,
+            skill: skill,
+            ref: ref,
+            installer: 'linggen-web',
+            installer_version: '1.0.0',
+            timestamp: new Date().toISOString(),
+        };
+        if (content) payload.content = content;
+
         const response = await fetch(`${REGISTRY_URL}/skills/install`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-API-Key': 'dd55d4c93490bf9d6e45124351838ea9',
             },
-            body: JSON.stringify({
-                url: url,
-                skill: skill,
-                ref: ref,
-                installer: 'linggen-web',
-                installer_version: '1.0.0',
-                timestamp: new Date().toISOString(),
-            }),
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {

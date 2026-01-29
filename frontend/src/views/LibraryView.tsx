@@ -214,11 +214,11 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
 
         setDownloadingId(skill.skill_id);
         try {
-            await downloadSkill(skill.url, skill.skill, skill.ref || 'main');
+            const result = await downloadSkill(skill.url, skill.skill, skill.ref || 'main');
             setDownloadedIds(prev => new Set(prev).add(skill.skill_id));
 
             // Record install in registry (with cooldown protection)
-            recordSkillInstall(skill.url, skill.skill, skill.ref || 'main', skill.skill_id).catch(err => {
+            recordSkillInstall(skill.url, skill.skill, skill.ref || 'main', skill.skill_id, result.content ?? skill.content).catch(err => {
                 console.warn('Failed to record install:', err);
             });
 
@@ -249,10 +249,10 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
         setDownloadingId(key);
         try {
             const repoUrl = `https://github.com/${skill.topSource}`;
-            await downloadSkill(repoUrl, skill.id, 'main');
+            const result = await downloadSkill(repoUrl, skill.id, 'main');
             setDownloadedIds(prev => new Set(prev).add(key));
 
-            recordSkillInstall(repoUrl, skill.id, 'main', key).catch(err => {
+            recordSkillInstall(repoUrl, skill.id, 'main', key, result.content).catch(err => {
                 console.warn('Failed to record install:', err);
             });
 

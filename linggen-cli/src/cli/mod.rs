@@ -6,7 +6,7 @@ mod jobs;
 mod signature;
 pub mod skills;
 mod util;
-pub use util::find_server_binary;
+pub use util::{command_exists, find_server_binary};
 
 pub use client::ApiClient;
 pub use commands::{

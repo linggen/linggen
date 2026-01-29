@@ -547,29 +547,75 @@ fn extract_skill_from_zip(
     // GitHub zips have a root folder like "repo-name-branch-name/"
     let mut skill_root_in_zip = None;
     let mut skill_md_path_in_zip = None;
+    let mut candidates: Vec<(String, PathBuf, String)> = Vec::new(); // (dir_name, root, SKILL.md path)
 
     for i in 0..archive.len() {
         let file = archive.by_index(i)?;
         let name = file.name();
 
         // Look for SKILL.md or skill.md inside a directory named skill_name
-        if (name.ends_with("/SKILL.md") || name.ends_with("/skill.md"))
-            && name.contains(&format!("/{}/", skill_name))
-        {
-            let path = Path::new(name);
-            if let Some(parent) = path.parent() {
-                skill_root_in_zip = Some(parent.to_path_buf());
-                skill_md_path_in_zip = Some(name.to_string());
-                break;
-            }
+        if !(name.ends_with("/SKILL.md") || name.ends_with("/skill.md")) {
+            continue;
+        }
+
+        let path = Path::new(name);
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+
+        let dir_name = parent
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        candidates.push((dir_name.clone(), parent.to_path_buf(), name.to_string()));
+
+        if name.contains(&format!("/{}/", skill_name)) {
+            skill_root_in_zip = Some(parent.to_path_buf());
+            skill_md_path_in_zip = Some(name.to_string());
+            break;
+        }
+    }
+
+    if skill_root_in_zip.is_none() && !candidates.is_empty() {
+        // Fallback: allow prefixed skill ids like "vendor-skill" to map to "skill" folder when unambiguous.
+        let mut matches: Vec<&(String, PathBuf, String)> = candidates
+            .iter()
+            .filter(|(dir_name, _, _)| {
+                !dir_name.is_empty() && skill_name.ends_with(&format!("-{}", dir_name))
+            })
+            .collect();
+
+        matches.sort_by(|a, b| a.0.cmp(&b.0));
+        matches.dedup_by(|a, b| a.0 == b.0);
+
+        if matches.len() == 1 {
+            let (_, root, md_path) = matches[0];
+            skill_root_in_zip = Some(root.clone());
+            skill_md_path_in_zip = Some(md_path.clone());
         }
     }
 
     let skill_root = skill_root_in_zip.ok_or_else(|| {
-        anyhow::anyhow!(
+        let available: BTreeSet<String> = candidates
+            .iter()
+            .map(|(dir, _, _)| dir.clone())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let shown: Vec<String> = available.iter().take(10).cloned().collect();
+
+        let mut msg = format!(
             "Could not find skill '{}' in the repository. Make sure it contains a SKILL.md file.",
             skill_name
-        )
+        );
+        if !shown.is_empty() {
+            msg.push_str(&format!(
+                " Available skills (by folder): {}{}",
+                shown.join(", "),
+                if available.len() > shown.len() { ", ..." } else { "" }
+            ));
+        }
+        anyhow::anyhow!(msg)
     })?;
 
     // Read SKILL.md content for registry
