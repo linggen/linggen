@@ -223,27 +223,47 @@ pub async fn handle_skills_init(
     force: bool,
     skills: Vec<String>,
 ) -> Result<()> {
-    let ai_choice = resolve_ai_choice(ai)?;
+    let cwd = std::env::current_dir()?;
+    let repo_root = find_repo_root(&cwd);
+    let install_root = repo_root
+        .clone()
+        .or_else(|| if local { Some(cwd.clone()) } else { None });
+
+    let ai_choices = resolve_ai_choices(ai, install_root.is_some())?;
     let normalized_url = normalize_github_url(&repo_url)?;
     let (owner, repo) = parse_github_url(&normalized_url)?;
 
-    let base_skills_dir = resolve_skills_dir(ai_choice, local)?;
-    fs::create_dir_all(&base_skills_dir)?;
+    let base_skills_dirs: Vec<PathBuf> = ai_choices
+        .iter()
+        .map(|ai_choice| resolve_skills_dir(*ai_choice, install_root.as_deref()))
+        .collect::<Result<Vec<_>>>()?;
+    for dir in &base_skills_dirs {
+        fs::create_dir_all(dir)?;
+    }
 
     println!(
         "{}",
         format!(
             "🔧 Initializing Linggen skills for {} from {} (ref: {})",
-            ai_choice.label(),
+            ai_choices
+                .iter()
+                .map(|c| c.label())
+                .collect::<Vec<_>>()
+                .join(" + "),
             normalized_url,
             git_ref
         )
         .cyan()
     );
-    println!(
-        "{}",
-        format!("📂 Skills directory: {}", base_skills_dir.display()).dimmed()
-    );
+    for dir in &base_skills_dirs {
+        println!("{}", format!("📂 Skills directory: {}", dir.display()).dimmed());
+    }
+    if let Some(root) = &repo_root {
+        println!(
+            "{}",
+            format!("📌 Detected repo root: {}", root.display()).dimmed()
+        );
+    }
 
     let zip_url = build_github_zip_url(&owner, &repo, &git_ref);
     println!("{}", "⬇️  Downloading skills repo from GitHub...".dimmed());
@@ -296,30 +316,32 @@ pub async fn handle_skills_init(
 
     let mut installed = 0usize;
     for (skill_name, zip_prefix) in to_install {
-        let target_dir = base_skills_dir.join(&skill_name);
-        if target_dir.exists() {
-            if force || skill_name == "linggen" {
-                fs::remove_dir_all(&target_dir)?;
-            } else {
-                println!(
-                    "{}",
-                    format!(
-                        "ℹ️  Skill '{}' already exists at {}; skipping (use --force to overwrite).",
-                        skill_name,
-                        target_dir.display()
-                    )
-                    .yellow()
-                );
-                continue;
+        for base_skills_dir in &base_skills_dirs {
+            let target_dir = base_skills_dir.join(&skill_name);
+            if target_dir.exists() {
+                if force || skill_name == "linggen" {
+                    fs::remove_dir_all(&target_dir)?;
+                } else {
+                    println!(
+                        "{}",
+                        format!(
+                            "ℹ️  Skill '{}' already exists at {}; skipping (use --force to overwrite).",
+                            skill_name,
+                            target_dir.display()
+                        )
+                        .yellow()
+                    );
+                    continue;
+                }
             }
-        }
 
-        extract_dir_from_zip(&temp_zip, &zip_prefix, &target_dir)?;
-        println!(
-            "{}",
-            format!("✅ Installed skill '{}' to {}", skill_name, target_dir.display()).green()
-        );
-        installed += 1;
+            extract_dir_from_zip(&temp_zip, &zip_prefix, &target_dir)?;
+            println!(
+                "{}",
+                format!("✅ Installed skill '{}' to {}", skill_name, target_dir.display()).green()
+            );
+            installed += 1;
+        }
     }
 
     let _ = fs::remove_file(temp_zip);
@@ -335,10 +357,19 @@ pub async fn handle_skills_init(
             format!(
                 "✨ Done. {} skill(s) installed into {}",
                 installed,
-                base_skills_dir.display()
+                base_skills_dirs
+                    .iter()
+                    .map(|d| d.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
             .green()
         );
+    }
+
+    // If we're in a repo, bootstrap the entry points (Cursor rules + CLAUDE/AGENTS).
+    if let Some(root) = repo_root {
+        bootstrap_repo_entrypoints(&root)?;
     }
 
     Ok(())
@@ -359,56 +390,43 @@ impl AiChoice {
     }
 }
 
-fn resolve_ai_choice(ai: Option<String>) -> Result<AiChoice> {
+fn resolve_ai_choices(ai: Option<String>, is_local: bool) -> Result<Vec<AiChoice>> {
     match ai.as_deref().map(|s| s.trim().to_lowercase()) {
-        Some(ref s) if s == "claude" => Ok(AiChoice::Claude),
-        Some(ref s) if s == "codex" => Ok(AiChoice::Codex),
-        Some(other) => anyhow::bail!("Unsupported AI provider '{}'. Use 'claude' or 'codex'.", other),
-        None => prompt_ai_choice(),
-    }
-}
-
-fn prompt_ai_choice() -> Result<AiChoice> {
-    use std::io::{self, IsTerminal};
-
-    if !io::stdin().is_terminal() {
-        println!("ℹ️  No --ai provided and stdin is not interactive; defaulting to Claude.");
-        return Ok(AiChoice::Claude);
-    }
-
-    println!("Select AI:");
-    println!("1) Claude (default)");
-    println!("2) Codex");
-    print!("Enter choice [1-2]: ");
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let choice = input.trim().to_lowercase();
-
-    if choice.is_empty() || choice == "1" || choice == "claude" {
-        Ok(AiChoice::Claude)
-    } else if choice == "2" || choice == "codex" {
-        Ok(AiChoice::Codex)
-    } else {
-        anyhow::bail!("Invalid choice '{}'. Use 1 (Claude) or 2 (Codex).", input.trim())
-    }
-}
-
-fn resolve_skills_dir(ai: AiChoice, local: bool) -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-    let path = match ai {
-        AiChoice::Claude => {
-            if local {
-                PathBuf::from(".claude").join("skills")
+        Some(ref s) if s == "claude" => Ok(vec![AiChoice::Claude]),
+        Some(ref s) if s == "codex" => {
+            // In a repo/local install, always include Claude-style skills so Cursor/Claude Code
+            // can discover `.claude/skills/...` and entrypoints (Cursor rules, CLAUDE.md, AGENTS.md)
+            // can be generated reliably. Also install Codex skills for completeness.
+            if is_local {
+                Ok(vec![AiChoice::Claude, AiChoice::Codex])
             } else {
-                home.join(".claude").join("skills")
+                Ok(vec![AiChoice::Codex])
             }
         }
-        AiChoice::Codex => {
-            if local {
-                PathBuf::from(".codex").join("skills")
-            } else if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        Some(other) => anyhow::bail!("Unsupported AI provider '{}'. Use 'claude' or 'codex'.", other),
+        None => {
+            // Default behavior:
+            // - If we're installing into a local project (repo root or --local), prefer Claude-style skills
+            //   so tooling like Cursor/Claude Code can discover them via `.claude/skills/...`.
+            // - If we're installing globally (no repo), install both Claude + Codex skills to avoid
+            //   "which AI?" confusion.
+            if is_local {
+                Ok(vec![AiChoice::Claude])
+            } else {
+                Ok(vec![AiChoice::Claude, AiChoice::Codex])
+            }
+        }
+    }
+}
+
+fn resolve_skills_dir(ai: AiChoice, install_root: Option<&Path>) -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    let path = match (ai, install_root) {
+        (AiChoice::Claude, Some(root)) => root.join(".claude").join("skills"),
+        (AiChoice::Codex, Some(root)) => root.join(".codex").join("skills"),
+        (AiChoice::Claude, None) => home.join(".claude").join("skills"),
+        (AiChoice::Codex, None) => {
+            if let Ok(codex_home) = std::env::var("CODEX_HOME") {
                 PathBuf::from(codex_home).join("skills")
             } else {
                 home.join(".codex").join("skills")
@@ -416,6 +434,85 @@ fn resolve_skills_dir(ai: AiChoice, local: bool) -> Result<PathBuf> {
         }
     };
     Ok(path)
+}
+
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = Some(start);
+    while let Some(dir) = cur {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+fn ensure_claude_md(root: &Path) -> Result<()> {
+    let path = root.join("CLAUDE.md");
+    let linggen_ref = "Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.";
+
+    if path.exists() {
+        let content = fs::read_to_string(&path)?;
+        if content.contains(".claude/skills/linggen/SKILL.md") {
+            return Ok(());
+        }
+        let updated = format!("{}\n\n{}\n", content.trim_end(), linggen_ref);
+        fs::write(&path, updated)?;
+        return Ok(());
+    }
+
+    let new_content = format!("# Claude Code Instructions\n\n{}\n", linggen_ref);
+    fs::write(&path, new_content)?;
+    Ok(())
+}
+
+fn ensure_agents_md(root: &Path) -> Result<()> {
+    let claude = root.join("CLAUDE.md");
+    let agents = root.join("AGENTS.md");
+
+    let source = if claude.exists() {
+        fs::read_to_string(&claude)?
+    } else {
+        let linggen_ref = "Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.";
+        format!("# Claude Code Instructions\n\n{}\n", linggen_ref)
+    };
+
+    if agents.exists() {
+        let existing = fs::read_to_string(&agents)?;
+        if existing == source {
+            return Ok(());
+        }
+    }
+
+    fs::write(&agents, source)?;
+    Ok(())
+}
+
+fn ensure_cursor_rule(root: &Path) -> Result<()> {
+    let rules_dir = root.join(".cursor").join("rules");
+    fs::create_dir_all(&rules_dir)?;
+    let rule_path = rules_dir.join("linggen.md");
+
+    let skill_md = root
+        .join(".claude")
+        .join("skills")
+        .join("linggen")
+        .join("SKILL.md");
+    if !skill_md.exists() {
+        // Best-effort: don't fail init if rule generation can't find the file.
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(skill_md)?;
+    fs::write(&rule_path, content)?;
+    Ok(())
+}
+
+fn bootstrap_repo_entrypoints(root: &Path) -> Result<()> {
+    ensure_claude_md(root)?;
+    ensure_agents_md(root)?;
+    ensure_cursor_rule(root)?;
+    Ok(())
 }
 
 fn get_last_install_time(skill_name: &str) -> Result<chrono::DateTime<chrono::Utc>> {
