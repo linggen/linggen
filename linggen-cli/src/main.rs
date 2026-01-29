@@ -51,6 +51,10 @@ enum Commands {
         #[arg(long)]
         local: bool,
 
+        /// Install into home (~/.claude or ~/.codex) even if inside a repo
+        #[arg(long)]
+        global: bool,
+
         /// Force overwrite if a skill is already installed
         #[arg(long)]
         force: bool,
@@ -410,10 +414,11 @@ async fn main() -> Result<()> {
             repo_url,
             git_ref,
             local,
+            global,
             force,
             skills,
         }) => {
-            handle_skills_init(ai, repo_url, git_ref, local, force, skills).await?;
+            handle_skills_init(ai, repo_url, git_ref, local, global, force, skills).await?;
         }
     }
 

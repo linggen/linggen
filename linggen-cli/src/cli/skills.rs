@@ -220,11 +220,16 @@ pub async fn handle_skills_init(
     repo_url: String,
     git_ref: String,
     local: bool,
+    global: bool,
     force: bool,
     skills: Vec<String>,
 ) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let repo_root = find_repo_root(&cwd);
+    if local && global {
+        anyhow::bail!("Use only one of --local or --global.");
+    }
+
+    let repo_root = if global { None } else { find_repo_root(&cwd) };
     let install_root = repo_root
         .clone()
         .or_else(|| if local { Some(cwd.clone()) } else { None });
@@ -258,7 +263,9 @@ pub async fn handle_skills_init(
     for dir in &base_skills_dirs {
         println!("{}", format!("📂 Skills directory: {}", dir.display()).dimmed());
     }
-    if let Some(root) = &repo_root {
+    if global {
+        println!("{}", "🌍 Global install requested (--global)".dimmed());
+    } else if let Some(root) = &repo_root {
         println!(
             "{}",
             format!("📌 Detected repo root: {}", root.display()).dimmed()
