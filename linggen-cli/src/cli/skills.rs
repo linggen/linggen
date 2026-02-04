@@ -3,8 +3,8 @@ use colored::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use zip::ZipArchive;
 
 use super::download::{default_http_client, download_to_temp};
@@ -72,9 +72,10 @@ async fn handle_skills_add_impl(
         );
 
         // 1. Determine target directory
-        let local_claude = Path::new(".claude");
-        let target_dir = if local_claude.exists() && local_claude.is_dir() {
-            local_claude.join("skills").join(&current_skill_name)
+        let cwd = std::env::current_dir()?;
+        let install_root = find_install_root(&cwd)?;
+        let target_dir = if let Some(root) = install_root {
+            root.join(".claude").join("skills").join(&current_skill_name)
         } else {
             dirs::home_dir()
                 .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
@@ -110,7 +111,12 @@ async fn handle_skills_add_impl(
 
         // 4. Extract selectively
         println!("{}", "📦 Extracting skill...".dimmed());
-        let skill_content = match extract_skill_from_zip(&temp_zip, &current_skill_name, &target_dir) {
+        let skill_content = match extract_skill_from_zip(
+            &temp_zip,
+            &current_skill_name,
+            &repo,
+            &target_dir,
+        ) {
             Ok(content) => content,
             Err(err) => {
                 let _ = fs::remove_file(&temp_zip);
@@ -229,10 +235,14 @@ pub async fn handle_skills_init(
         anyhow::bail!("Use only one of --local or --global.");
     }
 
-    let repo_root = if global { None } else { find_repo_root(&cwd) };
-    let install_root = repo_root
-        .clone()
-        .or_else(|| if local { Some(cwd.clone()) } else { None });
+    let repo_root = if global {
+        None
+    } else if local {
+        Some(cwd.clone())
+    } else {
+        find_install_root(&cwd)?
+    };
+    let install_root = repo_root.clone();
 
     let ai_choices = resolve_ai_choices(ai, install_root.is_some())?;
     let normalized_url = normalize_github_url(&repo_url)?;
@@ -454,6 +464,30 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
+fn find_claude_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = Some(start);
+    while let Some(dir) = cur {
+        let claude = dir.join(".claude");
+        if claude.exists() && claude.is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+// linggen anchor: linggen/doc/linggen-integration.md
+fn find_install_root(start: &Path) -> Result<Option<PathBuf>> {
+    if let Some(repo_root) = find_repo_root(start) {
+        let claude_dir = repo_root.join(".claude");
+        if !claude_dir.exists() {
+            fs::create_dir_all(&claude_dir)?;
+        }
+        return Ok(Some(repo_root));
+    }
+    Ok(find_claude_root(start))
+}
+
 fn ensure_claude_md(root: &Path) -> Result<()> {
     let path = root.join("CLAUDE.md");
     let linggen_ref = "Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.";
@@ -642,6 +676,7 @@ async fn search_skills_sh(query: &str) -> Result<Option<SkillsShSkill>> {
 fn extract_skill_from_zip(
     zip_path: &Path,
     skill_name: &str,
+    repo_name: &str,
     target_dir: &Path,
 ) -> Result<Option<String>> {
     let file = fs::File::open(zip_path)?;
@@ -652,6 +687,7 @@ fn extract_skill_from_zip(
     let mut skill_root_in_zip = None;
     let mut skill_md_path_in_zip = None;
     let mut candidates: Vec<(String, PathBuf, String)> = Vec::new(); // (dir_name, root, SKILL.md path)
+    let mut root_skill_md_candidate: Option<(String, PathBuf, String)> = None;
 
     for i in 0..archive.len() {
         let file = archive.by_index(i)?;
@@ -673,6 +709,17 @@ fn extract_skill_from_zip(
             .unwrap_or("")
             .to_string();
         candidates.push((dir_name.clone(), parent.to_path_buf(), name.to_string()));
+
+        // Special-case: a SKILL.md directly under the zip root folder (GitHub's repo-ref folder),
+        // e.g. "disk-cleaner-main/SKILL.md". Some third-party repos structure the skill like this.
+        let normal_component_count = path
+            .components()
+            .filter(|c| matches!(c, Component::Normal(_)))
+            .count();
+        if normal_component_count == 2 {
+            root_skill_md_candidate =
+                Some((dir_name.clone(), parent.to_path_buf(), name.to_string()));
+        }
 
         if name.contains(&format!("/{}/", skill_name)) {
             skill_root_in_zip = Some(parent.to_path_buf());
@@ -700,6 +747,24 @@ fn extract_skill_from_zip(
         }
     }
 
+    if skill_root_in_zip.is_none() {
+        // Fallback: if the repo contains a root SKILL.md (under the GitHub zip's root folder),
+        // treat the whole repo root as the skill when it is a plausible match.
+        //
+        // This supports third-party repos that keep SKILL.md at repo root, while still avoiding
+        // ambiguous installs for multi-skill repositories.
+        if let Some((root_dir_name, root, md_path)) = &root_skill_md_candidate {
+            let has_only_root_candidate = candidates
+                .iter()
+                .all(|(dir_name, _, _)| dir_name == root_dir_name);
+
+            if skill_name == repo_name || candidates.len() == 1 || has_only_root_candidate {
+                skill_root_in_zip = Some(root.clone());
+                skill_md_path_in_zip = Some(md_path.clone());
+            }
+        }
+    }
+
     let skill_root = skill_root_in_zip.ok_or_else(|| {
         let available: BTreeSet<String> = candidates
             .iter()
@@ -717,6 +782,12 @@ fn extract_skill_from_zip(
                 " Available skills (by folder): {}{}",
                 shown.join(", "),
                 if available.len() > shown.len() { ", ..." } else { "" }
+            ));
+        }
+        if let Some((root_dir_name, _, _)) = &root_skill_md_candidate {
+            msg.push_str(&format!(
+                " Tip: this repo has a root SKILL.md under '{}'; try '--skill {}' or update Linggen to a version that supports root SKILL.md fallback.",
+                root_dir_name, root_dir_name
             ));
         }
         anyhow::anyhow!(msg)
@@ -764,6 +835,92 @@ fn extract_skill_from_zip(
     }
 
     Ok(skill_md_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_skill_from_zip;
+    use std::io::Write;
+    use tempfile::{tempdir, NamedTempFile};
+    use zip::write::FileOptions;
+    use zip::ZipWriter;
+
+    fn make_zip(entries: &[(&str, &str)]) -> NamedTempFile {
+        let mut tmp = NamedTempFile::new().expect("temp zip");
+        {
+            let mut zip = ZipWriter::new(&mut tmp);
+            let options = FileOptions::default();
+            for &(path, content) in entries {
+                zip.start_file(path, options).expect("start_file");
+                zip.write_all(content.as_bytes()).expect("write_all");
+            }
+            zip.finish().expect("finish");
+        }
+        tmp
+    }
+
+    #[test]
+    fn extracts_root_skill_md_when_repo_matches() {
+        let zip = make_zip(&[
+            ("disk-cleaner-main/SKILL.md", "name: disk-cleaner\n"),
+            ("disk-cleaner-main/scripts/run.sh", "echo hi\n"),
+        ]);
+        let out = tempdir().expect("temp out dir");
+
+        let skill_md = extract_skill_from_zip(
+            zip.path(),
+            "disk-cleaner",
+            "disk-cleaner",
+            out.path(),
+        )
+        .expect("extract ok")
+        .expect("skill md content");
+
+        assert!(skill_md.contains("disk-cleaner"));
+        assert!(out.path().join("SKILL.md").exists());
+        assert!(out.path().join("scripts/run.sh").exists());
+    }
+
+    #[test]
+    fn does_not_guess_when_multiple_candidates() {
+        let zip = make_zip(&[
+            ("repo-main/foo/SKILL.md", "name: foo\n"),
+            ("repo-main/bar/SKILL.md", "name: bar\n"),
+        ]);
+        let out = tempdir().expect("temp out dir");
+
+        let err = extract_skill_from_zip(zip.path(), "baz", "repo", out.path())
+            .expect_err("should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("Could not find skill 'baz'"));
+    }
+
+    #[test]
+    fn root_fallback_requires_reasonable_match() {
+        let zip = make_zip(&[
+            ("repo-main/SKILL.md", "name: some-skill\n"),
+            ("repo-main/README.md", "docs\n"),
+            ("repo-main/other/SKILL.md", "name: other\n"),
+        ]);
+        let out = tempdir().expect("temp out dir");
+
+        let err = extract_skill_from_zip(zip.path(), "unrelated", "repo", out.path())
+            .expect_err("should fail (ambiguous)");
+        let msg = err.to_string();
+        assert!(msg.contains("Could not find skill 'unrelated'"));
+
+        // But repo match should succeed even with extra nested candidates.
+        let out2 = tempdir().expect("temp out dir 2");
+        let skill_md = extract_skill_from_zip(zip.path(), "repo", "repo", out2.path())
+            .expect("repo match ok")
+            .expect("skill md content");
+        assert!(skill_md.contains("some-skill"));
+
+        // Ensure it extracted root SKILL.md.
+        assert!(out2.path().join("SKILL.md").exists());
+        // And also extracted a non-skill root file (since root is treated as the skill).
+        assert!(out2.path().join("README.md").exists());
+    }
 }
 
 fn detect_skills_in_zip(zip_path: &Path) -> Result<BTreeMap<String, String>> {

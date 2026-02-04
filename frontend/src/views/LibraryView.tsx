@@ -38,6 +38,7 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
     const isSearching = searchQuery.trim().length > 0;
 
     const [isDarkMode, setIsDarkMode] = useState(() => {
+        if (typeof document === 'undefined') return true;
         const rootTheme = document.documentElement.getAttribute('data-theme');
         if (rootTheme === 'dark') return true;
         if (rootTheme === 'light') return false;
@@ -45,6 +46,7 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
     });
 
     useEffect(() => {
+        if (typeof document === 'undefined') return;
         const observer = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
                 if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
@@ -195,15 +197,26 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
     };
 
     const handleCopyInstall = (e: React.MouseEvent, skill: RemoteSkill) => {
-        const command = `linggen skills add ${skill.url} --skill ${skill.skill}`;
+        const repoName = skill.url.split('/').pop();
+        const command = skill.skill === repoName
+            ? `linggen skills add ${skill.url}`
+            : `linggen skills add ${skill.url} --skill ${skill.skill}`;
         handleCopyInstallCommand(e, command, skill.skill_id);
     };
 
-    const getSkillsShKey = (skill: SkillsShSkill) => `skillsSh-${skill.topSource}-${skill.id}`;
+    const getSkillsShKey = (skill: SkillsShSkill) => `skillsSh-${skill.source}-${skill.id}`;
 
     const handleCopyInstallSkillsSh = (e: React.MouseEvent, skill: SkillsShSkill) => {
-        const repoUrl = `https://github.com/${skill.topSource}`;
-        const command = `linggen skills add ${repoUrl} --skill ${skill.id}`;
+        const repoUrl = `https://github.com/${skill.source}`;
+        const skillId = skill.skillId || skill.id.split('/').pop() || skill.id;
+        
+        // If skillId is the same as the repo name (last part of source), 
+        // it might be a single-skill repo.
+        const repoName = skill.source.split('/').pop();
+        const command = skillId === repoName 
+            ? `linggen skills add ${repoUrl}`
+            : `linggen skills add ${repoUrl} --skill ${skillId}`;
+            
         handleCopyInstallCommand(e, command, getSkillsShKey(skill));
     };
 
@@ -214,7 +227,11 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
 
         setDownloadingId(skill.skill_id);
         try {
-            const result = await downloadSkill(skill.url, skill.skill, skill.ref || 'main');
+            // Check if skill name is the same as repo name to handle single-skill repos
+            const repoName = skill.url.split('/').pop();
+            const skillName = skill.skill === repoName ? '' : skill.skill;
+            
+            const result = await downloadSkill(skill.url, skillName, skill.ref || 'main');
             setDownloadedIds(prev => new Set(prev).add(skill.skill_id));
 
             // Record install in registry (with cooldown protection)
@@ -248,11 +265,17 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
 
         setDownloadingId(key);
         try {
-            const repoUrl = `https://github.com/${skill.topSource}`;
-            const result = await downloadSkill(repoUrl, skill.id, 'main');
+            const repoUrl = `https://github.com/${skill.source}`;
+            const skillId = skill.skillId || skill.id.split('/').pop() || skill.id;
+            
+            // Handle single-skill repo case
+            const repoName = skill.source.split('/').pop();
+            const downloadSkillId = skillId === repoName ? '' : skillId;
+            
+            const result = await downloadSkill(repoUrl, downloadSkillId, 'main');
             setDownloadedIds(prev => new Set(prev).add(key));
 
-            recordSkillInstall(repoUrl, skill.id, 'main', key, result.content).catch(err => {
+            recordSkillInstall(repoUrl, skillId, 'main', key, result.content).catch(err => {
                 console.warn('Failed to record install:', err);
             });
 
@@ -354,7 +377,12 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
                                 </div>
                                 <div className="relative group">
                                     <code className="block bg-[var(--bg-app)] p-6 rounded-2xl border-2 border-[var(--border-color)] text-[13px] font-mono text-[var(--accent)] break-all pr-32 shadow-inner leading-relaxed">
-                                        linggen skills add {selectedRemoteSkill.url} --skill {selectedRemoteSkill.skill}
+                                        {(() => {
+                                            const repoName = selectedRemoteSkill.url.split('/').pop();
+                                            return selectedRemoteSkill.skill === repoName
+                                                ? `linggen skills add ${selectedRemoteSkill.url}`
+                                                : `linggen skills add ${selectedRemoteSkill.url} --skill ${selectedRemoteSkill.skill}`;
+                                        })()}
                                     </code>
                                     <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
                                         <button
@@ -611,16 +639,16 @@ export function LibraryView({ selectedLibraryPackId, onRefresh }: LibraryViewPro
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <a
-                                                                href={`https://github.com/${skill.topSource}`}
+                                                                href={`https://github.com/${skill.source}`}
                                                                 target="_blank"
                                                                 rel="noopener noreferrer"
                                                                 onClick={(e) => e.stopPropagation()}
                                                                 className="text-sm font-bold text-[var(--text-active)] truncate group-hover:text-[var(--accent)] transition-colors block"
                                                                 title="Open GitHub repository"
                                                             >
-                                                                {skill.name || skill.id}
+                                                                {skill.name || skill.skillId || skill.id}
                                                             </a>
-                                                            <p className="text-[var(--text-muted)] text-[10px] font-mono truncate">{skill.topSource}</p>
+                                                            <p className="text-[var(--text-muted)] text-[10px] font-mono truncate">{skill.source}</p>
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center justify-between mt-2">

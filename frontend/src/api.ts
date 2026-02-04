@@ -1,20 +1,25 @@
 
 // Determine the API base URL:
-// - In browser on localhost:8787, use localhost:8787
-// - In browser on remote IP (http://linggen-ip:8787), use that IP
+// - Use VITE_API_BASE from environment if provided
+// - Fallback to current origin (useful for production/docker)
 function getApiBase(): string {
+    const envApiBase = import.meta.env.VITE_API_BASE;
+    if (envApiBase) {
+        return envApiBase;
+    }
+
     if (typeof window === 'undefined') {
         return 'http://127.0.0.1:8787';
     }
 
     const origin = window.location.origin;
 
-    // In Vite dev server (localhost:5173), point to backend
-    if (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173')) {
+    // In Vite dev server, if no env var is provided, we still need a fallback for local dev
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
         return 'http://127.0.0.1:8787';
     }
 
-    // For browser access (local or remote), use the current origin
+    // For production browser access, use the current origin
     return origin;
 }
 
@@ -897,9 +902,11 @@ export async function searchRemoteSkills(query: string, page = 1, limit = 20): P
 // skills.sh API
 export interface SkillsShSkill {
     id: string;
+    skillId: string;
     name: string;
     installs: number;
-    topSource: string;
+    source: string;
+    topSource?: string; // Legacy support if needed
 }
 
 export interface SkillsShResponse {
