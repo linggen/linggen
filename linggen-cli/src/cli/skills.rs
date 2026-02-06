@@ -221,31 +221,20 @@ async fn handle_skills_add_impl(
     }
 }
 
-pub async fn handle_skills_init(
-    ai: Option<String>,
-    repo_url: String,
-    git_ref: String,
-    local: bool,
-    global: bool,
-    force: bool,
-    skills: Vec<String>,
-) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    if local && global {
-        anyhow::bail!("Use only one of --local or --global.");
-    }
+const DEFAULT_SKILLS_REPO_URL: &str = "https://github.com/linggen/skills";
+const DEFAULT_SKILLS_GIT_REF: &str = "main";
 
+pub async fn handle_skills_init(global: bool) -> Result<()> {
+    let cwd = std::env::current_dir()?;
     let repo_root = if global {
         None
-    } else if local {
-        Some(cwd.clone())
     } else {
-        find_install_root(&cwd)?
+        find_repo_root(&cwd)
     };
-    let install_root = repo_root.clone();
+    let install_root = repo_root.as_deref();
 
-    let ai_choices = resolve_ai_choices(ai, install_root.is_some())?;
-    let normalized_url = normalize_github_url(&repo_url)?;
+    let ai_choices = resolve_ai_choices_for_install(install_root)?;
+    let normalized_url = normalize_github_url(DEFAULT_SKILLS_REPO_URL)?;
     let (owner, repo) = parse_github_url(&normalized_url)?;
 
     let base_skills_dirs: Vec<PathBuf> = ai_choices
@@ -266,7 +255,7 @@ pub async fn handle_skills_init(
                 .collect::<Vec<_>>()
                 .join(" + "),
             normalized_url,
-            git_ref
+            DEFAULT_SKILLS_GIT_REF
         )
         .cyan()
     );
@@ -282,7 +271,7 @@ pub async fn handle_skills_init(
         );
     }
 
-    let zip_url = build_github_zip_url(&owner, &repo, &git_ref);
+    let zip_url = build_github_zip_url(&owner, &repo, DEFAULT_SKILLS_GIT_REF);
     println!("{}", "⬇️  Downloading skills repo from GitHub...".dimmed());
 
     let client = default_http_client()?;
@@ -294,32 +283,11 @@ pub async fn handle_skills_init(
         anyhow::bail!(
             "No skills found in repository {} at ref {} (expected SKILL.md).",
             normalized_url,
-            git_ref
+            DEFAULT_SKILLS_GIT_REF
         );
     }
 
-    let requested: BTreeSet<String> = skills.into_iter().collect();
-    let to_install: BTreeMap<String, String> = if requested.is_empty() {
-        detected
-    } else {
-        let mut filtered = BTreeMap::new();
-        for skill in &requested {
-            if let Some(prefix) = detected.get(skill) {
-                filtered.insert(skill.clone(), prefix.clone());
-            }
-        }
-        let missing: Vec<String> = requested
-            .into_iter()
-            .filter(|s| !filtered.contains_key(s))
-            .collect();
-        if !missing.is_empty() {
-            anyhow::bail!(
-                "Requested skill(s) not found in repo: {}",
-                missing.join(", ")
-            );
-        }
-        filtered
-    };
+    let to_install: BTreeMap<String, String> = detected;
 
     println!(
         "{}",
@@ -336,13 +304,13 @@ pub async fn handle_skills_init(
         for base_skills_dir in &base_skills_dirs {
             let target_dir = base_skills_dir.join(&skill_name);
             if target_dir.exists() {
-                if force || skill_name == "linggen" {
+                if skill_name == "linggen" {
                     fs::remove_dir_all(&target_dir)?;
                 } else {
                     println!(
                         "{}",
                         format!(
-                            "ℹ️  Skill '{}' already exists at {}; skipping (use --force to overwrite).",
+                            "ℹ️  Skill '{}' already exists at {}; skipping.",
                             skill_name,
                             target_dir.display()
                         )
@@ -407,50 +375,48 @@ impl AiChoice {
     }
 }
 
-fn resolve_ai_choices(ai: Option<String>, is_local: bool) -> Result<Vec<AiChoice>> {
-    match ai.as_deref().map(|s| s.trim().to_lowercase()) {
-        Some(ref s) if s == "claude" => Ok(vec![AiChoice::Claude]),
-        Some(ref s) if s == "codex" => {
-            // In a repo/local install, always include Claude-style skills so Cursor/Claude Code
-            // can discover `.claude/skills/...` and entrypoints (Cursor rules, CLAUDE.md, AGENTS.md)
-            // can be generated reliably. Also install Codex skills for completeness.
-            if is_local {
-                Ok(vec![AiChoice::Claude, AiChoice::Codex])
-            } else {
-                Ok(vec![AiChoice::Codex])
-            }
-        }
-        Some(other) => anyhow::bail!("Unsupported AI provider '{}'. Use 'claude' or 'codex'.", other),
-        None => {
-            // Default behavior:
-            // - If we're installing into a local project (repo root or --local), prefer Claude-style skills
-            //   so tooling like Cursor/Claude Code can discover them via `.claude/skills/...`.
-            // - If we're installing globally (no repo), install both Claude + Codex skills to avoid
-            //   "which AI?" confusion.
-            if is_local {
-                Ok(vec![AiChoice::Claude])
-            } else {
-                Ok(vec![AiChoice::Claude, AiChoice::Codex])
-            }
-        }
+fn resolve_ai_choices_for_install(install_root: Option<&Path>) -> Result<Vec<AiChoice>> {
+    let claude_base = resolve_base_dir(AiChoice::Claude, install_root)?;
+    let codex_base = resolve_base_dir(AiChoice::Codex, install_root)?;
+
+    let claude_exists = claude_base.exists();
+    let codex_exists = codex_base.exists();
+
+    let mut choices = Vec::new();
+    if claude_exists {
+        choices.push(AiChoice::Claude);
     }
+    if codex_exists {
+        choices.push(AiChoice::Codex);
+    }
+
+    if choices.is_empty() {
+        fs::create_dir_all(&claude_base)?;
+        choices.push(AiChoice::Claude);
+    }
+
+    Ok(choices)
 }
 
-fn resolve_skills_dir(ai: AiChoice, install_root: Option<&Path>) -> Result<PathBuf> {
+fn resolve_base_dir(ai: AiChoice, install_root: Option<&Path>) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
     let path = match (ai, install_root) {
-        (AiChoice::Claude, Some(root)) => root.join(".claude").join("skills"),
-        (AiChoice::Codex, Some(root)) => root.join(".codex").join("skills"),
-        (AiChoice::Claude, None) => home.join(".claude").join("skills"),
+        (AiChoice::Claude, Some(root)) => root.join(".claude"),
+        (AiChoice::Codex, Some(root)) => root.join(".codex"),
+        (AiChoice::Claude, None) => home.join(".claude"),
         (AiChoice::Codex, None) => {
             if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-                PathBuf::from(codex_home).join("skills")
+                PathBuf::from(codex_home)
             } else {
-                home.join(".codex").join("skills")
+                home.join(".codex")
             }
         }
     };
     Ok(path)
+}
+
+fn resolve_skills_dir(ai: AiChoice, install_root: Option<&Path>) -> Result<PathBuf> {
+    Ok(resolve_base_dir(ai, install_root)?.join("skills"))
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -476,7 +442,6 @@ fn find_claude_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
-// linggen anchor: linggen/doc/linggen-integration.md
 fn find_install_root(start: &Path) -> Result<Option<PathBuf>> {
     if let Some(repo_root) = find_repo_root(start) {
         let claude_dir = repo_root.join(".claude");
@@ -487,6 +452,8 @@ fn find_install_root(start: &Path) -> Result<Option<PathBuf>> {
     }
     Ok(find_claude_root(start))
 }
+
+// linggen anchor: linggen/doc/linggen-integration.md
 
 fn ensure_claude_md(root: &Path) -> Result<()> {
     let path = root.join("CLAUDE.md");
