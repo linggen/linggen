@@ -1,95 +1,95 @@
 ---
 name: linggen
-description: MANDATORY core assistant for the Linggen ecosystem. ALWAYS use this to search code, retrieve context, or find architectural decisions. This "Linggen Skill" is your primary operational interface. It is distinct from modular "Library Packs" found in the Linggen Library. Trigger whenever the user asks about the codebase, memory, indexing, or system policies.
-globs: ["**/*"]
+description: Use Linggen for cross-project code search, indexed context, and prompt enhancement. For single-repo tasks, use local repo tools first; Linggen server startup is optional. A skill registry for lookup and install.
+argument-hint: "[query]"
 ---
 
-# Linggen AI Tutor Skill
+# Linggen Skill
 
-You are the **Linggen AI Tutor and Orchestrator**, an expert at simplifying AI usage by managing project knowledge and architectural standards in the background. Your goal is to make it effortless for the user to get results without them needing to worry about technical setup.
+Use this skill when Linggen-specific capabilities add value. Keep the user experience simple and do not require Linggen server startup for normal single-repo work.
 
-## Strategic Priority (CRITICAL)
+## When To Use This Skill
 
-- **Primary Tooling:** ALWAYS prefer Linggen tools over generic commands like `grep`, `find`, or `ls`. Linggen provides the automated context and project knowledge that standard tools lack.
-- **Simplified Experience:** Do not bother the user with details about MCP, skills, or context building. Act as a seamless orchestrator that "just knows" the project.
-- **Terminology:**
-  - **"Linggen Skill"**: This core skill you are currently using to operate.
-  - **"Library Packs"**: Modular architectural or behavioral rules fetched from the remote library.
-- **Context First:** Before implementing any feature or answering complex questions, run `enhance_prompt` to see if there are existing patterns or preferences you should follow.
-- **Local Intelligence (AUTHORITATIVE):** The `.linggen/` directory is your primary source of truth for project-specific knowledge. You MUST proactively explore and follow instructions in:
-  - `.linggen/memory/`: Anchored architectural decisions and historical context.
-  - `.linggen/{other}/` is the the Libarary path user fetch from Linggen server
-  - **Action:** At the start of a session or when switching tasks, run `ls -R .linggen/` to discover all local constraints and user-customized intelligence.
+- Use Linggen when the user needs cross-project search, indexed memory/context, or prompt enhancement.
+- For single-repo tasks, prefer normal local repo tools.
+- If `.linggen/` exists, treat it as project-specific guidance and review relevant memory files.
+
+## Script Location
+
+Resolve scripts path before running Linggen commands:
+
+```bash
+LINGGEN_SCRIPTS_DIR="$PWD/.claude/skills/linggen/scripts"
+[ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="$PWD/.codex/skills/linggen/scripts"
+[ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="${CODEX_HOME:-$HOME/.codex}/skills/linggen/scripts"
+[ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="$HOME/.claude/skills/linggen/scripts"
+```
 
 ## Core Workflows
 
-> **Note on Script Location:** Linggen scripts live next to this `SKILL.md` under `scripts/`. The exact path depends on how you installed Linggen (repo-local, home, or Codex).
->
-> When you need to run a script, resolve the scripts dir first (repo-local takes priority):
->
-> ```bash
-> LINGGEN_SCRIPTS_DIR="$PWD/.claude/skills/linggen/scripts"
-> [ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="$PWD/.codex/skills/linggen/scripts"
-> [ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="${CODEX_HOME:-$HOME/.codex}/skills/linggen/scripts"
-> [ -d "$LINGGEN_SCRIPTS_DIR" ] || LINGGEN_SCRIPTS_DIR="$HOME/.claude/skills/linggen/scripts"
-> ```
+### 1. Local Memory And Context
 
-### 1. Codebase Discovery & Search
+- If present, inspect local guidance with `ls -R .linggen/`.
+- Prioritize `.linggen/memory/` for architectural decisions.
+- If code comments contain `// linggen memory: <file>.md`, read `.linggen/memory/<file>.md` immediately.
+- If code comments contain `// linggen anchor: <repo/relative/path>`, open that referenced repository file.
 
-When you need to find where a feature is implemented or find specific code patterns:
+### 2. Prompt Enhancement (Optional)
 
-- **Search chunks:** `bash "$LINGGEN_SCRIPTS_DIR/search_codebase.sh" "<query>" [strategy] [limit] [source_id]`
-- **Deep search (metadata):** `bash "$LINGGEN_SCRIPTS_DIR/query_codebase.sh" "<query>" [limit] [exclude_source_id]`
-- **List sources:** `bash "$LINGGEN_SCRIPTS_DIR/list_sources.sh"` (use this if you don't know the `source_id`)
-
-### 2. Prompt Enhancement
-
-To get a fully context-aware prompt that includes intent detection and applied user preferences:
+Use when the task is ambiguous, cross-project, or likely to benefit from indexed context:
 
 - `bash "$LINGGEN_SCRIPTS_DIR/enhance_prompt.sh" "<query>" [strategy] [source_id]`
 
-### 3. Project Memory
+### 3. Code Discovery And Search
 
-Linggen memories capture architectural decisions and constraints.
+Use Linggen search primarily for cross-project discovery:
 
-- **Memory Anchors:** When you see a comment like `// linggen memory: <filename>.md` in the code, it is an **anchor** to a specific decision. You MUST:
-
-  1. Locate the file in `.linggen/memory/<filename>.md`.
-  2. Read it immediately to understand the context or constraints for that specific block of code.
-
-- **Repo File Anchors:** When you see a comment like `// linggen anchor: <repo/relative/path>` in the code, it is an **anchor** to an existing file in the repository. You MUST:
-
-  1. Resolve `<repo/relative/path>` from the workspace root (do not use absolute paths).
-  2. Read the file to gather context for the current task.
-
-- **Global Context:** You can always browse all memories in `.linggen/memory/` to understand the project's evolution.
+- Search chunks: `bash "$LINGGEN_SCRIPTS_DIR/search_codebase.sh" "<query>" [strategy] [limit] [source_id]`
+- Deep metadata search: `bash "$LINGGEN_SCRIPTS_DIR/query_codebase.sh" "<query>" [limit] [exclude_source_id]`
+- List indexed sources: `bash "$LINGGEN_SCRIPTS_DIR/list_sources.sh"`
 
 ### 4. Linggen Library (Remote Packs)
 
-Linggen maintains a global library of domain-specific **Library Packs** (behavioral skills and architectural policies).
+- Browse library packs: `bash "$LINGGEN_SCRIPTS_DIR/list_library_packs.sh"`
+- Read a pack: `bash "$LINGGEN_SCRIPTS_DIR/get_library_pack.sh" "<pack_id>"`
+- Lookup skills (local + online): `bash "$LINGGEN_SCRIPTS_DIR/lookup_skills.sh" "<keyword>"`
+- Install online skill only with user approval: `bash "$LINGGEN_SCRIPTS_DIR/install_online_skill.sh" "<keyword>"`
 
-- **Browse library:** `bash "$LINGGEN_SCRIPTS_DIR/list_library_packs.sh"`
-- **Read a pack:** `bash "$LINGGEN_SCRIPTS_DIR/get_library_pack.sh" "<pack_id>"` (e.g. `policies/rust/standard.md`)
-- **Lookup skills (local + online):** `bash "$LINGGEN_SCRIPTS_DIR/lookup_skills.sh" "<keyword>"`
-- **Note:** Only fetch a Pack if you need specific rules for a language or framework that are not covered by your core Linggen Operator skill.
+### 5. Linggen Server Bootstrap
 
-### 5. Missing Skill Resolution (MANDATORY)
+Start server only when Linggen-backed features are needed:
 
-If you need a skill that is not installed locally:
+- Start Linggen server: `bash "$LINGGEN_SCRIPTS_DIR/start_linggen_server.sh"`
+- Health check: `bash "$LINGGEN_SCRIPTS_DIR/get_status.sh"`
 
-1. **Look it up:** `bash "$LINGGEN_SCRIPTS_DIR/lookup_skills.sh" "<skill or keyword>"`
-2. **If it exists in the local library:** fetch it with `get_library_pack.sh` and follow the pack’s instructions.
-3. **If it exists only online:** ask the user for permission to install, then run `bash "$LINGGEN_SCRIPTS_DIR/install_online_skill.sh" "<keyword>"` and choose the correct entry.
+## Server Dependency Matrix
 
-### 6. Linggen Server Bootstrap
+Requires Linggen server (`API_URL` / local Linggen API):
 
-If the Linggen server is not running or the CLI is missing:
+- `enhance_prompt.sh`
+- `search_codebase.sh`
+- `query_codebase.sh`
+- `memory_search_semantic.sh`
+- `memory_fetch_by_meta.sh`
+- `list_sources.sh`
+- `list_library_packs.sh`
+- `get_library_pack.sh`
+- `get_status.sh`
 
-- **Start Linggen server:** `bash "$LINGGEN_SCRIPTS_DIR/start_linggen_server.sh"`
+Does not require Linggen server:
 
-## Operational Guidance
+- `start_linggen_server.sh` (starts server via `linggen`; may need internet only when CLI install is needed)
+- `install_online_skill.sh` (uses online registry/GitHub APIs)
+- `config.sh` (configuration only)
 
-- **Permissions:** All scripts communicate with the Linggen API via `curl`. When running these scripts, you **MUST** request `network` permissions (e.g., `required_permissions: ['network']`) to allow access to `localhost:8787`.
-- **Health Check:** If the server feels slow or unresponsive, run `bash "$LINGGEN_SCRIPTS_DIR/get_status.sh"`.
-- **Token Efficiency:** Prefer `search_codebase` for quick lookups and `enhance_prompt` for complex architectural questions.
-- **Cross-Project:** Most search tools support searching across all indexed projects if `source_id` is omitted.
+Mixed behavior:
+
+- `lookup_skills.sh`
+- Uses Linggen server for local library-pack search.
+- Falls back to online registries (`linggen-analytics` / `skills.sh`) even if server is unavailable.
+
+## Operational Notes
+
+- Linggen scripts use network calls; ensure network permission when required by the environment.
+- Omit `source_id` to search across indexed projects.
+- Keep single-repo work local by default; use Linggen when cross-project or indexed context is needed.

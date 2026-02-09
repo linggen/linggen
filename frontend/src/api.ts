@@ -27,6 +27,7 @@ export const API_BASE = getApiBase();
 
 // Skills registry URL (CF Worker)
 const REGISTRY_URL = import.meta.env.VITE_LINGGEN_CF_WORKER_URL || 'https://linggen-analytics.liangatbc.workers.dev';
+const REGISTRY_API_KEY = import.meta.env.VITE_LINGGEN_CF_WORKER_API_KEY;
 
 /** Indexing mode: "full" rebuilds everything, "incremental" only updates changed files */
 export type IndexMode = 'full' | 'incremental';
@@ -1243,6 +1244,11 @@ export async function recordSkillInstall(
     }
 
     try {
+        if (!REGISTRY_API_KEY) {
+            console.warn('[Install Tracking] Missing VITE_LINGGEN_CF_WORKER_API_KEY; skipping.');
+            return false;
+        }
+
         const payload: Record<string, unknown> = {
             url: url,
             skill: skill,
@@ -1257,7 +1263,7 @@ export async function recordSkillInstall(
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': 'dd55d4c93490bf9d6e45124351838ea9',
+                'X-API-Key': REGISTRY_API_KEY,
             },
             body: JSON.stringify(payload),
         });

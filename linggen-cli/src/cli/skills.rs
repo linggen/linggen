@@ -477,20 +477,28 @@ fn ensure_claude_md(root: &Path) -> Result<()> {
 fn ensure_agents_md(root: &Path) -> Result<()> {
     let claude = root.join("CLAUDE.md");
     let agents = root.join("AGENTS.md");
-
-    let source = if claude.exists() {
-        fs::read_to_string(&claude)?
-    } else {
-        let linggen_ref = "Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.";
-        format!("# Claude Code Instructions\n\n{}\n", linggen_ref)
-    };
+    let linggen_ref = "Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.";
 
     if agents.exists() {
         let existing = fs::read_to_string(&agents)?;
-        if existing == source {
+        if existing.contains(".claude/skills/linggen/SKILL.md") {
             return Ok(());
         }
+        let updated = format!("{}\n\n{}\n", existing.trim_end(), linggen_ref);
+        fs::write(&agents, updated)?;
+        return Ok(());
     }
+
+    let source = if claude.exists() {
+        let claude_content = fs::read_to_string(&claude)?;
+        if claude_content.contains(".claude/skills/linggen/SKILL.md") {
+            claude_content
+        } else {
+            format!("{}\n\n{}\n", claude_content.trim_end(), linggen_ref)
+        }
+    } else {
+        format!("# Claude Code Instructions\n\n{}\n", linggen_ref)
+    };
 
     fs::write(&agents, source)?;
     Ok(())
