@@ -162,12 +162,30 @@ pub(crate) fn normalize_tool_args(tool: &str, args: &Value) -> Value {
         }
 
         if matches!(tool, "Grep") && !obj.contains_key("query") {
-            if let Some(path) = obj.get("path").cloned() {
+            if let Some(pat) = obj.get("pattern").cloned() {
+                obj.insert("query".to_string(), pat);
+            } else if let Some(path) = obj.get("path").cloned() {
                 obj.insert("query".to_string(), path);
             } else if let Some(fp) = obj.get("filepath").cloned() {
                 obj.insert("query".to_string(), fp);
             } else if let Some(file) = obj.get("file").cloned() {
                 obj.insert("query".to_string(), file);
+            }
+        }
+
+        // Normalize "pattern" → "globs" for Glob tool. Models often emit
+        // {"pattern":"**/*.rs"} instead of {"globs":["**/*.rs"]}.
+        if matches!(tool, "Glob") && !obj.contains_key("globs") {
+            if let Some(pat) = obj
+                .get("pattern")
+                .or_else(|| obj.get("glob"))
+                .cloned()
+            {
+                if let Some(s) = pat.as_str() {
+                    obj.insert("globs".to_string(), serde_json::json!([s]));
+                } else if pat.is_array() {
+                    obj.insert("globs".to_string(), pat);
+                }
             }
         }
 
@@ -208,7 +226,8 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
         serde_json::json!({
             "name": "Glob",
             "args": {"globs": "string[]?", "max_results": "number?"},
-            "returns": "string[]"
+            "returns": "string[]",
+            "notes": "Glob pattern aliases accepted: globs, pattern, glob."
         }),
         serde_json::json!({
             "name": "Read",
@@ -284,4 +303,45 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
             "notes": "Signal that your plan is complete and ready for user review. Call this after researching the codebase and writing your plan in your response text."
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_glob_pattern_to_globs() {
+        let args = serde_json::json!({"pattern": "**/SKILL.md"});
+        let result = normalize_tool_args("Glob", &args);
+        assert_eq!(result["globs"], serde_json::json!(["**/SKILL.md"]));
+    }
+
+    #[test]
+    fn normalize_glob_single_string_to_array() {
+        let args = serde_json::json!({"globs": "**/*.rs"});
+        let result = normalize_tool_args("Glob", &args);
+        assert_eq!(result["globs"], serde_json::json!(["**/*.rs"]));
+    }
+
+    #[test]
+    fn normalize_glob_already_array_untouched() {
+        let args = serde_json::json!({"globs": ["**/*.rs", "**/*.toml"]});
+        let result = normalize_tool_args("Glob", &args);
+        assert_eq!(result["globs"], serde_json::json!(["**/*.rs", "**/*.toml"]));
+    }
+
+    #[test]
+    fn normalize_grep_pattern_to_query() {
+        let args = serde_json::json!({"pattern": "fn main"});
+        let result = normalize_tool_args("Grep", &args);
+        assert_eq!(result["query"], "fn main");
+    }
+
+    #[test]
+    fn normalize_glob_pattern_does_not_override_globs() {
+        // If both "globs" and "pattern" are present, "globs" wins.
+        let args = serde_json::json!({"globs": ["**/*.rs"], "pattern": "**/SKILL.md"});
+        let result = normalize_tool_args("Glob", &args);
+        assert_eq!(result["globs"], serde_json::json!(["**/*.rs"]));
+    }
 }

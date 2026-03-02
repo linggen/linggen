@@ -97,7 +97,7 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
       case 'Write': return `Writing file: ${args.file_path || args.path || argsStr}`;
       case 'Edit': return `Editing file: ${args.file_path || args.path || argsStr}`;
       case 'Bash': {
-        const cmd = args.command || '';
+        const cmd = args.command || args.cmd || '';
         return `Running command: ${cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd}`;
       }
       case 'Grep': return `Searching: ${args.pattern || argsStr}`;
@@ -577,6 +577,8 @@ function handleTurnComplete(item: UiSseMessage, deps: SseHandlerDeps): void {
   delete deps.runStartTsRef.current[agentId];
 
   deps.chatDispatch({ type: 'TURN_COMPLETE', agentId, durationMs: elapsed, contextTokens: ctxTokens });
+  // Clear any pending AskUser when the turn ends (e.g. cancelled by new message).
+  deps.setPendingAskUser(null);
 }
 
 function handleToolProgress(item: UiSseMessage, deps: SseHandlerDeps): void {

@@ -26,6 +26,11 @@ pub enum ModelAction {
         #[serde(default)]
         reason: Option<String>,
     },
+    #[serde(rename = "update_plan")]
+    UpdatePlan {
+        #[serde(default)]
+        items: Vec<serde_json::Value>,
+    },
 }
 
 #[allow(dead_code)]
@@ -626,6 +631,22 @@ Now let me also search:
                 assert_eq!(args["task"], "Fix the bug");
             }
             _ => panic!("expected tool action, got {:?}", actions[0]),
+        }
+    }
+
+    #[test]
+    fn parse_update_plan_action() {
+        let raw = r#"I need to create a plan.
+{"type":"update_plan","items":[{"id":"1","title":"Step one","status":"completed"},{"id":"2","title":"Step two","status":"in_progress"},{"id":"3","title":"Step three","status":"pending"}]}"#;
+        let actions = parse_all_actions(raw).unwrap();
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            ModelAction::UpdatePlan { items } => {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0]["title"], "Step one");
+                assert_eq!(items[1]["status"], "in_progress");
+            }
+            _ => panic!("expected UpdatePlan, got {:?}", actions[0]),
         }
     }
 

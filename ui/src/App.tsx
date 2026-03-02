@@ -34,6 +34,8 @@ import {
   buildAgentWorkInfo,
   buildSubagentInfos,
   shouldHideInternalChatMessage,
+  isPersistedToolOnlyMessage,
+  reconstructContentFromText,
 } from './lib/messageUtils';
 import { useChatMessages } from './hooks/useChatMessages';
 import { useAgentActivity } from './hooks/useAgentActivity';
@@ -348,6 +350,7 @@ const App: React.FC = () => {
       if (data.messages && !isInClearCooldown()) {
         const msgs: ChatMessage[] = data.messages
           .filter(([meta, body]: any) => !shouldHideInternalChatMessage(meta.from, body))
+          .filter(([_meta, body]: any) => !isPersistedToolOnlyMessage(String(body || '')))
           .flatMap(([meta, body]: any) => {
             const isUser = meta.from === 'user';
             let bodyStr = String(body || '');
@@ -370,6 +373,8 @@ const App: React.FC = () => {
               bodyStr = stripEmbeddedStructuredJson(bodyStr);
             }
             if (!isUser && !bodyStr) return [];
+            // Reconstruct content blocks from tool status lines in persisted text
+            const restored = !isUser ? reconstructContentFromText(bodyStr) : null;
             return [{
               role:
                 meta.from === 'user'
@@ -380,6 +385,7 @@ const App: React.FC = () => {
               text: bodyStr,
               timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
               timestampMs: Number(meta.ts || 0) * 1000,
+              ...(restored ? { content: restored.content, toolCount: restored.toolCount } : {}),
             }];
           });
         chatDispatch({ type: 'SYNC_PERSISTED', persisted: msgs });
@@ -783,8 +789,8 @@ const App: React.FC = () => {
         fetchSessions();
       }
       if (data?.status === 'queued') {
-        // Remove the optimistically-added user message — it will appear in the queue banner instead
-        chatDispatch({ type: 'REMOVE_LAST_USER_MESSAGE', text: userMessage, agentId: agentToUse });
+        // Keep the user message in chat — it has the correct timestamp for
+        // time-ordered display. The queue banner still shows it separately.
         return;
       }
       setAgentStatus((prev) => ({ ...prev, [agentToUse]: 'model_loading' }));

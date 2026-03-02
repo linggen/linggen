@@ -4,6 +4,7 @@
  */
 import type {
   ChatMessage,
+  ContentBlock,
   SubagentTreeEntry,
   AgentTreeItem,
   AgentWorkInfo,
@@ -664,8 +665,9 @@ export const dedupPlanMessages = (messages: ChatMessage[]): ChatMessage[] => {
 
 export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
   if (persisted.length === 0) {
-    const generating = live.filter((m) => m.isGenerating);
-    return generating;
+    // Keep generating messages and recent user messages (images are ephemeral
+    // and would be lost if we dropped them before the server persists the text).
+    return live.filter((m) => m.isGenerating || m.role === 'user' || m.from === 'user');
   }
   if (live.length === 0) return dedupPlanMessages(persisted);
 
@@ -681,7 +683,8 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
           candidate.segments ||
           candidate.toolCount ||
           candidate.durationMs ||
-          candidate.contextTokens
+          candidate.contextTokens ||
+          (candidate.images && candidate.images.length > 0)
         )
     );
     if (!matchingLive) return msg;
@@ -695,6 +698,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       toolCount: matchingLive.toolCount || msg.toolCount,
       durationMs: matchingLive.durationMs || msg.durationMs,
       contextTokens: matchingLive.contextTokens || msg.contextTokens,
+      images: matchingLive.images || msg.images,
     };
   });
 
@@ -723,4 +727,90 @@ export const shouldHideInternalChatMessage = (_from?: string, text?: string): bo
   // Hide delegation task text (already shown in SubagentTreeView)
   if (text.startsWith('Delegated task:')) return true;
   return false;
+};
+
+/** Hide persisted-only tool-status messages that are redundant with content blocks.
+ *  NOT used for live SSE messages (those drive spinner/activity). */
+export const isPersistedToolOnlyMessage = (text: string): boolean =>
+  /^(Reading file|Writing file|Editing file|Running command|Searching|Listing files|Fetching URL|Searching web|Delegating to subagent|Calling tool)[:.]/i.test(text);
+
+// ---------------------------------------------------------------------------
+// Reconstruct content blocks from persisted text
+// ---------------------------------------------------------------------------
+
+/** Tool start-phase patterns produced by sanitize_message_for_ui / tool_status_line(Start). */
+const TOOL_START_PATTERNS: [RegExp, string][] = [
+  [/^Reading file[:.]\s*(.*)/i, 'Read'],
+  [/^Writing file[:.]\s*(.*)/i, 'Write'],
+  [/^Editing file[:.]\s*(.*)/i, 'Edit'],
+  [/^Running command[:.]\s*(.*)/i, 'Bash'],
+  [/^Searching web[:.]\s*(.*)/i, 'WebSearch'],
+  [/^Searching[:.]\s*(.*)/i, 'Grep'],
+  [/^Listing files[:.]\s*(.*)/i, 'Glob'],
+  [/^Fetching URL[:.]\s*(.*)/i, 'WebFetch'],
+  [/^Delegating to subagent[:.]\s*(.*)/i, 'Task'],
+  [/^Calling tool[:.]\s*(.*)/i, 'Tool'],
+];
+
+/** Result-phase lines to skip (redundant with start-phase lines). */
+const isToolResultLine = (line: string): boolean =>
+  /^Used tool:\s*\w+/i.test(line) ||
+  /^Tool \w+:/i.test(line) ||
+  /^Delegated task:/i.test(line);
+
+/**
+ * Parse persisted message text to reconstruct ContentBlock[] for tool activity.
+ * After server restart, messages lose ephemeral tool blocks. This recovers
+ * them from the "Reading file:", "Running command:", etc. status lines that
+ * sanitize_message_for_ui embeds in the persisted text.
+ */
+export const reconstructContentFromText = (text: string): {
+  content: ContentBlock[];
+  toolCount: number;
+} | null => {
+  const lines = text.split('\n');
+  const content: ContentBlock[] = [];
+  let textBuffer: string[] = [];
+  let toolCount = 0;
+  let idCounter = 0;
+
+  const flushText = () => {
+    const t = textBuffer.join('\n').trim();
+    if (t) content.push({ type: 'text', text: t });
+    textBuffer = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Match start-phase tool lines → create tool_use blocks
+    let matched = false;
+    for (const [re, toolName] of TOOL_START_PATTERNS) {
+      const m = trimmed.match(re);
+      if (m) {
+        flushText();
+        content.push({
+          type: 'tool_use',
+          id: `restored-${idCounter++}`,
+          tool: toolName,
+          args: m[1]?.trim() || '',
+          status: 'done',
+        });
+        toolCount++;
+        matched = true;
+        break;
+      }
+    }
+    if (matched) continue;
+
+    // Skip redundant result lines
+    if (isToolResultLine(trimmed)) continue;
+
+    textBuffer.push(line);
+  }
+
+  flushText();
+
+  if (toolCount === 0) return null;
+  return { content, toolCount };
 };

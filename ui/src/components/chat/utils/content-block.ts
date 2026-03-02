@@ -31,7 +31,7 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'Write': return args.file_path || args.path || raw;
       case 'Edit': return args.file_path || args.path || raw;
       case 'Bash': {
-        const cmd = args.command || '';
+        const cmd = args.command || args.cmd || '';
         return cmd.length > 70 ? cmd.slice(0, 67) + '…' : cmd;
       }
       case 'Grep': return args.pattern || raw;

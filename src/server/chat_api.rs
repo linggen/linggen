@@ -714,6 +714,13 @@ pub(crate) async fn chat_handler(
                 emit_queue_updated(&state, &project_root_str, &effective_session_id, &target_id)
                     .await;
 
+                // Cancel any pending AskUser for this agent so the tool
+                // unblocks immediately and the loop can pick up the new message.
+                {
+                    let mut pending = state.pending_ask_user.lock().await;
+                    pending.retain(|_, entry| entry.agent_id != target_id);
+                }
+
                 // Send through interrupt channel so the running loop sees the message.
                 {
                     let interrupt_guard = state.interrupt_tx.lock().await;
@@ -813,6 +820,38 @@ pub(crate) async fn chat_handler(
                     clean_msg: clean_msg_clone.clone(),
                     images: req_images,
                 };
+
+                // Restore chat history from session store when the engine was
+                // freshly created (e.g. after model change invalidated cache).
+                if engine.chat_history.is_empty() {
+                    if let Ok(proj_ctx) = ctx.manager.get_or_create_project(ctx.root.clone()).await {
+                        let sid = ctx.session_id.as_deref().unwrap_or("default");
+                        if let Ok(msgs) = proj_ctx.sessions.get_chat_history(sid, Some(&ctx.agent_id)) {
+                            for m in &msgs {
+                                if m.is_observation || m.from_id == "system" {
+                                    continue;
+                                }
+                                let role = if m.from_id == "user" {
+                                    "user"
+                                } else if m.from_id == ctx.agent_id {
+                                    "assistant"
+                                } else {
+                                    continue;
+                                };
+                                engine.chat_history.push(
+                                    crate::ollama::ChatMessage::new(role, &m.content),
+                                );
+                            }
+                            engine.truncate_chat_history();
+                            if !engine.chat_history.is_empty() {
+                                tracing::info!(
+                                    "Restored {} chat_history messages from session store",
+                                    engine.chat_history.len()
+                                );
+                            }
+                        }
+                    }
+                }
 
                 let is_plan_mode = req_mode.as_deref() == Some("plan")
                     || clean_msg_clone.trim_start().starts_with("/plan ");

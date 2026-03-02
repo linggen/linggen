@@ -122,7 +122,6 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
             liveText: (next[idx].liveText || '') + tokenText,
             isGenerating: true,
             isThinking: false,
-            timestampMs: Date.now(),
           };
           return next;
         }
@@ -132,7 +131,7 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
         // into the visible message body.
         if (isThinking) {
           if (!next[idx].isThinking) {
-            next[idx] = { ...next[idx], isThinking: true, isGenerating: true, timestampMs: Date.now() };
+            next[idx] = { ...next[idx], isThinking: true, isGenerating: true };
           }
           return next;
         }
@@ -145,7 +144,6 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
           text: shouldReplace ? tokenText : (next[idx].text || '') + tokenText,
           isGenerating: true,
           isThinking: false,
-          timestampMs: Date.now(),
         };
         return next;
       }
@@ -362,7 +360,6 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
         msg.content = blocks;
         msg.isGenerating = true;
         msg.isThinking = false; // Clear thinking when any content block arrives
-        msg.timestampMs = Date.now();
         // Also add to segments for backward compat rendering
         if (block.type === 'tool_use') {
           const segs = [...(msg.segments || [])];

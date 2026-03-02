@@ -154,24 +154,14 @@ impl AgentEngine {
                 anyhow::bail!("run cancelled");
             }
 
-            // Drain any user interrupt messages that arrived while we were working.
+            // If the user sent a new message while we were working, break the
+            // loop and let the queued message start a fresh chat round. The
+            // model will see the full conversation history and decide whether
+            // to continue the previous task or handle the new request.
             if let Some(rx) = &mut self.interrupt_rx {
-                let mut interrupt_count = 0;
-                while interrupt_count < 5 {
-                    match rx.try_recv() {
-                        Ok(msg) => {
-                            debug!("Injecting user interrupt into loop context");
-                            let imsg = ChatMessage::new(
-                                "user",
-                                format!("[User message received while you are working]\n{}", msg),
-                            );
-                            self.accumulated_token_estimate += Self::estimate_tokens_for_text(&imsg.content);
-                            self.message_importance.push(MessageImportance::High);
-                            state.messages.push(imsg);
-                            interrupt_count += 1;
-                        }
-                        Err(_) => break,
-                    }
+                if rx.try_recv().is_ok() {
+                    info!("Breaking loop: user sent a new message");
+                    break;
                 }
             }
 

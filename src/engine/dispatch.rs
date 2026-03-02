@@ -360,7 +360,86 @@ impl AgentEngine {
                 info!("EnterPlanMode: {:?}", reason);
                 return Some(AgentOutcome::PlanModeRequested { reason });
             }
+            ModelAction::UpdatePlan { items } => {
+                self.handle_update_plan_action(items, session_id).await;
+            }
         }
         None
+    }
+
+    /// Handle an `update_plan` action from the model: convert task items into
+    /// a Plan and emit a PlanUpdate event so the UI can display progress.
+    async fn handle_update_plan_action(
+        &mut self,
+        items: Vec<serde_json::Value>,
+        session_id: Option<&str>,
+    ) {
+        // Build markdown plan text from items.
+        let mut lines = Vec::new();
+        let mut summary = String::new();
+        for item in &items {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+            let checkbox = match status {
+                "completed" | "done" => "- [x]",
+                "in_progress" | "working" => "- [~]",
+                _ => "- [ ]",
+            };
+            let suffix = if status == "in_progress" || status == "working" {
+                " *(in progress)*"
+            } else {
+                ""
+            };
+            lines.push(format!("{} {}{}", checkbox, title, suffix));
+            if summary.is_empty() {
+                summary = title.chars().take(80).collect();
+            }
+        }
+        let plan_text = lines.join("\n");
+        if summary.is_empty() {
+            summary = "Plan".to_string();
+        }
+
+        let plan_status = if items.iter().all(|i| {
+            let s = i.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            s == "completed" || s == "done"
+        }) {
+            PlanStatus::Executing
+        } else {
+            PlanStatus::Executing
+        };
+
+        let plan = Plan {
+            summary,
+            status: plan_status,
+            plan_text,
+        };
+        self.plan = Some(plan.clone());
+        self.write_plan_file(&plan);
+
+        // Emit PlanUpdate event for the UI.
+        if let Some(manager) = self.tools.get_manager() {
+            let agent_id = self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            manager
+                .send_event(crate::agent_manager::AgentEvent::PlanUpdate {
+                    agent_id,
+                    plan,
+                })
+                .await;
+        }
+
+        info!("UpdatePlan: {} items", items.len());
+
+        // Acknowledge to the model so it can continue.
+        let _ = self
+            .manager_db_add_observation(
+                "UpdatePlan",
+                &format!("Plan updated with {} items.", items.len()),
+                session_id,
+            )
+            .await;
     }
 }
