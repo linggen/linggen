@@ -986,8 +986,6 @@ const App: React.FC = () => {
         copyChatStatus={copyChatStatus}
         clearChat={clearChat}
         isRunning={isRunning}
-        verboseMode={verboseMode}
-        onToggleVerbose={() => setVerboseMode((v) => !v)}
         onOpenMission={() => setCurrentPage('mission')}
         missionActive={!!mission?.active}
         onOpenStorage={() => setCurrentPage('storage')}

@@ -318,7 +318,7 @@ export const StoragePage: React.FC<{
                 {selectedFile}
                 {isDirty && <span className="ml-2 text-amber-500 font-medium">modified</span>}
               </div>
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
                 {loading ? (
                   <div className="flex items-center justify-center h-full text-sm text-slate-400">
                     Loading...
@@ -328,6 +328,7 @@ export const StoragePage: React.FC<{
                     value={fileContent}
                     onChange={setFileContent}
                     livePreview={isMarkdown}
+                    filePath={selectedFile ?? undefined}
                   />
                 )}
               </div>

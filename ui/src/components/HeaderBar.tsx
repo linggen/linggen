@@ -1,5 +1,5 @@
 import React from 'react';
-import { Copy, Eraser, HardDrive, Maximize2, Minimize2, Settings, Target } from 'lucide-react';
+import { Copy, Eraser, HardDrive, Settings, Target } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 export const HeaderBar: React.FC<{
@@ -7,8 +7,6 @@ export const HeaderBar: React.FC<{
   copyChatStatus: 'idle' | 'copied' | 'error';
   clearChat: () => void;
   isRunning: boolean;
-  verboseMode?: boolean;
-  onToggleVerbose?: () => void;
   onOpenSettings?: () => void;
   onOpenStorage?: () => void;
   onOpenMission?: () => void;
@@ -18,8 +16,6 @@ export const HeaderBar: React.FC<{
   copyChatStatus,
   clearChat,
   isRunning,
-  verboseMode,
-  onToggleVerbose,
   onOpenSettings,
   onOpenStorage,
   onOpenMission,
@@ -56,20 +52,6 @@ export const HeaderBar: React.FC<{
         >
           <Eraser size={14} />
         </button>
-        {onToggleVerbose && (
-          <button
-            onClick={onToggleVerbose}
-            className={cn(
-              'p-1.5 rounded-md transition-colors shrink-0',
-              verboseMode
-                ? 'bg-blue-500/10 text-blue-600'
-                : 'hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400'
-            )}
-            title={verboseMode ? 'Compact mode' : 'Verbose mode'}
-          >
-            {verboseMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
-        )}
       </div>
 
       {/* Right: Status + nav */}
