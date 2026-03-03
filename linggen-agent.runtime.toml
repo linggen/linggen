@@ -68,6 +68,5 @@ model = "ollama1"
 policies = []
 default_models = [
     "gemini-flash",
-    "qwen3-coder:latest",
-    "qwen3.5:35b",
+    "qwen3.5:cloud",
 ]

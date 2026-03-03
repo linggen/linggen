@@ -67,24 +67,29 @@ impl AgentEngine {
             status: PlanStatus::Planned,
             plan_text,
         };
-        self.plan = Some(plan.clone());
-        self.write_plan_file(&plan);
+        self.persist_and_emit_plan(plan).await;
+        AgentOutcome::Plan(self.plan.clone().unwrap())
+    }
 
-        // Emit PlanUpdate event
+    /// Persist the plan to self.plan + plan file, and emit a PlanUpdate SSE event.
+    pub(crate) async fn persist_and_emit_plan(&mut self, plan: Plan) {
+        self.write_plan_file(&plan);
+        self.plan = Some(plan);
+
         if let Some(manager) = self.tools.get_manager() {
             let agent_id = self
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
+            // Clone from self.plan for the event — avoids double clone.
+            let plan = self.plan.clone().unwrap();
             manager
                 .send_event(crate::agent_manager::AgentEvent::PlanUpdate {
                     agent_id,
-                    plan: plan.clone(),
+                    plan,
                 })
                 .await;
         }
-
-        AgentOutcome::Plan(plan)
     }
 
     /// Extract a summary from the plan text (first heading or first non-empty line).

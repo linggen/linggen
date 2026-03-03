@@ -24,7 +24,7 @@ impl AgentEngine {
         let mut delegation_args: Vec<tools::TaskArgs> = Vec::new();
         for action in batch {
             if let ModelAction::Tool { tool, args } = action {
-                let normalized = tools::normalize_tool_args(&tool, &args);
+                let normalized = tools::normalize_tool_args(&tool, args.clone());
                 match serde_json::from_value::<tools::TaskArgs>(normalized) {
                     Ok(da) => delegation_args.push(da),
                     Err(e) => {
@@ -83,15 +83,15 @@ impl AgentEngine {
                     });
                 }
                 Err(e) => {
-                    let rendered = format!(
-                        "tool_error: tool=Task target={} error={}",
-                        da.target_agent_id, e
-                    );
-                    self.upsert_observation("error", "Task", rendered.clone());
                     messages.push(ChatMessage::new(
                         "user",
                         format!("Delegation to '{}' failed validation: {}", da.target_agent_id, e),
                     ));
+                    let rendered = format!(
+                        "tool_error: tool=Task target={} error={}",
+                        da.target_agent_id, e
+                    );
+                    self.upsert_observation("error", "Task", rendered);
                 }
             }
         }
@@ -138,7 +138,11 @@ impl AgentEngine {
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
                 Ok((idx, target, result)) => results.push((idx, target, result)),
-                Err(join_err) => warn!("Delegation task panicked: {}", join_err),
+                Err(join_err) => {
+                    warn!("Delegation task panicked: {}", join_err);
+                    results.push((usize::MAX, "unknown".to_string(),
+                        Err(anyhow::anyhow!("delegation task panicked: {}", join_err))));
+                }
             }
         }
         results.sort_by_key(|(idx, _, _)| *idx);
@@ -148,7 +152,6 @@ impl AgentEngine {
             match result {
                 Ok(tool_result) => {
                     let rendered = render_tool_result(&tool_result);
-                    self.upsert_observation("tool", "Task", rendered.clone());
                     let _ = self
                         .manager_db_add_observation("Task", &rendered, session_id)
                         .await;
@@ -160,12 +163,12 @@ impl AgentEngine {
                             &rendered,
                         ),
                     ));
+                    self.upsert_observation("tool", "Task", rendered);
                 }
                 Err(e) => {
                     let rendered = format!(
                         "tool_error: tool=Task target={} error={}", target, e
                     );
-                    self.upsert_observation("error", "Task", rendered.clone());
                     let _ = self
                         .manager_db_add_observation("Task", &rendered, session_id)
                         .await;
@@ -173,6 +176,7 @@ impl AgentEngine {
                         "user",
                         format!("Delegation to '{}' failed: {}", target, e),
                     ));
+                    self.upsert_observation("error", "Task", rendered);
                 }
             }
         }
@@ -361,7 +365,7 @@ impl AgentEngine {
                 return Some(AgentOutcome::PlanModeRequested { reason });
             }
             ModelAction::UpdatePlan { items } => {
-                self.handle_update_plan_action(items, session_id).await;
+                self.handle_update_plan_action(items, &mut state.messages, session_id).await;
             }
         }
         None
@@ -372,11 +376,11 @@ impl AgentEngine {
     async fn handle_update_plan_action(
         &mut self,
         items: Vec<serde_json::Value>,
+        messages: &mut Vec<ChatMessage>,
         session_id: Option<&str>,
     ) {
         // Build markdown plan text from items.
         let mut lines = Vec::new();
-        let mut summary = String::new();
         for item in &items {
             let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?");
             let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
@@ -391,55 +395,24 @@ impl AgentEngine {
                 ""
             };
             lines.push(format!("{} {}{}", checkbox, title, suffix));
-            if summary.is_empty() {
-                summary = title.chars().take(80).collect();
-            }
         }
         let plan_text = lines.join("\n");
-        if summary.is_empty() {
-            summary = "Plan".to_string();
-        }
-
-        let plan_status = if items.iter().all(|i| {
-            let s = i.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            s == "completed" || s == "done"
-        }) {
-            PlanStatus::Executing
-        } else {
-            PlanStatus::Executing
-        };
+        let summary = Self::extract_plan_summary(&plan_text);
 
         let plan = Plan {
             summary,
-            status: plan_status,
+            status: PlanStatus::Executing,
             plan_text,
         };
-        self.plan = Some(plan.clone());
-        self.write_plan_file(&plan);
+        self.persist_and_emit_plan(plan).await;
 
-        // Emit PlanUpdate event for the UI.
-        if let Some(manager) = self.tools.get_manager() {
-            let agent_id = self
-                .agent_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            manager
-                .send_event(crate::agent_manager::AgentEvent::PlanUpdate {
-                    agent_id,
-                    plan,
-                })
-                .await;
-        }
+        let ack = format!("Plan updated with {} items.", items.len());
+        info!("UpdatePlan: {}", ack);
 
-        info!("UpdatePlan: {} items", items.len());
-
-        // Acknowledge to the model so it can continue.
+        // Push acknowledgement to model messages so it sees the feedback.
+        messages.push(ChatMessage::new("user", &ack));
         let _ = self
-            .manager_db_add_observation(
-                "UpdatePlan",
-                &format!("Plan updated with {} items.", items.len()),
-                session_id,
-            )
+            .manager_db_add_observation("UpdatePlan", &ack, session_id)
             .await;
     }
 }

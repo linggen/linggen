@@ -110,8 +110,8 @@ pub(crate) fn summarize_tool_args(tool: &str, args: &Value) -> String {
     safe_args.to_string()
 }
 
-pub(crate) fn normalize_tool_args(tool: &str, args: &Value) -> Value {
-    let mut normalized = args.clone();
+pub(crate) fn normalize_tool_args(tool: &str, args: Value) -> Value {
+    let mut normalized = args;
     if let Some(obj) = normalized.as_object_mut() {
         if matches!(tool, "Bash") && !obj.contains_key("cmd") {
             if let Some(command) = obj.get("command").cloned() {
@@ -161,11 +161,11 @@ pub(crate) fn normalize_tool_args(tool: &str, args: &Value) -> Value {
             }
         }
 
+        // Normalize query aliases for Grep. Note: "path" is intentionally excluded
+        // because it's the directory/file scope argument, not a search pattern.
         if matches!(tool, "Grep") && !obj.contains_key("query") {
             if let Some(pat) = obj.get("pattern").cloned() {
                 obj.insert("query".to_string(), pat);
-            } else if let Some(path) = obj.get("path").cloned() {
-                obj.insert("query".to_string(), path);
             } else if let Some(fp) = obj.get("filepath").cloned() {
                 obj.insert("query".to_string(), fp);
             } else if let Some(file) = obj.get("file").cloned() {
@@ -312,28 +312,28 @@ mod tests {
     #[test]
     fn normalize_glob_pattern_to_globs() {
         let args = serde_json::json!({"pattern": "**/SKILL.md"});
-        let result = normalize_tool_args("Glob", &args);
+        let result = normalize_tool_args("Glob", args);
         assert_eq!(result["globs"], serde_json::json!(["**/SKILL.md"]));
     }
 
     #[test]
     fn normalize_glob_single_string_to_array() {
         let args = serde_json::json!({"globs": "**/*.rs"});
-        let result = normalize_tool_args("Glob", &args);
+        let result = normalize_tool_args("Glob", args);
         assert_eq!(result["globs"], serde_json::json!(["**/*.rs"]));
     }
 
     #[test]
     fn normalize_glob_already_array_untouched() {
         let args = serde_json::json!({"globs": ["**/*.rs", "**/*.toml"]});
-        let result = normalize_tool_args("Glob", &args);
+        let result = normalize_tool_args("Glob", args);
         assert_eq!(result["globs"], serde_json::json!(["**/*.rs", "**/*.toml"]));
     }
 
     #[test]
     fn normalize_grep_pattern_to_query() {
         let args = serde_json::json!({"pattern": "fn main"});
-        let result = normalize_tool_args("Grep", &args);
+        let result = normalize_tool_args("Grep", args);
         assert_eq!(result["query"], "fn main");
     }
 
@@ -341,7 +341,7 @@ mod tests {
     fn normalize_glob_pattern_does_not_override_globs() {
         // If both "globs" and "pattern" are present, "globs" wins.
         let args = serde_json::json!({"globs": ["**/*.rs"], "pattern": "**/SKILL.md"});
-        let result = normalize_tool_args("Glob", &args);
+        let result = normalize_tool_args("Glob", args);
         assert_eq!(result["globs"], serde_json::json!(["**/*.rs"]));
     }
 }

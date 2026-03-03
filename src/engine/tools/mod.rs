@@ -252,7 +252,7 @@ impl Tools {
     // ── Execute dispatcher ──────────────────────────────────────────────
 
     pub fn execute(&self, call: ToolCall) -> Result<ToolResult> {
-        let normalized_args = normalize_tool_args(&call.tool, &call.args);
+        let normalized_args = normalize_tool_args(&call.tool, call.args);
         debug!(
             "Executing tool: {} args={}",
             call.tool,
