@@ -296,15 +296,17 @@ impl AgentEngine {
                     }
                 }
 
-                // Record the assistant message with tool_calls in chat history
+                // Record the assistant message with tool_calls in chat history.
+                // Use empty id/call_type so they are omitted from Ollama requests
+                // (Ollama's native API doesn't use these OpenAI-specific fields).
                 let tool_call_msgs: Vec<crate::ollama::ToolCallMessage> = native_tool_calls
                     .iter()
                     .map(|tc| crate::ollama::ToolCallMessage {
-                        id: tc.id.clone(),
-                        call_type: "function".to_string(),
+                        id: String::new(),
+                        call_type: String::new(),
                         function: crate::ollama::ToolCallFunction {
                             name: tc.name.clone(),
-                            arguments: tc.arguments.to_string(),
+                            arguments: tc.arguments.clone(),
                         },
                     })
                     .collect();

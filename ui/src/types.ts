@@ -63,6 +63,8 @@ export interface ChatMessage {
   liveText?: string;
   /** Structured content blocks (new message model). */
   content?: ContentBlock[];
+  /** True when the message represents an error (agent loop failure, etc.). */
+  isError?: boolean;
 }
 
 export interface UiSseMessage {

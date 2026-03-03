@@ -453,10 +453,13 @@ function handleMessage(item: UiSseMessage, deps: SseHandlerDeps): void {
   const msgCtxTokens = deps.latestContextTokensRef.current[from] || undefined;
   delete deps.runStartTsRef.current[from];
 
+  const isError = from !== 'user' && content.startsWith('Error:');
+
   deps.chatDispatch({
     type: 'FINALIZE_MESSAGE',
     agentId: from, content, to, tsMs,
     elapsed: msgElapsed, ctxTokens: msgCtxTokens,
+    isError: isError || undefined,
   });
 }
 

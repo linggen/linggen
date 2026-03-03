@@ -57,6 +57,19 @@ export const AgentMessage: React.FC<{
 
   const fallbackText = !hasToolBlocks ? visibleMessageText(msg) : '';
 
+  // Error messages get a prominent banner style.
+  if (msg.isError) {
+    const errorText = fallbackText || msg.text || 'An error occurred';
+    return (
+      <div className="rounded-lg border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-800 dark:text-red-300">
+        <div className="flex items-start gap-2">
+          <span className="mt-0.5 shrink-0 text-red-500 dark:text-red-400">&#x26A0;</span>
+          <MarkdownContent text={errorText} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {msg.subagentTree && msg.subagentTree.length > 0 && (

@@ -38,7 +38,7 @@ export type ChatAction =
   | { type: 'UPSERT_PLAN'; agentId: string; planText: string }
   | { type: 'UPDATE_SUBAGENT_TREE'; parentId: string; subagentId: string; updater: (entry: SubagentTreeEntry) => SubagentTreeEntry }
   | { type: 'ADD_SUBAGENT_TO_TREE'; parentId: string; entry: SubagentTreeEntry }
-  | { type: 'FINALIZE_MESSAGE'; agentId: string; content: string; to: string; tsMs: number; elapsed?: number; ctxTokens?: number }
+  | { type: 'FINALIZE_MESSAGE'; agentId: string; content: string; to: string; tsMs: number; elapsed?: number; ctxTokens?: number; isError?: boolean }
   | { type: 'FINALIZE_ON_IDLE'; agentId: string; elapsed?: number; ctxTokens?: number }
   | { type: 'CONTENT_BLOCK_START'; agentId: string; block: ContentBlock }
   | { type: 'CONTENT_BLOCK_UPDATE'; agentId: string; blockId: string; status?: string; summary?: string; isError?: boolean; diffData?: ContentBlock['diffData']; bashOutput?: string[] }
@@ -239,7 +239,7 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
     }
 
     case 'FINALIZE_MESSAGE': {
-      const { agentId, content, to, tsMs, elapsed, ctxTokens } = action;
+      const { agentId, content, to, tsMs, elapsed, ctxTokens, isError } = action;
       const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
       if (generatingIdx >= 0) {
         const next = [...state];
@@ -286,6 +286,7 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
           to: to || existingMsg.to || 'user',
           isGenerating: keepGenerating,
           isThinking: false,
+          isError: isError || existingMsg.isError,
           liveText: keepGenerating ? existingMsg.liveText : undefined,
           segments: finalSegments,
           timestamp: new Date(tsMs).toLocaleTimeString(),
@@ -323,6 +324,7 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
           timestamp: new Date(tsMs).toLocaleTimeString(),
           timestampMs: tsMs,
           isGenerating: false,
+          isError,
         },
       ];
     }

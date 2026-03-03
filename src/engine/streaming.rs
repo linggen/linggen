@@ -13,6 +13,30 @@ const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const INTER_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
+// Think-tag stripping
+// ---------------------------------------------------------------------------
+
+/// Strip `<think>...</think>` blocks that many local models (Qwen, DeepSeek)
+/// emit for chain-of-thought reasoning. These should not appear in user-facing
+/// text responses. Also handles unclosed `<think>` (strips to end of string).
+pub(crate) fn strip_think_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(start) = remaining.find("<think>") {
+        result.push_str(&remaining[..start]);
+        remaining = &remaining[start + 7..]; // skip "<think>"
+        if let Some(end) = remaining.find("</think>") {
+            remaining = &remaining[end + 8..]; // skip "</think>"
+        } else {
+            // Unclosed <think> — strip everything after it
+            remaining = "";
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
+// ---------------------------------------------------------------------------
 // Free functions for parallel tool execution
 // ---------------------------------------------------------------------------
 
@@ -158,6 +182,9 @@ impl AgentEngine {
             }
         }
 
+        // Strip <think>...</think> blocks from the accumulated text.
+        let accumulated = strip_think_tags(&accumulated);
+
         Ok(StreamResult {
             full_text: accumulated,
             token_usage,
@@ -186,6 +213,8 @@ impl AgentEngine {
 
         let mut accumulated_text = String::new();
         let mut token_usage = None;
+        // Track whether we're inside a <think> block to suppress streaming
+        let mut in_think_block = false;
         // Accumulate tool call deltas keyed by index
         let mut tc_ids: Vec<Option<String>> = Vec::new();
         let mut tc_names: Vec<Option<String>> = Vec::new();
@@ -212,9 +241,18 @@ impl AgentEngine {
             match chunk {
                 StreamChunk::Token(token) => {
                     accumulated_text.push_str(&token);
-                    // Forward text tokens to the UI for streaming display
-                    if let Some(tx) = &self.thinking_tx {
-                        let _ = tx.send(ThinkingEvent::Token(token));
+                    // Detect <think> / </think> boundaries for streaming suppression.
+                    if !in_think_block && accumulated_text.contains("<think>") {
+                        in_think_block = true;
+                    }
+                    if in_think_block && accumulated_text.contains("</think>") {
+                        in_think_block = false;
+                    }
+                    // Only forward tokens outside <think> blocks to the UI
+                    if !in_think_block {
+                        if let Some(tx) = &self.thinking_tx {
+                            let _ = tx.send(ThinkingEvent::Token(token));
+                        }
                     }
                 }
                 StreamChunk::Usage(usage) => {
@@ -266,6 +304,9 @@ impl AgentEngine {
                 arguments,
             });
         }
+
+        // Strip <think>...</think> blocks from the accumulated text.
+        let accumulated_text = strip_think_tags(&accumulated_text);
 
         Ok(StreamResult {
             full_text: accumulated_text,
@@ -403,5 +444,45 @@ impl AgentEngine {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_think_tags_basic() {
+        assert_eq!(
+            strip_think_tags("<think>reasoning here</think>Hello!"),
+            "Hello!"
+        );
+    }
+
+    #[test]
+    fn strip_think_tags_no_tags() {
+        assert_eq!(strip_think_tags("Hello world"), "Hello world");
+    }
+
+    #[test]
+    fn strip_think_tags_unclosed() {
+        assert_eq!(
+            strip_think_tags("Before<think>reasoning without end"),
+            "Before"
+        );
+    }
+
+    #[test]
+    fn strip_think_tags_multiple() {
+        assert_eq!(
+            strip_think_tags("<think>first</think>A<think>second</think>B"),
+            "AB"
+        );
+    }
+
+    #[test]
+    fn strip_think_tags_with_newlines() {
+        let input = "<think>\nThe user said hi.\nI should respond.\n</think>\nHi! How can I help?";
+        assert_eq!(strip_think_tags(input), "\nHi! How can I help?");
     }
 }

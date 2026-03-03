@@ -264,14 +264,15 @@ impl OllamaClient {
                 return Some(Ok(chunks.into_iter().next().unwrap()));
             }
 
-            // Regular text content
-            let mut result = String::new();
-            if let Some(thinking) = message.get("thinking").and_then(|v| v.as_str()) {
-                result.push_str(thinking);
-            }
-            if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
-                result.push_str(content);
-            }
+            // Regular text content — only emit `content`, not `thinking`.
+            // Ollama separates reasoning into message.thinking; we discard it
+            // here because in native tool calling mode text goes directly to
+            // the user and thinking is internal model reasoning.
+            let result = message
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if result.is_empty() {
                 None
             } else {
@@ -506,8 +507,9 @@ pub struct OllamaPsModelDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallMessage {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
     pub call_type: String, // "function"
     pub function: ToolCallFunction,
 }
@@ -515,7 +517,7 @@ pub struct ToolCallMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallFunction {
     pub name: String,
-    pub arguments: String, // JSON string
+    pub arguments: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------

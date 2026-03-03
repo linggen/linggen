@@ -383,6 +383,7 @@ const App: React.FC = () => {
             if (!isUser && !bodyStr) return [];
             // Reconstruct content blocks from tool status lines in persisted text
             const restored = !isUser ? reconstructContentFromText(bodyStr) : null;
+            const isError = !isUser && bodyStr.startsWith('Error:');
             return [{
               role:
                 meta.from === 'user'
@@ -394,6 +395,7 @@ const App: React.FC = () => {
               timestamp: new Date(meta.ts * 1000).toLocaleTimeString(),
               timestampMs: Number(meta.ts || 0) * 1000,
               ...(restored ? { content: restored.content, toolCount: restored.toolCount } : {}),
+              ...(isError ? { isError: true } : {}),
             }];
           });
         chatDispatch({ type: 'SYNC_PERSISTED', persisted: msgs });
@@ -846,6 +848,9 @@ const App: React.FC = () => {
       if (!resp.ok) {
         addLog(`Clear chat API error: ${resp.status}`);
       }
+      // Clear again after server confirms — SSE events may have re-added
+      // messages while the API call was in flight.
+      clearChatMessages();
     } catch (e) {
       addLog(`Error clearing chat: ${e}`);
     }

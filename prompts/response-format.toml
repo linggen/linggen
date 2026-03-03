@@ -129,7 +129,9 @@ You have access to tools via native function calling. The model API provides too
 
 ### Conversational Responses
 
-When responding to the user conversationally (greetings, explanations, questions), just write your response as text content — no tool calls needed. The text you write IS the response the user sees.
+When responding to the user conversationally (greetings, explanations, questions), just write your response as text content — no tool calls needed. Your text output is shown directly to the user exactly as written.
+
+**CRITICAL:** Do NOT include your reasoning, analysis, or thought process in text output. Do NOT write things like "The user is asking about X, I should..." or "Let me think about this..." — those are internal thoughts that must not appear in the response. Just write the actual response the user should see.
 
 Use the Done tool only when finishing a multi-step task and you want to provide a completion summary.
 
