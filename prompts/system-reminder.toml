@@ -73,7 +73,9 @@ text = "Tool execution failed for tool='{tool}'. Error: {error}. Choose a valid 
 [permission_denied]
 description = "Feedback when user denies a tool permission request"
 vars = ["tool", "summary"]
-text = "Permission denied: {tool} on '{summary}'"
+text = '''Permission denied by user: {tool} on '{summary}'.
+The user has denied this action. Do NOT retry the same tool call.
+Choose a different approach, skip this step, or use AskUser to ask the user what to do instead.'''
 
 [permission_timeout]
 description = "Feedback when permission prompt times out with no user response"

@@ -1,4 +1,4 @@
-use super::tool_helpers::{build_globset, sanitize_rel_path, to_rel_string};
+use super::tool_helpers::{build_globset, expand_tilde, sanitize_rel_path, to_rel_string};
 use super::{is_rfc1918_172, ToolResult, Tools};
 use anyhow::Result;
 use ignore::WalkBuilder;
@@ -65,8 +65,10 @@ impl Tools {
     }
 
     pub(super) fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
+        // Expand ~/ to home directory before processing.
+        let expanded = expand_tilde(&args.path);
         // Check if this is a memory path (absolute, outside workspace)
-        let abs_path = Path::new(&args.path);
+        let abs_path = Path::new(&expanded);
         if abs_path.is_absolute() && self.is_memory_path(abs_path) {
             if abs_path.exists() && abs_path.is_file() {
                 return self.do_read_file(&args.path, abs_path, args.max_bytes, args.line_range);

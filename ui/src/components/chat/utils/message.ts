@@ -223,8 +223,13 @@ export const mergeMessageStreams = (contextMessages: ChatMessage[], liveMessages
     if (liveIdx < 0) return ctxMsg;
     usedLiveIndices.add(liveIdx);
     const live = liveMessages[liveIdx];
+    // Preserve the earlier timestamp for correct chronological ordering.
+    const cTs = ctxMsg.timestampMs ?? 0;
+    const lTs = live.timestampMs ?? 0;
+    const useEarlierTs = cTs > 0 && lTs > 0 && lTs < cTs;
     return {
       ...ctxMsg,
+      ...(useEarlierTs ? { timestampMs: lTs, timestamp: live.timestamp } : {}),
       content: live.content || ctxMsg.content,
       subagentTree: live.subagentTree || ctxMsg.subagentTree,
       segments: live.segments || ctxMsg.segments,

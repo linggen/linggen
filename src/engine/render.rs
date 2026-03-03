@@ -165,7 +165,10 @@ pub fn normalize_tool_path_arg(ws_root: &Path, args: &serde_json::Value) -> Opti
         .and_then(|v| v.as_str())?;
     let raw_path = Path::new(raw);
     let rel = if raw_path.is_absolute() {
-        raw_path.strip_prefix(ws_root).ok()?.to_path_buf()
+        raw_path
+            .strip_prefix(ws_root)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| raw_path.to_path_buf())
     } else {
         raw_path.to_path_buf()
     };

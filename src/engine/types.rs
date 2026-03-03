@@ -167,6 +167,9 @@ pub struct AgentEngine {
     /// Required by Ollama native tool calling — Ollama expects tool results
     /// after an assistant message with tool_calls.
     pub(crate) native_tool_mode: bool,
+    /// Tool call signatures the user has denied permission for.
+    /// Lives on AgentEngine (not LoopState) so denials persist across runs within a session.
+    pub(crate) denied_tool_sigs: HashSet<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -333,6 +336,7 @@ impl AgentEngine {
             accumulated_token_estimate: 0,
             last_assistant_text: None,
             native_tool_mode: false,
+            denied_tool_sigs: HashSet::new(),
         })
     }
 

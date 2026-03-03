@@ -199,7 +199,11 @@ function handleRun(item: UiSseMessage, deps: SseHandlerDeps): void {
 
   if (item.phase === 'plan_update' && item.data?.plan) {
     const plan = item.data.plan as Plan;
-    const agentId = String(item.agent_id || '');
+    const rawId = String(item.agent_id || '');
+    // Extract agent name from run ID (e.g., "run-coder-123-456" → "coder").
+    // Fall back to the raw ID if the pattern doesn't match.
+    const match = rawId.match(/^run-(.+?)-\d+/);
+    const agentId = match ? match[1] : rawId;
     deps.setActivePlan(plan);
     if (plan.status === 'planned') {
       deps.setPendingPlan(plan);

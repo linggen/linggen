@@ -674,19 +674,30 @@ const hasRichContent = (m: ChatMessage): boolean =>
   !!m.contextTokens ||
   (m.images != null && m.images.length > 0);
 
-/** Transfer rich ephemeral content from a live message to a persisted message. */
-const transferRichContent = (persisted: ChatMessage, live: ChatMessage): ChatMessage => ({
-  ...persisted,
-  content: live.content || persisted.content,
-  activityEntries: live.activityEntries || persisted.activityEntries,
-  activitySummary: live.activitySummary || persisted.activitySummary,
-  subagentTree: live.subagentTree || persisted.subagentTree,
-  segments: live.segments || persisted.segments,
-  toolCount: live.toolCount || persisted.toolCount,
-  durationMs: live.durationMs || persisted.durationMs,
-  contextTokens: live.contextTokens || persisted.contextTokens,
-  images: live.images || persisted.images,
-});
+/** Transfer rich ephemeral content from a live message to a persisted message.
+ *  Preserves the earlier timestamp so agent messages keep their creation time
+ *  (when the first token arrived) rather than the server's finalization time.
+ *  This ensures correct chronological ordering when user messages are sent
+ *  during agent generation. */
+const transferRichContent = (persisted: ChatMessage, live: ChatMessage): ChatMessage => {
+  // Use the earlier non-zero timestamp to preserve chronological order.
+  const pTs = persisted.timestampMs ?? 0;
+  const lTs = live.timestampMs ?? 0;
+  const useEarlier = pTs > 0 && lTs > 0 && lTs < pTs;
+  return {
+    ...persisted,
+    ...(useEarlier ? { timestampMs: lTs, timestamp: live.timestamp } : {}),
+    content: live.content || persisted.content,
+    activityEntries: live.activityEntries || persisted.activityEntries,
+    activitySummary: live.activitySummary || persisted.activitySummary,
+    subagentTree: live.subagentTree || persisted.subagentTree,
+    segments: live.segments || persisted.segments,
+    toolCount: live.toolCount || persisted.toolCount,
+    durationMs: live.durationMs || persisted.durationMs,
+    contextTokens: live.contextTokens || persisted.contextTokens,
+    images: live.images || persisted.images,
+  };
+};
 
 export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
   if (persisted.length === 0) {
@@ -736,6 +747,23 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
     if (fallbackIdx >= 0) {
       mergedLiveIndices.add(fallbackIdx);
       return transferRichContent(msg, live[fallbackIdx]);
+    }
+
+    // Even without rich content, preserve the earlier timestamp from a matching
+    // live message to maintain correct chronological ordering. Persisted messages
+    // store the finalization timestamp (end of turn), but for sorting we need the
+    // creation timestamp (start of turn / first token).
+    const tsMatchIdx = live.findIndex(
+      (candidate, idx) =>
+        !mergedLiveIndices.has(idx) &&
+        !candidate.isGenerating &&
+        likelySameMessage(msg, candidate) &&
+        (candidate.timestampMs ?? 0) > 0 &&
+        (candidate.timestampMs ?? 0) < (msg.timestampMs ?? 0)
+    );
+    if (tsMatchIdx >= 0) {
+      mergedLiveIndices.add(tsMatchIdx);
+      return { ...msg, timestampMs: live[tsMatchIdx].timestampMs, timestamp: live[tsMatchIdx].timestamp };
     }
     return msg;
   });

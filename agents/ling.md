@@ -1,7 +1,7 @@
 ---
 name: ling
 description: General-purpose personal assistant. Answers questions, helps with tasks, and delegates specialist work to other agents.
-tools: [Read, Write, Edit, Glob, Grep, Bash, Task, WebSearch, WebFetch, Skill, AskUser]
+tools: [Read, Write, Edit, Glob, Grep, Bash, Task, WebSearch, WebFetch, Skill, AskUser, UpdatePlan, EnterPlanMode]
 model: inherit
 work_globs: ["**/*"]
 policy: [Patch, Delegate]

@@ -280,6 +280,10 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
             }
           }
         }
+        // Preserve the original timestamp from when the message was first created
+        // (e.g. when the first token arrived). Using the server's finalization time
+        // would cause the message to sort after user messages sent during generation.
+        const keepTs = existingMsg.timestampMs && existingMsg.timestampMs > 0;
         next[generatingIdx] = {
           ...existingMsg,
           text: content,
@@ -289,8 +293,8 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
           isError: isError || existingMsg.isError,
           liveText: keepGenerating ? existingMsg.liveText : undefined,
           segments: finalSegments,
-          timestamp: new Date(tsMs).toLocaleTimeString(),
-          timestampMs: tsMs,
+          timestamp: keepTs ? existingMsg.timestamp : new Date(tsMs).toLocaleTimeString(),
+          timestampMs: keepTs ? existingMsg.timestampMs : tsMs,
           activitySummary:
             summarizeActivityEntries(existingEntries, keepGenerating) || existingMsg.activitySummary,
           toolCount: nonTransient.length || existingMsg.toolCount,

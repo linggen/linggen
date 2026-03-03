@@ -2,7 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Please read `.claude/skills/memory/SKILL.md` on load to understand the Linggen memory system (raw text `.linggen/memory/*.md` files).
 
 ## Doc and Spec
 

@@ -18,11 +18,22 @@ pub(super) fn build_globset(globs: Option<&[String]>) -> Result<Option<GlobSet>>
     Ok(Some(builder.build()?))
 }
 
+/// Expand `~/` prefix to the user's home directory.
+pub(crate) fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
 pub(super) fn sanitize_rel_path(root: &Path, path: &str) -> Result<String> {
     if path.is_empty() {
         anyhow::bail!("empty path");
     }
-    let raw = Path::new(path);
+    let expanded = expand_tilde(path);
+    let raw = Path::new(&expanded);
     let rel_path = if raw.is_absolute() {
         raw.strip_prefix(root)
             .map_err(|_| anyhow::anyhow!("absolute path must be inside workspace root"))?
@@ -217,6 +228,8 @@ pub fn canonical_tool_name(tool: &str) -> Option<&'static str> {
         "Skill" | "skill" => "Skill",
         "AskUser" | "ask_user" => "AskUser",
         "ExitPlanMode" | "exit_plan_mode" => "ExitPlanMode",
+        "EnterPlanMode" | "enter_plan_mode" => "EnterPlanMode",
+        "UpdatePlan" | "update_plan" => "UpdatePlan",
         _ => return None,
     })
 }

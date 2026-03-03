@@ -1,5 +1,5 @@
 use super::block_on_async;
-use super::tool_helpers::sanitize_rel_path;
+use super::tool_helpers::{expand_tilde, sanitize_rel_path};
 use super::{ToolResult, Tools};
 use anyhow::Result;
 use serde::Deserialize;
@@ -114,7 +114,8 @@ impl Tools {
     }
 
     pub(super) fn write_file(&self, args: WriteFileArgs) -> Result<ToolResult> {
-        let abs_path = Path::new(&args.path);
+        let expanded = expand_tilde(&args.path);
+        let abs_path = Path::new(&expanded);
 
         // Check if this is a memory path (absolute, outside workspace)
         if abs_path.is_absolute() && self.is_memory_path(abs_path) {

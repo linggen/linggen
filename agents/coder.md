@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Coder agent. Implements tasks and produces code changes.
-tools: [Read, Write, Edit, Bash, Glob, Grep, Task, WebSearch, WebFetch, Skill, AskUser]
+tools: [Read, Write, Edit, Bash, Glob, Grep, Task, WebSearch, WebFetch, Skill, AskUser, UpdatePlan, EnterPlanMode]
 model: inherit
 work_globs: ["**/*"]
 policy: [Patch, Delegate]
