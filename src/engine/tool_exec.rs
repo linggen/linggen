@@ -179,7 +179,7 @@ impl AgentEngine {
                 );
                 self.upsert_observation("error", &canonical_tool, rendered.clone());
                 let _ = self
-                    .manager_db_add_observation(&canonical_tool, &rendered, session_id)
+                    .persist_observation(&canonical_tool, &rendered, session_id)
                     .await;
                 messages.push(self.tool_result_msg(
                     self.prompt_store.render_or_fallback(
@@ -225,7 +225,7 @@ impl AgentEngine {
                             );
                             self.upsert_observation("error", action, rendered.clone());
                             let _ = self
-                                .manager_db_add_observation(action, &rendered, session_id)
+                                .persist_observation(action, &rendered, session_id)
                                 .await;
                             messages.push(self.tool_result_msg(
                                 self.prompt_store.render_or_fallback(
@@ -242,7 +242,7 @@ impl AgentEngine {
                             );
                             self.upsert_observation("warning", action, rendered.clone());
                             let _ = self
-                                .manager_db_add_observation(action, &rendered, session_id)
+                                .persist_observation(action, &rendered, session_id)
                                 .await;
                         }
                         crate::config::WriteSafetyMode::Off => {}
@@ -315,7 +315,7 @@ impl AgentEngine {
                             &[],
                         );
                         let _ = self
-                            .manager_db_add_assistant_message(&msg, session_id)
+                            .persist_assistant_message(&msg, session_id)
                             .await;
                         return PreExecOutcome::Blocked(
                             LoopControl::Return(AgentOutcome::None),
@@ -346,7 +346,7 @@ impl AgentEngine {
                             &[],
                         );
                         let _ = self
-                            .manager_db_add_assistant_message(&msg, session_id)
+                            .persist_assistant_message(&msg, session_id)
                             .await;
                         return PreExecOutcome::Blocked(
                             LoopControl::Return(AgentOutcome::None),
@@ -379,7 +379,7 @@ impl AgentEngine {
                             &[],
                         );
                         let _ = self
-                            .manager_db_add_assistant_message(&msg, session_id)
+                            .persist_assistant_message(&msg, session_id)
                             .await;
                         return PreExecOutcome::Blocked(
                             LoopControl::Return(AgentOutcome::None),
@@ -556,7 +556,7 @@ impl AgentEngine {
                 self.upsert_observation("tool", &canonical_tool, rendered_model.clone());
 
                 let _ = self
-                    .manager_db_add_observation(&canonical_tool, &rendered_public, session_id)
+                    .persist_observation(&canonical_tool, &rendered_public, session_id)
                     .await;
                 if let Some(manager) = self.tools.get_manager() {
                     let agent_id = self
@@ -630,7 +630,7 @@ impl AgentEngine {
                         "File updated.".to_string()
                     };
                     let _ = self
-                        .manager_db_add_assistant_message(&msg, session_id)
+                        .persist_assistant_message(&msg, session_id)
                         .await;
                 }
 
@@ -695,7 +695,7 @@ impl AgentEngine {
                 );
                 self.upsert_observation("error", &canonical_tool, rendered.clone());
                 let _ = self
-                    .manager_db_add_observation(&canonical_tool, &rendered, session_id)
+                    .persist_observation(&canonical_tool, &rendered, session_id)
                     .await;
                 if let Some(manager) = self.tools.get_manager() {
                     let agent_id = self
@@ -882,7 +882,7 @@ impl AgentEngine {
                 &[("count", &(*streak + 1).to_string())],
             );
             let _ = self
-                .manager_db_add_assistant_message(&message, session_id)
+                .persist_assistant_message(&message, session_id)
                 .await;
             self.active_skill = None;
             return Some(LoopControl::Return(AgentOutcome::None));

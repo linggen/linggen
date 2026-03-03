@@ -648,7 +648,7 @@ async fn run_structured_loop(
     if let Ok(outcome) = &outcome {
         emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
         // For text-only responses (AgentOutcome::None with streamed content),
-        // the engine persists the message to DB but doesn't emit a Message event.
+        // the engine persists the message to session files but doesn't emit a Message event.
         // Emit one now so the UI can finalize liveText → text.
         if matches!(outcome, crate::engine::AgentOutcome::None) {
             if let Some(text) = &engine.last_assistant_text {

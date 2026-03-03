@@ -61,7 +61,7 @@ pub async fn idle_scheduler_loop(state: Arc<ServerState>) {
             for spec_entry in &agent_specs {
                 let agent_id = &spec_entry.agent_id;
 
-                // Get effective idle config (merges mission -> DB override -> markdown defaults)
+                // Get effective idle config (merges mission -> persisted override -> markdown defaults)
                 let (idle_prompt, idle_interval) = state
                     .manager
                     .get_effective_idle_config(&root, agent_id)

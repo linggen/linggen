@@ -248,10 +248,11 @@ impl AgentEngine {
                     if in_think_block && accumulated_text.contains("</think>") {
                         in_think_block = false;
                     }
-                    // Only forward tokens outside <think> blocks to the UI
+                    // Forward visible content tokens (outside <think> blocks) to
+                    // the UI for real-time streaming display.
                     if !in_think_block {
                         if let Some(tx) = &self.thinking_tx {
-                            let _ = tx.send(ThinkingEvent::Token(token));
+                            let _ = tx.send(ThinkingEvent::ContentToken(token));
                         }
                     }
                 }
@@ -279,9 +280,10 @@ impl AgentEngine {
             }
         }
 
-        // Signal thinking done
+        // Signal content stream done (not thinking done — avoids re-enabling
+        // the UI thinking indicator after content tokens have been streamed).
         if let Some(tx) = &self.thinking_tx {
-            let _ = tx.send(ThinkingEvent::Done);
+            let _ = tx.send(ThinkingEvent::ContentDone);
         }
 
         // Build ParsedToolCall objects from accumulated deltas

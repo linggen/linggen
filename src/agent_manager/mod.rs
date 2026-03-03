@@ -1093,7 +1093,7 @@ impl AgentManager {
 
     /// Get the effective idle config for an agent, merging:
     /// 1. Mission-level per-agent config (highest priority)
-    /// 2. DB agent override
+    /// 2. Persisted agent override
     /// 3. Agent markdown defaults (lowest priority)
     pub async fn get_effective_idle_config(
         &self,
@@ -1113,7 +1113,7 @@ impl AgentManager {
             .and_then(|s| s.spec.idle_interval_secs)
             .unwrap_or(60);
 
-        // 2. Override with DB agent override
+        // 2. Override with persisted agent override
         if let Ok(Some(overr)) = self.store.get_agent_override(&project_root_str, agent_id) {
             if let Some(prompt) = overr.idle_prompt {
                 idle_prompt = Some(prompt);

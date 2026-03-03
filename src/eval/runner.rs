@@ -112,7 +112,7 @@ pub async fn run_single_task(
         copy_dir_recursive(&agents_src, &agents_dst)?;
     }
 
-    // 5. Create SkillManager, AgentManager (Db is shared across tasks)
+    // 5. Create SkillManager, AgentManager (store is shared across tasks)
     let (config, _config_path) =
         Config::load_with_path().unwrap_or_else(|_| (Config::default(), None));
     let skill_manager = Arc::new(SkillManager::new());

@@ -448,7 +448,7 @@ impl AgentEngine {
                 // Content tokens were already streamed to the UI in real-time via
                 // ContentToken events in stream_with_tool_calling(), so we don't
                 // need to emit TextSegment/ContentBlockStart events here.
-                let _ = self.manager_db_add_assistant_message(&raw, session_id).await;
+                let _ = self.persist_assistant_message(&raw, session_id).await;
                 self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                 self.truncate_chat_history();
                 self.last_assistant_text = Some(raw);
@@ -526,7 +526,7 @@ impl AgentEngine {
                         // Plain text that looks like a substantive answer (long enough,
                         // not "thinking out loud") — treat as an implicit done.
                         let _ = self
-                            .manager_db_add_assistant_message(&raw, session_id)
+                            .persist_assistant_message(&raw, session_id)
                             .await;
                         return Ok(AgentOutcome::None);
                     }
@@ -542,7 +542,7 @@ impl AgentEngine {
                             )
                         };
                         let _ = self
-                            .manager_db_add_assistant_message(&message, session_id)
+                            .persist_assistant_message(&message, session_id)
                             .await;
                         self.active_skill = None;
                         return Ok(AgentOutcome::None);
@@ -695,7 +695,7 @@ impl AgentEngine {
             serde_json::json!({ "max_iters": self.cfg.max_iters }),
         );
         let _ = self
-            .manager_db_add_assistant_message(&fallback, session_id)
+            .persist_assistant_message(&fallback, session_id)
             .await;
         Ok(AgentOutcome::None)
     }

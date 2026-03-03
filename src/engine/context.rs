@@ -41,9 +41,9 @@ impl AgentEngine {
             .unwrap_or(3)
     }
 
-    // DB / event helpers
+    // Persistence + event helpers (writes to session files + emits SSE events)
 
-    pub async fn manager_db_add_observation(
+    pub async fn persist_observation(
         &self,
         tool: &str,
         rendered: &str,
@@ -72,7 +72,7 @@ impl AgentEngine {
         Ok(())
     }
 
-    pub async fn manager_db_add_assistant_message(
+    pub async fn persist_assistant_message(
         &self,
         content: &str,
         session_id: Option<&str>,

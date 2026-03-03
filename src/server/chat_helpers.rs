@@ -10,7 +10,7 @@ use tokio::sync::broadcast;
 // Message persistence
 // ---------------------------------------------------------------------------
 
-/// Emit a `ServerEvent::Message` **and** persist to state_fs + DB.
+/// Emit a `ServerEvent::Message` **and** persist to session files.
 pub(crate) async fn persist_and_emit_message(
     manager: &Arc<AgentManager>,
     events_tx: &broadcast::Sender<ServerEvent>,

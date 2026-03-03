@@ -126,6 +126,18 @@ export const ChatPanel: React.FC<{
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // When chat is cleared (chatMessages becomes empty), also clear cached run
+  // context so stale messages from previous runs don't keep showing.
+  useEffect(() => {
+    if (chatMessages.length === 0) {
+      setRunContextById({});
+      setContextErrorByRunId({});
+      setChildrenByRunId({});
+      setChildrenErrorByRunId({});
+      notFoundRunIds.current.clear();
+    }
+  }, [chatMessages.length]);
+
   useEffect(() => {
     if (pendingAskUser) {
       chatEndRef?.current?.scrollIntoView({ behavior: 'auto', block: 'nearest' });

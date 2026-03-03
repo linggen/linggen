@@ -123,7 +123,7 @@ fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, b
     (out, truncated)
 }
 
-/// Render tool results for DB/UI without dumping large payloads (e.g. full files).
+/// Render tool results for session files / UI without dumping large payloads (e.g. full files).
 pub fn render_tool_result_public(r: &ToolResult) -> String {
     match r {
         ToolResult::FileContent {

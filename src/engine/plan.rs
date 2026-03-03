@@ -114,10 +114,10 @@ impl AgentEngine {
         session_id: Option<&str>,
     ) -> LoopControl {
         info!("Task finalized: {}", packet.title);
-        // Persist the structured final answer for the UI (DB-backed chat).
+        // Persist the structured final answer to session files for the UI.
         let msg = serde_json::json!({ "type": "finalize_task", "packet": packet }).to_string();
         let _ = self
-            .manager_db_add_assistant_message(&msg, session_id)
+            .persist_assistant_message(&msg, session_id)
             .await;
         self.chat_history.push(ChatMessage::new("assistant", msg.clone()));
         self.push_context_record(

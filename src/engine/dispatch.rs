@@ -156,7 +156,7 @@ impl AgentEngine {
                 Ok(tool_result) => {
                     let rendered = render_tool_result(&tool_result);
                     let _ = self
-                        .manager_db_add_observation("Task", &rendered, session_id)
+                        .persist_observation("Task", &rendered, session_id)
                         .await;
                     messages.push(self.tool_result_msg(
                         self.observation_text(
@@ -172,7 +172,7 @@ impl AgentEngine {
                         "tool_error: tool=Task target={} error={}", target, e
                     );
                     let _ = self
-                        .manager_db_add_observation("Task", &rendered, session_id)
+                        .persist_observation("Task", &rendered, session_id)
                         .await;
                     messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
@@ -357,7 +357,7 @@ impl AgentEngine {
                     self.agent_id.clone(), Some("user".to_string()),
                     msg.clone(), serde_json::json!({ "kind": "done" }),
                 );
-                let _ = self.manager_db_add_assistant_message(&msg, session_id).await;
+                let _ = self.persist_assistant_message(&msg, session_id).await;
                 self.chat_history.push(ChatMessage::new("assistant", msg.clone()));
                 self.truncate_chat_history();
                 self.last_assistant_text = Some(msg.clone());
@@ -426,7 +426,7 @@ impl AgentEngine {
         // Push acknowledgement to model messages so it sees the feedback.
         messages.push(self.tool_result_msg(ack.clone()));
         let _ = self
-            .manager_db_add_observation("UpdatePlan", &ack, session_id)
+            .persist_observation("UpdatePlan", &ack, session_id)
             .await;
     }
 }
