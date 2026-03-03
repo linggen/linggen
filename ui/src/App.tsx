@@ -44,6 +44,8 @@ import { useSseDispatch } from './hooks/useSseDispatch';
 
 const SELECTED_AGENT_STORAGE_KEY = 'linggen-agent:selected-agent';
 const VERBOSE_MODE_STORAGE_KEY = 'linggen-agent:verbose-mode';
+const SELECTED_PROJECT_STORAGE_KEY = 'linggen-agent:selected-project';
+const ACTIVE_SESSION_STORAGE_KEY = 'linggen-agent:active-session';
 
 type Page = 'main' | 'settings' | 'storage' | 'mission';
 
@@ -51,7 +53,10 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('main');
   const [initialSettingsTab, setInitialSettingsTab] = useState<import('./types').ManagementTab | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [selectedProjectRoot, setSelectedProjectRoot] = useState<string>('');
+  const [selectedProjectRoot, setSelectedProjectRoot] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY) || '';
+  });
   const [agentTree, setAgentTree] = useState<Record<string, AgentTreeItem>>({});
   const [agentTreesByProject, setAgentTreesByProject] = useState<Record<string, Record<string, AgentTreeItem>>>({});
   const [newProjectPath, setNewProjectPath] = useState('');
@@ -64,7 +69,10 @@ const App: React.FC = () => {
   const [defaultModels, setDefaultModels] = useState<string[]>([]);
 
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY) || null;
+  });
   const [sessionCountsByProject, setSessionCountsByProject] = useState<Record<string, number>>({});
 
   const [, setLogs] = useState<string[]>([]);
@@ -559,10 +567,11 @@ const App: React.FC = () => {
 
   const fetchAgentRuns = useCallback(async () => {
     if (!selectedProjectRoot) return;
+    if (!activeSessionId) { setAgentRuns([]); return; }
     try {
       const url = new URL('/api/agent-runs', window.location.origin);
       url.searchParams.append('project_root', selectedProjectRoot);
-      url.searchParams.append('session_id', activeSessionId || 'default');
+      url.searchParams.append('session_id', activeSessionId);
       const resp = await fetch(url.toString());
       if (!resp.ok) return;
       const data = await resp.json();
@@ -710,6 +719,22 @@ const App: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(VERBOSE_MODE_STORAGE_KEY, String(verboseMode));
   }, [verboseMode]);
+
+  useEffect(() => {
+    if (selectedProjectRoot) {
+      window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, selectedProjectRoot);
+    } else {
+      window.localStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+    }
+  }, [selectedProjectRoot]);
+
+  useEffect(() => {
+    if (activeSessionId) {
+      window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, activeSessionId);
+    } else {
+      window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    }
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (mainAgentIds.length === 0) return;

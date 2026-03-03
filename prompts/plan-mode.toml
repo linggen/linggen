@@ -1,3 +1,9 @@
+# Plan mode instructions injected when plan mode is active.
+# Category: system-reminder-plan-mode-is-active (per Claude Code conventions)
+
+[default]
+description = "Instructions appended to the system prompt when plan mode is active"
+text = '''
 ## PLAN MODE ACTIVE
 
 You are in PLAN MODE. Your goal is to thoroughly research the codebase and produce a detailed, self-contained plan for user approval before any changes are made.
@@ -54,4 +60,4 @@ Also update the constructor at line 347:
 
 ### When done
 
-When your plan is ready, call the ExitPlanMode tool. The user will review and approve (or request changes to) your plan.
+When your plan is ready, call the ExitPlanMode tool. The user will review and approve (or request changes to) your plan.'''

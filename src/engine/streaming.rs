@@ -5,8 +5,12 @@ use crate::ollama::ChatMessage;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
+use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt as TokioStreamExt;
 use tracing::{debug, info, warn};
+
+const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
+const INTER_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
 // Free functions for parallel tool execution
@@ -97,7 +101,24 @@ impl AgentEngine {
         let mut token_usage = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
 
-        while let Some(chunk_result) = TokioStreamExt::next(&mut stream).await {
+        loop {
+            let chunk_timeout = if accumulated.is_empty() {
+                FIRST_CHUNK_TIMEOUT
+            } else {
+                INTER_CHUNK_TIMEOUT
+            };
+            let chunk_result = match timeout(chunk_timeout, TokioStreamExt::next(&mut stream)).await
+            {
+                Ok(Some(result)) => result,
+                Ok(None) => break, // stream ended
+                Err(_) => {
+                    let secs = chunk_timeout.as_secs();
+                    anyhow::bail!(
+                        "Model streaming timed out after {}s (no data received)",
+                        secs
+                    );
+                }
+            };
             let chunk = chunk_result?;
             match chunk {
                 StreamChunk::Token(token) => {
@@ -123,6 +144,10 @@ impl AgentEngine {
                 StreamChunk::Usage(usage) => {
                     token_usage = Some(usage);
                 }
+                StreamChunk::ToolCall(_) => {
+                    // Tool call chunks are not expected in legacy streaming mode;
+                    // they are handled by stream_with_tool_calling().
+                }
             }
         }
 
@@ -137,6 +162,116 @@ impl AgentEngine {
             full_text: accumulated,
             token_usage,
             first_action,
+            tool_calls: Vec::new(),
+        })
+    }
+
+    /// Stream model output with native tool calling support.
+    ///
+    /// Sends tool definitions via the `tools` parameter and accumulates
+    /// `StreamChunk::ToolCall` deltas into complete `ParsedToolCall` objects.
+    /// Text content is forwarded via `thinking_tx` for the UI.
+    pub(crate) async fn stream_with_tool_calling(
+        &self,
+        model_id: &str,
+        messages: &[ChatMessage],
+        tools: Vec<serde_json::Value>,
+    ) -> Result<StreamResult> {
+        use crate::agent_manager::models::StreamChunk;
+
+        let mut stream = self
+            .model_manager
+            .chat_tool_stream(model_id, messages, tools)
+            .await?;
+
+        let mut accumulated_text = String::new();
+        let mut token_usage = None;
+        // Accumulate tool call deltas keyed by index
+        let mut tc_ids: Vec<Option<String>> = Vec::new();
+        let mut tc_names: Vec<Option<String>> = Vec::new();
+        let mut tc_args: Vec<String> = Vec::new();
+
+        loop {
+            let chunk_timeout = if accumulated_text.is_empty() && tc_ids.is_empty() {
+                FIRST_CHUNK_TIMEOUT
+            } else {
+                INTER_CHUNK_TIMEOUT
+            };
+            let chunk_result = match timeout(chunk_timeout, TokioStreamExt::next(&mut stream)).await
+            {
+                Ok(Some(result)) => result,
+                Ok(None) => break,
+                Err(_) => {
+                    anyhow::bail!(
+                        "Model streaming timed out after {}s (no data received)",
+                        chunk_timeout.as_secs()
+                    );
+                }
+            };
+            let chunk = chunk_result?;
+            match chunk {
+                StreamChunk::Token(token) => {
+                    accumulated_text.push_str(&token);
+                    // Forward text tokens to the UI for streaming display
+                    if let Some(tx) = &self.thinking_tx {
+                        let _ = tx.send(ThinkingEvent::Token(token));
+                    }
+                }
+                StreamChunk::Usage(usage) => {
+                    token_usage = Some(usage);
+                }
+                StreamChunk::ToolCall(tc) => {
+                    let idx = tc.index;
+                    // Grow accumulators if needed
+                    while tc_ids.len() <= idx {
+                        tc_ids.push(None);
+                        tc_names.push(None);
+                        tc_args.push(String::new());
+                    }
+                    if let Some(id) = tc.id {
+                        tc_ids[idx] = Some(id);
+                    }
+                    if let Some(name) = tc.name {
+                        tc_names[idx] = Some(name);
+                    }
+                    if let Some(args_delta) = tc.arguments_delta {
+                        tc_args[idx].push_str(&args_delta);
+                    }
+                }
+            }
+        }
+
+        // Signal thinking done
+        if let Some(tx) = &self.thinking_tx {
+            let _ = tx.send(ThinkingEvent::Done);
+        }
+
+        // Build ParsedToolCall objects from accumulated deltas
+        let mut tool_calls = Vec::new();
+        for i in 0..tc_ids.len() {
+            let id = tc_ids[i].clone().unwrap_or_else(|| format!("call_{}", i));
+            let name = tc_names[i].clone().unwrap_or_default();
+            let args_str = &tc_args[i];
+            let arguments = if args_str.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(args_str).unwrap_or_else(|_| {
+                    warn!("Failed to parse tool call arguments as JSON: {}", args_str);
+                    serde_json::json!({})
+                })
+            };
+            tool_calls.push(ParsedToolCall {
+                id,
+                name,
+                arguments,
+            });
+        }
+
+        Ok(StreamResult {
+            full_text: accumulated_text,
+            token_usage,
+            first_action: None,
+            tool_calls,
         })
     }
 
@@ -166,7 +301,14 @@ impl AgentEngine {
     /// Call the LLM with automatic fallback to other configured models
     /// when the primary model hits a rate limit (429) or context limit (400).
     /// Uses the health tracker to skip models known to be down/quota-exhausted.
-    pub(crate) async fn stream_with_fallback(&mut self, messages: &[ChatMessage]) -> Result<StreamResult> {
+    ///
+    /// When `tools` is `Some`, uses native function calling via `stream_with_tool_calling()`.
+    /// When `tools` is `None`, uses legacy JSON action format via `stream_with_thinking_model()`.
+    pub(crate) async fn stream_with_fallback(
+        &mut self,
+        messages: &[ChatMessage],
+        tools: Option<Vec<serde_json::Value>>,
+    ) -> Result<StreamResult> {
         use crate::agent_manager::models;
 
         let chain = self.build_model_chain();
@@ -181,7 +323,14 @@ impl AgentEngine {
                 continue;
             }
 
-            match self.stream_with_thinking_model(model_id, messages).await {
+            let result = if let Some(ref tool_defs) = tools {
+                self.stream_with_tool_calling(model_id, messages, tool_defs.clone())
+                    .await
+            } else {
+                self.stream_with_thinking_model(model_id, messages).await
+            };
+
+            match result {
                 Ok(result) => {
                     health.mark_healthy(model_id).await;
                     self.last_token_usage = result.token_usage.clone();

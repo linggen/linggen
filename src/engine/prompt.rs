@@ -4,31 +4,66 @@ use crate::engine::tools;
 use crate::ollama::ChatMessage;
 use std::collections::HashSet;
 
+fn workspace_listing(ws_root: &std::path::Path) -> String {
+    let entries = match std::fs::read_dir(ws_root) {
+        Ok(e) => e,
+        Err(_) => return String::new(),
+    };
+    let mut items: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') && !matches!(name.as_str(),
+            ".claude" | ".linggen" | ".git" | ".github" | ".vscode" | ".cursorrules"
+        ) {
+            continue;
+        }
+        let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+        items.push(format!("  {}{}", name, if is_dir { "/" } else { "" }));
+        if items.len() >= 50 {
+            items.push("  ... (truncated)".to_string());
+            break;
+        }
+    }
+    items.sort();
+    items.join("\n")
+}
+
 impl AgentEngine {
     pub(crate) fn system_prompt(&self) -> String {
+        use crate::prompts::keys;
+
         let mut prompt = self
             .spec_system_prompt
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| "You are a helpful AI assistant.".to_string());
+            .unwrap_or_else(|| {
+                self.prompt_store.render_or_fallback(keys::SYSTEM_FALLBACK_IDENTITY, &[])
+            });
 
         if !self.available_skills_metadata.is_empty() {
-            prompt.push_str("\n\n## Available Skills\n\nUse the `Skill` tool to invoke a skill by name. Available skills:");
+            prompt.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_SKILLS_HEADER,
+                &[],
+            ));
             for (name, description) in &self.available_skills_metadata {
-                prompt.push_str(&format!("\n- **{}**: {}", name, description));
+                prompt.push_str(&self.prompt_store.render_or_fallback(
+                    keys::SYSTEM_SKILL_ENTRY,
+                    &[("name", name.as_str()), ("description", description.as_str())],
+                ));
             }
         }
 
         if let Some(skill) = &self.active_skill {
-            prompt.push_str("\n\n--- ACTIVE SKILL ---");
-            prompt.push_str(&format!(
-                "\nSkill: {}\nDescription: {}",
-                skill.name, skill.description
+            prompt.push_str(&self.prompt_store.render_or_fallback(
+                keys::SYSTEM_ACTIVE_SKILL_FRAME,
+                &[
+                    ("name", skill.name.as_str()),
+                    ("description", skill.description.as_str()),
+                    ("content", skill.content.as_str()),
+                ],
             ));
-            prompt.push_str(&format!("\n\n{}", skill.content));
-            prompt.push_str("\n-------------------");
         }
 
         prompt
@@ -37,6 +72,7 @@ impl AgentEngine {
     /// Build the stable portion of the system prompt (agent spec + project context + memory)
     /// and return (content, hash). This is the cacheable prefix.
     pub(crate) fn build_stable_system_content(&self) -> (String, u64) {
+        use crate::prompts::keys;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -75,11 +111,20 @@ impl AgentEngine {
             }
             sections.reverse();
             if !sections.is_empty() {
-                stable.push_str("\n\n--- PROJECT INSTRUCTIONS ---");
+                stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER,
+                    &[],
+                ));
                 for (label, content) in &sections {
-                    stable.push_str(&format!("\n\n# {}\n\n{}", label, content));
+                    stable.push_str(&self.prompt_store.render_or_fallback(
+                        keys::SYSTEM_PROJECT_INSTRUCTIONS_ENTRY,
+                        &[("label", label.as_str()), ("content", content.as_str())],
+                    ));
                 }
-                stable.push_str("\n\n--- END PROJECT INSTRUCTIONS ---");
+                stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::SYSTEM_PROJECT_INSTRUCTIONS_FOOTER,
+                    &[],
+                ));
             }
         }
 
@@ -87,41 +132,23 @@ impl AgentEngine {
         if let Some(memory_dir) = self.tools.memory_dir() {
             let memory_path = memory_dir.join("MEMORY.md");
             let mem_dir_display = memory_dir.display().to_string();
+            let mut memory_appended = false;
             if let Ok(content) = std::fs::read_to_string(&memory_path) {
                 let content = content.trim();
                 if !content.is_empty() {
                     let truncated: String =
                         content.lines().take(200).collect::<Vec<_>>().join("\n");
-                    stable.push_str(&format!(
-                        "\n\n--- AUTO MEMORY ---\n\
-                         You have a persistent memory directory at `{}`.\n\
-                         Its contents persist across sessions. Use Write/Edit tools to update MEMORY.md.\n\
-                         \n\
-                         Guidelines:\n\
-                         - Save stable patterns, user preferences, key architecture decisions, project structure\n\
-                         - Do NOT save session-specific context, in-progress work, or unverified conclusions\n\
-                         - Keep MEMORY.md concise (under 200 lines)\n\
-                         - When user says \"remember X\", save it immediately\n\
-                         \n## MEMORY.md\n\n{}\n\
-                         --- END AUTO MEMORY ---",
-                        mem_dir_display, truncated
+                    stable.push_str(&self.prompt_store.render_or_fallback(
+                        keys::SYSTEM_MEMORY_BLOCK,
+                        &[("mem_dir", &mem_dir_display), ("truncated", &truncated)],
                     ));
+                    memory_appended = true;
                 }
             }
-            if !stable.contains("AUTO MEMORY") {
-                let mem_dir_display = memory_dir.display().to_string();
-                stable.push_str(&format!(
-                    "\n\n--- AUTO MEMORY ---\n\
-                     You have a persistent memory directory at `{}`.\n\
-                     Its contents persist across sessions. Create MEMORY.md with Write to start saving memories.\n\
-                     \n\
-                     Guidelines:\n\
-                     - Save stable patterns, user preferences, key architecture decisions, project structure\n\
-                     - Do NOT save session-specific context, in-progress work, or unverified conclusions\n\
-                     - Keep MEMORY.md concise (under 200 lines)\n\
-                     - When user says \"remember X\", save it immediately\n\
-                     --- END AUTO MEMORY ---",
-                    mem_dir_display
+            if !memory_appended {
+                stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::SYSTEM_MEMORY_BLOCK_EMPTY,
+                    &[("mem_dir", &mem_dir_display)],
                 ));
             }
         }
@@ -133,9 +160,12 @@ impl AgentEngine {
     }
 
     /// Build the initial message list and read-paths set for the structured agent loop.
+    /// When `native_tools` is true, uses the native tool calling response format
+    /// (no JSON action format instructions) instead of the legacy format.
     pub(crate) fn prepare_loop_messages(
         &mut self,
         task: &str,
+        native_tools: bool,
     ) -> (Vec<ChatMessage>, Option<HashSet<String>>, HashSet<String>) {
         // Build stable system content with caching.
         let (stable_content, hash) = self.build_stable_system_content();
@@ -165,8 +195,16 @@ impl AgentEngine {
 
         // Dynamic content appended after cached stable prefix.
 
-        // --- Unified Response Format (loaded from prompts/response-format.md) ---
-        {
+        // --- Response Format ---
+        if native_tools {
+            // Native tool calling: model gets tool schemas via the API `tools` parameter.
+            // Use a lightweight prompt with usage guidelines only (no JSON format instructions).
+            if let Some(content) = self.prompt_store.get(crate::prompts::RESPONSE_FORMAT_NATIVE) {
+                system.push_str("\n\n");
+                system.push_str(content);
+            }
+        } else {
+            // Legacy mode: inject JSON action format + inline tool schemas.
             let tools_json = self.tools.tool_schema_json(allowed_tools.as_ref());
             if let Some(rendered) = self.prompt_store.render(
                 crate::prompts::RESPONSE_FORMAT,
@@ -212,22 +250,24 @@ impl AgentEngine {
         messages.extend(self.chat_history.clone());
 
         for obs in &self.observations {
-            messages.push(ChatMessage::new("user", Self::observation_for_model(obs)));
+            messages.push(ChatMessage::new("user", self.observation_for_model(obs)));
         }
 
         // Provide workspace info + task (last user message).
         // Tool schema and action format are already in the system prompt.
+        let ws_listing = workspace_listing(&self.cfg.ws_root);
         let task_content = self.prompt_store.render(
             crate::prompts::TASK_BOOTSTRAP,
             &[
                 ("ws_root", &self.cfg.ws_root.display().to_string()),
                 ("platform", std::env::consts::OS),
                 ("role", &format!("{:?}", self.role)),
+                ("workspace_listing", &ws_listing),
                 ("task", task),
             ],
         ).unwrap_or_else(|| format!(
-            "Autonomous agent loop started.\n\nWorkspace root: {}\nPlatform: {}\nCurrent Role: {:?}\n\nTask: {}",
-            self.cfg.ws_root.display(), std::env::consts::OS, self.role, task,
+            "Autonomous agent loop started.\n\nWorkspace root: {}\nPlatform: {}\nCurrent Role: {:?}\n\nWorkspace contents:\n{}\n\nTask: {}",
+            self.cfg.ws_root.display(), std::env::consts::OS, self.role, ws_listing, task,
         ));
         let task_msg = ChatMessage::new("user", task_content);
         // Attach any pending images to the task message, then clear them.
@@ -363,17 +403,7 @@ impl AgentEngine {
     }
 
     pub(crate) fn render_loop_breaker_prompt(template: &str, tool: &str) -> String {
-        let mut rendered = template.replace("{tool}", tool);
-        if rendered.contains("{}") {
-            rendered = rendered.replacen("{}", tool, 1);
-        }
-        rendered
+        crate::prompts::PromptStore::substitute(template, &[("tool", tool)])
     }
 
-    /// Get a rendered nudge prompt from the prompt store, with optional variable substitution.
-    pub(crate) fn nudge(&self, key: &str, vars: &[(&str, &str)]) -> String {
-        self.prompt_store
-            .render(key, vars)
-            .unwrap_or_else(|| format!("[missing prompt: {}]", key))
-    }
 }

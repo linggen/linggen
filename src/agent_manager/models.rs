@@ -30,6 +30,23 @@ pub enum StreamChunk {
     Token(String),
     /// Final usage stats from the API (emitted at end of stream).
     Usage(TokenUsage),
+    /// A tool call chunk from native function calling (incremental or complete).
+    ToolCall(ToolCallChunk),
+}
+
+/// An incremental tool call chunk from the streaming API.
+/// For OpenAI: arguments arrive in pieces, keyed by `index`.
+/// For Ollama: tool_calls arrive as complete objects per chunk.
+#[derive(Debug, Clone)]
+pub struct ToolCallChunk {
+    /// Index within the tool_calls array (for accumulation).
+    pub index: usize,
+    /// Tool call ID (usually only present in the first chunk for this index).
+    pub id: Option<String>,
+    /// Function name (usually only present in the first chunk for this index).
+    pub name: Option<String>,
+    /// Incremental arguments JSON string fragment.
+    pub arguments_delta: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +318,62 @@ impl ModelManager {
         }
     }
 
+    /// Streaming chat with native tool calling support.
+    /// Sends tool definitions to the provider and streams back text tokens + tool call chunks.
+    pub async fn chat_tool_stream(
+        &self,
+        model_id: &str,
+        messages: &[ChatMessage],
+        tools: Vec<serde_json::Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
+        let instance = self
+            .models
+            .get(model_id)
+            .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
+
+        let _permit = instance.semaphore.clone().acquire_owned().await?;
+
+        match &instance.client {
+            ProviderClient::Ollama(client) => {
+                let stream = client
+                    .chat_tool_stream_with_keep_alive(
+                        &instance.config.model,
+                        messages,
+                        instance.config.keep_alive.clone(),
+                        tools,
+                    )
+                    .await?;
+                let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
+                    Box::pin(stream);
+                Ok(Box::pin(futures_util::stream::unfold(
+                    (boxed_stream, _permit),
+                    |(mut stream, permit)| async move {
+                        match stream.next().await {
+                            Some(item) => Some((item, (stream, permit))),
+                            None => None,
+                        }
+                    },
+                )))
+            }
+            ProviderClient::OpenAi(client) => {
+                let stream = client
+                    .chat_tool_stream(&instance.config.model, messages, tools)
+                    .await?;
+                let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
+                    Box::pin(stream);
+                Ok(Box::pin(futures_util::stream::unfold(
+                    (boxed_stream, _permit),
+                    |(mut stream, permit)| async move {
+                        match stream.next().await {
+                            Some(item) => Some((item, (stream, permit))),
+                            None => None,
+                        }
+                    },
+                )))
+            }
+        }
+    }
+
     pub fn list_models(&self) -> Vec<&ModelConfig> {
         self.models.values().map(|m| &m.config).collect()
     }
@@ -369,6 +442,22 @@ impl ModelManager {
                 }
             }
         }
+    }
+
+    /// Check if a model supports native tool calling.
+    /// Uses explicit config if set, otherwise auto-detects based on provider.
+    pub fn supports_tools(&self, model_id: &str) -> bool {
+        let Some(instance) = self.models.get(model_id) else {
+            return false;
+        };
+        if let Some(explicit) = instance.config.supports_tools {
+            return explicit;
+        }
+        // Auto-detect: all known providers support tool calling
+        matches!(
+            instance.config.provider.as_str(),
+            "ollama" | "openai" | "gemini" | "groq" | "deepseek" | "openrouter" | "github"
+        )
     }
 
     /// Check if a model ID exists in the configured models.

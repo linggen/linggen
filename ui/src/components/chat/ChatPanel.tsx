@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Send, X, Sparkles } from 'lucide-react';
+import { Send, X, Sparkles, FolderOpen, FileText } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { AskUserCard } from '../AskUserCard';
@@ -9,6 +9,7 @@ import type {
   AgentRunInfo,
   AgentRunContextResponse,
   ChatMessage,
+  FileEntry,
   QueuedChatItem,
   SkillInfo,
   SubagentInfo,
@@ -93,6 +94,13 @@ export const ChatPanel: React.FC<{
   const [skillFilter, setSkillFilter] = useState('');
   const [showAgentDropdown, setShowAgentDropdown] = useState(false);
   const [agentFilter, setAgentFilter] = useState('');
+  const [showFileDropdown, setShowFileDropdown] = useState(false);
+  const [fileFilter, setFileFilter] = useState('');
+  const [fileBrowsePath, setFileBrowsePath] = useState('');
+  const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
+  const [fileEntriesLoading, setFileEntriesLoading] = useState(false);
+  const [fileSearchMode, setFileSearchMode] = useState(false);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
   const [selectedMainRunByAgent, setSelectedMainRunByAgent] = useState<Record<string, string>>({});
@@ -456,8 +464,12 @@ export const ChatPanel: React.FC<{
     setPendingImages([]);
     setShowSkillDropdown(false);
     setShowAgentDropdown(false);
+    setShowFileDropdown(false);
+    setFileFilter('');
+    setFileBrowsePath('');
+    setFileEntries([]);
 
-    const mentionMatch = userMessage.trim().match(/^@([a-zA-Z0-9_-]+)\b/);
+    const mentionMatch = userMessage.trim().match(/^@@([a-zA-Z0-9_-]+)\b/);
     let mentionAgent: string | undefined;
     if (mentionMatch?.[1]) {
       const mentioned = normalizeAgentKey(mentionMatch[1]);
@@ -517,6 +529,59 @@ export const ChatPanel: React.FC<{
       e.preventDefault();
     }
   };
+
+  const fetchFileEntries = useCallback(async (browsePath: string) => {
+    if (!projectRoot) return;
+    setFileEntriesLoading(true);
+    try {
+      const url = `/api/files?project_root=${encodeURIComponent(projectRoot)}&path=${encodeURIComponent(browsePath)}`;
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const entries: FileEntry[] = await resp.json();
+        entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
+        setFileEntries(entries);
+      }
+    } catch {
+      setFileEntries([]);
+    } finally {
+      setFileEntriesLoading(false);
+    }
+  }, [projectRoot]);
+
+  const searchFiles = useCallback((query: string) => {
+    if (!projectRoot) return;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (!query) {
+      setFileEntries([]);
+      return;
+    }
+    searchTimeoutRef.current = setTimeout(async () => {
+      setFileEntriesLoading(true);
+      try {
+        const url = `/api/files/search?project_root=${encodeURIComponent(projectRoot)}&query=${encodeURIComponent(query)}`;
+        const resp = await fetch(url);
+        if (resp.ok) setFileEntries(await resp.json());
+      } catch {
+        setFileEntries([]);
+      } finally {
+        setFileEntriesLoading(false);
+      }
+    }, 150);
+  }, [projectRoot]);
+
+  const filteredFileEntries = useMemo(() => {
+    // In search mode, entries are already filtered by the backend
+    if (fileSearchMode) return fileEntries;
+    let entries = fileEntries;
+    if (fileFilter) {
+      entries = entries.filter((e) => e.name.toLowerCase().includes(fileFilter.toLowerCase()));
+    }
+    // Hide dotfiles unless filter starts with "."
+    if (!fileFilter.startsWith('.')) {
+      entries = entries.filter((e) => !e.name.startsWith('.'));
+    }
+    return entries;
+  }, [fileEntries, fileFilter, fileSearchMode]);
 
   const buildSkillSuggestions = () => {
     const suggestions: {
@@ -851,18 +916,76 @@ export const ChatPanel: React.FC<{
                   <button
                     key={agent.name}
                     onClick={() => {
-                      const beforeAt = chatInput.substring(0, chatInput.lastIndexOf('@'));
+                      const doubleAtIdx = chatInput.lastIndexOf('@@');
+                      const beforeAt = doubleAtIdx >= 0 ? chatInput.substring(0, doubleAtIdx) : chatInput;
                       const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
-                      setChatInput(`${beforeAt}@${label} `);
+                      setChatInput(`${beforeAt}@@${label} `);
                       setShowAgentDropdown(false);
                       setSelectedAgent(agent.name.toLowerCase());
                     }}
                     className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-white/5 text-xs border-b border-slate-200 dark:border-white/5 last:border-none"
                   >
-                    <div className="font-bold text-purple-500">@{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
+                    <div className="font-bold text-purple-500">@@{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
                     <div className="text-slate-500 text-[10px]">{agent.description}</div>
                   </button>
                 ))}
+            </div>
+          )}
+          {showFileDropdown && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-56 overflow-y-auto z-[70]">
+              {!fileSearchMode && fileBrowsePath && (
+                <div className="px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-white/5 font-mono truncate">
+                  {fileBrowsePath}
+                </div>
+              )}
+              {fileEntriesLoading ? (
+                <div className="p-3 text-[10px] text-slate-500 italic">Loading...</div>
+              ) : filteredFileEntries.length === 0 ? (
+                <div className="p-3 text-[10px] text-slate-500 italic">No matching files</div>
+              ) : (
+                filteredFileEntries.map((entry) => (
+                  <button
+                    key={entry.path}
+                    onClick={() => {
+                      const lastAt = chatInput.lastIndexOf('@');
+                      const beforeAt = chatInput.substring(0, lastAt);
+                      if (entry.isDir) {
+                        // Navigate into directory
+                        const newPath = fileSearchMode ? entry.path + '/' : fileBrowsePath + entry.name + '/';
+                        setChatInput(`${beforeAt}@${newPath}`);
+                        setFileBrowsePath(newPath);
+                        setFileFilter('');
+                        setFileSearchMode(false);
+                        setSelectedSuggestionIndex(0);
+                        fetchFileEntries(newPath);
+                      } else {
+                        // Complete file mention
+                        const fullPath = fileSearchMode ? entry.path : fileBrowsePath + entry.name;
+                        setChatInput(`${beforeAt}@${fullPath} `);
+                        setShowFileDropdown(false);
+                        setFileFilter('');
+                        setFileBrowsePath('');
+                        setFileSearchMode(false);
+                      }
+                    }}
+                    className={cn(
+                      'w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-white/5 text-xs border-b border-slate-200 dark:border-white/5 last:border-none flex items-center gap-2',
+                      filteredFileEntries.indexOf(entry) === selectedSuggestionIndex && 'bg-blue-500/10'
+                    )}
+                  >
+                    {entry.isDir ? (
+                      <FolderOpen size={13} className="text-amber-500 shrink-0" />
+                    ) : (
+                      <FileText size={13} className="text-slate-400 shrink-0" />
+                    )}
+                    {fileSearchMode ? (
+                      <span className="font-mono truncate">{entry.path}</span>
+                    ) : (
+                      <span className={entry.isDir ? 'font-semibold' : ''}>{entry.name}</span>
+                    )}
+                  </button>
+                ))
+              )}
             </div>
           )}
           <textarea
@@ -874,43 +997,167 @@ export const ChatPanel: React.FC<{
             onChange={(e) => {
               const val = e.target.value;
               setChatInput(val);
+
+              // Skill dropdown: `/` trigger
               if (val.includes('/') && !val.includes(' ', val.lastIndexOf('/'))) {
-                setSkillFilter(val.substring(val.lastIndexOf('/') + 1).toLowerCase());
-                setShowSkillDropdown(true);
-                setShowAgentDropdown(false);
-                setSelectedSuggestionIndex(0);
-              } else if (val.includes('@') && !val.includes(' ', val.lastIndexOf('@'))) {
-                setAgentFilter(val.substring(val.lastIndexOf('@') + 1).toLowerCase());
-                setShowAgentDropdown(true);
-                setShowSkillDropdown(false);
-              } else {
-                setShowSkillDropdown(false);
-                setShowAgentDropdown(false);
+                const lastSlash = val.lastIndexOf('/');
+                // Only trigger skill dropdown if the `/` is not part of a file path (i.e. after `@`)
+                const atIdx = val.lastIndexOf('@');
+                if (atIdx < 0 || lastSlash < atIdx) {
+                  setSkillFilter(val.substring(lastSlash + 1).toLowerCase());
+                  setShowSkillDropdown(true);
+                  setShowAgentDropdown(false);
+                  setShowFileDropdown(false);
+                  setSelectedSuggestionIndex(0);
+                  return;
+                }
               }
+
+              // Find last `@` not preceded by a space-after check
+              const lastAt = val.lastIndexOf('@');
+              if (lastAt >= 0 && !val.includes(' ', lastAt)) {
+                // Check for `@@` (agent mention)
+                if (lastAt > 0 && val[lastAt - 1] === '@') {
+                  const afterDoubleAt = val.substring(lastAt + 1);
+                  // Only show agent dropdown if no space after @@
+                  if (!afterDoubleAt.includes(' ')) {
+                    setAgentFilter(afterDoubleAt.toLowerCase());
+                    setShowAgentDropdown(true);
+                    setShowSkillDropdown(false);
+                    setShowFileDropdown(false);
+                    setSelectedSuggestionIndex(0);
+                    return;
+                  }
+                }
+
+                // Single `@` — file mention
+                const afterAt = val.substring(lastAt + 1);
+                // Don't trigger file dropdown if next char is also `@`
+                if (!afterAt.startsWith('@') && !afterAt.includes(' ')) {
+                  const pathText = afterAt;
+                  const lastSlashInPath = pathText.lastIndexOf('/');
+
+                  setShowFileDropdown(true);
+                  setShowAgentDropdown(false);
+                  setShowSkillDropdown(false);
+                  setSelectedSuggestionIndex(0);
+
+                  if (lastSlashInPath >= 0) {
+                    // Has `/` → directory browse mode
+                    const browsePath = pathText.substring(0, lastSlashInPath + 1);
+                    const filterText = pathText.substring(lastSlashInPath + 1);
+                    setFileFilter(filterText);
+                    setFileSearchMode(false);
+                    if (browsePath !== fileBrowsePath || fileEntries.length === 0) {
+                      setFileBrowsePath(browsePath);
+                      fetchFileEntries(browsePath);
+                    }
+                  } else {
+                    // No `/` → recursive search mode
+                    setFileFilter(pathText);
+                    setFileSearchMode(true);
+                    setFileBrowsePath('');
+                    searchFiles(pathText);
+                  }
+                  return;
+                }
+              }
+
+              // No dropdown
+              setShowSkillDropdown(false);
+              setShowAgentDropdown(false);
+              setShowFileDropdown(false);
             }}
             onKeyDown={(e) => {
+              // Skill dropdown keyboard nav
               const suggestions = showSkillDropdown ? buildSkillSuggestions() : [];
-              if (showSkillDropdown && suggestions.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-                e.preventDefault();
-                const delta = e.key === 'ArrowDown' ? 1 : -1;
-                setSelectedSuggestionIndex((prev) => (prev + delta + suggestions.length) % suggestions.length);
-                return;
+              if (showSkillDropdown && suggestions.length > 0) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const delta = e.key === 'ArrowDown' ? 1 : -1;
+                  setSelectedSuggestionIndex((prev) => (prev + delta + suggestions.length) % suggestions.length);
+                  return;
+                }
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  suggestions[selectedSuggestionIndex]?.apply();
+                  return;
+                }
               }
-              if (showSkillDropdown && suggestions.length > 0 && e.key === 'Enter') {
-                e.preventDefault();
-                suggestions[selectedSuggestionIndex]?.apply();
-                return;
+
+              // File dropdown keyboard nav
+              if (showFileDropdown && filteredFileEntries.length > 0) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const delta = e.key === 'ArrowDown' ? 1 : -1;
+                  setSelectedSuggestionIndex((prev) => (prev + delta + filteredFileEntries.length) % filteredFileEntries.length);
+                  return;
+                }
+                if (e.key === 'Enter' || (e.key === 'Tab' && filteredFileEntries[selectedSuggestionIndex]?.isDir)) {
+                  e.preventDefault();
+                  const entry = filteredFileEntries[selectedSuggestionIndex];
+                  if (!entry) return;
+                  const lastAt = chatInput.lastIndexOf('@');
+                  const beforeAt = chatInput.substring(0, lastAt);
+                  if (entry.isDir) {
+                    const newPath = fileSearchMode ? entry.path + '/' : fileBrowsePath + entry.name + '/';
+                    setChatInput(`${beforeAt}@${newPath}`);
+                    setFileBrowsePath(newPath);
+                    setFileFilter('');
+                    setFileSearchMode(false);
+                    setSelectedSuggestionIndex(0);
+                    fetchFileEntries(newPath);
+                  } else {
+                    const fullPath = fileSearchMode ? entry.path : fileBrowsePath + entry.name;
+                    setChatInput(`${beforeAt}@${fullPath} `);
+                    setShowFileDropdown(false);
+                    setFileFilter('');
+                    setFileBrowsePath('');
+                    setFileSearchMode(false);
+                  }
+                  return;
+                }
               }
-              if (e.key === 'Enter' && !e.shiftKey && !showSkillDropdown && !showAgentDropdown) {
+
+              // Agent dropdown keyboard nav
+              if (showAgentDropdown) {
+                const filteredAgents = agents
+                  .filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name)))
+                  .filter((a) => a.name.toLowerCase().includes(agentFilter));
+                if (filteredAgents.length > 0) {
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const delta = e.key === 'ArrowDown' ? 1 : -1;
+                    setSelectedSuggestionIndex((prev) => (prev + delta + filteredAgents.length) % filteredAgents.length);
+                    return;
+                  }
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const agent = filteredAgents[selectedSuggestionIndex];
+                    if (!agent) return;
+                    const doubleAtIdx = chatInput.lastIndexOf('@@');
+                    const beforeAt = doubleAtIdx >= 0 ? chatInput.substring(0, doubleAtIdx) : chatInput;
+                    const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
+                    setChatInput(`${beforeAt}@@${label} `);
+                    setShowAgentDropdown(false);
+                    setSelectedAgent(agent.name.toLowerCase());
+                    return;
+                  }
+                }
+              }
+
+              // Send on Enter (only when no dropdown open)
+              if (e.key === 'Enter' && !e.shiftKey && !showSkillDropdown && !showAgentDropdown && !showFileDropdown) {
                 e.preventDefault();
                 send();
               }
               if (e.key === 'Escape') {
                 setShowSkillDropdown(false);
                 setShowAgentDropdown(false);
+                setShowFileDropdown(false);
               }
             }}
-            placeholder="Message...  (/ for skills, @ for agents, Shift+Enter for newline)"
+            placeholder="Message... (/ for skills, @ for files, @@ for agents, Shift+Enter for newline)"
             rows={1}
             className="flex-1 bg-transparent border-none px-1.5 py-1.5 text-[13px] outline-none resize-none min-h-[34px] max-h-[200px] leading-5"
           />

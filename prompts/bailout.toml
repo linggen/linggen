@@ -1,0 +1,14 @@
+# Loop termination messages (assistant-visible bailout text).
+
+[loop_limit]
+description = "Message when the agent loop hits max_iters"
+text = "I couldn't complete this automatically within the current tool loop limit. Please refine the request and try again."
+
+[malformed_output]
+description = "Message after 4 consecutive invalid JSON responses"
+text = "I couldn't continue automatically because the model kept returning malformed structured output."
+
+[repetition_loop]
+description = "Message after the model gets stuck repeating the same response"
+vars = ["count"]
+text = "I couldn't continue automatically because I got stuck in a repetition loop (same response {count} times)."

@@ -130,6 +130,35 @@ impl SkillToolDef {
         })
     }
 
+    /// Convert this skill tool definition to an OpenAI-compatible tool schema.
+    pub fn to_oai_schema(&self) -> Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+        for (name, param) in &self.args {
+            let mut prop = serde_json::Map::new();
+            prop.insert("type".to_string(), Value::String(param.param_type.clone()));
+            if !param.description.is_empty() {
+                prop.insert("description".to_string(), Value::String(param.description.clone()));
+            }
+            properties.insert(name.clone(), Value::Object(prop));
+            if param.required {
+                required.push(Value::String(name.clone()));
+            }
+        }
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        })
+    }
+
     pub fn to_schema_json(&self) -> Value {
         let mut args_map = serde_json::Map::new();
         for (name, param) in &self.args {

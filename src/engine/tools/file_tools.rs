@@ -71,9 +71,9 @@ impl Tools {
             if abs_path.exists() && abs_path.is_file() {
                 return self.do_read_file(&args.path, abs_path, args.max_bytes, args.line_range);
             }
-            return Ok(ToolResult::Success(format!(
-                "file_not_found: {} - Memory file does not exist yet. Use Write to create it.",
-                args.path
+            return Ok(ToolResult::Success(self.prompt(
+                crate::prompts::keys::FILE_NOT_FOUND_MEMORY,
+                &[("path", &args.path)],
             )));
         }
 
@@ -86,8 +86,11 @@ impl Tools {
 
         if path.exists() && path.is_dir() {
             anyhow::bail!(
-                "path '{}' is a directory. Use Glob to enumerate files, then Read with an exact file path.",
-                rel
+                "{}",
+                self.prompt(
+                    crate::prompts::keys::READ_IS_DIRECTORY,
+                    &[("path", &rel)],
+                )
             );
         }
 
@@ -101,17 +104,19 @@ impl Tools {
         if let Some(best_match) = candidates.first() {
             let full_path = self.root.join(best_match);
             let note = if candidates.len() > 1 {
-                format!(
-                    "Note: Original path '{}' not found. Found {} candidate files, reading '{}'. Others: {}",
-                    rel,
-                    candidates.len(),
-                    best_match,
-                    candidates[1..].join(", ")
+                self.prompt(
+                    crate::prompts::keys::SMART_SEARCH_REDIRECT_MULTI,
+                    &[
+                        ("original", &rel),
+                        ("count", &candidates.len().to_string()),
+                        ("found", best_match),
+                        ("others", &candidates[1..].join(", ")),
+                    ],
                 )
             } else {
-                format!(
-                    "Note: Original path '{}' not found. Automatically found and read '{}' instead.",
-                    rel, best_match
+                self.prompt(
+                    crate::prompts::keys::SMART_SEARCH_REDIRECT,
+                    &[("original", &rel), ("found", best_match)],
                 )
             };
             return self.do_read_file_with_note(
@@ -124,9 +129,9 @@ impl Tools {
         }
 
         // 3. Last resort: tell the model we searched everywhere
-        Ok(ToolResult::Success(format!(
-            "file_not_found: {} - I searched the whole repository for '{}' (including case-insensitive and partial matches) but found nothing. Please verify the filename or use 'Glob' to explore the directory structure.",
-            rel, filename
+        Ok(ToolResult::Success(self.prompt(
+            crate::prompts::keys::FILE_NOT_FOUND_EXHAUSTED,
+            &[("rel", &rel), ("filename", filename)],
         )))
     }
 

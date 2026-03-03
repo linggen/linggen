@@ -247,6 +247,11 @@ async fn main() -> Result<()> {
             let ws_root = workspace::resolve_workspace_root(global_root)?;
             let port = global_port.unwrap_or(config.server.port);
 
+            // Install/update built-in agent specs to ~/.linggen/agents/
+            if let Err(e) = cli::init::install_default_agents() {
+                tracing::warn!("Failed to install default agents: {e}");
+            }
+
             let store = Arc::new(project_store::ProjectStore::new());
             let skill_manager = Arc::new(skills::SkillManager::new());
             let config_dir = config_path

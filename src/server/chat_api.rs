@@ -95,6 +95,7 @@ async fn run_loop_with_tracking(
                 let status = if msg.to_lowercase().contains("cancel") {
                     crate::project_store::AgentRunStatus::Cancelled
                 } else {
+                    tracing::error!("Agent loop failed: {}", msg);
                     crate::project_store::AgentRunStatus::Failed
                 };
                 let _ = manager.finish_agent_run(&run_id, status, Some(msg)).await;

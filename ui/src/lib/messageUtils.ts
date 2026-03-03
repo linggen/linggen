@@ -663,56 +663,98 @@ export const dedupPlanMessages = (messages: ChatMessage[]): ChatMessage[] => {
   });
 };
 
+/** Check if a live message has rich ephemeral content worth preserving. */
+const hasRichContent = (m: ChatMessage): boolean =>
+  (m.activityEntries != null && m.activityEntries.length > 0) ||
+  (m.content != null && m.content.length > 0) ||
+  !!m.subagentTree ||
+  !!m.segments ||
+  !!m.toolCount ||
+  !!m.durationMs ||
+  !!m.contextTokens ||
+  (m.images != null && m.images.length > 0);
+
+/** Transfer rich ephemeral content from a live message to a persisted message. */
+const transferRichContent = (persisted: ChatMessage, live: ChatMessage): ChatMessage => ({
+  ...persisted,
+  content: live.content || persisted.content,
+  activityEntries: live.activityEntries || persisted.activityEntries,
+  activitySummary: live.activitySummary || persisted.activitySummary,
+  subagentTree: live.subagentTree || persisted.subagentTree,
+  segments: live.segments || persisted.segments,
+  toolCount: live.toolCount || persisted.toolCount,
+  durationMs: live.durationMs || persisted.durationMs,
+  contextTokens: live.contextTokens || persisted.contextTokens,
+  images: live.images || persisted.images,
+});
+
 export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] => {
   if (persisted.length === 0) {
-    // Keep generating messages and recent user messages (images are ephemeral
-    // and would be lost if we dropped them before the server persists the text).
-    return live.filter((m) => m.isGenerating || m.role === 'user' || m.from === 'user');
+    // Keep generating messages, user messages, and finalized messages with
+    // rich content (tool blocks, activity entries, etc.) — these hold
+    // irreplaceable ephemeral data that cannot be recovered once lost.
+    return live.filter((m) => m.isGenerating || m.role === 'user' || m.from === 'user' || hasRichContent(m));
   }
   if (live.length === 0) return dedupPlanMessages(persisted);
 
+  // Track which live messages have been matched so each is used at most once.
+  const mergedLiveIndices = new Set<number>();
+
+  // Pass 1: exact text match (existing logic).
   const persistedWithActivity = persisted.map((msg) => {
-    const matchingLive = live.find(
-      (candidate) =>
+    const matchIdx = live.findIndex(
+      (candidate, idx) =>
+        !mergedLiveIndices.has(idx) &&
         !candidate.isGenerating &&
         likelySameMessage(msg, candidate) &&
-        (
-          (candidate.activityEntries && candidate.activityEntries.length > 0) ||
-          (candidate.content && candidate.content.length > 0) ||
-          candidate.subagentTree ||
-          candidate.segments ||
-          candidate.toolCount ||
-          candidate.durationMs ||
-          candidate.contextTokens ||
-          (candidate.images && candidate.images.length > 0)
-        )
+        hasRichContent(candidate)
     );
-    if (!matchingLive) return msg;
-    return {
-      ...msg,
-      content: matchingLive.content || msg.content,
-      activityEntries: matchingLive.activityEntries || msg.activityEntries,
-      activitySummary: matchingLive.activitySummary || msg.activitySummary,
-      subagentTree: matchingLive.subagentTree || msg.subagentTree,
-      segments: matchingLive.segments || msg.segments,
-      toolCount: matchingLive.toolCount || msg.toolCount,
-      durationMs: matchingLive.durationMs || msg.durationMs,
-      contextTokens: matchingLive.contextTokens || msg.contextTokens,
-      images: matchingLive.images || msg.images,
-    };
+    if (matchIdx >= 0) {
+      mergedLiveIndices.add(matchIdx);
+      return transferRichContent(msg, live[matchIdx]);
+    }
+    return msg;
+  });
+
+  // Pass 2: fallback match for agent messages that didn't match in pass 1.
+  // Text may differ due to server-side sanitization (tool JSON → status lines).
+  // Match by same from/to + close timestamp (within 2 minutes).
+  const result = persistedWithActivity.map((msg) => {
+    // Already has rich content from pass 1.
+    if (hasRichContent(msg)) return msg;
+    // Only try fallback for agent messages.
+    if (msg.role === 'user' || msg.from === 'user') return msg;
+
+    const fallbackIdx = live.findIndex(
+      (candidate, idx) =>
+        !mergedLiveIndices.has(idx) &&
+        !candidate.isGenerating &&
+        (msg.from || msg.role) === (candidate.from || candidate.role) &&
+        Math.abs((msg.timestampMs ?? 0) - (candidate.timestampMs ?? 0)) <= 120_000 &&
+        hasRichContent(candidate)
+    );
+    if (fallbackIdx >= 0) {
+      mergedLiveIndices.add(fallbackIdx);
+      return transferRichContent(msg, live[fallbackIdx]);
+    }
+    return msg;
   });
 
   const now = Date.now();
   const uniqueExtras = live.filter(
-    (m) => {
+    (m, idx) => {
+      if (mergedLiveIndices.has(idx)) return false; // Already merged into a persisted msg.
       if (m.isGenerating) return true;
-      if (persistedWithActivity.some((p) => likelySameMessage(p, m))) return false;
+      if (result.some((p) => likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
+      // Never expire messages with tool content blocks — they hold irreplaceable
+      // ephemeral data (tool steps, activity) that cannot be recovered after loss.
+      if (m.content && m.content.length > 0) return true;
       const ts = m.timestampMs ?? now;
       return now - ts <= LIVE_MESSAGE_GRACE_MS;
     }
   );
-  const merged = [...persistedWithActivity, ...uniqueExtras];
+  const merged = [...result, ...uniqueExtras];
 
   return dedupPlanMessages(merged);
 };

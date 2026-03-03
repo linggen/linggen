@@ -1,3 +1,9 @@
+# Plan execution instructions injected when executing an approved plan.
+
+[default]
+description = "Instructions for executing an approved plan"
+vars = ["plan_text"]
+text = '''
 ## Executing Approved Plan
 
 The user has approved the following plan. Execute it step by step.
@@ -15,4 +21,4 @@ The user has approved the following plan. Execute it step by step.
 
 ### The Plan
 
-{plan_text}
+{plan_text}'''

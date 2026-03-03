@@ -208,15 +208,15 @@ impl AgentEngine {
 
     // Observations
 
-    pub(crate) fn observation_text(observation_type: &str, name: &str, content: &str) -> String {
-        format!(
-            "Observation:\ntype: {}\nname: {}\ncontent:\n{}",
-            observation_type, name, content
+    pub(crate) fn observation_text(&self, observation_type: &str, name: &str, content: &str) -> String {
+        self.prompt_store.render_or_fallback(
+            crate::prompts::keys::OBSERVATION_WRAPPER,
+            &[("type", observation_type), ("name", name), ("content", content)],
         )
     }
 
-    pub(crate) fn observation_for_model(obs: &ObservationRecord) -> String {
-        Self::observation_text(&obs.observation_type, &obs.name, &obs.content)
+    pub(crate) fn observation_for_model(&self, obs: &ObservationRecord) -> String {
+        self.observation_text(&obs.observation_type, &obs.name, &obs.content)
     }
 
     pub(crate) fn upsert_observation(
@@ -299,7 +299,7 @@ impl AgentEngine {
 
     /// Richer summary that extracts structured facts from dropped messages:
     /// file paths mentioned, error messages, tool outcomes.
-    fn summarize_message_window_rich(window: &[&ChatMessage]) -> String {
+    fn summarize_message_window_rich(&self, window: &[&ChatMessage]) -> String {
         let mut written_files: Vec<String> = Vec::new();
         let mut read_files: Vec<String> = Vec::new();
         let mut error_snippets: Vec<String> = Vec::new();
@@ -314,7 +314,10 @@ impl AgentEngine {
             }
         }
 
-        let mut summary = format!("Context summary (compressed {} messages).", window.len());
+        let mut summary = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::COMPACTION_SUMMARY,
+            &[("count", &window.len().to_string())],
+        );
         if !written_files.is_empty() {
             let files: Vec<&str> = written_files.iter().take(10).map(|s| s.as_str()).collect();
             summary.push_str(&format!("\nWrote: {}", files.join(", ")));
@@ -456,7 +459,7 @@ impl AgentEngine {
 
             // Build richer summary from dropped messages.
             let drop_refs: Vec<&ChatMessage> = drop_indices.iter().map(|&i| &window_msgs[i]).collect();
-            let summary = Self::summarize_message_window_rich(&drop_refs);
+            let summary = self.summarize_message_window_rich(&drop_refs);
 
             // Collect kept high-importance messages.
             let kept_msgs: Vec<ChatMessage> = keep_indices

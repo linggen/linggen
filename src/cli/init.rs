@@ -6,6 +6,10 @@ use std::path::PathBuf;
 const DEFAULT_AGENTS: &[(&str, &str)] = &[
     ("ling.md", include_str!("../../agents/ling.md")),
     ("coder.md", include_str!("../../agents/coder.md")),
+    ("debugger.md", include_str!("../../agents/debugger.md")),
+    ("explorer.md", include_str!("../../agents/explorer.md")),
+    ("general.md", include_str!("../../agents/general.md")),
+    ("linggen-guide.md", include_str!("../../agents/linggen-guide.md")),
 ];
 
 pub async fn run(global: bool, root: Option<PathBuf>) -> Result<()> {
@@ -47,24 +51,15 @@ pub async fn run(global: bool, root: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn install_default_agents() -> Result<()> {
+/// Install (or update) built-in agent specs to `~/.linggen/agents/`.
+/// Always overwrites to keep agents in sync with the binary version.
+pub fn install_default_agents() -> Result<()> {
     let agents_dir = crate::paths::global_agents_dir();
     std::fs::create_dir_all(&agents_dir)?;
 
-    let mut installed = Vec::new();
     for (filename, content) in DEFAULT_AGENTS {
         let dest = agents_dir.join(filename);
-        if !dest.exists() {
-            std::fs::write(&dest, content)?;
-            installed.push(*filename);
-        }
-    }
-
-    if !installed.is_empty() {
-        println!("Installed default agents to {}:", agents_dir.display());
-        for name in &installed {
-            println!("  - {}", name);
-        }
+        std::fs::write(&dest, content)?;
     }
 
     Ok(())

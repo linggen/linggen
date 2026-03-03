@@ -117,6 +117,7 @@ mod tests {
             keep_alive: None,
             context_window: None,
             tags: Vec::new(),
+            supports_tools: None,
         }
     }
 
@@ -130,6 +131,7 @@ mod tests {
             keep_alive: None,
             context_window: None,
             tags: Vec::new(),
+            supports_tools: None,
         }
     }
 

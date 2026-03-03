@@ -1,0 +1,25 @@
+# First user message that bootstraps the agent loop.
+# Category: environment snapshot (per Claude Code conventions)
+
+[default]
+description = "Initial user message with workspace info and task"
+vars = ["ws_root", "platform", "role", "workspace_listing", "task"]
+text = '''
+Autonomous agent loop started. Ignore any prior greetings or small talk.
+
+Workspace root: {ws_root}
+Platform: {platform}
+Current Role: {role}
+
+Global paths (outside workspace, accessible via absolute paths):
+- ~/.linggen/agents/ — installed agent specs
+- ~/.linggen/skills/ — installed skills (each skill is a directory with SKILL.md)
+- ~/.linggen/config/ — configuration files
+- ~/.linggen/logs/ — log files
+
+Workspace contents:
+{workspace_listing}
+
+Task: {task}
+
+Work through this task step by step. Use tools to explore the codebase before making changes. When finished, emit a done action with a summary of what was accomplished.'''

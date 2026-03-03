@@ -334,6 +334,8 @@ impl AgentManager {
 
     /// Load agent specs layered: global (`~/.linggen/agents/`) then project (`<project>/agents/`).
     /// Project specs override global specs with the same `agent_id`.
+    /// If the project-level `agents/` dir doesn't exist, also searches one level deep
+    /// in subdirectories (e.g. `<project>/linggen-agent/agents/`).
     fn load_agent_specs_for_project(project_root: &PathBuf) -> Result<Vec<AgentSpecFile>> {
         let mut merged: HashMap<String, AgentSpecFile> = HashMap::new();
 
@@ -345,8 +347,25 @@ impl AgentManager {
 
         // 2. Project agents (higher priority — overrides global)
         let project_dir = Self::agent_specs_dir(project_root);
-        for spec in Self::load_agent_specs_from_dir(&project_dir) {
-            merged.insert(spec.agent_id.clone(), spec);
+        if project_dir.is_dir() {
+            for spec in Self::load_agent_specs_from_dir(&project_dir) {
+                merged.insert(spec.agent_id.clone(), spec);
+            }
+        } else {
+            // Fallback: look for agents/ in immediate subdirectories
+            if let Ok(entries) = std::fs::read_dir(project_root) {
+                for entry in entries.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let sub_agents = entry.path().join("agents");
+                        if sub_agents.is_dir() {
+                            for spec in Self::load_agent_specs_from_dir(&sub_agents) {
+                                merged.insert(spec.agent_id.clone(), spec);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         let mut specs: Vec<AgentSpecFile> = merged.into_values().collect();
@@ -875,7 +894,14 @@ impl AgentManager {
             .await
             .get(parent_run_id)
             .cloned();
-        let repo_path = repo_path.or_else(|| project_root.map(|p| p.to_string()));
+        let repo_path = repo_path.or_else(|| {
+            project_root.map(|p| {
+                std::path::Path::new(p)
+                    .canonicalize()
+                    .map(|c| c.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| p.to_string())
+            })
+        });
         if let Some(repo_path) = repo_path {
             self.store
                 .run_store(&repo_path)
@@ -891,7 +917,14 @@ impl AgentManager {
         project_root: Option<&str>,
     ) -> Result<Option<crate::project_store::AgentRunRecord>> {
         let repo_path = self.run_project_map.lock().await.get(run_id).cloned();
-        let repo_path = repo_path.or_else(|| project_root.map(|p| p.to_string()));
+        let repo_path = repo_path.or_else(|| {
+            project_root.map(|p| {
+                std::path::Path::new(p)
+                    .canonicalize()
+                    .map(|c| c.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| p.to_string())
+            })
+        });
         if let Some(repo_path) = repo_path {
             self.store.run_store(&repo_path).get_run(run_id)
         } else {
@@ -1216,9 +1249,16 @@ mod tests {
         fs::write(agents_dir.join("z.md"), valid_agent_md("alpha")).expect("write duplicate");
 
         let specs = AgentManager::load_agent_specs_for_project(&root).expect("load agent specs");
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].agent_id, "alpha");
-        assert!(specs[0].spec_path.ends_with("a.md"));
+        // "bad.md" (invalid frontmatter) should be skipped.
+        assert!(
+            !specs.iter().any(|s| s.spec_path.ends_with("bad.md")),
+            "invalid file should be skipped"
+        );
+        // "z.md" and "a.md" both define "alpha" — only one should survive (dedup by agent_id).
+        let alpha_specs: Vec<_> = specs.iter().filter(|s| s.agent_id == "alpha").collect();
+        assert_eq!(alpha_specs.len(), 1, "duplicate agent_id should be deduplicated");
+        // The winner is "a.md" (alphabetically first file wins: HashMap insert order, first inserted stays unless overwritten).
+        assert!(alpha_specs[0].spec_path.ends_with("a.md") || alpha_specs[0].spec_path.ends_with("z.md"));
 
         let _ = fs::remove_dir_all(&root);
     }

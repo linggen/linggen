@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -54,6 +55,86 @@ pub(crate) async fn list_files(
             }
         }
     }
+    Json(entries).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FileSearchQuery {
+    project_root: String,
+    query: Option<String>,
+    limit: Option<usize>,
+}
+
+pub(crate) async fn search_files(
+    State(_state): State<Arc<ServerState>>,
+    Query(query): Query<FileSearchQuery>,
+) -> impl IntoResponse {
+    let project_root = PathBuf::from(&query.project_root);
+    let canonical_root = match project_root.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let limit = query.limit.unwrap_or(50);
+    let search = query
+        .query
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase();
+
+    let walker = WalkBuilder::new(&canonical_root)
+        .standard_filters(true)
+        .hidden(true)
+        .build();
+
+    let mut results: Vec<(String, bool)> = Vec::new();
+    for entry in walker {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let abs_path = entry.path();
+        let rel = match abs_path.strip_prefix(&canonical_root) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let rel_str = rel.to_string_lossy().to_string();
+        if rel_str.is_empty() {
+            continue;
+        }
+        if !search.is_empty() && !rel_str.to_lowercase().contains(&search) {
+            continue;
+        }
+        results.push((rel_str, is_dir));
+    }
+
+    // Sort: exact filename matches first, then by path length, then alphabetical
+    results.sort_by(|(a_path, _), (b_path, _)| {
+        let a_name = a_path.rsplit('/').next().unwrap_or(a_path).to_lowercase();
+        let b_name = b_path.rsplit('/').next().unwrap_or(b_path).to_lowercase();
+        let a_exact = a_name.contains(&search);
+        let b_exact = b_name.contains(&search);
+        b_exact
+            .cmp(&a_exact)
+            .then_with(|| a_path.len().cmp(&b_path.len()))
+            .then_with(|| a_path.cmp(b_path))
+    });
+
+    results.truncate(limit);
+
+    let entries: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(path, is_dir)| {
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            serde_json::json!({
+                "name": name,
+                "isDir": is_dir,
+                "path": path,
+            })
+        })
+        .collect();
+
     Json(entries).into_response()
 }
 

@@ -1,0 +1,66 @@
+# Tool result messages shown to the model after tool execution.
+# Category: tool-result (model-visible feedback)
+
+[file_not_found_memory]
+description = "Read result when a memory file does not exist yet"
+vars = ["path"]
+text = "file_not_found: {path} - Memory file does not exist yet. Use Write to create it."
+
+[file_not_found_exhausted]
+description = "Read result after smart search finds no candidates at all"
+vars = ["rel", "filename"]
+text = "file_not_found: {rel} - I searched the whole repository for '{filename}' (including case-insensitive and partial matches) but found nothing. Please verify the filename or use 'Glob' to explore the directory structure."
+
+[read_is_directory]
+description = "Read result when path points to a directory"
+vars = ["path"]
+text = "path '{path}' is a directory. Use Glob to enumerate files, then Read with an exact file path."
+
+[smart_search_redirect]
+description = "Note prepended when Read auto-resolves a single candidate"
+vars = ["original", "found"]
+text = "Note: Original path '{original}' not found. Automatically found and read '{found}' instead."
+
+[smart_search_redirect_multi]
+description = "Note prepended when Read auto-resolves with multiple candidates"
+vars = ["original", "count", "found", "others"]
+text = "Note: Original path '{original}' not found. Found {count} candidate files, reading '{found}'. Others: {others}"
+
+[askuser_subagent_blocked]
+description = "AskUser result when called from a delegated sub-agent"
+text = "AskUser is not available for delegated sub-agents. Return your question to the parent agent instead."
+
+[askuser_cli_blocked]
+description = "AskUser result when no UI bridge is available (CLI mode)"
+text = "AskUser is not available in CLI mode."
+
+[askuser_cancelled]
+description = "AskUser result when the question is dismissed"
+text = "AskUser cancelled: the question was dismissed."
+
+[askuser_timeout]
+description = "AskUser result when no response arrives within timeout"
+text = "AskUser timed out: no response within 5 minutes."
+
+[plan_submitted]
+description = "ExitPlanMode tool result acknowledging plan submission"
+text = "Plan submitted for review."
+
+[plan_updated]
+description = "UpdatePlan action acknowledgement"
+vars = ["count"]
+text = "Plan updated with {count} items."
+
+[done_default]
+description = "Default message for Done action when no message is provided"
+text = "Task completed."
+
+[observation_wrapper]
+description = "Format for observation messages fed back to the model"
+vars = ["type", "name", "content"]
+text = "Observation:\ntype: {type}\nname: {name}\ncontent:\n{content}"
+
+[compaction_summary]
+description = "Prefix for context compaction summary messages"
+vars = ["count"]
+text = "Context summary (compressed {count} messages)."

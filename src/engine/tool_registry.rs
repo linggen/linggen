@@ -81,6 +81,21 @@ impl ToolRegistry {
         serde_json::json!({ "tools": tools_arr }).to_string()
     }
 
+    /// Build OpenAI-compatible tool definitions for native function calling.
+    /// Merges builtin tool schemas with skill tool schemas, filtered by allowed set.
+    pub fn oai_tool_definitions(&self, allowed: Option<&HashSet<String>>) -> Vec<serde_json::Value> {
+        let mut defs = tools::json_schema::oai_tool_definitions(allowed);
+        for (name, def) in &self.skill_tools {
+            if let Some(set) = allowed {
+                if !set.contains(name) {
+                    continue;
+                }
+            }
+            defs.push(def.to_oai_schema());
+        }
+        defs
+    }
+
     pub fn register_skill_tool(&mut self, tool: SkillToolDef) {
         self.skill_tools.insert(tool.name.clone(), tool);
     }

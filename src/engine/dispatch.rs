@@ -30,7 +30,10 @@ impl AgentEngine {
                     Err(e) => {
                         messages.push(ChatMessage::new(
                             "user",
-                            format!("Invalid Task args: {}", e),
+                            self.prompt_store.render_or_fallback(
+                                crate::prompts::keys::INVALID_TASK_ARGS,
+                                &[("error", &e.to_string())],
+                            ),
                         ));
                     }
                 }
@@ -47,9 +50,9 @@ impl AgentEngine {
                 for da in &delegation_args {
                     messages.push(ChatMessage::new(
                         "user",
-                        format!(
-                            "Tool 'Task' is not allowed for this agent. Delegation to '{}' blocked.",
-                            da.target_agent_id
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::DELEGATION_BLOCKED,
+                            &[("target", &da.target_agent_id)],
                         ),
                     ));
                 }
@@ -85,7 +88,10 @@ impl AgentEngine {
                 Err(e) => {
                     messages.push(ChatMessage::new(
                         "user",
-                        format!("Delegation to '{}' failed validation: {}", da.target_agent_id, e),
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::DELEGATION_VALIDATION_FAILED,
+                            &[("target", &da.target_agent_id), ("error", &e.to_string())],
+                        ),
                     ));
                     let rendered = format!(
                         "tool_error: tool=Task target={} error={}",
@@ -157,7 +163,7 @@ impl AgentEngine {
                         .await;
                     messages.push(ChatMessage::new(
                         "user",
-                        Self::observation_text(
+                        self.observation_text(
                             "tool",
                             &format!("Task({})", target),
                             &rendered,
@@ -174,7 +180,10 @@ impl AgentEngine {
                         .await;
                     messages.push(ChatMessage::new(
                         "user",
-                        format!("Delegation to '{}' failed: {}", target, e),
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::DELEGATION_FAILED,
+                            &[("target", &target), ("error", &e.to_string())],
+                        ),
                     ));
                     self.upsert_observation("error", "Task", rendered);
                 }
@@ -308,7 +317,10 @@ impl AgentEngine {
                 } else {
                     state.messages.push(ChatMessage::new(
                         "user",
-                        "ExitPlanMode: not currently in plan mode.",
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::EXIT_PLAN_MODE_OUTSIDE_PLAN,
+                            &[],
+                        ),
                     ));
                 }
             }
@@ -339,7 +351,12 @@ impl AgentEngine {
                 }
             }
             ModelAction::Done { message } => {
-                let msg = message.unwrap_or_else(|| "Task completed.".to_string());
+                let msg = message.unwrap_or_else(|| {
+                    self.prompt_store.render_or_fallback(
+                        crate::prompts::keys::DONE_DEFAULT,
+                        &[],
+                    )
+                });
                 info!("Done: {}", msg);
                 self.push_context_record(
                     ContextType::Status, Some("done".to_string()),
@@ -406,7 +423,10 @@ impl AgentEngine {
         };
         self.persist_and_emit_plan(plan).await;
 
-        let ack = format!("Plan updated with {} items.", items.len());
+        let ack = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::PLAN_UPDATED,
+            &[("count", &items.len().to_string())],
+        );
         info!("UpdatePlan: {}", ack);
 
         // Push acknowledgement to model messages so it sees the feedback.

@@ -172,10 +172,9 @@ impl AgentEngine {
                     .await;
                 messages.push(ChatMessage::new(
                     "user",
-                    format!(
-                        "Tool '{}' is not allowed for this agent. Use one of [{}].",
-                        tool,
-                        allowed_list.join(", ")
+                    self.prompt_store.render_or_fallback(
+                        crate::prompts::keys::TOOL_NOT_ALLOWED,
+                        &[("tool", &tool), ("allowed_list", &allowed_list.join(", "))],
                     ),
                 ));
                 return PreExecOutcome::Blocked(LoopControl::Continue);
@@ -220,9 +219,9 @@ impl AgentEngine {
                                 .await;
                             messages.push(ChatMessage::new(
                                 "user",
-                                format!(
-                                    "Tool execution blocked for safety: {}. Read the existing file first, then apply a minimal update.",
-                                    rendered,
+                                self.prompt_store.render_or_fallback(
+                                    crate::prompts::keys::WRITE_SAFETY_BLOCKED,
+                                    &[("rendered", &rendered)],
                                 ),
                             ));
                             return PreExecOutcome::Blocked(LoopControl::Continue);
@@ -293,14 +292,19 @@ impl AgentEngine {
                         self.permission_store.allow_for_project(&key);
                     }
                     Some((permission::PermissionAction::Deny, _)) => {
-                        let msg =
-                            format!("Permission denied: Bash on '{}'", summary);
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_DENIED,
+                            &[("tool", "Bash"), ("summary", &summary)],
+                        );
                         messages.push(ChatMessage::new("user", msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
                         // Timeout or no bridge — stop the loop so the agent goes idle.
-                        let msg = "Permission prompt timed out. Stopping.".to_string();
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_TIMEOUT,
+                            &[],
+                        );
                         let _ = self
                             .manager_db_add_assistant_message(&msg, session_id)
                             .await;
@@ -320,13 +324,18 @@ impl AgentEngine {
                         self.permission_store.allow_for_session(&canonical_tool);
                     }
                     Some(permission::PermissionAction::Deny) => {
-                        let msg =
-                            format!("Permission denied: {} on '{}'", canonical_tool, summary);
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_DENIED,
+                            &[("tool", &canonical_tool), ("summary", &summary)],
+                        );
                         messages.push(ChatMessage::new("user", msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
-                        let msg = "Permission prompt timed out. Stopping.".to_string();
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_TIMEOUT,
+                            &[],
+                        );
                         let _ = self
                             .manager_db_add_assistant_message(&msg, session_id)
                             .await;
@@ -348,13 +357,18 @@ impl AgentEngine {
                         self.permission_store.allow_for_project(&canonical_tool);
                     }
                     Some(permission::PermissionAction::Deny) => {
-                        let msg =
-                            format!("Permission denied: {} on '{}'", canonical_tool, summary);
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_DENIED,
+                            &[("tool", &canonical_tool), ("summary", &summary)],
+                        );
                         messages.push(ChatMessage::new("user", msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
-                        let msg = "Permission prompt timed out. Stopping.".to_string();
+                        let msg = self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PERMISSION_TIMEOUT,
+                            &[],
+                        );
                         let _ = self
                             .manager_db_add_assistant_message(&msg, session_id)
                             .await;
@@ -382,7 +396,7 @@ impl AgentEngine {
                 .as_deref()
                 .map(|template| Self::render_loop_breaker_prompt(template, &canonical_tool))
                 .unwrap_or_else(|| {
-                    self.nudge(crate::prompts::NUDGE_REDUNDANT_TOOL, &[("tool", &canonical_tool)])
+                    self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REDUNDANT_TOOL, &[("tool", &canonical_tool)])
                 });
             messages.push(ChatMessage::new("user", loop_breaker_prompt));
             self.push_context_record(
@@ -404,7 +418,7 @@ impl AgentEngine {
             self.upsert_observation("tool", &canonical_tool, cached.model.clone());
             messages.push(ChatMessage::new(
                 "user",
-                Self::observation_text("tool", &canonical_tool, &cached.model),
+                self.observation_text("tool", &canonical_tool, &cached.model),
             ));
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
@@ -478,6 +492,7 @@ impl AgentEngine {
                 tool_done_status,
                 tool_failed_status,
                 block_id,
+                tool_call_id: None,
             },
         )
     }
@@ -501,6 +516,7 @@ impl AgentEngine {
             tool_done_status,
             tool_failed_status,
             block_id,
+            tool_call_id: _,
         } = exec;
 
         match result {
@@ -612,7 +628,7 @@ impl AgentEngine {
 
                 let obs_msg = ChatMessage::new(
                     "user",
-                    Self::observation_text("tool", &canonical_tool, &rendered_model),
+                    self.observation_text("tool", &canonical_tool, &rendered_model),
                 );
 
                 // Assign importance based on tool type and result.
@@ -623,25 +639,32 @@ impl AgentEngine {
                         || rendered_model.contains("no file candidates found"))
                 {
                     MessageImportance::Low
-                } else if canonical_tool == "Glob" && rendered_model.contains("(no matches)") {
+                } else if canonical_tool == "Glob" && rendered_model.contains("(no files)") {
                     MessageImportance::Low
                 } else {
                     MessageImportance::Normal
                 };
                 self.push_tracked_message(messages, obs_msg, importance);
 
-                if canonical_tool == "Grep"
-                    && (rendered_model.contains("(no matches)")
-                        || rendered_model.contains("no file candidates found"))
-                {
+                let is_empty_search =
+                    (canonical_tool == "Grep"
+                        && (rendered_model.contains("(no matches)")
+                            || rendered_model.contains("no file candidates found")))
+                    || (canonical_tool == "Glob" && rendered_model.contains("(no files)"));
+                if is_empty_search {
                     *empty_search_streak += 1;
-                } else {
+                } else if matches!(canonical_tool.as_str(), "Grep" | "Glob") {
+                    // Only reset streak on successful search tools — non-search tools
+                    // (Read, Edit, Bash) shouldn't break a search streak.
                     *empty_search_streak = 0;
                 }
                 if *empty_search_streak >= 4 {
                     messages.push(ChatMessage::new(
                         "user",
-                        "Grep returned no matches repeatedly. Change strategy and continue automatically (for example: broaden terms, use Glob to inspect files, then Read likely paths).",
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::NUDGE_EMPTY_SEARCH,
+                            &[],
+                        ),
                     ));
                     self.push_context_record(
                         ContextType::Error,
@@ -696,9 +719,9 @@ impl AgentEngine {
                 }
                 let err_msg = ChatMessage::new(
                     "user",
-                    format!(
-                        "Tool execution failed for tool='{}'. Error: {}. Choose a valid tool+args from the tool schema and try again.",
-                        canonical_tool, e
+                    self.prompt_store.render_or_fallback(
+                        crate::prompts::keys::TOOL_EXEC_FAILED,
+                        &[("tool", &canonical_tool), ("error", &e.to_string())],
                     ),
                 );
                 self.push_tracked_message(messages, err_msg, MessageImportance::High);
@@ -849,9 +872,9 @@ impl AgentEngine {
 
         *nudge_count += 1;
         if *nudge_count >= 2 {
-            let message = format!(
-                "I couldn't continue automatically because I got stuck in a repetition loop (same response {} times).",
-                *streak + 1
+            let message = self.prompt_store.render_or_fallback(
+                crate::prompts::keys::BAILOUT_REPETITION_LOOP,
+                &[("count", &(*streak + 1).to_string())],
             );
             let _ = self
                 .manager_db_add_assistant_message(&message, session_id)
@@ -862,7 +885,7 @@ impl AgentEngine {
 
         messages.push(ChatMessage::new(
             "user",
-            self.nudge(crate::prompts::NUDGE_REPETITION, &[]),
+            self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REPETITION, &[]),
         ));
         self.push_context_record(
             ContextType::Error,

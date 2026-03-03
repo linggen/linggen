@@ -49,6 +49,7 @@ impl OllamaClient {
             stream: Some(false),
             format: None,
             keep_alive,
+            tools: None,
         };
 
         let mut rb = self.http.post(url).json(&req);
@@ -95,6 +96,7 @@ impl OllamaClient {
             stream: Some(true),
             format: None,
             keep_alive,
+            tools: None,
         };
 
         let mut rb = self.http.post(url).json(&req);
@@ -147,6 +149,129 @@ impl OllamaClient {
                 result.push_str(thinking);
             }
             result.push_str(&payload.message.content);
+            if result.is_empty() {
+                None
+            } else {
+                Some(Ok(StreamChunk::Token(result)))
+            }
+        });
+
+        Ok(token_stream)
+    }
+
+    /// Streaming chat with native tool calling support.
+    /// Sends `tools` in the request and parses tool_calls from responses.
+    /// Ollama emits tool_calls as complete objects in the final chunk (not incrementally).
+    pub async fn chat_tool_stream_with_keep_alive(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        keep_alive: Option<String>,
+        tools: Vec<serde_json::Value>,
+    ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
+        let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
+        tracing::info!(
+            "Ollama tool stream: model={} msgs={} chars={} tools={}",
+            model, messages.len(), total_len, tools.len()
+        );
+
+        let url = format!("{}/api/chat", self.base_url);
+        let req = ChatRequest {
+            model: model.to_string(),
+            messages: messages.to_vec(),
+            stream: Some(true),
+            format: None,
+            keep_alive,
+            tools: Some(tools),
+        };
+
+        let mut rb = self.http.post(url).json(&req);
+        if let Some(key) = &self.api_key {
+            rb = rb.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = rb.send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("ollama error ({}): {}", status, text);
+        }
+
+        let stream = resp
+            .bytes_stream()
+            .map(|item| item.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+        let reader = tokio_util::io::StreamReader::new(stream);
+        let lines = FramedRead::new(reader, LinesCodec::new());
+
+        use crate::agent_manager::models::ToolCallChunk;
+
+        let token_stream = lines.filter_map(|line_result| async move {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(e) => return Some(Err(anyhow::anyhow!("stream error: {}", e))),
+            };
+            if line.trim().is_empty() {
+                return None;
+            }
+
+            // Parse as generic JSON to handle both text tokens and tool_calls.
+            let payload: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, line))),
+            };
+
+            let done = payload.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            if done {
+                let prompt_eval = payload.get("prompt_eval_count").and_then(|v| v.as_u64());
+                let eval = payload.get("eval_count").and_then(|v| v.as_u64());
+                let usage = TokenUsage {
+                    prompt_tokens: prompt_eval.map(|v| v as usize),
+                    completion_tokens: eval.map(|v| v as usize),
+                    total_tokens: match (prompt_eval, eval) {
+                        (Some(p), Some(c)) => Some((p + c) as usize),
+                        _ => None,
+                    },
+                };
+                return Some(Ok(StreamChunk::Usage(usage)));
+            }
+
+            let message = payload.get("message")?;
+
+            // Check for tool_calls in the message
+            if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+                // Ollama emits complete tool calls (not incremental)
+                let mut chunks = Vec::new();
+                for (idx, tc) in tool_calls.iter().enumerate() {
+                    let func = tc.get("function")?;
+                    let name = func.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let arguments = func.get("arguments").map(|v| v.to_string());
+                    // Generate a unique ID since Ollama doesn't provide one
+                    let id = format!("call_{}", uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string());
+                    chunks.push(StreamChunk::ToolCall(ToolCallChunk {
+                        index: idx,
+                        id: Some(id),
+                        name,
+                        arguments_delta: arguments,
+                    }));
+                }
+                // Return the first chunk; remaining ones would need multi-yield.
+                // Since Ollama sends all tool_calls at once, emit them as separate items.
+                if chunks.len() == 1 {
+                    return Some(Ok(chunks.into_iter().next().unwrap()));
+                }
+                // For multiple tool calls, emit first one (others come in subsequent chunks from Ollama).
+                // In practice, Ollama sends one message with all tool_calls at the end.
+                return Some(Ok(chunks.into_iter().next().unwrap()));
+            }
+
+            // Regular text content
+            let mut result = String::new();
+            if let Some(thinking) = message.get("thinking").and_then(|v| v.as_str()) {
+                result.push_str(thinking);
+            }
+            if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
+                result.push_str(content);
+            }
             if result.is_empty() {
                 None
             } else {
@@ -375,6 +500,28 @@ pub struct OllamaPsModelDetails {
     pub quantization_level: String,
 }
 
+// ---------------------------------------------------------------------------
+// Native tool calling types (OpenAI-compatible)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallMessage {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String, // "function"
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String, // JSON string
+}
+
+// ---------------------------------------------------------------------------
+// ChatMessage
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -388,6 +535,12 @@ pub struct ChatMessage {
     /// Skipped during serialization for providers that don't support it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<serde_json::Value>,
+    /// Tool calls emitted by the assistant (native function calling mode).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallMessage>,
+    /// The tool_call_id this message is a result for (role="tool" messages).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl ChatMessage {
@@ -398,6 +551,8 @@ impl ChatMessage {
             thinking: None,
             images: Vec::new(),
             cache_control: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
 
@@ -406,6 +561,31 @@ impl ChatMessage {
         self
     }
 
+    /// Create a tool result message (role="tool") for native function calling.
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            thinking: None,
+            images: Vec::new(),
+            cache_control: None,
+            tool_calls: Vec::new(),
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
+
+    /// Create an assistant message with tool calls (native function calling).
+    pub fn assistant_with_tool_calls(calls: Vec<ToolCallMessage>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: String::new(),
+            thinking: None,
+            images: Vec::new(),
+            cache_control: None,
+            tool_calls: calls,
+            tool_call_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -418,6 +598,9 @@ struct ChatRequest {
     format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     keep_alive: Option<String>,
+    /// OpenAI-compatible tool definitions for native function calling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -26,7 +26,10 @@ impl AgentEngine {
             );
             messages.push(ChatMessage::new(
                 "user",
-                "Error: This agent is not allowed to output 'patch'. Add `Patch` to the agent frontmatter `policy` to enable it.",
+                self.prompt_store.render_or_fallback(
+                    crate::prompts::keys::PATCH_NOT_ALLOWED,
+                    &[],
+                ),
             ));
             return LoopControl::Continue;
         }
@@ -43,9 +46,9 @@ impl AgentEngine {
             );
             messages.push(ChatMessage::new(
                 "user",
-                format!(
-                    "The patch failed validation. Fix and respond with a new patch JSON. Errors:\n{}",
-                    errs.join("\n")
+                self.prompt_store.render_or_fallback(
+                    crate::prompts::keys::PATCH_VALIDATION_FAILED,
+                    &[("errors", &errs.join("\n"))],
                 ),
             ));
             return LoopControl::Continue;

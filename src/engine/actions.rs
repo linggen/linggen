@@ -262,6 +262,41 @@ pub fn text_before_first_json(raw: &str) -> String {
     trimmed[..start].trim().to_string()
 }
 
+/// Heuristic: does plain text (no JSON) look like a substantive final answer
+/// rather than the model "thinking out loud"?
+///
+/// Returns `true` when the text is long enough to be a real answer AND doesn't
+/// start with phrases that signal the model intends to keep working.
+pub fn looks_like_final_answer(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    // Too short to be a real answer — likely thinking or a fragment.
+    if trimmed.len() < 200 {
+        return false;
+    }
+    // Starts with planning/thinking phrases → model wants to continue.
+    let lower = trimmed.to_lowercase();
+    let thinking_prefixes = [
+        "i need to ",
+        "i should ",
+        "i'll ",
+        "i will ",
+        "let me ",
+        "first, ",
+        "next, ",
+        "now i ",
+        "to do this",
+        "my plan is",
+        "the approach",
+        "step 1",
+    ];
+    for prefix in &thinking_prefixes {
+        if lower.starts_with(prefix) {
+            return false;
+        }
+    }
+    true
+}
+
 fn truncate_text_chars(s: &str, max_chars: usize) -> String {
     let count = s.chars().count();
     if count <= max_chars {
@@ -325,7 +360,10 @@ pub fn model_message_log_parts(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_all_actions, parse_first_action, text_before_first_json, ModelAction};
+    use super::{
+        looks_like_final_answer, parse_all_actions, parse_first_action, text_before_first_json,
+        ModelAction,
+    };
 
     #[test]
     fn parse_first_action_preserves_generic_types_in_write_content() {
@@ -672,5 +710,26 @@ Now let me also search:
     fn text_before_first_json_trims_whitespace() {
         let raw = r#"  I'll fix this.  {"type":"done","message":"ok"}"#;
         assert_eq!(text_before_first_json(raw), "I'll fix this.");
+    }
+
+    #[test]
+    fn looks_like_final_answer_short_text_is_not_final() {
+        assert!(!looks_like_final_answer("I need to read the file first."));
+        assert!(!looks_like_final_answer("Let me check that."));
+        assert!(!looks_like_final_answer(""));
+    }
+
+    #[test]
+    fn looks_like_final_answer_thinking_prefix_is_not_final() {
+        let long_thinking = format!("I need to {}", "x".repeat(300));
+        assert!(!looks_like_final_answer(&long_thinking));
+        let long_planning = format!("Let me {}", "x".repeat(300));
+        assert!(!looks_like_final_answer(&long_planning));
+    }
+
+    #[test]
+    fn looks_like_final_answer_long_substantive_text_is_final() {
+        let review = format!("## Code Review\n\nThe logging module is well-structured. {}", "Details here. ".repeat(30));
+        assert!(looks_like_final_answer(&review));
     }
 }

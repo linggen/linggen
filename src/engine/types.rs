@@ -110,7 +110,7 @@ pub struct AgentEngine {
     pub role: AgentRole,
     pub task: Option<String>,
     /// Prompt template store (loaded from ~/.linggen/prompts/ with embedded fallbacks).
-    pub prompt_store: crate::prompts::PromptStore,
+    pub prompt_store: std::sync::Arc<crate::prompts::PromptStore>,
     // Agent spec and runtime context
     pub spec: Option<AgentSpec>,
     pub spec_system_prompt: Option<String>,
@@ -206,6 +206,16 @@ pub(crate) struct ReadyExec {
     pub tool_failed_status: String,
     /// Unique ID for the content block (used by Web UI content-block events).
     pub block_id: String,
+    /// The tool_call_id from native function calling (for threading results back).
+    pub tool_call_id: Option<String>,
+}
+
+/// A fully parsed tool call from native function calling.
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Result of streaming model output, including early-detected first action.
@@ -214,6 +224,8 @@ pub(crate) struct StreamResult {
     pub token_usage: Option<crate::agent_manager::models::TokenUsage>,
     /// First action detected mid-stream (avoids re-parsing it later).
     pub first_action: Option<(super::actions::ModelAction, usize)>,
+    /// Tool calls from native function calling (empty in legacy mode).
+    pub tool_calls: Vec<ParsedToolCall>,
 }
 
 /// Cached system prompt with hash for quick staleness checks.
@@ -265,8 +277,7 @@ impl AgentEngine {
         model_id: String,
         role: AgentRole,
     ) -> Result<Self> {
-        let builtins = tools::Tools::new(cfg.ws_root.clone())?;
-        let tools = ToolRegistry::new(builtins);
+        let mut builtins = tools::Tools::new(cfg.ws_root.clone())?;
         // Load project-scoped permissions from {workspace}/.linggen/permissions.json
         let perm_store = {
             let linggen_dir = cfg.ws_root.join(".linggen");
@@ -274,12 +285,10 @@ impl AgentEngine {
         };
         let prompt_store = {
             let override_dir = crate::prompts::PromptStore::default_override_dir();
-            crate::prompts::PromptStore::load(if override_dir.is_dir() {
-                Some(override_dir.as_path())
-            } else {
-                None
-            })
+            std::sync::Arc::new(crate::prompts::PromptStore::load(Some(override_dir.as_path())))
         };
+        builtins.set_prompt_store(std::sync::Arc::clone(&prompt_store));
+        let tools = ToolRegistry::new(builtins);
         Ok(Self {
             cfg,
             model_manager,

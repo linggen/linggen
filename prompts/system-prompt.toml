@@ -1,0 +1,76 @@
+# Static system prompt sections assembled into the system prompt.
+# Category: system-prompt-* (per Claude Code conventions)
+
+[fallback_identity]
+description = "Default system prompt when no agent spec is configured"
+text = "You are a helpful AI assistant."
+
+[skills_header]
+description = "Section header listing available skills for the Skill tool"
+text = "\n\n## Available Skills\n\nUse the `Skill` tool to invoke a skill by name. Available skills:"
+
+[skill_entry]
+description = "One line per available skill"
+vars = ["name", "description"]
+text = "\n- **{name}**: {description}"
+
+[active_skill_frame]
+description = "Wraps the active skill content injected into the system prompt"
+vars = ["name", "description", "content"]
+text = '''
+
+--- ACTIVE SKILL ---
+Skill: {name}
+Description: {description}
+
+{content}
+-------------------'''
+
+[project_instructions_header]
+description = "Opening delimiter for project context files"
+text = "\n\n--- PROJECT INSTRUCTIONS ---"
+
+[project_instructions_entry]
+description = "One project context file"
+vars = ["label", "content"]
+text = "\n\n# {label}\n\n{content}"
+
+[project_instructions_footer]
+description = "Closing delimiter for project context files"
+text = "\n\n--- END PROJECT INSTRUCTIONS ---"
+
+[memory_block]
+description = "Auto memory block with existing MEMORY.md content"
+vars = ["mem_dir", "truncated"]
+text = '''
+
+--- AUTO MEMORY ---
+You have a persistent memory directory at `{mem_dir}`.
+Its contents persist across sessions. Use Write/Edit tools to update MEMORY.md.
+
+Guidelines:
+- Save stable patterns, user preferences, key architecture decisions, project structure
+- Do NOT save session-specific context, in-progress work, or unverified conclusions
+- Keep MEMORY.md concise (under 200 lines)
+- When user says "remember X", save it immediately
+
+## MEMORY.md
+
+{truncated}
+--- END AUTO MEMORY ---'''
+
+[memory_block_empty]
+description = "Auto memory block when MEMORY.md does not yet exist"
+vars = ["mem_dir"]
+text = '''
+
+--- AUTO MEMORY ---
+You have a persistent memory directory at `{mem_dir}`.
+Its contents persist across sessions. Create MEMORY.md with Write to start saving memories.
+
+Guidelines:
+- Save stable patterns, user preferences, key architecture decisions, project structure
+- Do NOT save session-specific context, in-progress work, or unverified conclusions
+- Keep MEMORY.md concise (under 200 lines)
+- When user says "remember X", save it immediately
+--- END AUTO MEMORY ---'''

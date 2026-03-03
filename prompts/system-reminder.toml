@@ -1,0 +1,113 @@
+# Dynamic contextual injections during the conversation.
+# Category: system-reminder-* (per Claude Code conventions)
+
+[nudge_invalid_json]
+description = "Nudge when model returns invalid JSON"
+vars = ["raw"]
+text = '''
+Your previous response could not be parsed as valid JSON actions. This happens when the response includes plain text outside of JSON objects, malformed JSON, or uses a format the parser doesn't recognize.
+
+Please respond with ONLY valid JSON objects matching the Response Format in the system prompt. Do not include any text, explanation, or markdown outside of the JSON.
+
+Correct format examples:
+
+Tool call:
+{"name": "Read", "args": {"path": "src/main.rs"}}
+
+Done:
+{"type": "done", "message": "Task completed."}
+
+Multiple actions in one response (each on its own line):
+{"name": "Glob", "args": {"pattern": "src/**/*.rs"}}
+{"name": "Read", "args": {"path": "Cargo.toml"}}
+
+Your raw response was:
+{raw}'''
+
+[nudge_repetition]
+description = "Nudge when model repeats the same response"
+text = '''
+You have sent the same response multiple times in a row, which means you are stuck in a loop. This usually happens when you are waiting for something to change, but nothing will change unless you take a different action.
+
+To break out of this loop, try one of these strategies:
+- Use a different tool to gather more information (e.g., Read a related file, Grep for a different pattern).
+- Rethink your approach — the current strategy is not working. Step back and consider what might be going wrong.
+- If you believe the task is actually complete, emit a done action with a summary.
+- If you are blocked and need user input, use AskUser to request clarification.
+
+Do NOT repeat the same response again.'''
+
+[nudge_redundant_tool]
+description = "Nudge when model calls the same tool repeatedly with same args"
+vars = ["tool"]
+text = '''
+You have called '{tool}' multiple times with the same arguments without making progress. Repeating the same call will produce the same result.
+
+To move forward, try a different approach:
+- If the tool returned an error, address the root cause before retrying.
+- If you're searching for something and not finding it, broaden your search pattern or try a different tool (e.g., Glob instead of Grep, or vice versa).
+- If a file doesn't exist or a command fails, consider whether your assumption about the codebase is wrong — explore to verify.
+- If you're stuck, step back and reconsider the overall approach rather than retrying the same step.
+
+Continue with a different tool call or approach now.'''
+
+[nudge_empty_search]
+description = "Nudge after 4+ consecutive empty search results"
+text = "Search/glob returned no results repeatedly. Change strategy: try different patterns, broader terms, or Read files at likely paths."
+
+[tool_not_allowed]
+description = "Feedback when model tries to use a tool not in its allowed set"
+vars = ["tool", "allowed_list"]
+text = "Tool '{tool}' is not allowed for this agent. Use one of [{allowed_list}]."
+
+[write_safety_blocked]
+description = "Feedback when write/edit is blocked by read-first safety check"
+vars = ["rendered"]
+text = "Tool execution blocked for safety: {rendered}. Read the existing file first, then apply a minimal update."
+
+[tool_exec_failed]
+description = "Feedback when a tool call fails with an error"
+vars = ["tool", "error"]
+text = "Tool execution failed for tool='{tool}'. Error: {error}. Choose a valid tool+args from the tool schema and try again."
+
+[permission_denied]
+description = "Feedback when user denies a tool permission request"
+vars = ["tool", "summary"]
+text = "Permission denied: {tool} on '{summary}'"
+
+[permission_timeout]
+description = "Feedback when permission prompt times out with no user response"
+text = "Permission prompt timed out. Stopping."
+
+[patch_not_allowed]
+description = "Feedback when agent tries Patch without the policy capability"
+text = "Error: This agent is not allowed to output 'patch'. Add `Patch` to the agent frontmatter `policy` to enable it."
+
+[patch_validation_failed]
+description = "Feedback when a unified diff patch fails validation"
+vars = ["errors"]
+text = "The patch failed validation. Fix and respond with a new patch JSON. Errors:\n{errors}"
+
+[delegation_blocked]
+description = "Feedback when Task tool is not in the allowed tool set"
+vars = ["target"]
+text = "Tool 'Task' is not allowed for this agent. Delegation to '{target}' blocked."
+
+[delegation_validation_failed]
+description = "Feedback when delegation target fails validation checks"
+vars = ["target", "error"]
+text = "Delegation to '{target}' failed validation: {error}"
+
+[delegation_failed]
+description = "Feedback when a delegated sub-agent run fails"
+vars = ["target", "error"]
+text = "Delegation to '{target}' failed: {error}"
+
+[exit_plan_mode_outside_plan]
+description = "Feedback when ExitPlanMode is called but plan mode is not active"
+text = "ExitPlanMode: not currently in plan mode."
+
+[invalid_task_args]
+description = "Feedback when Task tool args cannot be parsed"
+vars = ["error"]
+text = "Invalid Task args: {error}"

@@ -48,7 +48,7 @@ use projects_api::{
 };
 use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, marketplace_install, marketplace_list, marketplace_move_to_global, marketplace_search, marketplace_uninstall};
 use storage_api::{storage_roots, storage_tree, storage_read_file, storage_write_file, storage_delete_file};
-use workspace_api::{get_agent_tree, get_workspace_state, list_files, read_file_api};
+use workspace_api::{get_agent_tree, get_workspace_state, list_files, read_file_api, search_files};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
@@ -59,6 +59,7 @@ pub struct ServerState {
     pub dev_mode: bool,
     pub events_tx: broadcast::Sender<ServerEvent>,
     pub skill_manager: Arc<crate::skills::SkillManager>,
+    pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
     /// Senders for interrupt messages keyed by queue_key. Used to inject user
     /// messages into a running agent loop so the model can adapt mid-run.
@@ -891,11 +892,16 @@ pub async fn prepare_server(
     // SSE can be bursty (tool/status steps). Use a larger buffer to reduce lag drops.
     let (events_tx, _) = broadcast::channel(4096);
 
+    let prompt_store = Arc::new(crate::prompts::PromptStore::load(
+        Some(&crate::prompts::PromptStore::default_override_dir()),
+    ));
+
     let state = Arc::new(ServerState {
         manager,
         dev_mode,
         events_tx,
         skill_manager,
+        prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
         pending_ask_user: Arc::new(Mutex::new(HashMap::new())),
@@ -980,6 +986,7 @@ pub async fn prepare_server(
         .route("/api/ask-user-response", post(ask_user_response_handler))
         .route("/api/workspace/tree", get(get_agent_tree))
         .route("/api/files", get(list_files))
+        .route("/api/files/search", get(search_files))
         .route("/api/file", get(read_file_api))
         .route("/api/workspace/state", get(get_workspace_state))
         .route("/api/events", get(events_handler))

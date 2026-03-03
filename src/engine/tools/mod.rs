@@ -1,4 +1,5 @@
 mod file_tools;
+pub(crate) mod json_schema;
 mod search_exec;
 mod write_tools;
 mod delegation;
@@ -170,6 +171,7 @@ pub struct Tools {
     memory_dir: Option<PathBuf>,
     ask_user_bridge: Option<Arc<AskUserBridge>>,
     progress_tx: Option<ToolProgressSender>,
+    prompt_store: Option<Arc<crate::prompts::PromptStore>>,
 }
 
 impl Tools {
@@ -185,6 +187,7 @@ impl Tools {
             memory_dir: None,
             ask_user_bridge: None,
             progress_tx: None,
+            prompt_store: None,
         })
     }
 
@@ -235,6 +238,18 @@ impl Tools {
 
     pub fn set_progress_tx(&mut self, tx: ToolProgressSender) {
         self.progress_tx = Some(tx);
+    }
+
+    pub fn set_prompt_store(&mut self, store: Arc<crate::prompts::PromptStore>) {
+        self.prompt_store = Some(store);
+    }
+
+    /// Render a prompt template with fallback.
+    pub fn prompt(&self, key: &str, vars: &[(&str, &str)]) -> String {
+        match &self.prompt_store {
+            Some(store) => store.render_or_fallback(key, vars),
+            None => format!("[missing prompt: {}]", key),
+        }
     }
 
     pub fn ask_user_bridge(&self) -> Option<&Arc<AskUserBridge>> {
@@ -371,7 +386,7 @@ impl Tools {
                 // Sub-agents cannot use AskUser.
                 if self.delegation_depth > 0 {
                     return Ok(ToolResult::Success(
-                        "AskUser is not available for delegated sub-agents. Return your question to the parent agent instead.".to_string()
+                        self.prompt(crate::prompts::keys::ASKUSER_SUBAGENT_BLOCKED, &[])
                     ));
                 }
 
@@ -379,7 +394,7 @@ impl Tools {
                     Some(b) => Arc::clone(b),
                     None => {
                         return Ok(ToolResult::Success(
-                            "AskUser is not available in CLI mode.".to_string()
+                            self.prompt(crate::prompts::keys::ASKUSER_CLI_BLOCKED, &[])
                         ));
                     }
                 };
@@ -416,15 +431,15 @@ impl Tools {
                 match response {
                     Ok(Ok(answers)) => Ok(ToolResult::AskUserResponse { answers }),
                     Ok(Err(_)) => Ok(ToolResult::Success(
-                        "AskUser cancelled: the question was dismissed.".to_string(),
+                        self.prompt(crate::prompts::keys::ASKUSER_CANCELLED, &[]),
                     )),
                     Err(_) => Ok(ToolResult::Success(
-                        "AskUser timed out: no response within 5 minutes.".to_string(),
+                        self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
                     )),
                 }
             }
             "ExitPlanMode" => Ok(ToolResult::Success(
-                "Plan submitted for review.".to_string(),
+                self.prompt(crate::prompts::keys::PLAN_SUBMITTED, &[]),
             )),
             _ => anyhow::bail!("unknown tool: {}", call.tool),
         }

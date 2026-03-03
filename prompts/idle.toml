@@ -1,0 +1,6 @@
+# Idle scheduler message format.
+
+[message_format]
+description = "Template for idle prompt dispatched to proactive agents"
+vars = ["mission", "prompt"]
+text = "[Mission] {mission}\n\n[Your standing instruction] {prompt}"

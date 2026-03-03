@@ -32,6 +32,11 @@ pub struct ModelConfig {
     /// Tags for model capabilities, e.g. ["vision"].
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Whether this model supports native function calling (OpenAI tools parameter).
+    /// `None` = auto-detect based on provider. `Some(true)` = force enable.
+    /// `Some(false)` = force disable (use legacy JSON action format).
+    #[serde(default)]
+    pub supports_tools: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -378,6 +383,7 @@ impl Default for Config {
                 keep_alive: None,
                 context_window: None,
                 tags: Vec::new(),
+                supports_tools: None,
             }],
             server: ServerConfig { port: 9898 },
             agent: AgentConfig {

@@ -117,9 +117,9 @@ pub async fn idle_scheduler_loop(state: Arc<ServerState>) {
                 });
 
                 // Construct the idle message
-                let idle_message = format!(
-                    "[Mission] {}\n\n[Your standing instruction] {}",
-                    mission.text, prompt
+                let idle_message = state.prompt_store.render_or_fallback(
+                    crate::prompts::keys::IDLE_MESSAGE_FORMAT,
+                    &[("mission", &mission.text), ("prompt", &prompt)],
                 );
 
                 // Dispatch using the same code path as chat_handler
