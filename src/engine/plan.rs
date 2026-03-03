@@ -24,8 +24,7 @@ impl AgentEngine {
                     "agent": self.agent_id.clone(),
                 }),
             );
-            messages.push(ChatMessage::new(
-                "user",
+            messages.push(self.tool_result_msg(
                 self.prompt_store.render_or_fallback(
                     crate::prompts::keys::PATCH_NOT_ALLOWED,
                     &[],
@@ -44,8 +43,7 @@ impl AgentEngine {
                 errs.join("\n"),
                 serde_json::json!({ "error_count": errs.len() }),
             );
-            messages.push(ChatMessage::new(
-                "user",
+            messages.push(self.tool_result_msg(
                 self.prompt_store.render_or_fallback(
                     crate::prompts::keys::PATCH_VALIDATION_FAILED,
                     &[("errors", &errs.join("\n"))],

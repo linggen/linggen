@@ -7,6 +7,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
+/// Build a compact summary of message roles + lengths for error logs.
+fn summarize_messages(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .map(|m| {
+            let tc = m.tool_calls.len();
+            if tc > 0 {
+                format!("{}({}ch,{}tc)", m.role, m.content.len(), tc)
+            } else {
+                format!("{}({}ch)", m.role, m.content.len())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[derive(Clone)]
 pub struct OllamaClient {
     http: Client,
@@ -60,6 +76,13 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                "Ollama chat_text error ({}): {} | model={} msgs=[{}]",
+                status, text, model, summarize_messages(messages)
+            );
+            if let Ok(body) = serde_json::to_string(&req) {
+                tracing::debug!("Ollama failed request body: {}", body);
+            }
             anyhow::bail!("ollama error ({}): {}", status, text);
         }
 
@@ -107,6 +130,13 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                "Ollama chat_text_stream error ({}): {} | model={} msgs=[{}]",
+                status, text, model, summarize_messages(messages)
+            );
+            if let Ok(body) = serde_json::to_string(&req) {
+                tracing::debug!("Ollama failed request body: {}", body);
+            }
             anyhow::bail!("ollama error ({}): {}", status, text);
         }
 
@@ -193,6 +223,14 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                "Ollama chat_tool_stream error ({}): {} | model={} tools={} msgs=[{}]",
+                status, text, model, req.tools.as_ref().map_or(0, |t| t.len()),
+                summarize_messages(messages)
+            );
+            if let Ok(body) = serde_json::to_string(&req) {
+                tracing::debug!("Ollama failed request body: {}", body);
+            }
             anyhow::bail!("ollama error ({}): {}", status, text);
         }
 

@@ -28,8 +28,7 @@ impl AgentEngine {
                 match serde_json::from_value::<tools::TaskArgs>(normalized) {
                     Ok(da) => delegation_args.push(da),
                     Err(e) => {
-                        messages.push(ChatMessage::new(
-                            "user",
+                        messages.push(self.tool_result_msg(
                             self.prompt_store.render_or_fallback(
                                 crate::prompts::keys::INVALID_TASK_ARGS,
                                 &[("error", &e.to_string())],
@@ -48,8 +47,7 @@ impl AgentEngine {
         if let Some(allowed) = allowed_tools {
             if !self.is_tool_allowed(allowed, "Task") {
                 for da in &delegation_args {
-                    messages.push(ChatMessage::new(
-                        "user",
+                    messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_BLOCKED,
                             &[("target", &da.target_agent_id)],
@@ -86,8 +84,7 @@ impl AgentEngine {
                     });
                 }
                 Err(e) => {
-                    messages.push(ChatMessage::new(
-                        "user",
+                    messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_VALIDATION_FAILED,
                             &[("target", &da.target_agent_id), ("error", &e.to_string())],
@@ -161,8 +158,7 @@ impl AgentEngine {
                     let _ = self
                         .manager_db_add_observation("Task", &rendered, session_id)
                         .await;
-                    messages.push(ChatMessage::new(
-                        "user",
+                    messages.push(self.tool_result_msg(
                         self.observation_text(
                             "tool",
                             &format!("Task({})", target),
@@ -178,8 +174,7 @@ impl AgentEngine {
                     let _ = self
                         .manager_db_add_observation("Task", &rendered, session_id)
                         .await;
-                    messages.push(ChatMessage::new(
-                        "user",
+                    messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_FAILED,
                             &[("target", &target), ("error", &e.to_string())],
@@ -315,8 +310,7 @@ impl AgentEngine {
                     let plan_text = state.last_assistant_response.clone();
                     return Some(self.finalize_plan_mode(plan_text).await);
                 } else {
-                    state.messages.push(ChatMessage::new(
-                        "user",
+                    state.messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::EXIT_PLAN_MODE_OUTSIDE_PLAN,
                             &[],
@@ -430,7 +424,7 @@ impl AgentEngine {
         info!("UpdatePlan: {}", ack);
 
         // Push acknowledgement to model messages so it sees the feedback.
-        messages.push(ChatMessage::new("user", &ack));
+        messages.push(self.tool_result_msg(ack.clone()));
         let _ = self
             .manager_db_add_observation("UpdatePlan", &ack, session_id)
             .await;

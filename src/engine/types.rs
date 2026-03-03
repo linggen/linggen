@@ -39,8 +39,14 @@ pub enum PlanStatus {
 
 #[derive(Debug, Clone)]
 pub enum ThinkingEvent {
+    /// Internal reasoning token (hidden from user, shows "Thinking..." indicator).
     Token(String),
+    /// Visible content token (streamed to user in real-time).
+    ContentToken(String),
+    /// Thinking stream finished (legacy path — triggers "thinking done" in UI).
     Done,
+    /// Content stream finished (native tool calling — does NOT re-enable thinking flag).
+    ContentDone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +163,10 @@ pub struct AgentEngine {
     /// Last assistant message text emitted during the agent loop.
     /// Set by `Done` dispatch; used by delegation callers to surface the sub-agent's response.
     pub(crate) last_assistant_text: Option<String>,
+    /// When true, tool result messages use `role: "tool"` instead of `role: "user"`.
+    /// Required by Ollama native tool calling — Ollama expects tool results
+    /// after an assistant message with tool_calls.
+    pub(crate) native_tool_mode: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -322,6 +332,7 @@ impl AgentEngine {
             message_importance: Vec::new(),
             accumulated_token_estimate: 0,
             last_assistant_text: None,
+            native_tool_mode: false,
         })
     }
 

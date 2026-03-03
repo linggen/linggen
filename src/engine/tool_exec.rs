@@ -12,6 +12,17 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 impl AgentEngine {
+    /// Create a message with the correct role for tool results.
+    /// In native tool calling mode, uses `role: "tool"` (required by Ollama).
+    /// In JSON-action mode, uses `role: "user"` (tool results are observations).
+    pub(crate) fn tool_result_msg(&self, content: String) -> ChatMessage {
+        if self.native_tool_mode {
+            ChatMessage::new("tool", content)
+        } else {
+            ChatMessage::new("user", content)
+        }
+    }
+
     /// Ask the user for permission via the AskUser bridge.
     /// `parser` converts the selected option label into a `PermissionAction`.
     /// Returns `None` if no bridge is available (e.g. CLI mode).
@@ -170,8 +181,7 @@ impl AgentEngine {
                 let _ = self
                     .manager_db_add_observation(&canonical_tool, &rendered, session_id)
                     .await;
-                messages.push(ChatMessage::new(
-                    "user",
+                messages.push(self.tool_result_msg(
                     self.prompt_store.render_or_fallback(
                         crate::prompts::keys::TOOL_NOT_ALLOWED,
                         &[("tool", &tool), ("allowed_list", &allowed_list.join(", "))],
@@ -217,8 +227,7 @@ impl AgentEngine {
                             let _ = self
                                 .manager_db_add_observation(action, &rendered, session_id)
                                 .await;
-                            messages.push(ChatMessage::new(
-                                "user",
+                            messages.push(self.tool_result_msg(
                                 self.prompt_store.render_or_fallback(
                                     crate::prompts::keys::WRITE_SAFETY_BLOCKED,
                                     &[("rendered", &rendered)],
@@ -296,7 +305,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", "Bash"), ("summary", &summary)],
                         );
-                        messages.push(ChatMessage::new("user", msg));
+                        messages.push(self.tool_result_msg(msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -328,7 +337,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(ChatMessage::new("user", msg));
+                        messages.push(self.tool_result_msg(msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -361,7 +370,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(ChatMessage::new("user", msg));
+                        messages.push(self.tool_result_msg(msg));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -398,7 +407,7 @@ impl AgentEngine {
                 .unwrap_or_else(|| {
                     self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REDUNDANT_TOOL, &[("tool", &canonical_tool)])
                 });
-            messages.push(ChatMessage::new("user", loop_breaker_prompt));
+            messages.push(self.tool_result_msg(loop_breaker_prompt));
             self.push_context_record(
                 ContextType::Error,
                 Some("redundant_tool_loop".to_string()),
@@ -416,8 +425,7 @@ impl AgentEngine {
 
         if let Some(cached) = tool_cache.get(&sig) {
             self.upsert_observation("tool", &canonical_tool, cached.model.clone());
-            messages.push(ChatMessage::new(
-                "user",
+            messages.push(self.tool_result_msg(
                 self.observation_text("tool", &canonical_tool, &cached.model),
             ));
             return PreExecOutcome::Blocked(LoopControl::Continue);
@@ -626,8 +634,7 @@ impl AgentEngine {
                         .await;
                 }
 
-                let obs_msg = ChatMessage::new(
-                    "user",
+                let obs_msg = self.tool_result_msg(
                     self.observation_text("tool", &canonical_tool, &rendered_model),
                 );
 
@@ -659,8 +666,7 @@ impl AgentEngine {
                     *empty_search_streak = 0;
                 }
                 if *empty_search_streak >= 4 {
-                    messages.push(ChatMessage::new(
-                        "user",
+                    messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::NUDGE_EMPTY_SEARCH,
                             &[],
@@ -717,8 +723,7 @@ impl AgentEngine {
                         })
                         .await;
                 }
-                let err_msg = ChatMessage::new(
-                    "user",
+                let err_msg = self.tool_result_msg(
                     self.prompt_store.render_or_fallback(
                         crate::prompts::keys::TOOL_EXEC_FAILED,
                         &[("tool", &canonical_tool), ("error", &e.to_string())],
@@ -883,8 +888,7 @@ impl AgentEngine {
             return Some(LoopControl::Return(AgentOutcome::None));
         }
 
-        messages.push(ChatMessage::new(
-            "user",
+        messages.push(self.tool_result_msg(
             self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REPETITION, &[]),
         ));
         self.push_context_record(

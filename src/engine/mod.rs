@@ -198,6 +198,7 @@ impl AgentEngine {
             loop_nudge_count: 0,
             progress_rx,
         };
+        self.native_tool_mode = use_native_tools;
 
         for _ in 0..self.cfg.max_iters {
             if self.is_cancelled().await {
@@ -444,30 +445,9 @@ impl AgentEngine {
             // --- Native mode: text-only response (no tool calls) ---
             if native_tools.is_some() && native_tool_calls.is_empty() && !raw.trim().is_empty() {
                 // In native mode, a text-only response IS the conversational reply.
-                // No need to parse JSON actions — the model just responded naturally.
-                if let Some(manager) = self.tools.get_manager() {
-                    let agent_id = self
-                        .agent_id
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    manager
-                        .send_event(crate::agent_manager::AgentEvent::TextSegment {
-                            agent_id: agent_id.clone(),
-                            text: raw.clone(),
-                            parent_id: self.parent_agent_id.clone(),
-                        })
-                        .await;
-                    manager
-                        .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
-                            agent_id,
-                            block_id: uuid::Uuid::new_v4().to_string(),
-                            block_type: "text".to_string(),
-                            tool: None,
-                            args: Some(raw.clone()),
-                            parent_id: self.parent_agent_id.clone(),
-                        })
-                        .await;
-                }
+                // Content tokens were already streamed to the UI in real-time via
+                // ContentToken events in stream_with_tool_calling(), so we don't
+                // need to emit TextSegment/ContentBlockStart events here.
                 let _ = self.manager_db_add_assistant_message(&raw, session_id).await;
                 self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                 self.truncate_chat_history();
@@ -567,8 +547,7 @@ impl AgentEngine {
                         self.active_skill = None;
                         return Ok(AgentOutcome::None);
                     }
-                    let nudge = ChatMessage::new(
-                        "user",
+                    let nudge = self.tool_result_msg(
                         self.prompt_store.render_or_fallback(crate::prompts::NUDGE_INVALID_JSON, &[("raw", &raw)]),
                     );
                     self.push_tracked_message(&mut state.messages, nudge, MessageImportance::Normal);
