@@ -48,6 +48,11 @@ pub fn compat_skills_dirs() -> Vec<(PathBuf, &'static str)> {
     ]
 }
 
+/// `~/.linggen/plans/`
+pub fn plans_dir() -> PathBuf {
+    linggen_home().join("plans")
+}
+
 /// `~/.linggen/projects/`
 pub fn projects_dir() -> PathBuf {
     linggen_home().join("projects")

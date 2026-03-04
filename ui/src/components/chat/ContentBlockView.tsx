@@ -38,7 +38,10 @@ export const ContentBlockView: React.FC<{
   isLast: boolean;
 }> = ({ block, isLast }) => {
   const [expanded, setExpanded] = useState(false);
+  const [bashExpanded, setBashExpanded] = useState(false);
   const outputEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
   const isRunning = block.status === 'running';
   const isFailed = block.status === 'failed' || block.isError;
   const isDone = block.status === 'done';
@@ -58,8 +61,14 @@ export const ContentBlockView: React.FC<{
   const hasDiff = !!block.diffData;
   const hasWidget = hasOutput || hasDiff;
 
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  };
+
   useEffect(() => {
-    if (isRunning && hasOutput && outputEndRef.current) {
+    if (isRunning && hasOutput && isAtBottomRef.current && outputEndRef.current) {
       outputEndRef.current.scrollIntoView({ behavior: 'auto', block: 'nearest' });
     }
   }, [isRunning, hasOutput, block.output?.length]);
@@ -83,17 +92,30 @@ export const ContentBlockView: React.FC<{
       </div>
     );
 
+    const expandBtn = (
+      <button
+        onClick={(e) => { e.stopPropagation(); setBashExpanded(!bashExpanded); }}
+        className="absolute top-0 right-1 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 select-none z-10"
+        title={bashExpanded ? 'Collapse' : 'Expand'}
+      >
+        {bashExpanded ? '⤡' : '⤢'}
+      </button>
+    );
+
     if (isRunning) {
-      const head = lines.slice(0, 3);
       return (
-        <div className="pl-4 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-          {head.map(prefixedLine)}
-          {lines.length > 3 && (
-            <div className="text-slate-400 dark:text-slate-500">
-              <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>… +{lines.length - 3} lines
+        <div className="relative">
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className={cn('pl-4 mt-1 overflow-y-auto custom-scrollbar', bashExpanded ? 'max-h-[70vh]' : 'max-h-80')}
+          >
+            <div className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300">
+              {lines.map(prefixedLine)}
+              <div ref={outputEndRef} />
             </div>
-          )}
-          <div ref={outputEndRef} />
+          </div>
+          {expandBtn}
         </div>
       );
     }
@@ -120,15 +142,18 @@ export const ContentBlockView: React.FC<{
     }
 
     return (
-      <div className="pl-4 mt-1 max-h-64 overflow-y-auto custom-scrollbar">
-        <div className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300">
-          {lines.map(prefixedLine)}
-          {hasTimeout && (
-            <div className="text-slate-400 dark:text-slate-500">
-              <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>(timeout)
-            </div>
-          )}
+      <div className="relative">
+        <div className={cn('pl-4 mt-1 overflow-y-auto custom-scrollbar', bashExpanded ? 'max-h-[70vh]' : 'max-h-80')}>
+          <div className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300">
+            {lines.map(prefixedLine)}
+            {hasTimeout && (
+              <div className="text-slate-400 dark:text-slate-500">
+                <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>(timeout)
+              </div>
+            )}
+          </div>
         </div>
+        {expandBtn}
       </div>
     );
   };
@@ -276,7 +301,10 @@ export const ContentBlockList: React.FC<{
       </div>
       <div
         ref={listRef}
-        className="mt-0.5 pl-1 space-y-0.5 max-h-[180px] overflow-y-auto custom-scrollbar"
+        className={cn(
+          "mt-0.5 pl-1 space-y-0.5 overflow-y-auto custom-scrollbar",
+          allDone ? 'max-h-[180px]' : 'max-h-[480px]'
+        )}
       >
         {toolBlocks.map((block, idx) => (
           <ContentBlockView

@@ -20,6 +20,7 @@ pub use types::{
     AgentEngine, AgentOutcome, AgentRole, ContextRecord, ContextType, EngineConfig,
     Plan, PlanStatus, TaskPacket, ThinkingEvent,
 };
+pub use plan::generate_plan_filename;
 
 pub use actions::{
     looks_like_final_answer, model_message_log_parts, parse_all_actions, text_before_first_json,
@@ -298,13 +299,13 @@ impl AgentEngine {
                 }
 
                 // Record the assistant message with tool_calls in chat history.
-                // Use empty id/call_type so they are omitted from Ollama requests
-                // (Ollama's native API doesn't use these OpenAI-specific fields).
+                // Preserve id/call_type so OpenAI-compatible APIs (Gemini, etc.)
+                // can match tool results back to their calls.
                 let tool_call_msgs: Vec<crate::ollama::ToolCallMessage> = native_tool_calls
                     .iter()
                     .map(|tc| crate::ollama::ToolCallMessage {
-                        id: String::new(),
-                        call_type: String::new(),
+                        id: tc.id.clone(),
+                        call_type: "function".to_string(),
                         function: crate::ollama::ToolCallFunction {
                             name: tc.name.clone(),
                             arguments: tc.arguments.clone(),
@@ -320,6 +321,13 @@ impl AgentEngine {
                 // Convert ParsedToolCalls to ModelActions
                 let actions: Vec<ModelAction> = Self::tool_calls_to_actions(&native_tool_calls);
                 state.invalid_json_streak = 0;
+                // Track latest response so plan mode can read it (ExitPlanMode
+                // uses last_assistant_response as plan text).  Only update
+                // when non-empty to avoid losing the plan text if ExitPlanMode
+                // arrives in a turn with no text content.
+                if !raw.is_empty() {
+                    state.last_assistant_response = raw.clone();
+                }
 
                 // Execute actions (reusing existing dispatch logic)
                 let mut early_return: Option<AgentOutcome> = None;
@@ -407,17 +415,18 @@ impl AgentEngine {
                     } else if parallel_batch_size >= 2 {
                         let batch: Vec<ModelAction> =
                             actions.drain(..parallel_batch_size).collect();
+                        let batch_start = action_idx;
                         action_idx += parallel_batch_size;
 
                         if let Some(outcome) = self
-                            .handle_parallel_batch(batch, &mut state, session_id)
+                            .handle_parallel_batch(batch, &mut state, session_id, &tc_ids, batch_start)
                             .await
                         {
                             early_return = Some(outcome);
                         }
                     } else {
                         let action = actions.remove(0);
-                        let _tc_id = tc_ids.get(action_idx).cloned();
+                        let tc_id = tc_ids.get(action_idx).cloned();
                         action_idx += 1;
                         let actions_remaining = !actions.is_empty();
                         if let Some(outcome) = self
@@ -426,6 +435,7 @@ impl AgentEngine {
                                 &mut state,
                                 actions_remaining,
                                 session_id,
+                                tc_id,
                             )
                             .await
                         {
@@ -444,7 +454,6 @@ impl AgentEngine {
 
             // --- Native mode: text-only response (no tool calls) ---
             if native_tools.is_some() && native_tool_calls.is_empty() && !raw.trim().is_empty() {
-                // In native mode, a text-only response IS the conversational reply.
                 // Content tokens were already streamed to the UI in real-time via
                 // ContentToken events in stream_with_tool_calling(), so we don't
                 // need to emit TextSegment/ContentBlockStart events here.
@@ -651,7 +660,7 @@ impl AgentEngine {
                         actions.drain(..parallel_batch_size).collect();
 
                     if let Some(outcome) = self
-                        .handle_parallel_batch(batch, &mut state, session_id)
+                        .handle_parallel_batch(batch, &mut state, session_id, &[], 0)
                         .await
                     {
                         early_return = Some(outcome);
@@ -665,6 +674,7 @@ impl AgentEngine {
                             &mut state,
                             actions_remaining,
                             session_id,
+                            None,
                         )
                         .await
                     {

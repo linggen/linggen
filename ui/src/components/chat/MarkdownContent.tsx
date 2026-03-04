@@ -54,19 +54,29 @@ export const MarkdownContent: React.FC<{ text: string }> = ({ text }) => (
       components={{
         pre: ({ children }) => <>{children}</>,
         code: ({ inline, className, children, node: _node, ...props }: any) => {
-          const raw = String(children ?? '').replace(/\n$/, '');
+          // Extract raw text from children (may be React elements from rehype-highlight).
+          const extractText = (node: unknown): string => {
+            if (typeof node === 'string') return node;
+            if (Array.isArray(node)) return node.map(extractText).join('');
+            if (node && typeof node === 'object' && 'props' in node) {
+              return extractText((node as any).props?.children);
+            }
+            return '';
+          };
+          const rawText = extractText(children).replace(/\n$/, '');
+
           const match = /language-([\w-]+)/.exec(className || '');
           const lang = match?.[1]?.toLowerCase();
           if (!inline && lang === 'mermaid') {
-            return <MermaidBlock code={raw} />;
+            return <MermaidBlock code={rawText} />;
           }
-          const isInlineCode = Boolean(inline) || (!className && !raw.includes('\n'));
+          const isInlineCode = Boolean(inline) || (!className && !rawText.includes('\n'));
           if (isInlineCode) {
             return <code {...props}>{children}</code>;
           }
           return (
             <pre>
-              <code className={className} {...props}>{raw}</code>
+              <code className={className} {...props}>{children}</code>
             </pre>
           );
         },

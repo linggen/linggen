@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
 
+#[derive(Clone)]
 pub struct ToolRegistry {
     pub builtins: Tools,
     pub skill_tools: HashMap<String, SkillToolDef>,

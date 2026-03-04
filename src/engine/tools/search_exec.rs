@@ -8,6 +8,8 @@ use ignore::WalkBuilder;
 use serde::Deserialize;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
@@ -22,6 +24,27 @@ pub(super) struct SearchArgs {
 pub(super) struct RunCommandArgs {
     pub(super) cmd: String,
     pub(super) timeout_ms: Option<u64>,
+    #[serde(skip)]
+    pub(super) cancel_flag: Option<Arc<AtomicBool>>,
+}
+
+fn kill_process_group(child: &std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::killpg(pid, libc::SIGTERM);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-unix, we can't use killpg; the caller already uses child.kill().
+        let _ = child;
+    }
 }
 
 impl Tools {
@@ -98,12 +121,14 @@ impl Tools {
                 .stderr(Stdio::piped())
                 .spawn()?
         } else {
+            use std::os::unix::process::CommandExt;
             Command::new("sh")
                 .arg("-c")
                 .arg(&args.cmd)
                 .current_dir(&self.root)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .process_group(0)
                 .spawn()?
         };
 
@@ -162,14 +187,22 @@ impl Tools {
         // Wait for the process with timeout.
         let start = Instant::now();
         let mut timed_out = false;
+        let mut interrupted = false;
         loop {
             if let Some(_status) = child.try_wait()? {
                 break;
             }
             if start.elapsed() >= timeout {
                 timed_out = true;
-                let _ = child.kill();
+                kill_process_group(&child);
                 break;
+            }
+            if let Some(flag) = &args.cancel_flag {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    interrupted = true;
+                    kill_process_group(&child);
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -194,6 +227,13 @@ impl Tools {
                 "linggen-agent: command timed out after {}ms\n",
                 timeout.as_millis()
             ));
+        }
+
+        if interrupted {
+            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                stderr.push('\n');
+            }
+            stderr.push_str("linggen-agent: command interrupted by user\n");
         }
 
         Ok(ToolResult::CommandOutput {

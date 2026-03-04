@@ -135,6 +135,10 @@ When responding to the user conversationally (greetings, explanations, questions
 
 Use the Done tool only when finishing a multi-step task and you want to provide a completion summary.
 
+### Plan Mode
+
+For complex tasks that need upfront exploration, call EnterPlanMode. This restricts you to read-only tools while you research and produce a plan for user approval. When your plan is ready, call ExitPlanMode.
+
 ### Plan Tracking
 
 For tasks with 3+ steps, use UpdatePlan to show progress. Update item statuses as you complete each step. Status values: `pending`, `in_progress`, `completed`.

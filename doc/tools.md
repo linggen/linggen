@@ -100,7 +100,7 @@ When `tool_permission_mode = "ask"` in `[agent]` config, destructive tool calls 
 
 **Approval options**:
 - **Allow once** — proceed this one time only.
-- **Allow all {tool} for this task** — session-scoped, in-memory.
+- **Allow all {tool} for this session** — session-scoped, in-memory.
 - **Allow all {tool} for this project** — persisted to `{workspace}/.linggen/permissions.json`.
 - **Cancel** — deny the tool call; agent sees a denial message.
 

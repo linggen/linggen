@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Send, X, Sparkles, FolderOpen, FileText } from 'lucide-react';
+import { Send, Square, X, Sparkles, FolderOpen, FileText } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { AskUserCard } from '../AskUserCard';
@@ -57,6 +57,8 @@ export const ChatPanel: React.FC<{
   onEditPlan?: (text: string) => void;
   pendingAskUser?: import('../../types').PendingAskUser | null;
   onRespondToAskUser?: (questionId: string, answers: import('../../types').AskUserAnswer[]) => void;
+  onCancelAgentRun?: (runId: string) => void | Promise<void>;
+  isRunning?: boolean;
   verboseMode?: boolean;
 }> = ({
   chatMessages,
@@ -86,6 +88,8 @@ export const ChatPanel: React.FC<{
   onEditPlan,
   pendingAskUser,
   onRespondToAskUser,
+  onCancelAgentRun,
+  isRunning,
   verboseMode,
 }) => {
   const [chatInput, setChatInput] = useState('');
@@ -151,7 +155,7 @@ export const ChatPanel: React.FC<{
 
   const visibleMessages = useMemo(() => {
     const selected = normalizeAgentKey(selectedAgent);
-    const filtered = chatMessages.filter((msg) => {
+    return chatMessages.filter((msg) => {
       const from = normalizeAgentKey(msg.from || msg.role);
       const to = normalizeAgentKey(msg.to || '');
       if (msg.role === 'user') {
@@ -161,7 +165,6 @@ export const ChatPanel: React.FC<{
       if (from === 'user') return to === selected;
       return false;
     });
-    return sortMessagesByTime(filtered);
   }, [chatMessages, selectedAgent]);
 
   const visibleQueued = useMemo(
@@ -805,7 +808,7 @@ export const ChatPanel: React.FC<{
             >
               <div
                 className={cn(
-                  'max-w-[96%] text-[13px] leading-relaxed',
+                  isUser ? 'max-w-[96%]' : 'max-w-full', 'text-[13px] leading-relaxed',
                   messageClass
                 )}
               >
@@ -1173,6 +1176,15 @@ export const ChatPanel: React.FC<{
             rows={1}
             className="flex-1 bg-transparent border-none px-1.5 py-1.5 text-[13px] outline-none resize-none min-h-[34px] max-h-[200px] leading-5"
           />
+          {isRunning && selectedMainRunningRunId && onCancelAgentRun && (
+            <button
+              onClick={() => onCancelAgentRun(selectedMainRunningRunId)}
+              className="w-8 h-8 rounded-lg bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+              title="Stop agent"
+            >
+              <Square size={12} fill="currentColor" />
+            </button>
+          )}
           <button
             onClick={send}
             className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center hover:bg-blue-500 transition-colors"

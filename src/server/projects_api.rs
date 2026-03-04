@@ -73,7 +73,17 @@ fn normalize_agent_md_path(path: &str) -> Result<String, String> {
     if raw.is_empty() {
         return Err("path is required".to_string());
     }
-    if raw.starts_with('/') || raw.contains("..") {
+    if raw.contains("..") {
+        return Err("path must not contain '..'".to_string());
+    }
+    // Allow ~/... paths for global agents
+    if raw.starts_with("~/") {
+        if !raw.to_ascii_lowercase().ends_with(".md") {
+            return Err("agent files must end with .md".to_string());
+        }
+        return Ok(raw);
+    }
+    if raw.starts_with('/') {
         return Err("path must be a relative markdown path under agents/".to_string());
     }
     let rel = if raw.starts_with("agents/") {
@@ -95,6 +105,17 @@ fn normalize_agent_md_path(path: &str) -> Result<String, String> {
         return Err("invalid agent markdown path".to_string());
     }
     Ok(rel)
+}
+
+/// Resolve an agent path to an absolute filesystem path. Handles both
+/// project-relative paths (`agents/coder.md`) and global paths (`~/.linggen/agents/coder.md`).
+fn resolve_agent_path(root: &std::path::Path, rel: &str) -> PathBuf {
+    if rel.starts_with("~/") {
+        let home = dirs::home_dir().unwrap_or_default();
+        home.join(&rel[2..])
+    } else {
+        root.join(rel)
+    }
 }
 
 pub(crate) async fn list_projects(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
@@ -126,23 +147,29 @@ pub(crate) async fn list_agent_files_api(
     let root = canonical_project_root(&query.project_root);
     match state.manager.list_agent_specs(&root).await {
         Ok(entries) => {
+            let global_dir = crate::paths::global_agents_dir();
+            let home_dir = dirs::home_dir().unwrap_or_default();
             let items: Vec<AgentFileListItem> = entries
                 .into_iter()
                 .map(|entry| {
-                    let rel = entry
-                        .spec_path
-                        .strip_prefix(&root)
-                        .unwrap_or(entry.spec_path.as_path())
-                        .to_string_lossy()
-                        .to_string();
+                    let path = if let Ok(rel) = entry.spec_path.strip_prefix(&root) {
+                        // Project-local agent: show relative to project root
+                        rel.to_string_lossy().to_string()
+                    } else if let Ok(rel) = entry.spec_path.strip_prefix(&home_dir) {
+                        // Global agent: show as ~/.linggen/agents/...
+                        format!("~/{}", rel.to_string_lossy())
+                    } else {
+                        entry.spec_path.to_string_lossy().to_string()
+                    };
                     AgentFileListItem {
                         agent_id: entry.agent_id,
                         name: entry.spec.name,
                         description: entry.spec.description,
-                        path: rel,
+                        path,
                     }
                 })
                 .collect();
+            let _ = global_dir; // suppress unused warning
             Json(items).into_response()
         }
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
@@ -155,7 +182,7 @@ pub(crate) async fn get_agent_file_api(Query(query): Query<AgentFileQuery>) -> i
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let full_path = root.join(&rel);
+    let full_path = resolve_agent_path(&root, &rel);
     let content = match std::fs::read_to_string(&full_path) {
         Ok(content) => content,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
@@ -183,7 +210,7 @@ pub(crate) async fn upsert_agent_file_api(
         Ok(parsed) => parsed,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
-    let full_path = root.join(&rel);
+    let full_path = resolve_agent_path(&root, &rel);
     if let Some(parent) = full_path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
             return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
@@ -212,7 +239,7 @@ pub(crate) async fn delete_agent_file_api(
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let full_path = root.join(&rel);
+    let full_path = resolve_agent_path(&root, &rel);
     if !full_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -385,6 +412,26 @@ pub(crate) async fn list_skills(State(state): State<Arc<ServerState>>) -> impl I
     Json(skills).into_response()
 }
 
+/// Reload skills from disk and invalidate agent caches so they pick up changes.
+pub(crate) async fn reload_skills(
+    State(state): State<Arc<ServerState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let project_root = body.get("project_root").and_then(|v| v.as_str());
+    let root_path = project_root.map(std::path::Path::new);
+    if let Err(err) = state.skill_manager.load_all(root_path).await {
+        tracing::warn!("Failed to reload skills: {err}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+    }
+    // Invalidate agent caches so engines pick up new skill metadata.
+    if let Some(root) = project_root {
+        let root_buf = std::path::PathBuf::from(root);
+        let _ = state.manager.invalidate_agent_cache(&root_buf, None).await;
+    }
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Skill-file CRUD (mirrors agent-file endpoints)
 // ---------------------------------------------------------------------------
@@ -508,7 +555,7 @@ pub(crate) async fn get_skill_file_api(
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let full_path = root.join(&rel);
+    let full_path = resolve_agent_path(&root, &rel);
     let content = match std::fs::read_to_string(&full_path) {
         Ok(content) => content,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),

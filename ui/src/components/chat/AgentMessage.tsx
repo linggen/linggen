@@ -53,6 +53,15 @@ export const AgentMessage: React.FC<{
         }
       }
     }
+    // If no text content blocks exist but msg.text has content (set by FINALIZE_MESSAGE),
+    // inject it as a leading text segment so it renders alongside tool blocks.
+    const hasTextSegments = segments.some(s => s.kind === 'text');
+    if (!hasTextSegments) {
+      const msgText = visibleMessageText(msg);
+      if (msgText && !isTransientStatus(msgText) && !isToolStatusText(msgText)) {
+        segments.unshift({ kind: 'text', text: msgText });
+      }
+    }
   }
 
   const fallbackText = !hasToolBlocks ? visibleMessageText(msg) : '';

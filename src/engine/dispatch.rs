@@ -194,17 +194,20 @@ impl AgentEngine {
         batch: Vec<ModelAction>,
         state: &mut LoopState,
         session_id: Option<&str>,
+        tc_ids: &[String],
+        action_idx_start: usize,
     ) -> Option<AgentOutcome> {
         // Phase 1: pre-execute each tool sequentially (needs &mut self).
         let mut ready: Vec<(usize, ToolCall, ReadyExec)> = Vec::new();
         for (idx, action) in batch.into_iter().enumerate() {
             if let ModelAction::Tool { tool, args } = action {
+                let tc_id = tc_ids.get(action_idx_start + idx).cloned();
                 match self
                     .pre_execute_tool(
                         tool, args, &state.allowed_tools, &mut state.messages,
                         &mut state.tool_cache, &mut state.read_paths,
                         &mut state.last_tool_sig, &mut state.redundant_tool_streak,
-                        session_id,
+                        session_id, tc_id,
                     )
                     .await
                 {
@@ -302,13 +305,39 @@ impl AgentEngine {
         state: &mut LoopState,
         _actions_remaining: bool,
         session_id: Option<&str>,
+        tc_id: Option<String>,
     ) -> Option<AgentOutcome> {
         match action {
             ModelAction::Tool { ref tool, .. } if tool == "ExitPlanMode" => {
                 if self.plan_mode {
-                    info!("ExitPlanMode → submitting plan for review");
-                    let plan_text = state.last_assistant_response.clone();
-                    return Some(self.finalize_plan_mode(plan_text).await);
+                    info!("ExitPlanMode → asking user for approval");
+                    // Extract the plan prose before any JSON tool calls.
+                    let plan_text = crate::engine::actions::text_before_first_json(
+                        &state.last_assistant_response,
+                    );
+
+                    // Capture the assistant text so the outer chat handler can
+                    // persist and emit it as a Message.
+                    if !plan_text.is_empty() {
+                        self.last_assistant_text = Some(plan_text.clone());
+                    }
+
+                    // Acknowledge ExitPlanMode so the model knows it was processed.
+                    state.messages.push(self.tool_result_msg(
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PLAN_SUBMITTED,
+                            &[],
+                        ),
+                    ));
+
+                    // Persist + ask for approval via shared helper.
+                    let (outcome, feedback) = self.finalize_plan_mode(plan_text).await;
+
+                    if let Some(feedback) = feedback {
+                        self.inject_plan_feedback(&mut state.messages, &feedback);
+                    } else {
+                        return Some(outcome);
+                    }
                 } else {
                     state.messages.push(self.tool_result_msg(
                         self.prompt_store.render_or_fallback(
@@ -324,7 +353,8 @@ impl AgentEngine {
                         tool, args, &state.allowed_tools, &mut state.messages,
                         &mut state.tool_cache, &mut state.read_paths,
                         &mut state.last_tool_sig, &mut state.redundant_tool_streak,
-                        &mut state.empty_search_streak, session_id,
+                        &mut state.empty_search_streak, &mut state.progress_rx, session_id,
+                        tc_id,
                     )
                     .await
                 {
@@ -351,7 +381,7 @@ impl AgentEngine {
                         &[],
                     )
                 });
-                info!("Done: {}", msg);
+                info!("Done: {}", crate::engine::render::truncate_for_log(&msg, 200));
                 self.push_context_record(
                     ContextType::Status, Some("done".to_string()),
                     self.agent_id.clone(), Some("user".to_string()),
@@ -364,10 +394,17 @@ impl AgentEngine {
                 self.active_skill = None;
                 if self.plan_mode {
                     // Fallback: model emitted done in plan mode without calling ExitPlanMode.
-                    // Treat the last response as the plan text.
+                    // Treat the last response as the plan text (strip JSON).
                     info!("Done in plan mode → implicit ExitPlanMode");
-                    let plan_text = state.last_assistant_response.clone();
-                    return Some(self.finalize_plan_mode(plan_text).await);
+                    let plan_text = crate::engine::actions::text_before_first_json(
+                        &state.last_assistant_response,
+                    );
+                    let (outcome, feedback) = self.finalize_plan_mode(plan_text).await;
+                    if let Some(feedback) = feedback {
+                        self.inject_plan_feedback(&mut state.messages, &feedback);
+                    } else {
+                        return Some(outcome);
+                    }
                 }
                 return Some(AgentOutcome::None);
             }
@@ -380,6 +417,16 @@ impl AgentEngine {
             }
         }
         None
+    }
+
+    /// Inject user feedback on a plan into the message stream so the model
+    /// can revise. Used by both the ExitPlanMode and Done-in-plan-mode paths.
+    fn inject_plan_feedback(&self, messages: &mut Vec<ChatMessage>, feedback: &str) {
+        info!("User feedback on plan: {}", feedback);
+        messages.push(self.tool_result_msg(format!(
+            "User feedback on plan:\n{}\n\nPlease revise the plan based on this feedback.",
+            feedback
+        )));
     }
 
     /// Handle an `update_plan` action from the model: convert task items into

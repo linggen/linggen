@@ -15,11 +15,29 @@ impl AgentEngine {
     /// Create a message with the correct role for tool results.
     /// In native tool calling mode, uses `role: "tool"` (required by Ollama).
     /// In JSON-action mode, uses `role: "user"` (tool results are observations).
+    ///
+    /// NOTE: This always uses `role: "user"` for synthetic/system messages
+    /// (nudges, plan acks, delegation results, etc.). For messages that
+    /// correspond to an actual native tool call, use `tool_result_msg_for()`
+    /// which includes `tool_call_id` and `name` fields required by strict
+    /// OpenAI-compatible APIs (e.g. Gemini).
     pub(crate) fn tool_result_msg(&self, content: String) -> ChatMessage {
-        if self.native_tool_mode {
-            ChatMessage::new("tool", content)
+        ChatMessage::new("user", content)
+    }
+
+    /// Create a tool result message tied to a specific native tool call.
+    /// Uses `tool_call_id` and `name` when available (required by Gemini's
+    /// OpenAI-compatible API), falls back to `tool_result_msg` otherwise.
+    pub(crate) fn tool_result_msg_for(
+        &self,
+        content: String,
+        tool_call_id: &Option<String>,
+        tool_name: &str,
+    ) -> ChatMessage {
+        if let Some(ref tc_id) = tool_call_id {
+            ChatMessage::tool_result_named(tc_id.clone(), tool_name, content)
         } else {
-            ChatMessage::new("user", content)
+            self.tool_result_msg(content)
         }
     }
 
@@ -235,6 +253,7 @@ impl AgentEngine {
         last_tool_sig: &mut String,
         redundant_tool_streak: &mut usize,
         session_id: Option<&str>,
+        tool_call_id: Option<String>,
     ) -> PreExecOutcome {
         let canonical_tool = self
             .tools
@@ -257,11 +276,12 @@ impl AgentEngine {
                 let _ = self
                     .persist_observation(&canonical_tool, &rendered, session_id)
                     .await;
-                messages.push(self.tool_result_msg(
+                messages.push(self.tool_result_msg_for(
                     self.prompt_store.render_or_fallback(
                         crate::prompts::keys::TOOL_NOT_ALLOWED,
                         &[("tool", &tool), ("allowed_list", &allowed_list.join(", "))],
                     ),
+                    &tool_call_id, &canonical_tool,
                 ));
                 return PreExecOutcome::Blocked(LoopControl::Continue);
             }
@@ -306,11 +326,12 @@ impl AgentEngine {
                             let _ = self
                                 .persist_observation(action, &rendered, session_id)
                                 .await;
-                            messages.push(self.tool_result_msg(
+                            messages.push(self.tool_result_msg_for(
                                 self.prompt_store.render_or_fallback(
                                     crate::prompts::keys::WRITE_SAFETY_BLOCKED,
                                     &[("rendered", &rendered)],
                                 ),
+                                &tool_call_id, &canonical_tool,
                             ));
                             return PreExecOutcome::Blocked(LoopControl::Continue);
                         }
@@ -390,7 +411,7 @@ impl AgentEngine {
                  Edit that file to remove the deny rule if needed.",
                 canonical_tool, summary
             );
-            messages.push(self.tool_result_msg(msg));
+            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
 
@@ -403,7 +424,7 @@ impl AgentEngine {
                     crate::prompts::keys::PERMISSION_DENIED,
                     &[("tool", &canonical_tool), ("summary", &summary)],
                 );
-                messages.push(self.tool_result_msg(msg));
+                messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                 return PreExecOutcome::Blocked(LoopControl::Continue);
             }
 
@@ -413,6 +434,11 @@ impl AgentEngine {
             if canonical_tool == "Bash" {
                 // Bash uses command-level granularity with glob patterns.
                 let cmd = bash_command.as_deref().unwrap_or("");
+                if cmd.is_empty() {
+                    let msg = "Error: Bash tool requires a 'cmd' argument with the command to run.".to_string();
+                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+                    return PreExecOutcome::Blocked(LoopControl::Continue);
+                }
                 let pattern = permission::derive_command_pattern(cmd);
                 let question = permission::build_bash_permission_question(
                     cmd,
@@ -435,7 +461,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", "Bash"), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some((permission::PermissionAction::DenyProject, key)) => {
@@ -447,7 +473,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", "Bash"), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some((permission::PermissionAction::DenyWithMessage(user_msg), _)) => {
@@ -456,7 +482,7 @@ impl AgentEngine {
                             "Permission denied by user for Bash on '{}'. User says: {}",
                             summary, user_msg
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -491,7 +517,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some(permission::PermissionAction::DenyProject) => {
@@ -501,7 +527,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
@@ -510,7 +536,7 @@ impl AgentEngine {
                             "Permission denied by user for {} on '{}'. User says: {}",
                             canonical_tool, summary, user_msg
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -552,7 +578,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some((permission::PermissionAction::DenyProject, key)) => {
@@ -564,7 +590,7 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some((permission::PermissionAction::DenyWithMessage(user_msg), _)) => {
@@ -573,7 +599,7 @@ impl AgentEngine {
                             "Permission denied by user for {} on '{}'. User says: {}",
                             canonical_tool, summary, user_msg
                         );
-                        messages.push(self.tool_result_msg(msg));
+                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
@@ -610,7 +636,7 @@ impl AgentEngine {
                 .unwrap_or_else(|| {
                     self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REDUNDANT_TOOL, &[("tool", &canonical_tool)])
                 });
-            messages.push(self.tool_result_msg(loop_breaker_prompt));
+            messages.push(self.tool_result_msg_for(loop_breaker_prompt, &tool_call_id, &canonical_tool));
             self.push_context_record(
                 ContextType::Error,
                 Some("redundant_tool_loop".to_string()),
@@ -628,8 +654,9 @@ impl AgentEngine {
 
         if let Some(cached) = tool_cache.get(&sig) {
             self.upsert_observation("tool", &canonical_tool, cached.model.clone());
-            messages.push(self.tool_result_msg(
+            messages.push(self.tool_result_msg_for(
                 self.observation_text("tool", &canonical_tool, &cached.model),
+                &tool_call_id, &canonical_tool,
             ));
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
@@ -693,6 +720,7 @@ impl AgentEngine {
         let call = ToolCall {
             tool: canonical_tool.clone(),
             args: args.clone(),
+            block_id: Some(block_id.clone()),
         };
         PreExecOutcome::Ready(
             call,
@@ -703,7 +731,7 @@ impl AgentEngine {
                 tool_done_status,
                 tool_failed_status,
                 block_id,
-                tool_call_id: None,
+                tool_call_id,
             },
         )
     }
@@ -727,7 +755,7 @@ impl AgentEngine {
             tool_done_status,
             tool_failed_status,
             block_id,
-            tool_call_id: _,
+            tool_call_id,
         } = exec;
 
         match result {
@@ -837,9 +865,8 @@ impl AgentEngine {
                         .await;
                 }
 
-                let obs_msg = self.tool_result_msg(
-                    self.observation_text("tool", &canonical_tool, &rendered_model),
-                );
+                let obs_content = self.observation_text("tool", &canonical_tool, &rendered_model);
+                let obs_msg = self.tool_result_msg_for(obs_content, &tool_call_id, &canonical_tool);
 
                 // Assign importance based on tool type and result.
                 let importance = if matches!(canonical_tool.as_str(), "Write" | "Edit") {
@@ -926,12 +953,11 @@ impl AgentEngine {
                         })
                         .await;
                 }
-                let err_msg = self.tool_result_msg(
-                    self.prompt_store.render_or_fallback(
-                        crate::prompts::keys::TOOL_EXEC_FAILED,
-                        &[("tool", &canonical_tool), ("error", &e.to_string())],
-                    ),
+                let err_content = self.prompt_store.render_or_fallback(
+                    crate::prompts::keys::TOOL_EXEC_FAILED,
+                    &[("tool", &canonical_tool), ("error", &e.to_string())],
                 );
+                let err_msg = self.tool_result_msg_for(err_content, &tool_call_id, &canonical_tool);
                 self.push_tracked_message(messages, err_msg, MessageImportance::High);
             }
         }
@@ -1032,7 +1058,9 @@ impl AgentEngine {
         last_tool_sig: &mut String,
         redundant_tool_streak: &mut usize,
         empty_search_streak: &mut usize,
+        progress_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(String, String, String)>,
         session_id: Option<&str>,
+        tool_call_id: Option<String>,
     ) -> LoopControl {
         match self
             .pre_execute_tool(
@@ -1045,12 +1073,25 @@ impl AgentEngine {
                 last_tool_sig,
                 redundant_tool_streak,
                 session_id,
+                tool_call_id,
             )
             .await
         {
             PreExecOutcome::Blocked(ctrl) => ctrl,
             PreExecOutcome::Ready(call, exec) => {
-                let result = self.tools.execute(call);
+                let tools_clone = self.tools.clone();
+                let mut handle = tokio::task::spawn_blocking(move || tools_clone.execute(call));
+                let result = loop {
+                    tokio::select! {
+                        res = &mut handle => {
+                            break res.unwrap_or_else(|e| Err(anyhow::anyhow!("spawn_blocking join: {e}")));
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
+                            self.drain_tool_progress(progress_rx).await;
+                        }
+                    }
+                };
+                self.drain_tool_progress(progress_rx).await;
                 self.post_execute_tool(exec, result, messages, tool_cache, empty_search_streak, session_id)
                     .await
             }

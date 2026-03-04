@@ -42,3 +42,5 @@ tokio-util = { version = "0.7", features = ["codec"] }
 tempfile = "3"
 zip = "2"
 url = "2"
+libc = "0.2"
+rand = "0.10.0"

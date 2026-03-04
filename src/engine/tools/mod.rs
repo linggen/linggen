@@ -61,6 +61,7 @@ fn is_rfc1918_172(host: &str) -> bool {
 pub struct ToolCall {
     pub tool: String,
     pub args: Value,
+    pub block_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +161,7 @@ pub type ToolProgressSender = tokio::sync::mpsc::UnboundedSender<(String, String
 
 // ── Tools struct ────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Tools {
     root: PathBuf,
     manager: Option<Arc<AgentManager>>,
@@ -294,14 +296,21 @@ impl Tools {
                 self.search_rg(args)
             }
             "Bash" => {
-                let args: search_exec::RunCommandArgs =
+                let mut args: search_exec::RunCommandArgs =
                     serde_json::from_value(normalized_args).map_err(|e| {
                         anyhow::anyhow!(
                             "invalid args for Bash: {}. Expected keys: cmd|timeout_ms",
                             e
                         )
                     })?;
-                self.run_command(args)
+                if let (Some(bid), Some(mgr)) = (&call.block_id, &self.manager) {
+                    args.cancel_flag = Some(mgr.register_tool_cancel_flag(bid));
+                }
+                let result = self.run_command(args);
+                if let (Some(bid), Some(mgr)) = (&call.block_id, &self.manager) {
+                    mgr.clear_tool_cancel_flag(bid);
+                }
+                result
             }
             "capture_screenshot" => {
                 let args: file_tools::CaptureScreenshotArgs = serde_json::from_value(normalized_args)
@@ -375,9 +384,9 @@ impl Tools {
                     anyhow::bail!("AskUser requires 1-4 questions, got {}", args.questions.len());
                 }
                 for (i, q) in args.questions.iter().enumerate() {
-                    if q.options.len() < 2 || q.options.len() > 4 {
+                    if q.options.len() < 2 || q.options.len() > 6 {
                         anyhow::bail!(
-                            "AskUser question {} requires 2-4 options, got {}",
+                            "AskUser question {} requires 2-6 options, got {}",
                             i, q.options.len()
                         );
                     }
@@ -438,9 +447,6 @@ impl Tools {
                     )),
                 }
             }
-            "ExitPlanMode" => Ok(ToolResult::Success(
-                self.prompt(crate::prompts::keys::PLAN_SUBMITTED, &[]),
-            )),
             _ => anyhow::bail!("unknown tool: {}", call.tool),
         }
     }

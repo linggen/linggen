@@ -56,6 +56,7 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             crate::engine::AgentOutcome::Task(t) => format!("agent produced task: {}", t.title),
             crate::engine::AgentOutcome::Patch(diff) => format!("agent produced patch ({} bytes)", diff.len()),
             crate::engine::AgentOutcome::Plan(p) => format!("agent produced plan: {}, status={:?}", p.summary, p.status),
+            crate::engine::AgentOutcome::PlanApproved(p) => format!("agent plan approved: {}", p.summary),
             crate::engine::AgentOutcome::PlanModeRequested { reason } => format!("agent requested plan mode: {}", reason.as_deref().unwrap_or("(no reason)")),
         }
         ToolResult::WebSearchResults { query, results } => {
@@ -269,4 +270,15 @@ pub fn tool_call_signature(tool: &str, args: &serde_json::Value) -> String {
         );
     }
     format!("{}|{}", tool, args)
+}
+
+/// Truncate a string for log output, collapsing newlines and adding "…" if truncated.
+pub fn truncate_for_log(s: &str, max_chars: usize) -> String {
+    let collapsed: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    if collapsed.len() <= max_chars {
+        collapsed
+    } else {
+        let truncated: String = collapsed.chars().take(max_chars).collect();
+        format!("{}… ({} chars total)", truncated, collapsed.len())
+    }
 }

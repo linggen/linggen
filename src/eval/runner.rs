@@ -150,6 +150,7 @@ pub async fn run_single_task(
             Ok(Ok(crate::engine::AgentOutcome::Patch(_))) => ("patch".to_string(), iters),
             Ok(Ok(crate::engine::AgentOutcome::Task(_))) => ("task".to_string(), iters),
             Ok(Ok(crate::engine::AgentOutcome::Plan(_))) => ("plan".to_string(), iters),
+            Ok(Ok(crate::engine::AgentOutcome::PlanApproved(_))) => ("plan_approved".to_string(), iters),
             Ok(Ok(crate::engine::AgentOutcome::PlanModeRequested { .. })) => ("plan_mode_requested".to_string(), iters),
             Ok(Ok(crate::engine::AgentOutcome::None)) => ("none".to_string(), iters),
             Ok(Err(_)) => ("error".to_string(), iters),

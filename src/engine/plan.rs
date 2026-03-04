@@ -1,8 +1,49 @@
 use super::types::*;
 use crate::config::AgentPolicyCapability;
 use crate::engine::patch::validate_unified_diff;
+use crate::engine::tools;
 use crate::ollama::ChatMessage;
+use rand::RngExt;
 use tracing::{info, warn};
+
+// -----------------------------------------------------------------------
+// Unique plan filename generator (adjective-gerund-noun.md)
+// -----------------------------------------------------------------------
+
+const ADJECTIVES: &[&str] = &[
+    "bright", "calm", "clever", "cool", "crisp", "deft", "eager", "fair",
+    "fast", "gentle", "grand", "keen", "kind", "neat", "nimble", "proud",
+    "quick", "sharp", "smooth", "warm",
+];
+
+const GERUNDS: &[&str] = &[
+    "blazing", "building", "charting", "crafting", "dancing", "dashing",
+    "flowing", "forging", "gliding", "growing", "humming", "leaping",
+    "mapping", "racing", "rising", "roaming", "sailing", "soaring",
+    "sparking", "weaving",
+];
+
+const NOUNS: &[&str] = &[
+    "arrow", "brook", "cedar", "crane", "eagle", "falcon", "grove",
+    "heron", "iris", "jade", "lark", "maple", "oak", "panda", "pine",
+    "raven", "sage", "whale", "wolf", "wren",
+];
+
+/// Generate a unique `adjective-gerund-noun.md` filename, collision-checked
+/// against the plans directory.
+pub fn generate_plan_filename() -> String {
+    let plans = crate::paths::plans_dir();
+    let mut rng = rand::rng();
+    loop {
+        let adj = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
+        let ger = GERUNDS[rng.random_range(0..GERUNDS.len())];
+        let noun = NOUNS[rng.random_range(0..NOUNS.len())];
+        let name = format!("{adj}-{ger}-{noun}.md");
+        if !plans.join(&name).exists() {
+            return name;
+        }
+    }
+}
 
 impl AgentEngine {
     pub(crate) async fn handle_patch_action(
@@ -60,16 +101,107 @@ impl AgentEngine {
 
     /// Called when the model signals plan completion (via ExitPlanMode tool or
     /// fallback: done in plan_mode). Extracts the plan text, persists it, and
-    /// returns the Plan outcome for user approval.
-    pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> AgentOutcome {
+    /// asks for user approval via the AskUser bridge (if available).
+    /// Returns `(outcome, custom_feedback)` — see `ask_plan_approval`.
+    pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> (AgentOutcome, Option<String>) {
         let summary = Self::extract_plan_summary(&plan_text);
         let plan = Plan {
             summary,
             status: PlanStatus::Planned,
             plan_text,
         };
-        self.persist_and_emit_plan(plan).await;
-        AgentOutcome::Plan(self.plan.clone().unwrap())
+        // Write to disk but don't emit SSE yet — ask_plan_approval will
+        // emit a single PlanUpdate at the final status (Approved/Planned).
+        self.write_plan_file(&plan);
+        self.plan = Some(plan);
+        self.ask_plan_approval().await
+    }
+
+    /// Send an AskUser event with Approve/Reject options for the current plan
+    /// and wait for the user's response. Returns `(outcome, custom_feedback)`.
+    ///
+    /// - Approve → `(PlanApproved, None)`
+    /// - Reject → `(None, None)`
+    /// - Custom feedback → `(Plan, Some(feedback))`
+    /// - Timeout / no bridge → `(Plan, None)`
+    pub(crate) async fn ask_plan_approval(&mut self) -> (AgentOutcome, Option<String>) {
+        let Some(bridge) = self.tools.ask_user_bridge().cloned() else {
+            // No AskUser bridge (CLI/TUI) — fall back to pending plan.
+            return (AgentOutcome::Plan(self.plan.clone().unwrap()), None);
+        };
+
+        let question_id = uuid::Uuid::new_v4().to_string();
+        let agent_id = self.agent_id.clone().unwrap_or_default();
+
+        let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
+            agent_id: agent_id.clone(),
+            question_id: question_id.clone(),
+            questions: vec![tools::AskUserQuestion {
+                question: "Plan is ready for review. How would you like to proceed?".to_string(),
+                header: "Plan".to_string(),
+                options: vec![
+                    tools::AskUserOption {
+                        label: "Start building".to_string(),
+                        description: Some("Start executing the plan".to_string()),
+                        preview: None,
+                    },
+                    tools::AskUserOption {
+                        label: "Reject".to_string(),
+                        description: Some("Discard the plan".to_string()),
+                        preview: None,
+                    },
+                ],
+                multi_select: false,
+            }],
+        });
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.pending.lock().await.insert(
+            question_id.clone(),
+            tools::PendingAskUser { agent_id, sender: tx },
+        );
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            rx,
+        ).await;
+        bridge.pending.lock().await.remove(&question_id);
+
+        match response {
+            Ok(Ok(answers)) => {
+                let selected = answers.first()
+                    .and_then(|a| a.selected.first())
+                    .map(|s| s.as_str());
+                let custom = answers.first()
+                    .and_then(|a| a.custom_text.clone());
+
+                if matches!(selected, Some("Start building") | Some("Approve")) {
+                    info!("Plan approved inline");
+                    self.plan_mode = false;
+                    if let Some(ref mut p) = self.plan {
+                        p.status = PlanStatus::Approved;
+                    }
+                    let approved = self.plan.clone().unwrap();
+                    self.persist_and_emit_plan(approved.clone()).await;
+                    (AgentOutcome::PlanApproved(approved), None)
+                } else if let Some("Reject") = selected {
+                    info!("Plan rejected inline");
+                    self.plan_mode = false;
+                    self.plan = None;
+                    (AgentOutcome::None, None)
+                } else if custom.is_some() {
+                    info!("User feedback on plan");
+                    (AgentOutcome::Plan(self.plan.clone().unwrap()), custom)
+                } else {
+                    // Unknown selection — fall back to pending plan.
+                    (AgentOutcome::Plan(self.plan.clone().unwrap()), None)
+                }
+            }
+            _ => {
+                // Timeout or cancelled — fall back to pending plan.
+                (AgentOutcome::Plan(self.plan.clone().unwrap()), None)
+            }
+        }
     }
 
     /// Persist the plan to self.plan + plan file, and emit a PlanUpdate SSE event.
@@ -133,14 +265,15 @@ impl AgentEngine {
     }
 
     // -----------------------------------------------------------------------
-    // Per-session plan file persistence
+    // Plan file persistence (~/.linggen/plans/)
     // -----------------------------------------------------------------------
 
     pub(crate) fn write_plan_file(&self, plan: &Plan) {
-        let Some(dir) = &self.session_plan_dir else { return };
-        let _ = std::fs::create_dir_all(dir);
-        let path = dir.join("plan.md");
-        let _ = std::fs::write(&path, &plan.plan_text);
+        let Some(path) = &self.plan_file_path else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, &plan.plan_text);
     }
 }
 
@@ -172,8 +305,8 @@ mod tests {
     fn write_plan_file_free_form() {
         let tmp = tempfile::tempdir().unwrap();
         let mut engine = make_test_engine(tmp.path());
-        let session_dir = tmp.path().join("sessions").join("s2");
-        engine.session_plan_dir = Some(session_dir.clone());
+        let plan_path = tmp.path().join("plans").join("test-plan.md");
+        engine.plan_file_path = Some(plan_path.clone());
 
         let plan_text = "# Add avatar upload\n\n1. Add endpoint\n2. Add model\n";
         let plan = Plan {
@@ -184,17 +317,16 @@ mod tests {
 
         engine.write_plan_file(&plan);
 
-        let plan_path = session_dir.join("plan.md");
         assert!(plan_path.exists());
         let content = std::fs::read_to_string(&plan_path).unwrap();
         assert_eq!(content, plan_text);
     }
 
     #[test]
-    fn write_plan_file_no_dir_noop() {
+    fn write_plan_file_no_path_noop() {
         let tmp = tempfile::tempdir().unwrap();
         let engine = make_test_engine(tmp.path());
-        // session_plan_dir is None — should not panic or write anything
+        // plan_file_path is None — should not panic or write anything
 
         let plan = Plan {
             summary: "Test".to_string(),
@@ -204,6 +336,14 @@ mod tests {
 
         engine.write_plan_file(&plan);
         // No assertion needed — just verify no panic
+    }
+
+    #[test]
+    fn generate_plan_filename_format() {
+        let name = generate_plan_filename();
+        assert!(name.ends_with(".md"));
+        let parts: Vec<&str> = name.trim_end_matches(".md").split('-').collect();
+        assert_eq!(parts.len(), 3, "Expected adjective-gerund-noun, got: {name}");
     }
 
     #[test]

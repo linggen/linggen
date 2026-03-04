@@ -48,30 +48,23 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
 
   return (
     <section className="bg-white dark:bg-[#141414] rounded-xl border border-amber-200 dark:border-amber-500/20 shadow-sm flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-100 dark:border-amber-500/10 bg-amber-50/50 dark:bg-amber-500/5">
-        <svg className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      {/* Header with tool name + command on same line */}
+      <div className="flex items-start gap-2 px-3 py-2 border-b border-amber-100 dark:border-amber-500/10 bg-amber-50/50 dark:bg-amber-500/5">
+        <svg className="w-3.5 h-3.5 mt-0.5 text-amber-500 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-          Permission Required
-        </span>
-        <span className="ml-auto text-[10px] font-medium text-slate-400 dark:text-slate-500">
-          {toolName}
-        </span>
+        <div className="min-w-0 flex-1">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+            Permission Required
+          </span>
+          <pre className="mt-1 text-[12px] text-slate-700 dark:text-slate-300 font-mono leading-snug overflow-x-auto whitespace-pre-wrap break-all">
+            <span className="font-semibold text-amber-700 dark:text-amber-300">{toolName}</span>{commandText ? ` ${commandText}` : ''}
+          </pre>
+        </div>
       </div>
 
-      {/* Command display */}
+      {/* Options */}
       <div className="px-3 py-3 space-y-3">
-        {commandText ? (
-          <pre className="text-[12px] text-slate-700 dark:text-slate-300 font-mono leading-snug bg-slate-50 dark:bg-white/5 rounded-md px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-all border border-slate-100 dark:border-white/5">
-            {commandText}
-          </pre>
-        ) : (
-          <p className="text-[12px] text-slate-700 dark:text-slate-300 font-mono leading-snug">
-            {qText}
-          </p>
-        )}
 
         {/* Vertical button list */}
         <div className="flex flex-col gap-1.5">

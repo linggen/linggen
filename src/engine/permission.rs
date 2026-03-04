@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Permission action returned after prompting the user
@@ -69,6 +69,15 @@ impl PermissionStore {
         } else {
             (HashSet::new(), HashSet::new())
         };
+        if !project_allows.is_empty() || !project_denies.is_empty() {
+            info!(
+                "Loaded project permissions from {}: {} allows, {} denies — {:?}",
+                file.display(),
+                project_allows.len(),
+                project_denies.len(),
+                project_allows,
+            );
+        }
         Self {
             session_allows: HashSet::new(),
             project_allows,
@@ -113,6 +122,10 @@ impl PermissionStore {
                 }
             }
         }
+        debug!(
+            "Permission check: tool={} command={:?} → NOT allowed (session={:?}, project={:?})",
+            tool, command, self.session_allows, self.project_allows,
+        );
         false
     }
 
@@ -214,8 +227,11 @@ pub fn is_compound_command(cmd: &str) -> bool {
 /// - `"npm run build"` → `"npm run *"` (3+ words = first two tokens + wildcard)
 /// - `"ls -la"` → `"ls *"` (second token starts with `-` = first token + wildcard)
 pub fn derive_command_pattern(cmd: &str) -> Option<String> {
+    // For compound commands, use "first_program *" from the first segment.
     if is_compound_command(cmd) {
-        return None;
+        let first_cmd = extract_first_command(cmd);
+        let first_token = first_cmd.split_whitespace().next()?;
+        return Some(format!("{} *", first_token));
     }
     let tokens: Vec<&str> = cmd.split_whitespace().collect();
     match tokens.len() {
@@ -235,6 +251,22 @@ pub fn derive_command_pattern(cmd: &str) -> Option<String> {
             }
         }
     }
+}
+
+/// Extract the first simple command from a compound command string.
+/// Splits on `|`, `;`, `&&`, `||` and returns the trimmed first segment.
+fn extract_first_command(cmd: &str) -> String {
+    let bytes = cmd.as_bytes();
+    let len = bytes.len();
+    for i in 0..len {
+        match bytes[i] {
+            b';' | b'|' | b'`' => return cmd[..i].trim().to_string(),
+            b'&' if i + 1 < len && bytes[i + 1] == b'&' => return cmd[..i].trim().to_string(),
+            b'$' if i + 1 < len && bytes[i + 1] == b'(' => return cmd[..i].trim().to_string(),
+            _ => {}
+        }
+    }
+    cmd.trim().to_string()
 }
 
 /// Matches a command against a stored glob pattern.
@@ -280,7 +312,7 @@ pub fn build_file_permission_question(
     }];
 
     options.push(AskUserOption {
-        label: format!("Allow {}({}) for this task", tool, pattern),
+        label: format!("Allow {}({}) for this session", tool, pattern),
         description: Some("Session-scoped; resets on new session".to_string()),
         preview: None,
     });
@@ -320,7 +352,7 @@ pub fn parse_file_permission_answer(
         return (PermissionAction::AllowOnce, None);
     }
     let key = format!("{}:{}", tool, pattern);
-    if selected == format!("Allow {}({}) for this task", tool, pattern) {
+    if selected == format!("Allow {}({}) for this session", tool, pattern) {
         return (PermissionAction::AllowSession, Some(key));
     }
     if selected == format!("Allow {}({}) for this project", tool, pattern) {
@@ -416,7 +448,7 @@ pub fn build_permission_question(tool: &str, target_summary: &str) -> AskUserQue
                 preview: None,
             },
             AskUserOption {
-                label: format!("Allow all {} for this task", tool),
+                label: format!("Allow all {} for this session", tool),
                 description: Some("Session-scoped; resets on new session".to_string()),
                 preview: None,
             },
@@ -452,7 +484,7 @@ pub fn build_web_permission_question(tool: &str, target_summary: &str) -> AskUse
                 preview: None,
             },
             AskUserOption {
-                label: format!("Allow all {} for this task", tool),
+                label: format!("Allow all {} for this session", tool),
                 description: Some("Session-scoped; resets on new session".to_string()),
                 preview: None,
             },
@@ -480,7 +512,7 @@ pub fn build_web_permission_question(tool: &str, target_summary: &str) -> AskUse
 pub fn parse_web_permission_answer(selected: &str, tool: &str) -> PermissionAction {
     if selected == "Allow this request" {
         PermissionAction::AllowOnce
-    } else if selected == format!("Allow all {} for this task", tool) {
+    } else if selected == format!("Allow all {} for this session", tool) {
         PermissionAction::AllowSession
     } else if selected == format!("Allow all {} for this project", tool) {
         PermissionAction::AllowProject
@@ -505,7 +537,7 @@ pub fn build_bash_permission_question(command: &str, pattern: Option<&str>) -> A
     if let Some(pat) = pattern {
         // Pattern-scoped options for simple commands
         options.push(AskUserOption {
-            label: format!("Allow Bash({}) for this task", pat),
+            label: format!("Allow Bash({}) for this session", pat),
             description: Some("Session-scoped; resets on new session".to_string()),
             preview: None,
         });
@@ -527,7 +559,7 @@ pub fn build_bash_permission_question(command: &str, pattern: Option<&str>) -> A
     } else {
         // Blanket options for compound commands (no pattern derivable)
         options.push(AskUserOption {
-            label: "Allow all Bash for this task".to_string(),
+            label: "Allow all Bash for this session".to_string(),
             description: Some("Session-scoped; resets on new session".to_string()),
             preview: None,
         });
@@ -569,7 +601,7 @@ pub fn parse_bash_permission_answer(
     }
     if let Some(pat) = pattern {
         let key = format!("Bash:{}", pat);
-        if selected == format!("Allow Bash({}) for this task", pat) {
+        if selected == format!("Allow Bash({}) for this session", pat) {
             return (PermissionAction::AllowSession, Some(key));
         }
         if selected == format!("Allow Bash({}) for this project", pat) {
@@ -580,7 +612,7 @@ pub fn parse_bash_permission_answer(
         }
     } else {
         // Blanket Bash options for compound commands
-        if selected == "Allow all Bash for this task" {
+        if selected == "Allow all Bash for this session" {
             return (PermissionAction::AllowSession, Some("Bash".to_string()));
         }
         if selected == "Allow all Bash for this project" {
@@ -598,7 +630,7 @@ pub fn parse_bash_permission_answer(
 pub fn parse_permission_answer(selected: &str, tool: &str) -> PermissionAction {
     if selected == "Allow once" {
         PermissionAction::AllowOnce
-    } else if selected == format!("Allow all {} for this task", tool) {
+    } else if selected == format!("Allow all {} for this session", tool) {
         PermissionAction::AllowSession
     } else if selected == format!("Allow all {} for this project", tool) {
         PermissionAction::AllowProject
@@ -659,7 +691,7 @@ mod tests {
     fn test_parse_permission_answer() {
         assert_eq!(parse_permission_answer("Allow once", "Write"), PermissionAction::AllowOnce);
         assert_eq!(
-            parse_permission_answer("Allow all Write for this task", "Write"),
+            parse_permission_answer("Allow all Write for this session", "Write"),
             PermissionAction::AllowSession
         );
         assert_eq!(
@@ -739,7 +771,7 @@ mod tests {
             PermissionAction::AllowOnce
         );
         assert_eq!(
-            parse_web_permission_answer("Allow all WebFetch for this task", "WebFetch"),
+            parse_web_permission_answer("Allow all WebFetch for this session", "WebFetch"),
             PermissionAction::AllowSession
         );
         assert_eq!(
@@ -808,9 +840,17 @@ mod tests {
             Some("ls *".to_string())
         );
 
-        // Compound commands → None
-        assert_eq!(derive_command_pattern("ls && cat foo"), None);
-        assert_eq!(derive_command_pattern("echo $(pwd)"), None);
+        // Compound commands → "first_program *" from first segment
+        assert_eq!(derive_command_pattern("ls && cat foo"), Some("ls *".to_string()));
+        assert_eq!(derive_command_pattern("echo $(pwd)"), Some("echo *".to_string()));
+        assert_eq!(
+            derive_command_pattern("find ~/.linggen -type f | head -20"),
+            Some("find *".to_string())
+        );
+        assert_eq!(
+            derive_command_pattern("npm run build && npm run test"),
+            Some("npm *".to_string())
+        );
 
         // Empty → None
         assert_eq!(derive_command_pattern(""), None);
@@ -880,7 +920,7 @@ mod tests {
         // With pattern: Allow once, Allow Bash(pattern) task, Allow Bash(pattern) project, Deny, Deny for project
         assert_eq!(q.options.len(), 5);
         assert_eq!(q.options[0].label, "Allow once");
-        assert_eq!(q.options[1].label, "Allow Bash(npm run *) for this task");
+        assert_eq!(q.options[1].label, "Allow Bash(npm run *) for this session");
         assert_eq!(
             q.options[2].label,
             "Allow Bash(npm run *) for this project"
@@ -896,7 +936,7 @@ mod tests {
         // Without pattern (compound command): Allow once, blanket task, blanket project, Deny, Deny for project
         assert_eq!(q.options.len(), 5);
         assert_eq!(q.options[0].label, "Allow once");
-        assert_eq!(q.options[1].label, "Allow all Bash for this task");
+        assert_eq!(q.options[1].label, "Allow all Bash for this session");
         assert_eq!(q.options[2].label, "Allow all Bash for this project");
         assert_eq!(q.options[3].label, "Deny");
         assert_eq!(q.options[4].label, "Deny all Bash for this project");
@@ -913,7 +953,7 @@ mod tests {
 
         // Pattern-scoped session
         let (action, key) =
-            parse_bash_permission_answer("Allow Bash(npm run *) for this task", "Bash", pat);
+            parse_bash_permission_answer("Allow Bash(npm run *) for this session", "Bash", pat);
         assert_eq!(action, PermissionAction::AllowSession);
         assert_eq!(key.as_deref(), Some("Bash:npm run *"));
 
@@ -933,7 +973,7 @@ mod tests {
 
         // Blanket options for compound commands (pattern=None)
         let (action, key) =
-            parse_bash_permission_answer("Allow all Bash for this task", "Bash", None);
+            parse_bash_permission_answer("Allow all Bash for this session", "Bash", None);
         assert_eq!(action, PermissionAction::AllowSession);
         assert_eq!(key.as_deref(), Some("Bash"));
 
@@ -987,7 +1027,7 @@ mod tests {
         assert_eq!(q.question, "Edit src/components/App.tsx");
         assert_eq!(q.options.len(), 5);
         assert_eq!(q.options[0].label, "Allow once");
-        assert_eq!(q.options[1].label, "Allow Edit(src/components/*) for this task");
+        assert_eq!(q.options[1].label, "Allow Edit(src/components/*) for this session");
         assert_eq!(q.options[2].label, "Allow Edit(src/components/*) for this project");
         assert_eq!(q.options[3].label, "Deny");
         assert_eq!(q.options[4].label, "Deny Edit(src/components/*) for this project");
@@ -1004,7 +1044,7 @@ mod tests {
 
         // Pattern-scoped session
         let (action, key) = parse_file_permission_answer(
-            "Allow Edit(src/components/*) for this task", "Edit", pat,
+            "Allow Edit(src/components/*) for this session", "Edit", pat,
         );
         assert_eq!(action, PermissionAction::AllowSession);
         assert_eq!(key.as_deref(), Some("Edit:src/components/*"));

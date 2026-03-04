@@ -311,7 +311,7 @@ export interface BuiltInSkillInfo {
   installed: boolean;
 }
 
-export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'general';
+export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'general' | 'mission' | 'storage';
 
 // --- Mission types ---
 

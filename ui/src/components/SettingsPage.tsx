@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import type { AppConfig, ManagementTab } from '../types';
+import type { AgentInfo, AgentRunSummary, AppConfig, IdlePromptEvent, ManagementTab, MissionInfo } from '../types';
 import { ModelsTab } from './ModelsTab';
 import { AgentsTab } from './AgentsTab';
 import { SkillsTab } from './SkillsTab';
 import { ToolsTab } from './ToolsTab';
 import { GeneralTab } from './GeneralTab';
+import { MissionPage } from './MissionPage';
+import { StoragePage } from './StoragePage';
 
 const tabs: { key: ManagementTab; label: string }[] = [
   { key: 'models', label: 'Models' },
@@ -13,13 +15,25 @@ const tabs: { key: ManagementTab; label: string }[] = [
   { key: 'skills', label: 'Skills' },
   { key: 'tools', label: 'Tools' },
   { key: 'general', label: 'General' },
+  { key: 'mission', label: 'Mission' },
+  { key: 'storage', label: 'Storage' },
 ];
 
 export const SettingsPage: React.FC<{
   onBack: () => void;
   projectRoot?: string;
   initialTab?: ManagementTab;
-}> = ({ onBack, projectRoot = '', initialTab }) => {
+  // Mission props
+  missionAgents?: AgentInfo[];
+  missionAgentStatus?: Record<string, string>;
+  missionAgentRunSummary?: Record<string, AgentRunSummary>;
+  mission?: MissionInfo | null;
+  missionDraft?: string | null;
+  onMissionDraftChange?: (v: string) => void;
+  onSaveMission?: (text: string) => void;
+  onClearMission?: () => void;
+  idlePromptEvents?: IdlePromptEvent[];
+}> = ({ onBack, projectRoot = '', initialTab, missionAgents, missionAgentStatus, missionAgentRunSummary, mission, missionDraft, onMissionDraftChange, onSaveMission, onClearMission, idlePromptEvents }) => {
   const [activeTab, setActiveTab] = useState<ManagementTab>(initialTab || 'models');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
@@ -169,6 +183,27 @@ export const SettingsPage: React.FC<{
               <GeneralTab config={config} onChange={setConfig} />
             </div>
           </div>
+        )}
+
+        {activeTab === 'mission' && (
+          <MissionPage
+            embedded
+            onBack={onBack}
+            projectRoot={projectRoot}
+            agents={missionAgents ?? []}
+            agentStatus={missionAgentStatus ?? {}}
+            agentRunSummary={missionAgentRunSummary ?? {}}
+            mission={mission ?? null}
+            missionDraft={missionDraft ?? null}
+            onMissionDraftChange={onMissionDraftChange ?? (() => {})}
+            onSaveMission={onSaveMission ?? (() => {})}
+            onClearMission={onClearMission ?? (() => {})}
+            idlePromptEvents={idlePromptEvents ?? []}
+          />
+        )}
+
+        {activeTab === 'storage' && (
+          <StoragePage embedded onBack={onBack} />
         )}
       </div>
     </div>

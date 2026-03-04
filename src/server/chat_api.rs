@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -139,17 +139,9 @@ pub(crate) async fn clear_chat_history_api(
     }
 }
 
-/// Compute the per-session plan directory from the project store.
-fn compute_session_plan_dir(
-    store: &crate::project_store::ProjectStore,
-    root: &Path,
-    session_id: Option<&str>,
-) -> std::path::PathBuf {
-    let root_str = root.to_string_lossy().to_string();
-    store
-        .project_dir(&root_str)
-        .join("sessions")
-        .join(session_id.unwrap_or("default"))
+/// Generate a new plan file path in `~/.linggen/plans/`.
+fn new_plan_file_path() -> std::path::PathBuf {
+    crate::paths::plans_dir().join(crate::engine::generate_plan_filename())
 }
 
 /// Shared context for the async chat dispatch functions.
@@ -191,34 +183,15 @@ async fn run_skill_dispatch(
                 .await;
                 return;
             }
-            // If no arguments given and the skill has a usage hint, respond immediately
-            // with a subcommand list instead of spinning up the agent loop.
-            if user_args.is_none() {
-                if let Some(hint) = &skill.argument_hint {
-                    let subcommands: Vec<String> = hint
-                        .split('|')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| format!("  `/{} {}`", skill.name, s))
-                        .collect();
-                    let usage_msg = format!(
-                        "{}\n\n**Commands:**\n{}",
-                        skill.description,
-                        subcommands.join("\n"),
-                    );
-                    persist_and_emit_message(
-                        &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                        &ctx.agent_id, "user", &usage_msg, ctx.session_id.as_deref(), false,
-                    )
-                    .await;
-                    return;
-                }
-            }
             engine.active_skill = Some(skill);
         }
     }
 
+    let skill_default_task = engine.active_skill.as_ref().map(|s| {
+        format!("Run the '{}' skill: {}", s.name, s.description)
+    });
     let task_for_loop = user_args
+        .or(skill_default_task)
         .unwrap_or_else(|| "Initialize this workspace and summarize status.".to_string());
 
     engine.observations.clear();
@@ -234,6 +207,17 @@ async fn run_skill_dispatch(
         &ctx.agent_id, "user", &skill_msg, ctx.session_id.as_deref(), false,
     )
     .await;
+
+    tracing::info!("Skill started: {}", cmd);
+
+    ctx.state
+        .send_agent_status(
+            ctx.agent_id.clone(),
+            AgentStatusKind::Thinking,
+            Some(format!("Running skill: {}", cmd)),
+            None,
+        )
+        .await;
 
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
     wire_ask_user_bridge(&ctx.state, engine);
@@ -255,6 +239,7 @@ async fn run_skill_dispatch(
         )
         .await;
     } else {
+        tracing::info!("Skill completed: {}", cmd);
         if let Ok(outcome) = &outcome {
             emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
         }
@@ -317,6 +302,17 @@ async fn run_trigger_dispatch(
     )
     .await;
 
+    tracing::info!("Trigger skill started: {}", skill_name);
+
+    ctx.state
+        .send_agent_status(
+            ctx.agent_id.clone(),
+            AgentStatusKind::Thinking,
+            Some(format!("Running skill: {}", skill_name)),
+            None,
+        )
+        .await;
+
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
     wire_ask_user_bridge(&ctx.state, engine);
 
@@ -337,6 +333,7 @@ async fn run_trigger_dispatch(
         )
         .await;
     } else {
+        tracing::info!("Trigger skill completed: {}", skill_name);
         if let Ok(outcome) = &outcome {
             emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
         }
@@ -370,11 +367,7 @@ async fn run_plan_dispatch(
     engine.plan = None;
     engine.observations.clear();
     engine.task = Some(task_text.to_string());
-    engine.session_plan_dir = Some(compute_session_plan_dir(
-        &ctx.state.manager.store,
-        &ctx.root,
-        ctx.session_id.as_deref(),
-    ));
+    engine.plan_file_path = Some(new_plan_file_path());
 
     // Add user message to chat history so subsequent turns have conversational context.
     engine.chat_history.push(crate::ollama::ChatMessage::new("user", ctx.clean_msg.clone()));
@@ -441,13 +434,40 @@ async fn run_plan_dispatch(
 
     engine.thinking_tx = None;
     unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
-    engine.plan_mode = false;
+    // Note: plan_mode is managed by ask_plan_approval (approve/reject both
+    // set it to false). Don't reset it unconditionally here — the Plan
+    // outcome with custom feedback needs plan_mode to stay true for revision.
 
     match outcome {
+        Ok(crate::engine::AgentOutcome::PlanApproved(plan)) => {
+            // User approved inline via AskUser — start execution immediately.
+            persist_and_emit_last_assistant_text(ctx, engine).await;
+            emit_outcome_event(
+                &crate::engine::AgentOutcome::PlanApproved(plan.clone()),
+                &ctx.events_tx,
+                &ctx.agent_id,
+            );
+            persist_and_emit_message(
+                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
+                "user", &ctx.agent_id,
+                "Plan approved. Starting execution.",
+                ctx.session_id.as_deref(), false,
+            )
+            .await;
+
+            engine.plan = Some(plan);
+            engine.observations.clear();
+            engine.task = Some(format!(
+                "Execute the approved plan: {}",
+                engine.plan.as_ref().map(|p| p.summary.as_str()).unwrap_or("Plan")
+            ));
+            run_plan_execution(ctx, engine).await;
+        }
         Ok(ref outcome) => {
+            persist_and_emit_last_assistant_text(ctx, engine).await;
             emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
             if let crate::engine::AgentOutcome::Plan(ref plan) = outcome {
-                // Always wait for explicit user approval before execution.
+                // Fallback: no inline approval — store for manual approval via UI buttons.
                 ctx.manager
                     .set_pending_plan(
                         &ctx.root.to_string_lossy(),
@@ -455,6 +475,93 @@ async fn run_plan_dispatch(
                         plan.clone(),
                     )
                     .await;
+            }
+        }
+        Err(err) => {
+            let error_msg = format!("Error: {}", err);
+            persist_and_emit_message(
+                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
+                &ctx.agent_id, "user", &error_msg, ctx.session_id.as_deref(), false,
+            )
+            .await;
+        }
+    }
+    let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
+}
+
+/// Run the execution loop for an approved plan. Wires thinking/interrupt channels,
+/// runs the loop, and emits outcome events. Engine must already have plan + task set.
+async fn run_plan_execution(
+    ctx: &ChatRunCtx,
+    engine: &mut crate::engine::AgentEngine,
+) {
+    let (thinking_tx, mut thinking_rx) = tokio::sync::mpsc::unbounded_channel();
+    engine.thinking_tx = Some(thinking_tx);
+    let interrupt_key = wire_interrupt_channel(ctx, engine).await;
+    wire_ask_user_bridge(&ctx.state, engine);
+
+    let events_tx_clone = ctx.events_tx.clone();
+    let agent_id_clone = ctx.agent_id.clone();
+    tokio::spawn(async move {
+        while let Some(event) = thinking_rx.recv().await {
+            match event {
+                crate::engine::ThinkingEvent::Token(token) => {
+                    let _ = events_tx_clone.send(ServerEvent::Token {
+                        agent_id: agent_id_clone.clone(), token, done: false, thinking: true,
+                    });
+                }
+                crate::engine::ThinkingEvent::ContentToken(token) => {
+                    let _ = events_tx_clone.send(ServerEvent::Token {
+                        agent_id: agent_id_clone.clone(), token, done: false, thinking: false,
+                    });
+                }
+                crate::engine::ThinkingEvent::Done => {
+                    let _ = events_tx_clone.send(ServerEvent::Token {
+                        agent_id: agent_id_clone.clone(), token: String::new(), done: true, thinking: true,
+                    });
+                }
+                crate::engine::ThinkingEvent::ContentDone => {
+                    let _ = events_tx_clone.send(ServerEvent::Token {
+                        agent_id: agent_id_clone.clone(), token: String::new(), done: true, thinking: false,
+                    });
+                }
+            }
+        }
+    });
+
+    ctx.state
+        .send_agent_status(
+            ctx.agent_id.clone(),
+            AgentStatusKind::Thinking,
+            Some("Executing plan".to_string()),
+            None,
+        )
+        .await;
+
+    let exec_outcome = run_loop_with_tracking(
+        &ctx.manager, &ctx.root, engine, &ctx.agent_id,
+        ctx.session_id.as_deref(), "chat:plan-execution",
+    )
+    .await;
+
+    engine.thinking_tx = None;
+    unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
+
+    match exec_outcome {
+        Ok(ref out) => {
+            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id);
+            // For Done (AgentOutcome::None): emit the last_assistant_text as a
+            // Message so the UI shows the completion summary.
+            if matches!(out, crate::engine::AgentOutcome::None) {
+                if let Some(text) = &engine.last_assistant_text {
+                    if !text.is_empty() {
+                        let _ = ctx.events_tx.send(ServerEvent::Message {
+                            from: ctx.agent_id.clone(),
+                            to: "user".to_string(),
+                            content: text.clone(),
+                        });
+                    }
+                }
             }
         }
         Err(err) => {
@@ -513,6 +620,24 @@ fn wire_ask_user_bridge(
     engine.tools.set_ask_user_bridge(bridge);
 }
 
+/// Persist and emit the assistant's streamed text content so the UI can
+/// finalize liveText → a permanent message bubble.  Used for plan outcomes
+/// where the engine doesn't persist the text itself.
+async fn persist_and_emit_last_assistant_text(
+    ctx: &ChatRunCtx,
+    engine: &crate::engine::AgentEngine,
+) {
+    if let Some(text) = &engine.last_assistant_text {
+        if !text.is_empty() {
+            persist_and_emit_message(
+                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
+                &ctx.agent_id, "user", text, ctx.session_id.as_deref(), false,
+            )
+            .await;
+        }
+    }
+}
+
 /// Dispatch the structured (auto) mode agent loop.
 async fn run_structured_loop(
     ctx: &ChatRunCtx,
@@ -554,11 +679,7 @@ async fn run_structured_loop(
     }
     let task_for_loop = ctx.clean_msg.trim().to_string();
     engine.task = Some(task_for_loop);
-    engine.session_plan_dir = Some(compute_session_plan_dir(
-        &ctx.state.manager.store,
-        &ctx.root,
-        ctx.session_id.as_deref(),
-    ));
+    engine.plan_file_path = Some(new_plan_file_path());
 
     // Add user message to chat history so subsequent turns have conversational context.
     engine.chat_history.push(crate::ollama::ChatMessage::new("user", ctx.clean_msg.clone()));
@@ -633,6 +754,8 @@ async fn run_structured_loop(
 
     // Agent created a plan that needs approval — store as pending.
     if let Ok(ref ok_outcome @ crate::engine::AgentOutcome::Plan(ref plan)) = outcome {
+        // Emit assistant text preceding the plan so the UI can finalize liveText → text.
+        persist_and_emit_last_assistant_text(ctx, engine).await;
         emit_outcome_event(ok_outcome, &ctx.events_tx, &ctx.agent_id);
         ctx.manager
             .set_pending_plan(
@@ -645,11 +768,27 @@ async fn run_structured_loop(
         return;
     }
 
+    // Agent plan was approved inline — start execution immediately.
+    if let Ok(crate::engine::AgentOutcome::PlanApproved(ref plan)) = outcome {
+        persist_and_emit_last_assistant_text(ctx, engine).await;
+        emit_outcome_event(outcome.as_ref().unwrap(), &ctx.events_tx, &ctx.agent_id);
+        engine.plan = Some(plan.clone());
+        engine.plan_mode = false;
+        engine.observations.clear();
+        if engine.task.is_none() {
+            engine.task = Some(format!("Execute the approved plan: {}", plan.summary));
+        }
+        // Use run_plan_execution helper (same logic as plan dispatch path)
+        run_plan_execution(ctx, engine).await;
+        return;
+    }
+
     if let Ok(outcome) = &outcome {
         emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
         // For text-only responses (AgentOutcome::None with streamed content),
-        // the engine persists the message to session files but doesn't emit a Message event.
-        // Emit one now so the UI can finalize liveText → text.
+        // the engine already persists the message to session files but doesn't
+        // emit a ServerEvent::Message.  Emit one now so the UI can finalize
+        // liveText → text.  (Don't persist again — the engine already did.)
         if matches!(outcome, crate::engine::AgentOutcome::None) {
             if let Some(text) = &engine.last_assistant_text {
                 if !text.is_empty() {
@@ -996,28 +1135,19 @@ pub(crate) async fn approve_plan_handler(
     .await;
 
     let root_clone = root.clone();
-    let plan_dir = compute_session_plan_dir(
-        &state.manager.store,
-        &root,
-        session_id.as_deref(),
-    );
 
     tokio::spawn(async move {
         let mut engine = agent.lock().await;
 
-        state_clone
-            .send_agent_status(
-                agent_id.clone(),
-                AgentStatusKind::Thinking,
-                Some("Executing plan".to_string()),
-                None,
-            )
-            .await;
-
-        // Set the approved plan on the engine.
+        // Set the approved plan on the engine and persist to disk.
         engine.plan = Some(plan);
         engine.plan_mode = false;
-        engine.session_plan_dir = Some(plan_dir);
+        if engine.plan_file_path.is_none() {
+            engine.plan_file_path = Some(new_plan_file_path());
+        }
+        let plan_snapshot = engine.plan.clone().unwrap();
+        engine.persist_and_emit_plan(plan_snapshot).await;
+
         if clear_context {
             // Full context clear — plan file is the sole source of truth
             engine.observations.clear();
@@ -1038,92 +1168,19 @@ pub(crate) async fn approve_plan_handler(
             }
         }
 
-        // Wire up thinking channel.
-        let (thinking_tx, mut thinking_rx) = tokio::sync::mpsc::unbounded_channel();
-        engine.thinking_tx = Some(thinking_tx);
+        // Build a ChatRunCtx so we can reuse run_plan_execution.
+        let ctx = ChatRunCtx {
+            state: state_clone.clone(),
+            manager,
+            events_tx: events_tx.clone(),
+            root: root_clone,
+            agent_id: agent_id.clone(),
+            session_id,
+            clean_msg: String::new(),
+            images: Vec::new(),
+        };
 
-        // Wire up interrupt channel.
-        let (interrupt_tx_ch, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        engine.interrupt_rx = Some(interrupt_rx);
-        let interrupt_key = queue_key(
-            &root_clone.to_string_lossy(),
-            session_id.as_deref().unwrap_or(""),
-            &agent_id,
-        );
-        {
-            let mut guard = state_clone.interrupt_tx.lock().await;
-            guard.insert(interrupt_key.clone(), interrupt_tx_ch);
-        }
-
-        let events_tx_inner = events_tx.clone();
-        let agent_id_inner = agent_id.clone();
-        tokio::spawn(async move {
-            while let Some(event) = thinking_rx.recv().await {
-                match event {
-                    crate::engine::ThinkingEvent::Token(token) => {
-                        let _ = events_tx_inner.send(ServerEvent::Token {
-                            agent_id: agent_id_inner.clone(),
-                            token,
-                            done: false,
-                            thinking: true,
-                        });
-                    }
-                    crate::engine::ThinkingEvent::ContentToken(token) => {
-                        let _ = events_tx_inner.send(ServerEvent::Token {
-                            agent_id: agent_id_inner.clone(),
-                            token,
-                            done: false,
-                            thinking: false,
-                        });
-                    }
-                    crate::engine::ThinkingEvent::Done => {
-                        let _ = events_tx_inner.send(ServerEvent::Token {
-                            agent_id: agent_id_inner.clone(),
-                            token: String::new(),
-                            done: true,
-                            thinking: true,
-                        });
-                    }
-                    crate::engine::ThinkingEvent::ContentDone => {
-                        let _ = events_tx_inner.send(ServerEvent::Token {
-                            agent_id: agent_id_inner.clone(),
-                            token: String::new(),
-                            done: true,
-                            thinking: false,
-                        });
-                    }
-                }
-            }
-        });
-
-        let outcome = run_loop_with_tracking(
-            &manager,
-            &root_clone,
-            &mut engine,
-            &agent_id,
-            session_id.as_deref(),
-            "chat:plan-execution",
-        )
-        .await;
-
-        engine.thinking_tx = None;
-        engine.interrupt_rx = None;
-        {
-            let mut guard = state_clone.interrupt_tx.lock().await;
-            guard.remove(&interrupt_key);
-        }
-
-        if let Ok(ref outcome) = outcome {
-            emit_outcome_event(outcome, &events_tx, &agent_id);
-        } else if let Err(err) = outcome {
-            let error_msg = format!("Error: {}", err);
-            persist_and_emit_message(
-                &manager, &events_tx, &root_clone, &agent_id,
-                &agent_id, "user", &error_msg, session_id.as_deref(), false,
-            )
-            .await;
-        }
-        let _ = events_tx.send(ServerEvent::StateUpdated);
+        run_plan_execution(&ctx, &mut engine).await;
 
         // Emit TurnComplete so the Web UI has a single finalizer.
         let _ = events_tx.send(ServerEvent::TurnComplete {

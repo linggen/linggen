@@ -4,6 +4,18 @@ use futures_util::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+/// Fix malformed JSON from some providers (e.g. Gemini sends `"function":,` instead of `"function":null,`).
+fn sanitize_json(data: &str) -> std::borrow::Cow<'_, str> {
+    // Match `":,` or `":}` patterns (value missing after colon)
+    if data.contains(":,") || data.contains(":}") {
+        let mut out = data.replace(":,", ":null,");
+        out = out.replace(":}", ":null}");
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    }
+}
+
 #[derive(Clone)]
 pub struct OpenAiClient {
     http: Client,
@@ -55,7 +67,12 @@ impl OpenAiClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("openai error ({}): {}", status, text);
+            let truncated = if text.len() > 500 {
+                format!("{}… ({} chars)", &text[..500], text.len())
+            } else {
+                text
+            };
+            anyhow::bail!("openai error ({}): {}", status, truncated);
         }
 
         // OpenAI streams SSE: "data: {...}\n\n" lines, terminated by "data: [DONE]"
@@ -82,13 +99,19 @@ impl OpenAiClient {
             if data == "[DONE]" {
                 return None;
             }
-            let chunk: OaiStreamChunk = match serde_json::from_str(data) {
+            let sanitized = sanitize_json(data);
+            let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
                 Ok(c) => c,
                 Err(e) => {
+                    let truncated = if data.len() > 300 {
+                        format!("{}… ({} chars)", &data[..300], data.len())
+                    } else {
+                        data.to_string()
+                    };
                     return Some(Err(anyhow::anyhow!(
                         "openai json parse error: {} (data: {})",
                         e,
-                        data
+                        truncated
                     )));
                 }
             };
@@ -150,7 +173,12 @@ impl OpenAiClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("openai error ({}): {}", status, text);
+            let truncated = if text.len() > 500 {
+                format!("{}… ({} chars)", &text[..500], text.len())
+            } else {
+                text
+            };
+            anyhow::bail!("openai error ({}): {}", status, truncated);
         }
 
         let byte_stream = resp
@@ -177,7 +205,8 @@ impl OpenAiClient {
             if data == "[DONE]" {
                 return None;
             }
-            let chunk: OaiStreamChunk = match serde_json::from_str(data) {
+            let sanitized = sanitize_json(data);
+            let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
                 Ok(c) => c,
                 Err(e) => {
                     return Some(Err(anyhow::anyhow!(
@@ -266,6 +295,9 @@ struct OaiMessageWithTools {
     tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+    /// Function name for role="tool" messages (required by Gemini's OpenAI-compatible API).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 impl OaiMessage {
@@ -302,18 +334,24 @@ impl OaiMessageWithTools {
                 content: Some(OaiContent::Text(msg.content.clone())),
                 tool_calls: None,
                 tool_call_id: msg.tool_call_id.clone(),
+                name: msg.name.clone(),
             };
         }
 
         // Assistant messages with tool_calls
         if msg.role == "assistant" && !msg.tool_calls.is_empty() {
             let tc: Vec<serde_json::Value> = msg.tool_calls.iter().map(|tc| {
+                // OpenAI API requires `arguments` to be a JSON string, not an object.
+                let args_str = match &tc.function.arguments {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
                 serde_json::json!({
                     "id": tc.id,
                     "type": tc.call_type,
                     "function": {
                         "name": tc.function.name,
-                        "arguments": tc.function.arguments
+                        "arguments": args_str
                     }
                 })
             }).collect();
@@ -322,6 +360,7 @@ impl OaiMessageWithTools {
                 content: if msg.content.is_empty() { None } else { Some(OaiContent::Text(msg.content.clone())) },
                 tool_calls: Some(tc),
                 tool_call_id: None,
+                name: None,
             };
         }
 
@@ -346,6 +385,7 @@ impl OaiMessageWithTools {
             content: Some(content),
             tool_calls: None,
             tool_call_id: None,
+            name: None,
         }
     }
 }
@@ -400,6 +440,7 @@ struct OaiStreamDelta {
 
 #[derive(Debug, Deserialize)]
 struct OaiStreamToolCall {
+    #[serde(default)]
     index: usize,
     #[serde(default)]
     id: Option<String>,

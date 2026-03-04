@@ -5,9 +5,34 @@ use ignore::WalkBuilder;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::time::Duration;
 use tracing::info;
+
+/// Extract the longest non-wildcard directory prefix from an absolute glob pattern.
+/// e.g. "/home/user/.linggen/skills/*/SKILL.md" → "/home/user/.linggen/skills"
+fn abs_glob_base_dir(pattern: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for component in Path::new(pattern).components() {
+        let s = component.as_os_str().to_str().unwrap_or("");
+        if s.contains('*') || s.contains('?') || s.contains('[') {
+            break;
+        }
+        match component {
+            Component::RootDir => parts.push("/"),
+            _ => parts.push(s),
+        }
+    }
+    if parts.is_empty() {
+        return "/".to_string();
+    }
+    let joined: String = if parts[0] == "/" {
+        format!("/{}", parts[1..].join("/"))
+    } else {
+        parts.join("/")
+    };
+    joined
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ListFilesArgs {
@@ -31,33 +56,93 @@ pub(super) struct CaptureScreenshotArgs {
 
 impl Tools {
     pub(super) fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
-        let globset = build_globset(args.globs.as_deref())?;
         let max_results = args.max_results.unwrap_or(200);
-
         let mut out = Vec::new();
-        let walker = WalkBuilder::new(&self.root)
-            .standard_filters(true)
-            .hidden(true)
-            .build();
 
-        for entry in walker {
-            let entry = match entry {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                continue;
+        // Expand tilde and partition into absolute vs relative globs.
+        let all_globs: Vec<String> = args
+            .globs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| expand_tilde(&g))
+            .collect();
+
+        let mut rel_globs: Vec<String> = Vec::new();
+        let mut abs_globs: Vec<String> = Vec::new();
+        for g in &all_globs {
+            if Path::new(g).is_absolute() {
+                abs_globs.push(g.clone());
+            } else {
+                rel_globs.push(g.clone());
             }
-            let path = entry.path();
-            let rel = to_rel_string(&self.root, path)?;
-            if let Some(gs) = &globset {
-                if !gs.is_match(Path::new(&rel)) {
+        }
+
+        // Walk workspace root for relative globs (or all files if no globs).
+        if !rel_globs.is_empty() || abs_globs.is_empty() {
+            let globset = build_globset(if rel_globs.is_empty() {
+                None
+            } else {
+                Some(&rel_globs)
+            })?;
+            let walker = WalkBuilder::new(&self.root)
+                .standard_filters(true)
+                .hidden(true)
+                .build();
+
+            for entry in walker {
+                let entry = match entry {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
                     continue;
                 }
+                let path = entry.path();
+                let rel = to_rel_string(&self.root, path)?;
+                if let Some(gs) = &globset {
+                    if !gs.is_match(Path::new(&rel)) {
+                        continue;
+                    }
+                }
+                out.push(rel);
+                if out.len() >= max_results {
+                    break;
+                }
             }
-            out.push(rel);
+        }
+
+        // Walk absolute directories for tilde-expanded absolute globs
+        // (e.g. ~/.linggen/skills/*/SKILL.md).
+        for abs_glob in &abs_globs {
             if out.len() >= max_results {
                 break;
+            }
+            let base_dir = abs_glob_base_dir(abs_glob);
+            let walk_root = Path::new(&base_dir);
+            if !walk_root.is_dir() {
+                continue;
+            }
+            let gs = build_globset(Some(&[abs_glob.clone()]))?;
+            let Some(gs) = gs else { continue };
+            let walker = WalkBuilder::new(walk_root)
+                .standard_filters(false)
+                .hidden(false)
+                .build();
+            for entry in walker {
+                let entry = match entry {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
+                let path_str = entry.path().to_string_lossy().to_string();
+                if gs.is_match(Path::new(&path_str)) {
+                    out.push(path_str);
+                    if out.len() >= max_results {
+                        break;
+                    }
+                }
             }
         }
 
@@ -67,9 +152,10 @@ impl Tools {
     pub(super) fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
         // Expand ~/ to home directory before processing.
         let expanded = expand_tilde(&args.path);
-        // Check if this is a memory path (absolute, outside workspace)
         let abs_path = Path::new(&expanded);
-        if abs_path.is_absolute() && self.is_memory_path(abs_path) {
+
+        // Absolute paths are read directly (no workspace sandboxing).
+        if abs_path.is_absolute() {
             if abs_path.exists() && abs_path.is_file() {
                 return self.do_read_file(&args.path, abs_path, args.max_bytes, args.line_range);
             }

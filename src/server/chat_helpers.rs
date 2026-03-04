@@ -630,6 +630,21 @@ pub(crate) fn emit_outcome_event(
                 plan: plan.clone(),
             });
         }
+        AgentOutcome::PlanApproved(plan) => {
+            let _ = events_tx.send(ServerEvent::Message {
+                from: from_id.to_string(),
+                to: "user".to_string(),
+                content: serde_json::json!({
+                    "type": "plan",
+                    "plan": plan
+                })
+                .to_string(),
+            });
+            let _ = events_tx.send(ServerEvent::PlanUpdate {
+                agent_id: from_id.to_string(),
+                plan: plan.clone(),
+            });
+        }
         _ => {}
     }
     // Always emit an Outcome event so the UI transitions the run from

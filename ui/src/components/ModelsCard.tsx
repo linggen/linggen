@@ -17,10 +17,11 @@ export const ModelsCard: React.FC<{
   ollamaStatus: OllamaPsResponse | null;
   chatMessages: ChatMessage[];
   tokensPerSec?: number;
+  activeModelId?: string;
   agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
   defaultModels?: string[];
   onToggleDefault?: (modelId: string) => void;
-}> = ({ models, agents, ollamaStatus, tokensPerSec, agentContext, defaultModels = [], onToggleDefault }) => {
+}> = ({ models, agents, ollamaStatus, tokensPerSec, activeModelId, agentContext, defaultModels = [], onToggleDefault }) => {
   const tps = Number.isFinite(Number(tokensPerSec)) ? Number(tokensPerSec) : 0;
 
   return (
@@ -36,6 +37,11 @@ export const ModelsCard: React.FC<{
         });
 
         const isStarred = defaultModels.includes(m.id);
+        // Show token rate on the model currently generating, not just any Ollama model
+        const isGeneratingModel = activeModelId
+          ? (m.id.toLowerCase() === activeModelId.toLowerCase() || m.model.toLowerCase() === activeModelId.toLowerCase())
+          : false;
+        const showTps = tps > 0 && isGeneratingModel;
         return (
           <div key={m.id} className={cn(
             'rounded-lg border bg-slate-50/50 dark:bg-white/[0.02] p-2.5 space-y-1.5',
@@ -44,7 +50,7 @@ export const ModelsCard: React.FC<{
             {/* Model name + status */}
             <div className="flex items-center justify-between gap-1">
               <div className="flex items-center gap-1.5 min-w-0">
-                <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', isActive ? 'bg-green-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600')} />
+                <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', (isActive || isGeneratingModel) ? 'bg-green-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600')} />
                 <span className="font-mono font-bold text-[11px] truncate">{m.model || m.id}</span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
@@ -65,12 +71,12 @@ export const ModelsCard: React.FC<{
             </div>
 
             {/* Model stats when active */}
-            {activeInfo && (
+            {(activeInfo || showTps) && (
               <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
-                <span>{activeInfo.details.parameter_size}</span>
-                <span>{activeInfo.details.quantization_level}</span>
-                <span>{(activeInfo.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB</span>
-                {tps > 0 && <span className="text-emerald-500 font-semibold">{tps.toFixed(1)} tok/s</span>}
+                {activeInfo && <span>{activeInfo.details.parameter_size}</span>}
+                {activeInfo && <span>{activeInfo.details.quantization_level}</span>}
+                {activeInfo && <span>{(activeInfo.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB</span>}
+                {showTps && <span className="text-emerald-500 font-semibold">{tps.toFixed(1)} tok/s</span>}
               </div>
             )}
 

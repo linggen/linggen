@@ -139,8 +139,8 @@ pub struct AgentEngine {
     // Plan mode
     pub plan_mode: bool,
     pub plan: Option<Plan>,
-    /// Directory for per-session plan file persistence.
-    pub session_plan_dir: Option<PathBuf>,
+    /// Path to the plan file in `~/.linggen/plans/`.
+    pub plan_file_path: Option<PathBuf>,
     /// Base64-encoded images to attach to the next user message.
     pub pending_images: Vec<String>,
     /// Tool permission store (session + project scoped allows).
@@ -181,6 +181,9 @@ pub enum AgentOutcome {
     Patch(String),
     #[serde(rename = "plan")]
     Plan(Plan),
+    /// User approved the plan inline via AskUser — ready for immediate execution.
+    #[serde(rename = "plan_approved")]
+    PlanApproved(Plan),
     #[serde(rename = "plan_mode_requested")]
     PlanModeRequested {
         #[serde(default)]
@@ -325,7 +328,7 @@ impl AgentEngine {
             interrupt_rx: None,
             plan_mode: false,
             plan: None,
-            session_plan_dir: None,
+            plan_file_path: None,
             pending_images: Vec::new(),
             permission_store: perm_store,
             default_models: Vec::new(),

@@ -227,6 +227,21 @@ pub(crate) async fn run_agent(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CancelToolRequest {
+    block_id: String,
+}
+
+pub(crate) async fn cancel_tool_execution(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<CancelToolRequest>,
+) -> impl IntoResponse {
+    let triggered = state.manager.trigger_tool_cancel(&req.block_id);
+    Json(serde_json::json!({
+        "status": if triggered { "cancelled" } else { "not_found" }
+    }))
+}
+
 pub(crate) async fn cancel_agent_run(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CancelRunRequest>,

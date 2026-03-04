@@ -89,74 +89,31 @@ impl Tools {
         Ok(())
     }
 
-    /// Check if an absolute path is inside the memory directory.
-    pub(super) fn is_memory_path(&self, path: &Path) -> bool {
-        if let Some(ref mem_dir) = self.memory_dir {
-            if let (Ok(canonical_path), Ok(canonical_mem)) = (
-                path.canonicalize().or_else(|_| {
-                    // File may not exist yet — canonicalize parent
-                    path.parent()
-                        .and_then(|p| p.canonicalize().ok())
-                        .map(|p| p.join(path.file_name().unwrap_or_default()))
-                        .ok_or(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            "no parent",
-                        ))
-                }),
-                mem_dir
-                    .canonicalize()
-                    .or_else(|_| Ok::<PathBuf, std::io::Error>(mem_dir.clone())),
-            ) {
-                return canonical_path.starts_with(&canonical_mem);
-            }
-        }
-        false
-    }
-
     pub(super) fn write_file(&self, args: WriteFileArgs) -> Result<ToolResult> {
         let expanded = expand_tilde(&args.path);
         let abs_path = Path::new(&expanded);
 
-        // Check if this is a memory path (absolute, outside workspace)
-        if abs_path.is_absolute() && self.is_memory_path(abs_path) {
-            if let Some(parent) = abs_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            if abs_path.exists() {
-                match fs::read_to_string(abs_path) {
-                    Ok(existing) if existing == args.content => {
-                        return Ok(ToolResult::Success(format!(
-                            "File unchanged (content identical): {}",
-                            args.path
-                        )));
-                    }
-                    Ok(_) => {} // content differs, proceed to write
-                    Err(_) => {} // file unreadable (e.g. binary), proceed to overwrite
-                }
-            }
-            let bytes = args.content.len();
-            fs::write(abs_path, &args.content)?;
-            return Ok(ToolResult::Success(format!(
-                "Memory file written: {} ({} bytes)",
-                args.path, bytes
-            )));
-        }
+        // Absolute paths are written directly (permission was already approved upstream).
+        // Relative paths are resolved against the workspace root.
+        let (target, display) = if abs_path.is_absolute() {
+            (abs_path.to_path_buf(), args.path.clone())
+        } else {
+            let rel = sanitize_rel_path(&self.root, &args.path)?;
+            self.enforce_write_access(&rel)?;
+            let p = self.root.join(&rel);
+            (p, rel)
+        };
 
-        let rel = sanitize_rel_path(&self.root, &args.path)?;
-        let path = self.root.join(&rel);
-        let new_content = args.content;
-        self.enforce_write_access(&rel)?;
-
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        if path.exists() {
-            match fs::read_to_string(&path) {
-                Ok(existing) if existing == new_content => {
+        if target.exists() {
+            match fs::read_to_string(&target) {
+                Ok(existing) if existing == args.content => {
                     return Ok(ToolResult::Success(format!(
                         "File unchanged (content identical): {}",
-                        rel
+                        display
                     )));
                 }
                 Ok(_) => {} // content differs, proceed to write
@@ -164,11 +121,11 @@ impl Tools {
             }
         }
 
-        let bytes = new_content.len();
-        fs::write(&path, new_content)?;
+        let bytes = args.content.len();
+        fs::write(&target, &args.content)?;
         Ok(ToolResult::Success(format!(
             "File written: {} ({} bytes)",
-            rel, bytes
+            display, bytes
         )))
     }
 
@@ -177,65 +134,34 @@ impl Tools {
             anyhow::bail!("old_string must not be empty");
         }
 
-        let abs_path = Path::new(&args.path);
+        let expanded = expand_tilde(&args.path);
+        let abs_path = Path::new(&expanded);
 
-        // Check if this is a memory path (absolute, outside workspace)
-        if abs_path.is_absolute() && self.is_memory_path(abs_path) {
-            if !abs_path.exists() {
-                anyhow::bail!("file not found: {}", args.path);
-            }
-            let existing = fs::read_to_string(abs_path)?;
-            let match_count = existing.matches(&args.old_string).count();
-            if match_count == 0 {
-                anyhow::bail!("old_string was not found in file: {}", args.path);
-            }
-            let replace_all = args.replace_all.unwrap_or(false);
-            if match_count > 1 && !replace_all {
-                anyhow::bail!(
-                    "old_string matched {} locations in {}. Provide a more specific old_string or set replace_all=true.",
-                    match_count,
-                    args.path
-                );
-            }
-            let updated = if replace_all {
-                existing.replace(&args.old_string, &args.new_string)
-            } else {
-                existing.replacen(&args.old_string, &args.new_string, 1)
-            };
-            if updated == existing {
-                return Ok(ToolResult::Success(format!(
-                    "File unchanged (no effective edit): {}",
-                    args.path
-                )));
-            }
-            fs::write(abs_path, updated)?;
-            let replaced = if replace_all { match_count } else { 1 };
-            return Ok(ToolResult::Success(format!(
-                "Edited memory file: {} ({} replacement{})",
-                args.path,
-                replaced,
-                if replaced == 1 { "" } else { "s" }
-            )));
-        }
+        // Absolute paths are used directly (permission was already approved upstream).
+        // Relative paths are resolved against the workspace root.
+        let (target, display) = if abs_path.is_absolute() {
+            (abs_path.to_path_buf(), args.path.clone())
+        } else {
+            let rel = sanitize_rel_path(&self.root, &args.path)?;
+            self.enforce_write_access(&rel)?;
+            let p = self.root.join(&rel);
+            (p, rel)
+        };
 
-        let rel = sanitize_rel_path(&self.root, &args.path)?;
-        let path = self.root.join(&rel);
-        if !path.exists() {
-            anyhow::bail!("file not found: {}", rel);
+        if !target.exists() {
+            anyhow::bail!("file not found: {}", display);
         }
-        if path.is_dir() {
+        if target.is_dir() {
             anyhow::bail!(
                 "path '{}' is a directory. Use Glob to enumerate files, then Edit with an exact file path.",
-                rel
+                display
             );
         }
 
-        self.enforce_write_access(&rel)?;
-
-        let existing = fs::read_to_string(&path)?;
+        let existing = fs::read_to_string(&target)?;
         let match_count = existing.matches(&args.old_string).count();
         if match_count == 0 {
-            anyhow::bail!("old_string was not found in file: {}", rel);
+            anyhow::bail!("old_string was not found in file: {}", display);
         }
 
         let replace_all = args.replace_all.unwrap_or(false);
@@ -243,7 +169,7 @@ impl Tools {
             anyhow::bail!(
                 "old_string matched {} locations in {}. Provide a more specific old_string or set replace_all=true.",
                 match_count,
-                rel
+                display
             );
         }
 
@@ -256,15 +182,15 @@ impl Tools {
         if updated == existing {
             return Ok(ToolResult::Success(format!(
                 "File unchanged (no effective edit): {}",
-                rel
+                display
             )));
         }
 
-        fs::write(&path, updated)?;
+        fs::write(&target, updated)?;
         let replaced = if replace_all { match_count } else { 1 };
         Ok(ToolResult::Success(format!(
             "Edited file: {} ({} replacement{})",
-            rel,
+            display,
             replaced,
             if replaced == 1 { "" } else { "s" }
         )))

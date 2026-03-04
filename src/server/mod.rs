@@ -34,8 +34,8 @@ use tokio_stream::StreamExt;
 use tracing::info;
 
 use agent_api::{
-    cancel_agent_run, clear_mission, get_agent_override, get_mission, list_missions, run_agent,
-    set_agent_override, set_mission, set_task,
+    cancel_agent_run, cancel_tool_execution, clear_mission, get_agent_override, get_mission,
+    list_missions, run_agent, set_agent_override, set_mission, set_task,
 };
 use chat_api::{approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api, edit_plan_handler, reject_plan_handler};
 use config_api::{get_config_api, get_credentials_api, get_models_health, update_config_api, update_credentials_api};
@@ -43,7 +43,7 @@ use projects_api::{
     add_project, create_session, delete_agent_file_api, delete_skill_file_api,
     get_agent_context_api, get_agent_file_api, get_skill_file_api, list_agent_children_api,
     list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api, list_projects,
-    list_sessions, list_skill_files_api, list_skills, remove_project, remove_session_api,
+    list_sessions, list_skill_files_api, list_skills, reload_skills, remove_project, remove_session_api,
     rename_session_api, upsert_agent_file_api, upsert_skill_file_api,
 };
 use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, marketplace_install, marketplace_list, marketplace_move_to_global, marketplace_search, marketplace_uninstall};
@@ -956,6 +956,7 @@ pub async fn prepare_server(
         .route("/api/config", get(get_config_api).post(update_config_api))
         .route("/api/credentials", get(get_credentials_api).put(update_credentials_api))
         .route("/api/skills", get(list_skills))
+        .route("/api/skills/reload", post(reload_skills))
         .route("/api/marketplace/search", get(marketplace_search))
         .route("/api/marketplace/list", get(marketplace_list))
         .route("/api/marketplace/install", post(marketplace_install))
@@ -975,6 +976,7 @@ pub async fn prepare_server(
         .route("/api/task", post(set_task))
         .route("/api/run", post(run_agent))
         .route("/api/agent-cancel", post(cancel_agent_run))
+        .route("/api/tool-cancel", post(cancel_tool_execution))
         .route("/api/mission", get(get_mission).post(set_mission).delete(clear_mission))
         .route("/api/missions", get(list_missions))
         .route("/api/agent-override", get(get_agent_override).post(set_agent_override))

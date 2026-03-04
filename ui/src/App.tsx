@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { Bot, FilePenLine, Settings, Sparkles, Target, Zap } from 'lucide-react';
+import { Bot, FilePenLine, RefreshCw, Settings, Sparkles, Target, Zap } from 'lucide-react';
 import { AgentsCard } from './components/AgentsCard';
 import { SessionNav } from './components/SessionNav';
 import { ModelsCard } from './components/ModelsCard';
@@ -9,8 +9,6 @@ import { FilePreview } from './components/FilePreview';
 import { ChatPanel } from './components/chat';
 import { HeaderBar } from './components/HeaderBar';
 import { SettingsPage } from './components/SettingsPage';
-import { StoragePage } from './components/StoragePage';
-import { MissionPage } from './components/MissionPage';
 import { MissionSidebarCard } from './components/MissionSidebarCard';
 import { AgentSpecEditorModal } from './components/AgentSpecEditorModal';
 import type {
@@ -47,7 +45,7 @@ const VERBOSE_MODE_STORAGE_KEY = 'linggen-agent:verbose-mode';
 const SELECTED_PROJECT_STORAGE_KEY = 'linggen-agent:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen-agent:active-session';
 
-type Page = 'main' | 'settings' | 'storage' | 'mission';
+type Page = 'main' | 'settings';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('main');
@@ -113,6 +111,20 @@ const App: React.FC = () => {
 
   const prevSessionIdRef = useRef<string | null>(null);
   const mainAgents = agents;
+  // Determine which model is currently generating (for token rate display).
+  // Extract from status text like "Thinking (gemini-2.5-flash)" since agent.model
+  // may be "inherit" or null when using the default routing chain.
+  const activeModelId = useMemo(() => {
+    for (const name of Object.keys(agentStatusText)) {
+      const status = agentStatus[name];
+      if (status && status !== 'idle') {
+        const text = agentStatusText[name] || '';
+        const match = text.match(/\(([^)]+)\)/);
+        if (match) return match[1];
+      }
+    }
+    return undefined;
+  }, [agentStatus, agentStatusText]);
   const mainAgentIds = useMemo(() => {
     return agents.map((agent) => agent.name.toLowerCase());
   }, [agents]);
@@ -499,6 +511,23 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const [reloadingSkills, setReloadingSkills] = useState(false);
+  const reloadSkills = useCallback(async () => {
+    setReloadingSkills(true);
+    try {
+      await fetch('/api/skills/reload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_root: selectedProjectRoot || undefined }),
+      });
+      await fetchSkills();
+    } catch (e) {
+      console.error('Failed to reload skills:', e);
+    } finally {
+      setReloadingSkills(false);
+    }
+  }, [selectedProjectRoot, fetchSkills]);
+
   const fetchAgents = useCallback(async (projectRootOverride?: string) => {
     const root = projectRootOverride || selectedProjectRoot;
     if (!root) {
@@ -640,6 +669,7 @@ const App: React.FC = () => {
       addLog(`Error clearing mission: ${e}`);
     }
   };
+
 
   const cancelAgentRun = async (runId: string) => {
     if (!runId) return;
@@ -816,8 +846,9 @@ const App: React.FC = () => {
         fetchSessions();
       }
       if (data?.status === 'queued') {
-        // Keep the user message in chat — it has the correct timestamp for
-        // time-ordered display. The queue banner still shows it separately.
+        // Remove the optimistic user message — queued messages are shown in the
+        // queue banner only. They'll appear in chat once the agent processes them.
+        chatDispatch({ type: 'REMOVE_LAST_USER_MESSAGE', text: userMessage, agentId: agentToUse });
         return;
       }
       setAgentStatus((prev) => ({ ...prev, [agentToUse]: 'model_loading' }));
@@ -993,20 +1024,9 @@ const App: React.FC = () => {
         }}
         projectRoot={selectedProjectRoot}
         initialTab={initialSettingsTab}
-      />
-    )}
-    {currentPage === 'storage' && (
-      <StoragePage
-        onBack={() => setCurrentPage('main')}
-      />
-    )}
-    {currentPage === 'mission' && (
-      <MissionPage
-        onBack={() => setCurrentPage('main')}
-        projectRoot={selectedProjectRoot}
-        agents={agents}
-        agentStatus={agentStatus}
-        agentRunSummary={agentRunSummary}
+        missionAgents={agents}
+        missionAgentStatus={agentStatus}
+        missionAgentRunSummary={agentRunSummary}
         mission={mission}
         missionDraft={missionDraft}
         onMissionDraftChange={setMissionDraft}
@@ -1022,9 +1042,6 @@ const App: React.FC = () => {
         copyChatStatus={copyChatStatus}
         clearChat={clearChat}
         isRunning={isRunning}
-        onOpenMission={() => setCurrentPage('mission')}
-        missionActive={!!mission?.active}
-        onOpenStorage={() => setCurrentPage('storage')}
         onOpenSettings={() => setCurrentPage('settings')}
       />
 
@@ -1111,6 +1128,8 @@ const App: React.FC = () => {
               subagentRunHistory={subagentRunHistory}
               cancellingRunIds={cancellingRunIds}
               onCancelRun={cancelAgentRun}
+              onCancelAgentRun={cancelAgentRun}
+              isRunning={isRunning}
               onSendMessage={sendChatMessage}
               pendingPlan={pendingPlan}
               pendingPlanAgentId={pendingPlanAgentId}
@@ -1137,7 +1156,7 @@ const App: React.FC = () => {
             <MissionSidebarCard
               mission={mission}
               projectRoot={selectedProjectRoot}
-              onOpenMission={() => setCurrentPage('mission')}
+              onOpenMission={() => { setInitialSettingsTab('mission'); setCurrentPage('settings'); }}
             />
           </CollapsibleCard>
           <CollapsibleCard
@@ -1162,6 +1181,7 @@ const App: React.FC = () => {
               ollamaStatus={ollamaStatus}
               chatMessages={chatMessages}
               tokensPerSec={tokensPerSec}
+              activeModelId={activeModelId}
               agentContext={agentContext}
               defaultModels={defaultModels}
               onToggleDefault={toggleDefaultModel}
@@ -1174,13 +1194,23 @@ const App: React.FC = () => {
             badge={`${skills.length} loaded`}
             defaultOpen
             headerAction={
-              <button
-                onClick={() => { setInitialSettingsTab('skills'); setCurrentPage('settings'); }}
-                className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500"
-                title="Manage Skills"
-              >
-                <Settings size={12} />
-              </button>
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={reloadSkills}
+                  disabled={reloadingSkills}
+                  className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500 disabled:opacity-50"
+                  title="Reload skills from disk"
+                >
+                  <RefreshCw size={12} className={reloadingSkills ? 'animate-spin' : ''} />
+                </button>
+                <button
+                  onClick={() => { setInitialSettingsTab('skills'); setCurrentPage('settings'); }}
+                  className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500"
+                  title="Manage Skills"
+                >
+                  <Settings size={12} />
+                </button>
+              </div>
             }
           >
             <SkillsCard skills={skills} projectRoot={selectedProjectRoot} />

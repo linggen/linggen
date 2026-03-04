@@ -58,6 +58,19 @@ Also update the constructor at line 347:
 **Why:** Moves from global plan persistence to per-session storage.
 ```
 
+### Create a task list
+
+Before exiting plan mode, call UpdatePlan with a structured task list that mirrors the numbered steps in your plan. This gives the user a progress tracker during execution. Each item should correspond to a concrete implementation step from your plan. Use concise, action-oriented titles. Set all items to `pending` status.
+
 ### When done
 
-When your plan is ready, call the ExitPlanMode tool. The user will review and approve (or request changes to) your plan.'''
+When your plan is ready, write the full plan as your response text and call these tools **in the same turn**:
+
+1. Call **UpdatePlan** with a structured task list mirroring your plan steps (all `pending`).
+2. Call **ExitPlanMode** to submit the plan for user approval.
+
+The system will present the plan to the user for approval automatically. Do NOT call AskUser for plan approval — the infrastructure handles this.
+
+If the user gives feedback via the approval UI, you will receive it as a message. Revise your plan, call UpdatePlan again, and call ExitPlanMode again.
+
+**CRITICAL:** Your plan text MUST be in the same response as the ExitPlanMode call. Do NOT split them across turns. Do NOT ask the user for confirmation in your text — never write "Does this look good?" or similar.'''

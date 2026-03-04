@@ -340,17 +340,20 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
       const tree = state[idx].subagentTree;
       if (tree && tree.some((e) => e.status === 'running')) return state;
       const next = [...state];
-      const entries = Array.isArray(next[idx].activityEntries) ? next[idx].activityEntries : [];
+      const msg = next[idx];
+      const entries = Array.isArray(msg.activityEntries) ? msg.activityEntries : [];
       const nonTransient = entries.filter((e: string) => !isTransientStatus(e));
+      const finalText = msg.text || msg.liveText || '';
       next[idx] = {
-        ...next[idx],
+        ...msg,
+        text: finalText,
         isGenerating: false,
         isThinking: false,
         liveText: undefined,
-        activitySummary: summarizeActivityEntries(entries, false) || next[idx].activitySummary,
-        toolCount: nonTransient.length || next[idx].toolCount,
-        durationMs: elapsed || next[idx].durationMs,
-        contextTokens: ctxTokens || next[idx].contextTokens,
+        activitySummary: summarizeActivityEntries(entries, false) || msg.activitySummary,
+        toolCount: nonTransient.length || msg.toolCount,
+        durationMs: elapsed || msg.durationMs,
+        contextTokens: ctxTokens || msg.contextTokens,
       };
       return next;
     }
@@ -528,8 +531,17 @@ function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
       const nonTransient = entries.filter((e: string) => !isTransientStatus(e));
       const toolBlocks = (msg.content || []).filter((b) => b.type === 'tool_use');
       const totalTools = toolBlocks.length || nonTransient.length || msg.toolCount || 0;
+      // Preserve streamed liveText into msg.text so the response isn't lost
+      // when liveText is cleared. FINALIZE_MESSAGE normally sets text, but if
+      // it never fires (e.g. the server message was sanitized away) or fires
+      // with empty content, liveText is the only copy of the response.
+      // Prefer liveText over placeholder text (e.g. "Thinking (model)").
+      const textIsPlaceholder = isStatusLineText(msg.text || '');
+      const finalText = msg.liveText || (textIsPlaceholder ? '' : msg.text) || '';
+
       next[idx] = {
         ...msg,
+        text: finalText,
         isGenerating: false,
         isThinking: false,
         liveText: undefined,
@@ -554,15 +566,23 @@ export function useChatMessages() {
   const [chatMessages, chatDispatch] = useReducer(chatReducer, []);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lastChatCountRef = useRef(0);
+  const lastContentLenRef = useRef(0);
   const chatClearTsRef = useRef(0);
 
-  // Auto-scroll when new messages arrive
+  // Auto-scroll when new messages arrive or new content blocks are added to the
+  // last generating message (e.g. a new tool starts running within a turn).
+  const lastMsg = chatMessages[chatMessages.length - 1];
+  const lastContentLen = lastMsg?.isGenerating ? (lastMsg.content?.length || 0) : 0;
+
   useEffect(() => {
-    if (chatMessages.length > lastChatCountRef.current) {
+    const newMessages = chatMessages.length > lastChatCountRef.current;
+    const newContentBlocks = lastContentLen > lastContentLenRef.current;
+    if (newMessages || newContentBlocks) {
       chatEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
     }
     lastChatCountRef.current = chatMessages.length;
-  }, [chatMessages.length]);
+    lastContentLenRef.current = lastContentLen;
+  }, [chatMessages.length, lastContentLen]);
 
   // Track clear timestamp for cooldown
   const clearChat = () => {

@@ -138,8 +138,8 @@ export const AgentsCard: React.FC<{
               </div>
             )}
 
-            {/* Row 4: Run badges */}
-            {run && (
+            {/* Row 4: Run badges — hide stale "running" when agent is actually idle */}
+            {run && !(run.status === 'running' && !isActive) && (
               <div className="mt-1 flex items-center gap-1 flex-wrap">
                 <span
                   className={cn(

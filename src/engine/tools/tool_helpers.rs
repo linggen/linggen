@@ -307,7 +307,7 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
                 "questions": "[{question: string, header: string, options: [{label: string, description?: string, preview?: string}], multi_select?: boolean}]"
             },
             "returns": "{answers: [{question_index: number, selected: string[], custom_text?: string}]}",
-            "notes": "Ask user 1-4 structured questions with 2-4 options each. User can always type custom text via 'Other'. Blocks until response (5 min timeout). Not available in sub-agents."
+            "notes": "Ask user 1-4 structured questions with 2-6 options each. User can always type custom text via 'Other'. Blocks until response (5 min timeout). Not available in sub-agents."
         }),
         serde_json::json!({
             "name": "ExitPlanMode",

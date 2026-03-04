@@ -12,6 +12,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::Instant;
@@ -38,6 +39,8 @@ pub struct AgentManager {
     pub skill_manager: Arc<SkillManager>,
     working_places: Mutex<HashMap<String, HashMap<String, WorkingPlaceEntry>>>,
     cancelled_runs: Mutex<HashSet<String>>,
+    /// Per-tool-block cancellation flags (block_id → AtomicBool).
+    tool_cancel_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     events: mpsc::UnboundedSender<AgentEvent>,
     /// Pending plans awaiting user approval, keyed by "{project_root}|{agent_id}".
     pending_plans: Mutex<HashMap<String, Plan>>,
@@ -351,21 +354,6 @@ impl AgentManager {
             for spec in Self::load_agent_specs_from_dir(&project_dir) {
                 merged.insert(spec.agent_id.clone(), spec);
             }
-        } else {
-            // Fallback: look for agents/ in immediate subdirectories
-            if let Ok(entries) = std::fs::read_dir(project_root) {
-                for entry in entries.flatten() {
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        let sub_agents = entry.path().join("agents");
-                        if sub_agents.is_dir() {
-                            for spec in Self::load_agent_specs_from_dir(&sub_agents) {
-                                merged.insert(spec.agent_id.clone(), spec);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
         }
 
         let mut specs: Vec<AgentSpecFile> = merged.into_values().collect();
@@ -415,6 +403,7 @@ impl AgentManager {
                 skill_manager,
                 working_places: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
+                tool_cancel_flags: std::sync::Mutex::new(HashMap::new()),
                 events: tx,
                 pending_plans: Mutex::new(HashMap::new()),
                 run_project_map: Mutex::new(HashMap::new()),
@@ -422,6 +411,28 @@ impl AgentManager {
             }),
             rx,
         )
+    }
+
+    pub fn register_tool_cancel_flag(&self, block_id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.tool_cancel_flags
+            .lock()
+            .unwrap()
+            .insert(block_id.to_string(), Arc::clone(&flag));
+        flag
+    }
+
+    pub fn trigger_tool_cancel(&self, block_id: &str) -> bool {
+        if let Some(flag) = self.tool_cancel_flags.lock().unwrap().get(block_id) {
+            flag.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_tool_cancel_flag(&self, block_id: &str) {
+        self.tool_cancel_flags.lock().unwrap().remove(block_id);
     }
 
     pub async fn get_or_create_project(&self, root: PathBuf) -> Result<Arc<ProjectContext>> {

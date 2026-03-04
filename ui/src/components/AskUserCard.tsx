@@ -26,7 +26,20 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
     return init;
   });
 
+  // Single question + single-select → auto-submit on click for faster UX
+  // (e.g. plan approve/reject, permission prompts).
+  const canAutoSubmit = questions.length === 1 && !questions[0].multi_select;
+
   const toggleOption = (qIdx: number, label: string) => {
+    if (canAutoSubmit) {
+      // Immediately submit the selection
+      onRespond(pending.questionId, [{
+        question_index: qIdx,
+        selected: [label],
+        custom_text: null,
+      }]);
+      return;
+    }
     setSelections(prev => {
       const next = { ...prev };
       const set = new Set(prev[qIdx]);

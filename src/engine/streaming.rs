@@ -37,6 +37,28 @@ pub(crate) fn strip_think_tags(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// JSON recovery helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the first valid JSON object from a string that may contain multiple
+/// concatenated JSON objects (e.g. `{"a":1}{"b":2}`). Some models produce this
+/// when they try to emit multiple tool calls under a single delta index.
+fn extract_first_json_object(s: &str) -> Option<serde_json::Value> {
+    let trimmed = s.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    // Use serde_json's streaming deserializer to read just the first object
+    let mut de = serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
+    if let Some(Ok(val)) = de.next() {
+        if val.is_object() {
+            return Some(val);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Free functions for parallel tool execution
 // ---------------------------------------------------------------------------
 
@@ -296,8 +318,13 @@ impl AgentEngine {
                 serde_json::json!({})
             } else {
                 serde_json::from_str(args_str).unwrap_or_else(|_| {
-                    warn!("Failed to parse tool call arguments as JSON: {}", args_str);
-                    serde_json::json!({})
+                    // Some models (e.g. Qwen) concatenate multiple JSON objects
+                    // into a single tool call delta: {"a":1}{"b":2}{"c":3}
+                    // Try to extract the first valid JSON object.
+                    extract_first_json_object(args_str).unwrap_or_else(|| {
+                        warn!("Failed to parse tool call arguments as JSON: {}", args_str);
+                        serde_json::json!({})
+                    })
                 })
             };
             tool_calls.push(ParsedToolCall {

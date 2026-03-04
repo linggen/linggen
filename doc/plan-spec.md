@@ -22,7 +22,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 1. **Enforce at infrastructure, not model level.** Remove tools from the API call — don't trust the model to not call them.
 2. **Plans are free-form markdown, not structured JSON.** Any model can write text. No JSON parsing for plan creation.
 3. **Progress tracking is separate from planning.** `update_plan` is for execution-time task tracking, decoupled from plan mode.
-4. **Per-session persistence.** Plans persist to `~/.linggen/projects/{enc}/sessions/{sid}/plan.md`. Session resume replaces plan resume.
+4. **Global plan persistence.** Plans persist to `~/.linggen/plans/{adjective-gerund-noun}.md` with unique generated filenames. Each plan gets its own file.
 5. **Self-contained plans.** Plans must include file paths, line numbers, and code snippets so they work as the sole context after clearing.
 6. **Unified flow.** No `PlanOrigin` enum — all plans use the same approval flow. Plan mode requires user initiation and approval.
 
@@ -31,11 +31,10 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 ### Dropped
 
 - `PlanOrigin` enum — single unified flow, no `ModelManaged` vs `UserRequested` distinction.
-- Global plan persistence (`~/.linggen/plans/`) — now per-session.
+- Per-session plan persistence — now global `~/.linggen/plans/` with unique filenames.
 - Plan auto-resume (`load_latest_plan()`) — session resume replaces it.
-- `plan_file` / `plans_dir_override` fields — replaced by `session_plan_dir`.
-- `slugify_summary()`, `unique_plan_path()`, `parse_plan_file()` — no longer needed.
-- Sidecar `.meta.json` files — simplified to single `plan.md`.
+- `session_plan_dir` field — replaced by `plan_file_path` (full path to the plan file).
+- Sidecar `.meta.json` files — simplified to single `.md` file per plan.
 - Stale `Planned` → `Executing` auto-promotion — no silent approval bypass.
 - Bash in plan mode — blocked entirely for safety.
 
@@ -44,29 +43,27 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - SSE `PlanUpdate` events.
 - `update_plan` action for execution-time progress (separate feature).
 - `plan_mode: bool` on engine.
-- Status lifecycle: `Planned` → `Approved` → `Executing` → `Completed`.
-- `auto_complete_plan()` marking remaining items as `Skipped`.
+- Status lifecycle: `Planned` → `Approved` → `Executing`.
 
 ### Added
 
 - **`ExitPlanMode` tool** — model calls this when plan is ready, triggers approval.
 - **Fallback detection** — if model emits `done` in plan mode without calling `ExitPlanMode`, treat as implicit exit.
 - **Direct plan editing** — user can edit plan markdown before approving (TUI: `$EDITOR`, Web UI: inline editor).
-- **Rich approval UI** — shows context usage percentage, offers "Approve, clear context" / "Approve, keep context" / "Reject".
+- **Approval UI** — inline: "Start building" / "Reject" / custom feedback. Web UI: approve endpoint with `clear_context` option.
 - **Self-contained plan prompts** — plan-mode prompt emphasizes code snippets and line numbers.
-- **Per-session plan dir** — `session_plan_dir` field on engine, set from `ProjectStore.project_dir()`.
+- **Global plan dir** — `plan_file_path` field on engine, unique filename generated per plan via `generate_plan_filename()`.
 
 ## Lifecycle
 
 ### Entry
 
-User-initiated only:
-1. `/plan <task>` command in Web UI or TUI.
-2. Model emits `enter_plan_mode` → engine asks user for consent first.
+1. `/plan <task>` command in Web UI or TUI (user-initiated).
+2. Model emits `enter_plan_mode` → engine enters plan mode directly and runs the plan dispatch loop.
 
 ### Research phase
 
-Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`.
+Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `UpdatePlan`.
 
 Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `Task`, `lock_paths`, `unlock_paths`, `Skill`.
 
@@ -74,11 +71,14 @@ Model researches the codebase, then writes a self-contained markdown plan and ca
 
 ### Approval
 
-User options:
-- **Approve, clear context (X% used)** — clears conversation history; plan is sole context.
-- **Approve, keep context** — retains full conversation; plan appended.
-- **Give feedback** — user sends a message; model refines plan.
+Inline approval (via AskUser bridge):
+- **Start building** — approves the plan and begins execution.
 - **Reject** — plan discarded.
+- **Custom text** — user types feedback; model refines plan and re-submits.
+
+Web UI approval (via `/api/plan/approve`):
+- Passes `clear_context: bool` to choose whether to clear conversation history.
+- Clear context → plan is sole context for execution. Keep context → full conversation retained.
 
 ### Execution
 
@@ -86,7 +86,7 @@ Plan text injected into system prompt. Model executes with full tools. Progress 
 
 ### Completion
 
-On `done`: remaining tracked items marked `Skipped` (not `Done`), plan status → `Completed`, file updated, SSE event sent.
+Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped`, set plan status → `Completed`, update file, emit SSE event.
 
 ## Progress tracking
 
@@ -94,16 +94,12 @@ On `done`: remaining tracked items marked `Skipped` (not `Done`), plan status �
 
 ## Storage
 
-Plan file: `~/.linggen/projects/{encoded_path}/sessions/{session_id}/plan.md`
+Plan file: `~/.linggen/plans/{adjective-gerund-noun}.md`
 
-Single file, no sidecar metadata. Written on every plan update, overwritten in place.
+Each plan gets a unique filename generated from adjective-gerund-noun word lists (e.g., `bright-running-falcon.md`), collision-checked against the plans directory. Single file per plan, no sidecar metadata. Written on every plan update, overwritten in place.
 
-## Model capability tiers
+## Model compatibility
 
-| Tier | Models | Support |
-|------|--------|---------|
-| **Tier 1** | Claude, GPT-4, Gemini Pro | Full: `ExitPlanMode` tool, progress tracking, `AskUser` |
-| **Tier 2** | Qwen-72B, DeepSeek, Llama-70B+ | Core: tool calling with fallback detection |
-| **Tier 3** | Small Ollama (7B-14B) | Basic: fallback only, manual approval trigger |
+Fallback detection (`done` in plan mode → implicit `ExitPlanMode`) applies to all models unconditionally, so plan mode works regardless of model capability. Models with native tool calling use `ExitPlanMode` directly; models without it rely on the fallback path.
 
-Tier configured via `capability_tier` in model config. Default: Tier 1. Tier 3 auto-treats `done` in plan mode as `ExitPlanMode`.
+Future: `capability_tier` config field to fine-tune per-model behavior (e.g., disabling `UpdatePlan` for small models).

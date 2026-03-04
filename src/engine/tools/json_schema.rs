@@ -243,7 +243,7 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "AskUser",
-            "Ask the user 1-4 structured questions with 2-4 options each. User can always type custom text. Blocks until response (5 min timeout).",
+            "Ask the user 1-4 structured questions with 2-6 options each. User can always type custom text. Blocks until response (5 min timeout).",
             json!({
                 "type": "object",
                 "properties": {
@@ -276,7 +276,7 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "ExitPlanMode",
-            "Signal that your plan is complete and ready for user review. Call after researching and writing your plan.",
+            "Submit your plan for user approval. The system will prompt the user to approve, reject, or give feedback — do NOT ask for confirmation in your response text. Just call this tool when the plan is ready.",
             json!({
                 "type": "object",
                 "properties": {},

@@ -518,6 +518,7 @@ export const MissionPage: React.FC<{
   onSaveMission: (text: string) => void;
   onClearMission: () => void;
   idlePromptEvents: IdlePromptEvent[];
+  embedded?: boolean;
 }> = ({
   onBack,
   projectRoot,
@@ -530,6 +531,7 @@ export const MissionPage: React.FC<{
   onSaveMission,
   onClearMission,
   idlePromptEvents,
+  embedded,
 }) => {
   const [tab, setTab] = useState<MissionTab>('editor');
 
@@ -539,6 +541,72 @@ export const MissionPage: React.FC<{
     { id: 'history', label: 'History' },
     { id: 'activity', label: 'Activity' },
   ];
+
+  const tabBar = (
+    <div className={cn(
+      'flex items-center gap-1 px-6 py-2',
+      !embedded && 'border-b border-slate-200 dark:border-white/5 bg-white/50 dark:bg-white/[0.02]',
+    )}>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => setTab(t.id)}
+          className={cn(
+            'px-3 py-1.5 rounded-md text-xs font-semibold transition-colors',
+            tab === t.id
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5'
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const content = (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-4xl mx-auto">
+        {tab === 'editor' && (
+          <EditorTab
+            mission={mission}
+            missionDraft={missionDraft}
+            onMissionDraftChange={onMissionDraftChange}
+            onSaveMission={onSaveMission}
+            onClearMission={onClearMission}
+          />
+        )}
+        {tab === 'agents' && (
+          <AgentsTab
+            agents={agents}
+            agentStatus={agentStatus}
+            projectRoot={projectRoot}
+          />
+        )}
+        {tab === 'history' && (
+          <HistoryTab projectRoot={projectRoot} />
+        )}
+        {tab === 'activity' && (
+          <ActivityTab
+            idlePromptEvents={idlePromptEvents}
+            agents={agents}
+            agentStatus={agentStatus}
+            agentRunSummary={agentRunSummary}
+            mission={mission}
+          />
+        )}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col h-full">
+        {tabBar}
+        {content}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200">
@@ -558,57 +626,8 @@ export const MissionPage: React.FC<{
         )}
       </header>
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 px-6 py-2 border-b border-slate-200 dark:border-white/5 bg-white/50 dark:bg-white/[0.02]">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={cn(
-              'px-3 py-1.5 rounded-md text-xs font-semibold transition-colors',
-              tab === t.id
-                ? 'bg-blue-600 text-white'
-                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5'
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          {tab === 'editor' && (
-            <EditorTab
-              mission={mission}
-              missionDraft={missionDraft}
-              onMissionDraftChange={onMissionDraftChange}
-              onSaveMission={onSaveMission}
-              onClearMission={onClearMission}
-            />
-          )}
-          {tab === 'agents' && (
-            <AgentsTab
-              agents={agents}
-              agentStatus={agentStatus}
-              projectRoot={projectRoot}
-            />
-          )}
-          {tab === 'history' && (
-            <HistoryTab projectRoot={projectRoot} />
-          )}
-          {tab === 'activity' && (
-            <ActivityTab
-              idlePromptEvents={idlePromptEvents}
-              agents={agents}
-              agentStatus={agentStatus}
-              agentRunSummary={agentRunSummary}
-              mission={mission}
-            />
-          )}
-        </div>
-      </div>
+      {tabBar}
+      {content}
     </div>
   );
 };

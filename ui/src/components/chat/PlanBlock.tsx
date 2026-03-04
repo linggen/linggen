@@ -87,13 +87,13 @@ export const PlanBlock: React.FC<{
               onClick={() => onApprovePlan(true)}
               className="px-3 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
             >
-              Approve, clear context{pct !== null ? ` (${pct}% used)` : ''}
+              Start building, clear context{pct !== null ? ` (${pct}% used)` : ''}
             </button>
             <button
               onClick={() => onApprovePlan(false)}
               className="px-3 py-1 text-[11px] font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700"
             >
-              Approve, keep context
+              Start building, keep context
             </button>
             {onEditPlan && (
               <button

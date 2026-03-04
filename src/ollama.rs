@@ -81,9 +81,19 @@ impl OllamaClient {
                 status, text, model, summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
-                tracing::debug!("Ollama failed request body: {}", body);
+                let truncated_body = if body.len() > 500 {
+                    format!("{}… ({} chars)", &body[..500], body.len())
+                } else {
+                    body
+                };
+                tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
-            anyhow::bail!("ollama error ({}): {}", status, text);
+            let truncated_err = if text.len() > 500 {
+                format!("{}… ({} chars)", &text[..500], text.len())
+            } else {
+                text
+            };
+            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
         }
 
         let payload: ChatResponse = resp.json().await?;
@@ -135,9 +145,19 @@ impl OllamaClient {
                 status, text, model, summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
-                tracing::debug!("Ollama failed request body: {}", body);
+                let truncated_body = if body.len() > 500 {
+                    format!("{}… ({} chars)", &body[..500], body.len())
+                } else {
+                    body
+                };
+                tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
-            anyhow::bail!("ollama error ({}): {}", status, text);
+            let truncated_err = if text.len() > 500 {
+                format!("{}… ({} chars)", &text[..500], text.len())
+            } else {
+                text
+            };
+            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
         }
 
         let stream = resp
@@ -157,7 +177,14 @@ impl OllamaClient {
             // Ollama sends one JSON object per line
             let payload: ChatStreamResponse = match serde_json::from_str(&line) {
                 Ok(p) => p,
-                Err(e) => return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, line))),
+                Err(e) => {
+                    let truncated = if line.len() > 300 {
+                        format!("{}… ({} chars)", &line[..300], line.len())
+                    } else {
+                        line.clone()
+                    };
+                    return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated)));
+                }
             };
 
             // When done==true, Ollama includes token usage stats.
@@ -229,9 +256,19 @@ impl OllamaClient {
                 summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
-                tracing::debug!("Ollama failed request body: {}", body);
+                let truncated_body = if body.len() > 500 {
+                    format!("{}… ({} chars)", &body[..500], body.len())
+                } else {
+                    body
+                };
+                tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
-            anyhow::bail!("ollama error ({}): {}", status, text);
+            let truncated_err = if text.len() > 500 {
+                format!("{}… ({} chars)", &text[..500], text.len())
+            } else {
+                text
+            };
+            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
         }
 
         let stream = resp
@@ -254,7 +291,14 @@ impl OllamaClient {
             // Parse as generic JSON to handle both text tokens and tool_calls.
             let payload: serde_json::Value = match serde_json::from_str(&line) {
                 Ok(p) => p,
-                Err(e) => return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, line))),
+                Err(e) => {
+                    let truncated = if line.len() > 300 {
+                        format!("{}… ({} chars)", &line[..300], line.len())
+                    } else {
+                        line.clone()
+                    };
+                    return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated)));
+                }
             };
 
             let done = payload.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -350,7 +394,8 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("ollama error ({}): {}", status, text);
+            let truncated = if text.len() > 500 { format!("{}…", &text[..500]) } else { text };
+            anyhow::bail!("ollama error ({}): {}", status, truncated);
         }
 
         let payload: OllamaShowResponse = resp.json().await?;
@@ -420,7 +465,8 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("ollama error ({}): {}", status, text);
+            let truncated = if text.len() > 500 { format!("{}…", &text[..500]) } else { text };
+            anyhow::bail!("ollama error ({}): {}", status, truncated);
         }
         let payload: OllamaShowResponse = resp.json().await?;
         Ok(payload.capabilities.iter().any(|c| c == "vision"))
@@ -581,6 +627,9 @@ pub struct ChatMessage {
     /// The tool_call_id this message is a result for (role="tool" messages).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Function name for role="tool" messages (required by Gemini's OpenAI-compatible API).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl ChatMessage {
@@ -593,6 +642,7 @@ impl ChatMessage {
             cache_control: None,
             tool_calls: Vec::new(),
             tool_call_id: None,
+            name: None,
         }
     }
 
@@ -601,8 +651,12 @@ impl ChatMessage {
         self
     }
 
-    /// Create a tool result message (role="tool") for native function calling.
-    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+    /// Create a tool result message with function name (required by Gemini's OpenAI-compatible API).
+    pub fn tool_result_named(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             role: "tool".to_string(),
             content: content.into(),
@@ -611,6 +665,7 @@ impl ChatMessage {
             cache_control: None,
             tool_calls: Vec::new(),
             tool_call_id: Some(tool_call_id.into()),
+            name: Some(name.into()),
         }
     }
 
@@ -624,6 +679,7 @@ impl ChatMessage {
             cache_control: None,
             tool_calls: calls,
             tool_call_id: None,
+            name: None,
         }
     }
 }
