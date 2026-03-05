@@ -47,6 +47,8 @@ const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
 
 type Page = 'main' | 'settings';
 
+const isCompact = new URLSearchParams(window.location.search).get('mode') === 'compact';
+
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('main');
   const [initialSettingsTab, setInitialSettingsTab] = useState<import('./types').ManagementTab | undefined>(undefined);
@@ -1015,7 +1017,7 @@ const App: React.FC = () => {
 
   return (
     <>
-    {currentPage === 'settings' && (
+    {!isCompact && currentPage === 'settings' && (
       <SettingsPage
         onBack={() => {
           setCurrentPage('main');
@@ -1038,19 +1040,40 @@ const App: React.FC = () => {
       />
     )}
     <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${currentPage !== 'main' ? ' hidden' : ''}`}>
-      {/* Header */}
-      <HeaderBar
-        copyChat={copyChat}
-        copyChatStatus={copyChatStatus}
-        clearChat={clearChat}
-        isRunning={isRunning}
-        onOpenSettings={() => setCurrentPage('settings')}
-      />
+      {/* Header — hidden in compact mode */}
+      {!isCompact && (
+        <HeaderBar
+          copyChat={copyChat}
+          copyChatStatus={copyChatStatus}
+          clearChat={clearChat}
+          isRunning={isRunning}
+          onOpenSettings={() => setCurrentPage('settings')}
+        />
+      )}
+
+      {/* Compact toolbar — agent & model selectors */}
+      {isCompact && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f] flex-shrink-0">
+          <select
+            value={selectedAgent}
+            onChange={(e) => setSelectedAgent(e.target.value)}
+            className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-2 py-1 text-slate-700 dark:text-slate-300 outline-none"
+          >
+            {agents.map((a) => (
+              <option key={a.name} value={a.name}>{a.name}</option>
+            ))}
+          </select>
+          <span className={`ml-auto text-[10px] ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
+            {isRunning ? 'Running' : 'Idle'}
+          </span>
+        </div>
+      )}
 
       {/* Main Layout */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* Left: Sessions + Agents */}
+        {/* Left: Sessions + Agents — hidden in compact mode */}
+        {!isCompact && (
         <div className="w-72 border-r border-slate-200 dark:border-white/5 flex flex-col bg-white dark:bg-[#0f0f0f] h-full">
           <SessionNav
             projects={projects}
@@ -1107,10 +1130,11 @@ const App: React.FC = () => {
             </CollapsibleCard>
           </div>
         </div>
+        )}
 
         {/* Center: Chat */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0">
-          <div className="flex-1 p-2 min-h-0">
+        <main className={`flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0${isCompact ? ' p-0' : ''}`}>
+          <div className={`flex-1 min-h-0${isCompact ? '' : ' p-2'}`}>
             <ChatPanel
               chatMessages={displayMessages}
               queuedMessages={queuedMessages}
@@ -1146,7 +1170,8 @@ const App: React.FC = () => {
           </div>
         </main>
 
-        {/* Right: Mission, Models, Skills */}
+        {/* Right: Mission, Models, Skills — hidden in compact mode */}
+        {!isCompact && (
         <aside className="w-72 border-l border-slate-200 dark:border-white/5 flex flex-col bg-slate-100/40 dark:bg-[#0a0a0a] p-3 gap-3 overflow-y-auto">
           <CollapsibleCard
             title="MISSION"
@@ -1218,6 +1243,7 @@ const App: React.FC = () => {
             <SkillsCard skills={skills} projectRoot={selectedProjectRoot} />
           </CollapsibleCard>
         </aside>
+        )}
       </div>
 
       <FilePreview selectedFilePath={selectedFilePath} selectedFileContent={selectedFileContent} onClose={closeFilePreview} />

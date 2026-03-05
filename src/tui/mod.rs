@@ -28,13 +28,16 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
         anyhow::bail!("Server did not become healthy in time");
     }
 
-    let sse_rx = client.subscribe_sse();
+    let (sse_rx, sse_abort) = client.subscribe_sse();
     let client = Arc::new(client);
     let mut terminal = setup_terminal()?;
     let mut app = app::App::new(client, sse_rx, project_root, port);
 
     let tick_rate = Duration::from_millis(50);
     let mut event_stream = EventStream::new();
+
+    // Kick off background fetch of skills/agents for autocomplete
+    app.fetch_autocomplete_data();
 
     loop {
         // Drain all pending SSE events before rendering
@@ -49,6 +52,9 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
             }
         }
 
+        // Pick up autocomplete cache data from background fetch
+        app.check_autocomplete_slots();
+
         terminal.draw(|f| app.render(f))?;
 
         tokio::select! {
@@ -57,21 +63,12 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
                     match event {
                         Event::Key(key) => {
                             if app.handle_key(key)? {
+                                sse_abort.abort();
                                 restore_terminal(terminal)?;
                                 return Ok(());
                             }
                         }
-                        Event::Mouse(mouse) => {
-                            match mouse.kind {
-                                crossterm::event::MouseEventKind::ScrollUp => {
-                                    app.scroll_offset = app.scroll_offset.saturating_add(3);
-                                }
-                                crossterm::event::MouseEventKind::ScrollDown => {
-                                    app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                                }
-                                _ => {}
-                            }
-                        }
+                        Event::Mouse(_) => {}
                         _ => {}
                     }
                 }
@@ -86,7 +83,6 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
-    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let (_, rows) = crossterm::terminal::size()?;
@@ -100,7 +96,6 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)?;
     disable_raw_mode()?;
     terminal.show_cursor()?;
     Ok(())

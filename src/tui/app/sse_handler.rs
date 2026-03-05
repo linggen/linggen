@@ -26,12 +26,17 @@ impl App {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                if !text.is_empty() {
+                if is_thinking {
+                    self.is_thinking_phase = true;
+                    // Don't accumulate thinking text in streaming_buffer
+                } else if !text.is_empty() {
+                    self.is_thinking_phase = false;
                     self.streaming_buffer.push_str(&text);
                     self.is_streaming = true;
                 }
                 if done {
                     if is_thinking {
+                        self.is_thinking_phase = false;
                         self.discard_streaming();
                     } else {
                         self.finalize_streaming();
@@ -50,6 +55,11 @@ impl App {
                 }
                 // Filter internal/status messages
                 if Self::should_hide_internal_message(&text) || Self::is_status_line_text(&text) {
+                    return;
+                }
+                // Dedup: skip if this text was already pushed via token streaming
+                if self.is_duplicate_agent_text(&text) {
+                    self.discard_streaming();
                     return;
                 }
                 // Discard any thinking tokens being streamed — text_segment is more reliable
@@ -91,6 +101,7 @@ impl App {
                     if !cleaned.is_empty()
                         && !Self::should_hide_internal_message(&cleaned)
                         && !Self::is_status_line_text(&cleaned)
+                        && !self.is_duplicate_agent_text(&cleaned)
                     {
                         let agent = msg.agent_id.unwrap_or_default();
                         self.push_agent(&agent, &cleaned);
@@ -142,15 +153,10 @@ impl App {
                             })
                             .unwrap_or_default();
                         if !options.is_empty() {
-                            // Add "Other..." option for free-text input
-                            let mut opts = options;
-                            opts.push("Other...".to_string());
                             self.pending_ask_user_id = Some(question_id);
                             self.prompt = Some(InteractivePrompt {
-                                options: opts,
+                                options,
                                 selected: 0,
-                                other_mode: false,
-                                other_text: String::new(),
                             });
                         }
                     }
@@ -516,8 +522,6 @@ impl App {
                             self.prompt = Some(InteractivePrompt {
                                 options,
                                 selected: 0,
-                                other_mode: false,
-                                other_text: String::new(),
                             });
                         } else {
                             // Clear prompt when plan is no longer pending approval

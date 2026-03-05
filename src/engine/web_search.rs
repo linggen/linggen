@@ -1,6 +1,15 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .pool_max_idle_per_host(2)
+        .build()
+        .expect("failed to build shared HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebSearchResult {
@@ -56,18 +65,13 @@ async fn tavily_search(
     query: &str,
     max_results: usize,
 ) -> Result<Vec<WebSearchResult>> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .context("failed to build HTTP client")?;
-
     let body = serde_json::json!({
         "query": query,
         "max_results": max_results,
         "include_answer": false,
     });
 
-    let resp = client
+    let resp = HTTP_CLIENT
         .post("https://api.tavily.com/search")
         .header("Content-Type", "application/json")
         .bearer_auth(api_key)

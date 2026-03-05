@@ -41,7 +41,38 @@ pub fn markdown_to_lines(input: &str) -> Vec<Line<'static>> {
 
         let trimmed = raw_line.trim();
 
-        // Headers
+        // Horizontal rules
+        if (trimmed == "---" || trimmed == "***" || trimmed == "___")
+            || (trimmed.len() >= 3
+                && trimmed
+                    .chars()
+                    .all(|c| c == '-' || c == '*' || c == '_' || c == ' ')
+                && trimmed.chars().filter(|c| !c.is_whitespace()).count() >= 3
+                && {
+                    let first_non_ws = trimmed.chars().find(|c| !c.is_whitespace()).unwrap();
+                    trimmed
+                        .chars()
+                        .all(|c| c == first_non_ws || c.is_whitespace())
+                })
+        {
+            lines.push(Line::from(Span::styled(
+                "  ────────────────────────────────────────",
+                Style::default().fg(Color::DarkGray),
+            )));
+            continue;
+        }
+
+        // Headers — check longest prefix first
+        if trimmed.starts_with("#### ") {
+            let rest = &trimmed[trimmed.find(' ').unwrap() + 1..];
+            lines.push(Line::from(Span::styled(
+                format!("   {rest}"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            continue;
+        }
         if let Some(rest) = trimmed.strip_prefix("### ") {
             lines.push(Line::from(Span::styled(
                 format!("   {rest}"),
@@ -66,6 +97,24 @@ pub fn markdown_to_lines(input: &str) -> Vec<Line<'static>> {
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )));
+            continue;
+        }
+
+        // Blockquotes
+        if let Some(rest) = trimmed.strip_prefix("> ") {
+            let mut spans = vec![Span::styled(
+                "  │ ",
+                Style::default().fg(Color::DarkGray),
+            )];
+            spans.extend(parse_inline_markdown(rest));
+            lines.push(Line::from(spans));
+            continue;
+        }
+        if trimmed == ">" {
+            lines.push(Line::from(Span::styled(
+                "  │",
+                Style::default().fg(Color::DarkGray),
             )));
             continue;
         }
@@ -137,6 +186,41 @@ fn parse_inline_markdown(input: &str) -> Vec<Span<'static>> {
                     code,
                     Style::default().fg(Color::Yellow),
                 ));
+            }
+            '[' => {
+                // Try to parse a markdown link [text](url)
+                let mut link_text = String::new();
+                let mut found_link = false;
+                for c in chars.by_ref() {
+                    if c == ']' {
+                        if chars.peek() == Some(&'(') {
+                            chars.next(); // consume '('
+                            for c2 in chars.by_ref() {
+                                if c2 == ')' {
+                                    break;
+                                }
+                            }
+                            found_link = true;
+                        }
+                        break;
+                    }
+                    link_text.push(c);
+                }
+                if found_link {
+                    if !buf.is_empty() {
+                        spans.push(Span::raw(std::mem::take(&mut buf)));
+                    }
+                    spans.push(Span::styled(
+                        link_text,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ));
+                } else {
+                    buf.push('[');
+                    buf.push_str(&link_text);
+                    buf.push(']');
+                }
             }
             '*' => {
                 // Check for bold (**) vs italic (*)

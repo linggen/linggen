@@ -243,14 +243,23 @@ pub fn derive_command_pattern(cmd: &str) -> Option<String> {
             Some(format!("{} *", tokens[0]))
         }
         _ => {
-            // 3+ tokens: if second token starts with `-`, use "program *"
-            if tokens[1].starts_with('-') {
+            // 3+ tokens: if second token is a flag or a file path, use "program *"
+            // Only treat it as a subcommand if it looks like one (no slashes, no dots prefix, no flags)
+            if tokens[1].starts_with('-') || is_path_like(tokens[1]) {
                 Some(format!("{} *", tokens[0]))
             } else {
                 Some(format!("{} {} *", tokens[0], tokens[1]))
             }
         }
     }
+}
+
+/// Returns true if a token looks like a file path rather than a subcommand.
+/// Paths typically contain `/`, start with `.` or `~`, or start with `/`.
+fn is_path_like(token: &str) -> bool {
+    token.contains('/')
+        || token.starts_with('.')
+        || token.starts_with('~')
 }
 
 /// Extract the first simple command from a compound command string.
@@ -834,6 +843,20 @@ mod tests {
         assert_eq!(
             derive_command_pattern("ls -la /tmp"),
             Some("ls *".to_string())
+        );
+
+        // 3+ words where second token is a path → "program *"
+        assert_eq!(
+            derive_command_pattern("rm /tmp/foo /tmp/bar"),
+            Some("rm *".to_string())
+        );
+        assert_eq!(
+            derive_command_pattern("rm ./file1 ./file2"),
+            Some("rm *".to_string())
+        );
+        assert_eq!(
+            derive_command_pattern("cp ~/src/file ~/dst/file"),
+            Some("cp *".to_string())
         );
 
         // Compound commands → "first_program *" from first segment

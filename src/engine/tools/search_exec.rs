@@ -111,12 +111,22 @@ impl Tools {
     pub(super) fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
         use std::io::BufRead;
 
+        const CWD_SENTINEL: &str = "__LINGGEN_CWD__";
+
         let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(30000));
+        let cwd = self.cwd();
+
+        // Wrap the user command to capture the final working directory.
+        // Preserves the original exit code while appending a sentinel + pwd.
+        let wrapped_cmd = format!(
+            "{}; __linggen_ec=$?; echo '{}'; pwd; exit $__linggen_ec",
+            &args.cmd, CWD_SENTINEL
+        );
 
         let mut child = if cfg!(target_os = "windows") {
             Command::new("cmd")
                 .args(["/C", &args.cmd])
-                .current_dir(&self.root)
+                .current_dir(&cwd)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?
@@ -124,8 +134,8 @@ impl Tools {
             use std::os::unix::process::CommandExt;
             Command::new("sh")
                 .arg("-c")
-                .arg(&args.cmd)
-                .current_dir(&self.root)
+                .arg(&wrapped_cmd)
+                .current_dir(&cwd)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .process_group(0)
@@ -218,6 +228,31 @@ impl Tools {
             warn!("stderr reader thread panicked for command");
             "linggen: internal error reading command output\n".to_string()
         });
+
+        // Strip the cwd sentinel from stdout and update persistent cwd.
+        let stdout = {
+            let mut lines: Vec<&str> = stdout.lines().collect();
+            // Look for sentinel from the end (it's always the second-to-last line).
+            let sentinel_pos = lines.iter().rposition(|l| *l == CWD_SENTINEL);
+            if let Some(pos) = sentinel_pos {
+                // The line after the sentinel is the pwd output.
+                if pos + 1 < lines.len() {
+                    let new_cwd = std::path::PathBuf::from(lines[pos + 1]);
+                    if new_cwd.is_absolute() && new_cwd.exists() {
+                        *self.cwd.lock().unwrap() = new_cwd;
+                    }
+                }
+                // Remove sentinel line and pwd line from output.
+                let drain_end = (pos + 2).min(lines.len());
+                lines.drain(pos..drain_end);
+            }
+            let mut cleaned = lines.join("\n");
+            // Restore trailing newline if original had one.
+            if !cleaned.is_empty() {
+                cleaned.push('\n');
+            }
+            cleaned
+        };
 
         if timed_out {
             if !stderr.is_empty() && !stderr.ends_with('\n') {

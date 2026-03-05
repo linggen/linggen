@@ -44,7 +44,9 @@ Events fall into these categories:
 
 ## Agent status lifecycle
 
-`model_loading` → `thinking` → `calling_tool` → `working` → `idle`
+Five status values: `idle`, `model_loading`, `thinking`, `calling_tool`, `working`.
+
+Typical progression: `model_loading` → `thinking` → `calling_tool` → `working` → `idle`, but transitions are event-driven and not strictly sequential — the backend emits whichever status reflects current state.
 
 Status events convey high-level transitions. Tool-level detail (which tool, what arguments, success/failure) is conveyed by structured content block events, not status text.
 
@@ -111,13 +113,18 @@ The UI should make it easy to follow this narrative: see what the agent explored
 
 ## Rendering pipeline
 
+Each agent message renders as a sequence of inline content blocks, interleaved with text:
+
 ```
 AgentMessage
-  ├─ SubagentTreeView (if delegation)
-  ├─ ActivitySection (tool calls: grouped, collapsible)
-  ├─ TurnSummaryFooter (tool count, tokens, duration)
-  └─ MessageBody (thinking indicator, special blocks, markdown)
+  ├─ SubagentTreeView (if delegation occurred)
+  ├─ ThinkingIndicator (while model is reasoning)
+  ├─ ContentBlockView* (tool calls rendered inline with status indicators)
+  ├─ Markdown text (streaming or final)
+  └─ TurnSummaryFooter (tool count, tokens, duration — shown when done)
 ```
+
+Tool calls are rendered inline as `ContentBlockView` items interspersed with text, not grouped into a separate section. Each block shows the tool name, arguments, and status (running / done / failed).
 
 ### Special block types
 
@@ -126,11 +133,46 @@ Certain structured payloads render as dedicated widgets:
 | Type | Widget | Purpose |
 |:-----|:-------|:--------|
 | Plan | PlanBlock | Interactive plan approval |
-| Finalize | FinalizeBlock | Task completion summary |
-| Change report | ChangeReportBlock | File diff summary |
+| Finalize | inline in SpecialBlocks | Task completion summary |
 | Ask user | AskUserCard | Agent question with options |
+| Tool diffs | DiffView (inside ContentBlockView) | File change diffs for Edit/Write |
 
 All other content renders as Markdown.
+
+## Sessions
+
+A session is a single conversation thread scoped to a project. Each session has its own message history, context, and state — completely isolated from other sessions.
+
+### Session lifecycle
+
+- **Creation**: auto-created on first chat when `session_id` is not provided. Format: `sess-{timestamp}-{uuid8}`.
+- **Storage**: each session lives at `<project>/.linggen/sessions/<session_id>/` with `session.yaml` (metadata) and `messages.jsonl` (chat history).
+- **Persistence**: sessions survive server restarts. The web UI lists all sessions per project.
+
+### Multi-session architecture
+
+Linggen supports multiple active sessions simultaneously. Each client creates its own session:
+
+- **TUI**: starts with no session; the server auto-creates one on the first message. All subsequent messages in that TUI instance reuse the same session.
+- **VS Code extension**: same pattern — auto-creates a session per workspace on first chat.
+- **Web UI**: can view and switch between all sessions for a project. "New Chat" creates a new session.
+
+### Session isolation
+
+- Different sessions can use the **same agent** (e.g. both use "ling") — the agent engine instance is shared per-project, but chat history is loaded from the session's own message file on each run.
+- Different sessions can use the **same model** — model access is controlled by a per-model semaphore (capacity 1). When a model is busy serving one session, other sessions block until the model is free.
+- **Context is per-session**: each session has independent message history. Compaction, token counting, and context window management all operate on the session's own messages.
+
+### Model concurrency
+
+Each configured model has a semaphore with capacity 1. When a session's agent calls a model:
+
+1. It acquires the model's semaphore permit.
+2. The permit is held for the duration of the streaming response.
+3. Other sessions requesting the same model block on `acquire_owned().await`.
+4. When the stream completes, the permit is released and the next waiting session proceeds.
+
+This means model busy status is **global** — a model serving project A is unavailable to project B until the request completes. The UI should reflect this: show a loading/busy indicator on all sessions waiting for the same model.
 
 ## Message queue
 
@@ -150,9 +192,13 @@ When a user sends a message to a busy agent, it queues. The agent picks it up at
 ## API surface
 
 - `POST /api/chat` — send message (queues if busy).
+- `POST /api/chat/clear` — clear chat history.
 - `GET /api/events` — SSE event stream.
 - `GET /api/agent-runs` — list runs for a project/session.
 - `GET /api/agent-children` — list child runs (delegation).
 - `GET /api/agent-context` — run context and messages.
 - `POST /api/agent-cancel` — cancel a run tree.
 - `POST /api/ask-user-response` — respond to an AskUser question.
+- `POST /api/plan/approve` — approve a pending plan.
+- `POST /api/plan/reject` — reject a pending plan.
+- `POST /api/plan/edit` — edit a pending plan.

@@ -34,8 +34,8 @@ COPY . .
 
 # 3. Build the Web UI (MUST happen before Rust build for rust-embed embedding)
 WORKDIR /app/ui
-# Remove lockfile to avoid architecture mismatches during multi-arch builds
-RUN rm -f package-lock.json && npm install
+# Remove lockfile and node_modules to avoid architecture mismatches during multi-arch builds
+RUN rm -rf package-lock.json node_modules && npm install
 RUN npm run build && [ "$(ls -A dist)" ] || (echo "❌ Error: UI build produced no assets" && exit 1)
 
 # 4. Build the real ling binary (with embedded UI)

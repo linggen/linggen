@@ -1,67 +1,66 @@
 use super::super::display::*;
-use super::App;
+use super::{App, AutocompleteItem};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         // When an interactive prompt is active, handle its keys first.
-        if let Some(prompt) = &mut self.prompt {
-            // "Other" free-text input mode
-            if prompt.other_mode {
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(true);
-                    }
-                    KeyCode::Char(ch) => {
-                        prompt.other_text.push(ch);
-                    }
-                    KeyCode::Backspace => {
-                        prompt.other_text.pop();
-                    }
-                    KeyCode::Enter => {
-                        let custom_text = prompt.other_text.clone();
-                        self.prompt = None;
-                        if !custom_text.is_empty() {
-                            self.handle_prompt_choice_custom(&custom_text)?;
-                        }
-                    }
-                    KeyCode::Esc => {
-                        // Exit other_mode back to option selection
-                        prompt.other_mode = false;
-                        prompt.other_text.clear();
-                    }
-                    _ => {}
-                }
-                return Ok(false);
-            }
-
-            // Normal option selection mode
+        if self.prompt.is_some() {
             match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return Ok(true);
                 }
+                // Arrow keys navigate the selector
                 KeyCode::Up | KeyCode::BackTab => {
-                    prompt.selected = prompt
-                        .selected
-                        .checked_sub(1)
-                        .unwrap_or(prompt.options.len() - 1);
-                }
-                KeyCode::Down | KeyCode::Tab => {
-                    prompt.selected = (prompt.selected + 1) % prompt.options.len();
-                }
-                KeyCode::Enter => {
-                    let choice = prompt.options[prompt.selected].clone();
-                    if choice == "Other..." {
-                        prompt.other_mode = true;
-                        prompt.other_text.clear();
-                    } else {
-                        self.prompt = None;
-                        self.handle_prompt_choice(&choice)?;
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.selected = prompt
+                            .selected
+                            .checked_sub(1)
+                            .unwrap_or(prompt.options.len() - 1);
                     }
                 }
+                KeyCode::Down | KeyCode::Tab => {
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.selected = (prompt.selected + 1) % prompt.options.len();
+                    }
+                }
+                // Enter: if input has text, send as free-form; otherwise confirm selection
+                KeyCode::Enter => {
+                    if !self.input.is_empty() {
+                        // Free-form input overrides the selector
+                        let custom_text = self.input.trim().to_string();
+                        self.input.clear();
+                        self.prompt = None;
+                        if !custom_text.is_empty() {
+                            self.handle_prompt_choice_custom(&custom_text)?;
+                        }
+                    } else if let Some(prompt) = &self.prompt {
+                        let choice = prompt.options[prompt.selected].clone();
+                        if choice == "Other..." {
+                            // Focus the input box — just dismiss "Other..." label
+                            // User can type in the input box directly
+                        } else {
+                            self.prompt = None;
+                            self.handle_prompt_choice(&choice)?;
+                        }
+                    }
+                }
+                // Typing goes to the input box (selector stays visible)
+                KeyCode::Char(ch) => {
+                    self.scroll_offset = 0;
+                    self.input.push(ch);
+                }
+                KeyCode::Backspace => {
+                    self.scroll_offset = 0;
+                    self.input.pop();
+                }
                 KeyCode::Esc => {
-                    self.prompt = None;
+                    if !self.input.is_empty() {
+                        self.input.clear();
+                    } else {
+                        self.prompt = None;
+                    }
                 }
                 _ => {}
             }
@@ -75,6 +74,9 @@ impl App {
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.paste_clipboard_image();
             }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.copy_last_agent_message();
+            }
             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.verbose_mode = !self.verbose_mode;
                 for block in &mut self.blocks {
@@ -87,11 +89,29 @@ impl App {
                     }
                 }
             }
+            // Tab: apply autocomplete selection
+            KeyCode::Tab if !self.autocomplete.is_empty() => {
+                self.apply_autocomplete();
+            }
+            // Up/Down: navigate autocomplete when visible, otherwise scroll
             KeyCode::Up => {
-                self.scroll_offset = self.scroll_offset.saturating_add(1);
+                if !self.autocomplete.is_empty() {
+                    if self.autocomplete_selected == 0 {
+                        self.autocomplete_selected = self.autocomplete.len() - 1;
+                    } else {
+                        self.autocomplete_selected -= 1;
+                    }
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_add(1);
+                }
             }
             KeyCode::Down => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                if !self.autocomplete.is_empty() {
+                    self.autocomplete_selected =
+                        (self.autocomplete_selected + 1) % self.autocomplete.len();
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                }
             }
             KeyCode::PageUp => {
                 self.scroll_offset = self.scroll_offset.saturating_add(20);
@@ -102,23 +122,33 @@ impl App {
             KeyCode::Char(ch) => {
                 self.scroll_offset = 0;
                 self.input.push(ch);
+                self.update_autocomplete();
             }
             KeyCode::Backspace => {
                 self.scroll_offset = 0;
                 self.input.pop();
+                self.update_autocomplete();
             }
             KeyCode::Enter => {
-                let line = self.input.trim().to_string();
-                self.input.clear();
-                if !line.is_empty() {
-                    self.scroll_offset = 0;
-                    if self.handle_command(line)? {
-                        return Ok(true);
+                if !self.autocomplete.is_empty() {
+                    // Apply autocomplete selection on Enter (don't send)
+                    self.apply_autocomplete();
+                } else {
+                    let line = self.input.trim().to_string();
+                    self.input.clear();
+                    self.autocomplete.clear();
+                    if !line.is_empty() {
+                        self.scroll_offset = 0;
+                        if self.handle_command(line)? {
+                            return Ok(true);
+                        }
                     }
                 }
             }
             KeyCode::Esc => {
-                if !self.input.is_empty() {
+                if !self.autocomplete.is_empty() {
+                    self.autocomplete.clear();
+                } else if !self.input.is_empty() {
                     self.input.clear();
                 } else if self.status_state != "idle" {
                     // Cancel running agent
@@ -240,15 +270,18 @@ impl App {
         if line == "/help" {
             self.push_system("Commands:");
             self.push_system("  /agent <name>     switch default agent");
+            self.push_system("  /model <id>       switch default model");
             self.push_system("  @agent message    send to specific agent");
             self.push_system("  /plan <task>      ask agent to create a plan (read-only)");
             self.push_system("  /plan approve     approve and execute the pending plan");
             self.push_system("  /plan reject      reject the pending plan");
+            self.push_system("  /copy             copy last agent message to clipboard");
             self.push_system("  /image <path>     attach an image file");
             self.push_system("  /image clear      remove all pending images");
             self.push_system("  /paste            paste image from clipboard");
             self.push_system("  /quit, /exit      exit");
             self.push_system("  <text>            send message to current agent");
+            self.push_system("  Ctrl+Y            copy last agent message to clipboard");
             self.push_system("  Ctrl+V            paste image from clipboard");
             self.push_system("  Ctrl+O            toggle verbose/compact tool display");
             self.push_system("  Esc               cancel running agent / clear input");
@@ -320,6 +353,12 @@ impl App {
             return Ok(false);
         }
 
+        // Copy command
+        if line == "/copy" {
+            self.copy_last_agent_message();
+            return Ok(false);
+        }
+
         // Image commands
         if line == "/image" || line.starts_with("/image ") || line == "/paste" {
             self.handle_image_command(&line);
@@ -331,6 +370,48 @@ impl App {
             self.agent_id = name.clone();
             self.status_agent = name.clone();
             self.push_system(&format!("Switched to agent: {name}"));
+            return Ok(false);
+        }
+
+        // Model commands
+        if line == "/model" {
+            self.push_system("Usage: /model <id>  — switch default model");
+            self.push_system("");
+            self.push_system("Available models:");
+            // Determine the current default (first in routing.default_models is unknown
+            // client-side, so mark the first cached model if any for now)
+            if self.cached_models.is_empty() {
+                self.push_system("  (loading...)");
+            } else {
+                let models = self.cached_models.clone();
+                for (id, desc) in &models {
+                    self.push_system(&format!("  {id}  ({desc})"));
+                }
+            }
+            return Ok(false);
+        }
+        if let Some(rest) = line.strip_prefix("/model ") {
+            let model_id = rest.trim().to_string();
+            if model_id.is_empty() {
+                self.push_system("Usage: /model <id>");
+                return Ok(false);
+            }
+            // Validate model_id exists in cached models
+            let valid = self.cached_models.is_empty()
+                || self.cached_models.iter().any(|(id, _)| id == &model_id);
+            if !valid {
+                self.push_system(&format!("Unknown model: {model_id}"));
+                self.push_system("Use /model to see available models.");
+                return Ok(false);
+            }
+            self.push_system(&format!("Switching default model to: {model_id}"));
+            let client = self.client.clone();
+            let mid = model_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = client.set_default_model(&mid).await {
+                    tracing::warn!("Failed to set default model: {}", e);
+                }
+            });
             return Ok(false);
         }
 
@@ -378,5 +459,103 @@ impl App {
         });
 
         Ok(false)
+    }
+
+    /// Built-in slash commands for autocomplete.
+    const BUILTIN_COMMANDS: &'static [(&'static str, &'static str)] = &[
+        ("/help", "Show available commands"),
+        ("/agent <name>", "Switch default agent"),
+        ("/model <id>", "Switch default model"),
+        ("/plan <task>", "Create a plan"),
+        ("/copy", "Copy last response to clipboard"),
+        ("/image <path>", "Attach an image file"),
+        ("/paste", "Paste image from clipboard"),
+        ("/quit", "Exit"),
+    ];
+
+    /// Update autocomplete suggestions based on current input.
+    fn update_autocomplete(&mut self) {
+        let input = self.input.as_str();
+
+        // Model autocomplete: "/model " followed by partial model id
+        if let Some(partial) = input.strip_prefix("/model ") {
+            let filter = partial.to_lowercase();
+            let items: Vec<AutocompleteItem> = self
+                .cached_models
+                .iter()
+                .filter(|(id, _)| filter.is_empty() || id.to_lowercase().contains(&filter))
+                .map(|(id, desc)| AutocompleteItem {
+                    label: format!("/model {id}"),
+                    description: desc.clone(),
+                })
+                .collect();
+            self.autocomplete = items;
+            self.autocomplete_selected = 0;
+            return;
+        }
+
+        // Only trigger on prefix with no spaces (still typing the command/agent name)
+        if input.starts_with('/') && !input[1..].contains(' ') {
+            let filter = input[1..].to_lowercase();
+            let mut items: Vec<AutocompleteItem> = Vec::new();
+
+            // Built-in commands
+            for &(cmd, desc) in Self::BUILTIN_COMMANDS {
+                let cmd_name = cmd.split_whitespace().next().unwrap_or(cmd);
+                if filter.is_empty() || cmd_name[1..].to_lowercase().contains(&filter) {
+                    items.push(AutocompleteItem {
+                        label: cmd.to_string(),
+                        description: desc.to_string(),
+                    });
+                }
+            }
+
+            // Cached skills
+            for (name, desc) in &self.cached_skills {
+                let prefixed = format!("/{name}");
+                if filter.is_empty() || name.to_lowercase().contains(&filter) {
+                    items.push(AutocompleteItem {
+                        label: prefixed,
+                        description: desc.clone(),
+                    });
+                }
+            }
+
+            self.autocomplete = items;
+            self.autocomplete_selected = 0;
+        } else if input.starts_with('@') && !input[1..].contains(' ') {
+            let filter = input[1..].to_lowercase();
+            let mut items: Vec<AutocompleteItem> = Vec::new();
+
+            for (name, desc) in &self.cached_agents {
+                if filter.is_empty() || name.to_lowercase().contains(&filter) {
+                    items.push(AutocompleteItem {
+                        label: format!("@{name}"),
+                        description: desc.clone(),
+                    });
+                }
+            }
+
+            self.autocomplete = items;
+            self.autocomplete_selected = 0;
+        } else {
+            self.autocomplete.clear();
+        }
+    }
+
+    /// Apply the currently selected autocomplete item to the input.
+    fn apply_autocomplete(&mut self) {
+        if let Some(item) = self.autocomplete.get(self.autocomplete_selected) {
+            // For commands with parameters like "/agent <name>", use just the command word
+            let label = &item.label;
+            if label.contains(' ') {
+                // e.g. "/agent <name>" → set input to "/agent "
+                let cmd_part = label.split_whitespace().next().unwrap_or(label);
+                self.input = format!("{cmd_part} ");
+            } else {
+                self.input = format!("{label} ");
+            }
+        }
+        self.autocomplete.clear();
     }
 }

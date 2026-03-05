@@ -164,6 +164,7 @@ pub type ToolProgressSender = tokio::sync::mpsc::UnboundedSender<(String, String
 #[derive(Clone)]
 pub struct Tools {
     root: PathBuf,
+    cwd: Arc<std::sync::Mutex<PathBuf>>,
     manager: Option<Arc<AgentManager>>,
     agent_id: Option<String>,
     delegation_depth: usize,
@@ -178,8 +179,10 @@ pub struct Tools {
 
 impl Tools {
     pub fn new(root: PathBuf) -> Result<Self> {
+        let cwd = Arc::new(std::sync::Mutex::new(root.clone()));
         Ok(Self {
             root,
+            cwd,
             manager: None,
             agent_id: None,
             delegation_depth: 0,
@@ -264,6 +267,10 @@ impl Tools {
 
     pub(crate) fn workspace_root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn cwd(&self) -> PathBuf {
+        self.cwd.lock().unwrap().clone()
     }
 
     // ── Execute dispatcher ──────────────────────────────────────────────

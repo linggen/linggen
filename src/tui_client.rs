@@ -3,6 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::json;
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 use tracing::warn;
 
 /// Percent-encode a query parameter value.
@@ -240,15 +241,42 @@ impl TuiClient {
         Ok(resp.json().await?)
     }
 
+    /// Fetch available skills from the server.
+    pub async fn fetch_skills(&self) -> Result<Vec<serde_json::Value>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/skills", self.base_url))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("skills fetch failed: {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Fetch available agents for a project.
+    pub async fn fetch_agents(&self, project_root: &str) -> Result<Vec<serde_json::Value>> {
+        let url = format!(
+            "{}/api/agents?project_root={}",
+            self.base_url,
+            encode_param(project_root)
+        );
+        let resp = self.client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("agents fetch failed: {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
     /// Subscribe to SSE events. Returns an unbounded receiver that yields parsed UiSseMessage.
     /// The SSE connection runs in a background task with automatic reconnection
     /// using exponential backoff (1s → 2s → 4s → ... capped at 30s).
-    pub fn subscribe_sse(&self) -> mpsc::UnboundedReceiver<UiSseMessage> {
+    pub fn subscribe_sse(&self) -> (mpsc::UnboundedReceiver<UiSseMessage>, AbortHandle) {
         let (tx, rx) = mpsc::unbounded_channel();
         let url = format!("{}/api/events", self.base_url);
         let client = self.client.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut backoff_secs: u64 = 1;
             const MAX_BACKOFF: u64 = 30;
 
@@ -333,7 +361,76 @@ impl TuiClient {
             }
         });
 
-        rx
+        (rx, handle.abort_handle())
+    }
+
+    /// Fetch available models from the server.
+    pub async fn fetch_models(&self) -> Result<Vec<serde_json::Value>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/models", self.base_url))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("models fetch failed: {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Set the default model by reordering `routing.default_models` to put the
+    /// chosen model first, then POST the updated config.
+    pub async fn set_default_model(&self, model_id: &str) -> Result<()> {
+        // GET current config
+        let resp = self
+            .client
+            .get(format!("{}/api/config", self.base_url))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("config fetch failed: {}", resp.status());
+        }
+        let mut config: serde_json::Value = resp.json().await?;
+
+        // Reorder routing.default_models: chosen model first, keep others as fallbacks
+        let routing = config
+            .as_object_mut()
+            .and_then(|o| o.get_mut("routing"))
+            .and_then(|r| r.as_object_mut());
+        if let Some(routing) = routing {
+            let existing: Vec<String> = routing
+                .get("default_models")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut new_list = vec![model_id.to_string()];
+            for m in &existing {
+                if m != model_id {
+                    new_list.push(m.clone());
+                }
+            }
+            routing.insert(
+                "default_models".to_string(),
+                json!(new_list),
+            );
+        }
+
+        // POST updated config
+        let resp = self
+            .client
+            .post(format!("{}/api/config", self.base_url))
+            .json(&config)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("config update failed ({}): {}", status, text);
+        }
+        Ok(())
     }
 
     fn send_disconnected(tx: &mpsc::UnboundedSender<UiSseMessage>, reason: &str) {

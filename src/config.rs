@@ -373,12 +373,12 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             models: vec![ModelConfig {
-                id: "default".to_string(),
+                id: "qwen3.5:35b".to_string(),
                 provider: "ollama".to_string(),
                 url: "http://127.0.0.1:11434".to_string(),
-                model: "qwen3-coder".to_string(),
+                model: "qwen3.5:35b".to_string(),
                 api_key: None,
-                keep_alive: None,
+                keep_alive: Some("10m".to_string()),
                 context_window: None,
                 tags: Vec::new(),
                 supports_tools: None,

@@ -1056,11 +1056,20 @@ async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Resp
 
     let path = if path.is_empty() { "index.html" } else { path };
 
+    // Allow embedding in iframes (e.g. VS Code webview compact mode).
+    // Disable frame restrictions entirely via X-Frame-Options and use a
+    // permissive frame-ancestors that explicitly lists non-network schemes
+    // used by VS Code webviews.
+    let xfo = "X-Frame-Options";
+    let xfo_val = "ALLOWALL";
+
     match Assets::get(path) {
         Some(content) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
             build_response(
-                Response::builder().header("Content-Type", mime.as_ref()),
+                Response::builder()
+                    .header("Content-Type", mime.as_ref())
+                    .header(xfo, xfo_val),
                 axum::body::Body::from(content.data),
             )
         }
@@ -1068,7 +1077,9 @@ async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Resp
             // Fallback to index.html for SPA routing
             match Assets::get("index.html") {
                 Some(index) => build_response(
-                    Response::builder().header("Content-Type", "text/html"),
+                    Response::builder()
+                        .header("Content-Type", "text/html")
+                        .header(xfo, xfo_val),
                     axum::body::Body::from(index.data),
                 ),
                 None => build_response(
@@ -1098,7 +1109,17 @@ async fn events_handler(
         Some(Ok(Event::default().data(data)))
     });
 
-    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
+    // Cap connection lifetime to 30 minutes so lingering TCP sockets are reclaimed.
+    // Clients (EventSource / TUI) auto-reconnect seamlessly.
+    let start = std::time::Instant::now();
+    let max_lifetime = std::time::Duration::from_secs(30 * 60);
+    let stream = stream.take_while(move |_| start.elapsed() < max_lifetime);
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    )
 }
 
 async fn health_handler() -> impl IntoResponse {

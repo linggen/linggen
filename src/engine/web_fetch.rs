@@ -1,9 +1,20 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 const DEFAULT_MAX_BYTES: usize = 100 * 1024; // 100 KB
+
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .pool_max_idle_per_host(2)
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()
+        .expect("failed to build shared HTTP client")
+});
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebFetchResult {
@@ -21,14 +32,7 @@ pub struct WebFetchResult {
 pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchResult> {
     let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let resp = client
+    let resp = HTTP_CLIENT
         .get(url)
         .send()
         .await

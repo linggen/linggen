@@ -51,6 +51,10 @@ pub struct App {
     // Token streaming
     pub streaming_buffer: String,
     pub is_streaming: bool,
+    /// True while model is in thinking phase (for animated indicator).
+    pub is_thinking_phase: bool,
+    /// App start time for animation timing.
+    pub app_start: Instant,
     // Tool step tracking
     pub active_tool_group: Option<ActiveToolGroup>,
     // Subagent tracking
@@ -73,20 +77,42 @@ pub struct App {
     pub pending_images: Vec<String>,
     /// Question ID for a pending AskUser/permission prompt.
     pub pending_ask_user_id: Option<String>,
+    /// Autocomplete suggestions currently showing.
+    pub autocomplete: Vec<AutocompleteItem>,
+    /// Selected index in autocomplete list.
+    pub autocomplete_selected: usize,
+    /// Cached skills (name, description) fetched from server.
+    pub cached_skills: Vec<(String, String)>,
+    /// Cached agents (name, description) fetched from server.
+    pub cached_agents: Vec<(String, String)>,
+    /// Cached models (id, "provider: model_name") fetched from server.
+    pub cached_models: Vec<(String, String)>,
+    /// Shared slot for background task to deliver fetched skills.
+    pub skills_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
+    /// Shared slot for background task to deliver fetched agents.
+    pub agents_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
+    /// Shared slot for background task to deliver fetched models.
+    pub models_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
     /// SSE connection status (for reconnection indicator).
     pub connection_status: ConnectionStatus,
     /// Last seen SSE sequence number for dedup. Reset on reconnection.
     pub last_seq: u64,
+    /// Text of the last agent message pushed (for deduplication across
+    /// token-stream finalize, text_segment, and message events).
+    pub last_agent_text: Option<String>,
 }
 
-/// An interactive prompt shown below the input for user selection.
+/// An autocomplete suggestion item.
+pub struct AutocompleteItem {
+    pub label: String,
+    pub description: String,
+}
+
+/// An interactive prompt shown inline for user selection.
+/// The real input box stays active — typing goes there as free-form input.
 pub struct InteractivePrompt {
     pub options: Vec<String>,
     pub selected: usize,
-    /// True when the user is typing custom "Other" text.
-    pub other_mode: bool,
-    /// Custom text buffer for "Other" input.
-    pub other_text: String,
 }
 
 impl App {
@@ -135,7 +161,7 @@ impl App {
             ]),
             Line::from(""),
             Line::from(vec![Span::styled(
-                "  /help  /agent <name>  @agent msg  /quit",
+                "  /help  /agent <name>  /model <id>  @agent msg  /quit",
                 dim,
             )]),
             Line::from(Span::styled(
@@ -160,6 +186,8 @@ impl App {
             status_agent: "ling".to_string(),
             streaming_buffer: String::new(),
             is_streaming: false,
+            is_thinking_phase: false,
+            app_start: Instant::now(),
             active_tool_group: None,
             active_subagents: HashMap::new(),
             subagent_parent_map: HashMap::new(),
@@ -172,8 +200,17 @@ impl App {
             prompt: None,
             pending_images: Vec::new(),
             pending_ask_user_id: None,
+            autocomplete: Vec::new(),
+            autocomplete_selected: 0,
+            cached_skills: Vec::new(),
+            cached_agents: Vec::new(),
+            cached_models: Vec::new(),
+            skills_slot: Arc::new(StdMutex::new(None)),
+            agents_slot: Arc::new(StdMutex::new(None)),
+            models_slot: Arc::new(StdMutex::new(None)),
             connection_status: ConnectionStatus::Connected,
             last_seq: 0,
+            last_agent_text: None,
         }
     }
 
@@ -186,6 +223,8 @@ impl App {
             text: text.to_string(),
             image_count,
         });
+        // Clear dedup state so a new agent response can be tracked fresh.
+        self.last_agent_text = None;
     }
 
     pub(super) fn push_agent(&mut self, agent: &str, text: &str) {
@@ -193,6 +232,12 @@ impl App {
             agent_id: agent.to_string(),
             text: text.to_string(),
         });
+        self.last_agent_text = Some(text.to_string());
+    }
+
+    /// Returns true if `text` duplicates the last pushed agent message.
+    pub(super) fn is_duplicate_agent_text(&self, text: &str) -> bool {
+        self.last_agent_text.as_deref() == Some(text)
     }
 
     pub(super) fn context_usage_pct(&self) -> usize {

@@ -49,7 +49,7 @@ impl App {
                     }
                     all_lines.push(Line::from(""));
                     all_lines.push(Line::from(Span::styled(
-                        "  ↑↓ to select, Enter to confirm",
+                        "  ↑↓ to select, Enter to confirm, or type below",
                         Style::default().fg(Color::DarkGray),
                     )));
                     all_lines.push(Line::from(""));
@@ -60,53 +60,29 @@ impl App {
         // AskUser prompt (not plan-related) — render at end of blocks
         if self.pending_ask_user_id.is_some() {
             if let Some(prompt) = &self.prompt {
-                if prompt.other_mode {
-                    // Other-text input mode
-                    all_lines.push(Line::from(""));
-                    all_lines.push(Line::from(Span::styled(
-                        "  Type your response:",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    all_lines.push(Line::from(vec![
-                        Span::styled(
-                            "  > ",
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            prompt.other_text.clone(),
-                            Style::default().fg(Color::White),
-                        ),
-                    ]));
-                    all_lines.push(Line::from(Span::styled(
-                        "  Enter to submit, Esc to go back",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    all_lines.push(Line::from(""));
-                } else {
-                    all_lines.push(Line::from(""));
-                    for (i, option) in prompt.options.iter().enumerate() {
-                        let marker = if i == prompt.selected { ">" } else { " " };
-                        let label = format!("  {} {}. {}", marker, i + 1, option);
-                        let style = if i == prompt.selected {
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-                        all_lines.push(Line::from(Span::styled(label, style)));
-                    }
-                    all_lines.push(Line::from(""));
-                    all_lines.push(Line::from(Span::styled(
-                        "  ↑↓ to select, Enter to confirm",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    all_lines.push(Line::from(""));
+                all_lines.push(Line::from(""));
+                for (i, option) in prompt.options.iter().enumerate() {
+                    let marker = if i == prompt.selected { ">" } else { " " };
+                    let label = format!("  {} {}. {}", marker, i + 1, option);
+                    let style = if i == prompt.selected {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    all_lines.push(Line::from(Span::styled(label, style)));
                 }
+                all_lines.push(Line::from(""));
+                all_lines.push(Line::from(Span::styled(
+                    "  ↑↓ to select, Enter to confirm, or type below",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                all_lines.push(Line::from(""));
             }
         }
 
         // Active (in-progress) tool group
         if let Some(group) = &self.active_tool_group {
-            all_lines.extend(render::render_tool_group_active(&group.steps));
+            all_lines.extend(render::render_tool_group_active(&group.steps, self.verbose_mode));
         }
 
         // Active (in-progress) subagent tree — rendered live
@@ -115,13 +91,20 @@ impl App {
             all_lines.extend(render::render_subagent_group_live(&entries));
         }
 
-        // Streaming buffer (dim text)
+        // Thinking animation (replaces raw thinking tokens)
+        if self.is_thinking_phase && self.streaming_buffer.is_empty() {
+            let tick = (self.app_start.elapsed().as_millis() / 200) % 4;
+            let dots = ".".repeat(tick as usize);
+            all_lines.push(Line::from(Span::styled(
+                format!("  Thinking{dots}"),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            )));
+        }
+
+        // Streaming buffer
         if self.is_streaming && !self.streaming_buffer.is_empty() {
             for l in self.streaming_buffer.lines() {
-                all_lines.push(Line::from(Span::styled(
-                    l.to_string(),
-                    Style::default().fg(Color::DarkGray),
-                )));
+                all_lines.push(Line::from(Span::raw(l.to_string())));
             }
         }
 
@@ -182,6 +165,63 @@ impl App {
                 height: 1,
             };
             f.render_widget(indicator, indicator_area);
+        }
+
+        // ── Autocomplete popup (overlay above input) ────────────────
+        // Defensive: ensure autocomplete is cleared if input no longer warrants it
+        if !self.autocomplete.is_empty() {
+            let should_show = (self.input.starts_with('/') && !self.input[1..].contains(' '))
+                || (self.input.starts_with('@') && !self.input[1..].contains(' '));
+            if !should_show {
+                self.autocomplete.clear();
+            }
+        }
+        if !self.autocomplete.is_empty() {
+            let max_items = 8.min(self.autocomplete.len());
+            let popup_height = max_items as u16;
+            if popup_height > 0 && content_area.height > popup_height {
+                let popup_y = content_area.y + content_area.height - popup_height;
+                let mut popup_lines: Vec<Line<'static>> = Vec::new();
+                for (i, item) in self.autocomplete.iter().take(max_items).enumerate() {
+                    let is_selected = i == self.autocomplete_selected;
+                    let marker = if is_selected { "> " } else { "  " };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .bg(Color::Black)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray).bg(Color::Black)
+                    };
+                    let desc_style = if is_selected {
+                        Style::default().fg(Color::White).bg(Color::Black)
+                    } else {
+                        Style::default().fg(Color::DarkGray).bg(Color::Black)
+                    };
+                    // Pad each line to full width so it covers underlying content
+                    let label_text = format!("{}{}", marker, item.label);
+                    let desc_text = format!("  {}", item.description);
+                    let used = label_text.len() + desc_text.len();
+                    let padding = if (width as usize) > used {
+                        " ".repeat(width as usize - used)
+                    } else {
+                        String::new()
+                    };
+                    popup_lines.push(Line::from(vec![
+                        Span::styled(label_text, style),
+                        Span::styled(desc_text, desc_style),
+                        Span::styled(padding, Style::default().bg(Color::Black)),
+                    ]));
+                }
+                let popup_area = ratatui::layout::Rect {
+                    x: content_area.x,
+                    y: popup_y,
+                    width: content_area.width,
+                    height: popup_height,
+                };
+                let popup = Paragraph::new(popup_lines);
+                f.render_widget(popup, popup_area);
+            }
         }
 
         // ── Fixed input area (always visible at bottom) ─────────────
