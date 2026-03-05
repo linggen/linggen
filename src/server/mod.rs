@@ -887,7 +887,7 @@ pub async fn prepare_server(
     dev_mode: bool,
     mut agent_events_rx: mpsc::UnboundedReceiver<crate::agent_manager::AgentEvent>,
 ) -> anyhow::Result<ServerHandle> {
-    info!("linggen-agent server starting on port {}...", port);
+    info!("linggen server starting on port {}...", port);
 
     // SSE can be bursty (tool/status steps). Use a larger buffer to reduce lag drops.
     let (events_tx, _) = broadcast::channel(4096);

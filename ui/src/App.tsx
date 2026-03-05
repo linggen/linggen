@@ -40,10 +40,10 @@ import { useAgentActivity } from './hooks/useAgentActivity';
 import { useSseConnection } from './hooks/useSseConnection';
 import { useSseDispatch } from './hooks/useSseDispatch';
 
-const SELECTED_AGENT_STORAGE_KEY = 'linggen-agent:selected-agent';
-const VERBOSE_MODE_STORAGE_KEY = 'linggen-agent:verbose-mode';
-const SELECTED_PROJECT_STORAGE_KEY = 'linggen-agent:selected-project';
-const ACTIVE_SESSION_STORAGE_KEY = 'linggen-agent:active-session';
+const SELECTED_AGENT_STORAGE_KEY = 'linggen:selected-agent';
+const VERBOSE_MODE_STORAGE_KEY = 'linggen:verbose-mode';
+const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
+const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
 
 type Page = 'main' | 'settings';
 

@@ -20,7 +20,7 @@ mkdir -p "$DIST_DIR"
 SLUG=$(detect_platform)
 ARCH="$(uname -m)"
 
-echo "🚀 Building Linggen Agent ${VERSION} for macOS (${ARCH})"
+echo "🚀 Building Linggen ${VERSION} for macOS (${ARCH})"
 echo "=========================================="
 
 # Step 1: Build Web UI
@@ -34,7 +34,7 @@ echo "✅ Web UI built"
 echo ""
 echo "2️⃣  Building ling binary..."
 cd "$ROOT_DIR"
-cargo clean -p linggen-agent
+cargo clean -p linggen
 cargo build --release
 BUILT_VER=$(target/release/ling --version | awk '{print $2}')
 if [ "$BUILT_VER" != "$VERSION_NUM" ]; then

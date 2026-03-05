@@ -55,12 +55,12 @@ For production: `cd ui && npm run build`, then `cargo run` (embeds `ui/dist/` vi
 
 ## Architecture
 
-Linggen Agent is a local-first, multi-agent coding assistant. The binary is `ling`. Default mode starts an HTTP server + TUI; `--web` runs the server only.
+Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. Default mode starts an HTTP server + TUI; `--web` runs the server only.
 
 ### Rust Backend (`src/`)
 
 - **`main.rs`** — CLI entry point (clap). Subcommands: `stop`, `status`, `doctor`, `eval`, `init`, `install`, `update`, `skills`. No subcommand → TUI + server.
-- **`config.rs`** — Config loading from `linggen-agent.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpec` (parsed from markdown frontmatter), `AgentPolicy`.
+- **`config.rs`** — Config loading from `linggen.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpec` (parsed from markdown frontmatter), `AgentPolicy`.
 - **`engine/`** — Core agent execution engine. `mod.rs` is the main loop. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
 - **`server/`** — Axum HTTP server. `chat_api.rs` handles chat/run endpoints + SSE streaming. `projects_api.rs` for project/session CRUD. `workspace_api.rs` serves file tree. `config_api.rs` for runtime config. `idle_scheduler.rs` for mission idle prompts.
 - **`agent_manager/`** — Agent lifecycle, run records, cancellation. `models.rs` handles multi-provider dispatch (Ollama, OpenAI-compatible). `routing.rs` implements model selection policies with fallback chains.
@@ -93,7 +93,7 @@ Current agents: `ling` (lead, delegates), `coder` (writes code), `explorer` (rea
 
 ### Configuration
 
-Config search: `$LINGGEN_CONFIG` → `./linggen-agent.toml` → `~/.config/linggen-agent/` → `~/.local/share/linggen-agent/`.
+Config search: `$LINGGEN_CONFIG` → `./linggen.toml` → `~/.config/linggen/` → `~/.local/share/linggen/`.
 
 Key sections: `[[models]]` (LLM providers), `[server]` (port), `[agent]` (max_iters, safety mode, tool_permission_mode), `[logging]`, `[[agents]]` (agent spec references), `[routing]` (model selection policies).
 

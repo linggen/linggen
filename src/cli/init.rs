@@ -2,7 +2,7 @@ use crate::skills::marketplace;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// Default agent specs shipped with linggen-agent.
+/// Default agent specs shipped with linggen.
 const DEFAULT_AGENTS: &[(&str, &str)] = &[
     ("ling.md", include_str!("../../agents/ling.md")),
     ("coder.md", include_str!("../../agents/coder.md")),

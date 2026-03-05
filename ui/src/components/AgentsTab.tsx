@@ -13,7 +13,7 @@ work_globs: ["**/*"]
 policy: []
 ---
 
-You are linggen-agent '${agentName}'.
+You are linggen '${agentName}'.
 `;
 
 const policyBadges: { key: string; label: string; cls: string }[] = [

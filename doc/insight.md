@@ -121,6 +121,5 @@ OpenClaw (264K stars) looks similar on the surface — local-first, personal, ex
 
 ### Planned
 
-- `linggen-agent` rename to `linggen` (the agent IS the product)
 - Built-in secure remote access (WebRTC or proxy — no SSH tunnels needed)
 - Skills marketplace with community contributions

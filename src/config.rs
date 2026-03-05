@@ -276,14 +276,10 @@ impl Config {
             candidates.push(PathBuf::from(explicit));
         }
 
-        // Check runtime.toml alongside the base config in each search location
-        candidates.push(PathBuf::from("linggen-agent.runtime.toml"));
-        candidates.push(PathBuf::from("linggen-agent.toml"));
-
-        // Consolidated location: ~/.linggen/config/
+        // ~/.linggen/config/
         let cfg_dir = crate::paths::config_dir();
-        candidates.push(cfg_dir.join("linggen-agent.runtime.toml"));
-        candidates.push(cfg_dir.join("linggen-agent.toml"));
+        candidates.push(cfg_dir.join("linggen.runtime.toml"));
+        candidates.push(cfg_dir.join("linggen.toml"));
 
         for path in candidates {
             if path.exists() {
@@ -298,9 +294,9 @@ impl Config {
 
     pub fn runtime_config_path(config_dir: Option<&Path>) -> PathBuf {
         if let Some(dir) = config_dir {
-            return dir.join("linggen-agent.runtime.toml");
+            return dir.join("linggen.runtime.toml");
         }
-        crate::paths::config_dir().join("linggen-agent.runtime.toml")
+        crate::paths::config_dir().join("linggen.runtime.toml")
     }
 
     pub fn save_runtime(&self, config_dir: Option<&Path>) -> Result<PathBuf> {

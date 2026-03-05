@@ -35,9 +35,9 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ```
 ~/.linggen/
 ├── config/
-│   └── linggen-agent.runtime.toml    # Runtime config overrides (TOML)
+│   └── linggen.runtime.toml    # Runtime config overrides (TOML)
 ├── logs/
-│   └── linggen-agent-{YYYY-MM-DD}.log  # Daily rolling logs (text)
+│   └── linggen-{YYYY-MM-DD}.log  # Daily rolling logs (text)
 ├── plans/
 │   └── {slug}.md                     # Plan files (markdown)
 ├── agents/
@@ -89,7 +89,7 @@ Same pattern as Claude Code's `{repo}/.claude/settings.local.json`. Lives in the
 }
 ```
 
-Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen-agent.toml`. Never committed to git. See `models.md` → Credentials.
+Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen.toml`. Never committed to git. See `models.md` → Credentials.
 
 ### Project info (`project.json`)
 
@@ -184,11 +184,11 @@ Item markers: `[x]` done, `[~]` in progress, `[ ]` pending, `[-]` skipped.
 
 ## Configuration
 
-Search order for `linggen-agent.toml`:
+Search order for `linggen.toml`:
 1. `$LINGGEN_CONFIG` env var
-2. `./linggen-agent.toml` (working directory)
-3. `~/.config/linggen-agent/`
-4. `~/.local/share/linggen-agent/`
+2. `./linggen.toml` (working directory)
+3. `~/.config/linggen/`
+4. `~/.local/share/linggen/`
 
 ## Implementation
 

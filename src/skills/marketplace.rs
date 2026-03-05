@@ -92,7 +92,7 @@ struct RegistryResponse {
 
 pub fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .user_agent("linggen-agent")
+        .user_agent("linggen")
         .timeout(Duration::from_secs(30))
         .build()
         .context("Failed to build HTTP client")

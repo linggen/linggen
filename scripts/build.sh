@@ -31,7 +31,7 @@ fi
 
 VERSION_NUM="${VERSION#v}"
 
-echo "🏗️  Building Linggen Agent ${VERSION}"
+echo "🏗️  Building Linggen ${VERSION}"
 echo "=============================="
 
 # 0. Sync version to all project files
@@ -50,7 +50,7 @@ if [ "$OS" = "darwin" ]; then
   "$ROOT_DIR/scripts/build-mac.sh" "$VERSION"
 else
   echo "📦 Step 1: Building local Linux artifact..."
-  cd "$ROOT_DIR" && cargo clean -p linggen-agent && cargo build --release
+  cd "$ROOT_DIR" && cargo clean -p linggen && cargo build --release
 fi
 
 # 2. Build multi-arch Linux artifacts (requires Docker)

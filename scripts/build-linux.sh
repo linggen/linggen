@@ -9,7 +9,7 @@ cd "$PROJECT_ROOT"
 
 echo "🐳 Building Linux packages using Docker Buildx..."
 echo "   Target architectures: amd64 (x86_64), arm64 (aarch64)"
-echo "   Artifact: ling (Linggen Agent with embedded Web UI)"
+echo "   Artifact: ling (Linggen with embedded Web UI)"
 echo "   This will take a while as it builds for both architectures."
 echo ""
 
@@ -62,4 +62,4 @@ echo "Files found:"
 ls -lh dist/linux/*.tar.gz 2>/dev/null || ls -lh dist/linux/
 
 echo ""
-echo "📝 To install on any Linux machine: curl -fsSL https://linggen.dev/install-cli.sh | bash"
+echo "📝 To install on any Linux machine: curl -fsSL https://linggen.dev/install.sh | bash"

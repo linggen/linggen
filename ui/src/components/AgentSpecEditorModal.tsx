@@ -13,7 +13,7 @@ work_globs: ["**/*"]
 policy: []
 ---
 
-You are linggen-agent '${agentName}'.
+You are linggen '${agentName}'.
 `;
 
 export const AgentSpecEditorModal: React.FC<{

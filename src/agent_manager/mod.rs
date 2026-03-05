@@ -340,7 +340,7 @@ impl AgentManager {
     /// Load agent specs layered: global (`~/.linggen/agents/`) then project (`<project>/agents/`).
     /// Project specs override global specs with the same `agent_id`.
     /// If the project-level `agents/` dir doesn't exist, also searches one level deep
-    /// in subdirectories (e.g. `<project>/linggen-agent/agents/`).
+    /// in subdirectories (e.g. `<project>/linggen/agents/`).
     fn load_agent_specs_for_project(project_root: &PathBuf) -> Result<Vec<AgentSpecFile>> {
         let mut merged: HashMap<String, AgentSpecFile> = HashMap::new();
 
@@ -490,7 +490,7 @@ impl AgentManager {
                         let s = p.to_string_lossy();
                         s.contains("/target/")
                             || s.contains("/.git/")
-                            || s.contains("/.linggen-agent/")
+                            || s.contains("/.linggen/")
                             || s.contains("/node_modules/")
                     }) {
                         return;
@@ -1225,7 +1225,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         dir.push(format!(
-            "linggen-agent-{prefix}-{}-{ts}",
+            "linggen-{prefix}-{}-{ts}",
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("create temp root");

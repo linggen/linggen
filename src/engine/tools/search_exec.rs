@@ -216,7 +216,7 @@ impl Tools {
         });
         let mut stderr = stderr_handle.join().unwrap_or_else(|_| {
             warn!("stderr reader thread panicked for command");
-            "linggen-agent: internal error reading command output\n".to_string()
+            "linggen: internal error reading command output\n".to_string()
         });
 
         if timed_out {
@@ -224,7 +224,7 @@ impl Tools {
                 stderr.push('\n');
             }
             stderr.push_str(&format!(
-                "linggen-agent: command timed out after {}ms\n",
+                "linggen: command timed out after {}ms\n",
                 timeout.as_millis()
             ));
         }
@@ -233,7 +233,7 @@ impl Tools {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
             }
-            stderr.push_str("linggen-agent: command interrupted by user\n");
+            stderr.push_str("linggen: command interrupted by user\n");
         }
 
         Ok(ToolResult::CommandOutput {

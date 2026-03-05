@@ -40,7 +40,7 @@ pub async fn run() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
 
     let client = reqwest::Client::builder()
-        .user_agent("linggen-agent")
+        .user_agent("linggen")
         .timeout(Duration::from_secs(60))
         .build()
         .context("Failed to build HTTP client")?;
@@ -49,7 +49,7 @@ pub async fn run() -> Result<()> {
     update_binary(
         &client,
         "ling",
-        "https://github.com/linggen/linggen-agent/releases/latest/download/manifest.json",
+        "https://github.com/linggen/linggen/releases/latest/download/manifest.json",
         Some(current_version),
         None,
     )

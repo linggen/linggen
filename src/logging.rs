@@ -10,7 +10,7 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static FILTER_HANDLE: OnceLock<Handle<EnvFilter, Registry>> = OnceLock::new();
 
 const DEFAULT_RETENTION_DAYS: u64 = 7;
-const LOG_FILE_PREFIX: &str = "linggen-agent";
+const LOG_FILE_PREFIX: &str = "linggen";
 
 pub struct LoggingSettings<'a> {
     pub level: Option<&'a str>,
@@ -23,7 +23,7 @@ pub struct LoggingSettings<'a> {
 /// Build an `EnvFilter` for the given application log level.
 fn build_filter(level: &str) -> EnvFilter {
     EnvFilter::try_new(format!(
-        "ling={level},linggen_agent={level},linggen-agent={level},linggen={level},\
+        "ling={level},linggen_agent={level},linggen={level},\
          axum=warn,tower_http=warn,hyper=warn,hyper_util=warn,reqwest=warn,\
          mio=warn,reqwest_retry=warn"
     ))

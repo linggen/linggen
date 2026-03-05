@@ -245,7 +245,7 @@ These flags can be used with any command:
 
 ## Configuration
 
-All commands load config from `linggen-agent.toml` (see `doc/storage.md` for search order). Lightweight commands only need the config file; they do not initialise the full agent runtime.
+All commands load config from `linggen.toml` (see `doc/storage.md` for search order). Lightweight commands only need the config file; they do not initialise the full agent runtime.
 
 ### Model context_window override
 

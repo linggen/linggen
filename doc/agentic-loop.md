@@ -8,7 +8,7 @@ guide: |
 
 # Agentic Loop
 
-The kernel of linggen-agent. Every agent run — chat, idle prompt, delegation — is one loop instance.
+The kernel of linggen. Every agent run — chat, idle prompt, delegation — is one loop instance.
 
 ## Related docs
 

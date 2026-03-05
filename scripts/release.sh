@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib-common.sh"
 
-REPO="linggen/linggen-agent"
+REPO="linggen/linggen"
 VERSION=""
 KEEP_DRAFT=false
 PASS_ARGS=()
@@ -52,7 +52,7 @@ if gh release view "$VERSION" --repo "$REPO" &>/dev/null; then
 else
   gh release create "$VERSION" \
     --repo "$REPO" \
-    --title "Linggen Agent ${VERSION}" \
+    --title "Linggen ${VERSION}" \
     --notes "Release ${VERSION}" \
     --draft
   echo "✅ Created draft release ${VERSION}"
@@ -133,5 +133,5 @@ else
   echo "🚀 Publishing release..."
   gh release edit "$VERSION" --draft=false --latest --repo "$REPO"
   echo "✅ Release ${VERSION} published!"
-  echo "curl -fsSL https://linggen.dev/install-cli.sh | bash"
+  echo "curl -fsSL https://linggen.dev/install.sh | bash"
 fi

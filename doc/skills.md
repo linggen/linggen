@@ -10,11 +10,11 @@ guide: |
 
 Skill is all you need.
 
-Linggen-agent is like a OS of agent, skill is the interface. Comparing with mcp, tools, skill is extendable, self-explained, so we do skill first in linggen-agent. 
+Linggen is like a OS of agent, skill is the interface. Comparing with mcp, tools, skill is extendable, self-explained, so we do skill first in linggen. 
 
 Dynamic extensions: format, discovery, triggers, and tool registration.
 
-Skills are the "dynamic libraries" of linggen-agent — loaded at runtime, callable by any agent, no code changes needed. Everything that isn't a core built-in tool should be a skill.
+Skills are the "dynamic libraries" of linggen — loaded at runtime, callable by any agent, no code changes needed. Everything that isn't a core built-in tool should be a skill.
 
 
 

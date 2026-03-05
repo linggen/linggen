@@ -118,7 +118,7 @@ impl SkillToolDef {
                 stderr.push('\n');
             }
             stderr.push_str(&format!(
-                "linggen-agent: skill tool command timed out after {}ms\n",
+                "linggen: skill tool command timed out after {}ms\n",
                 timeout.as_millis()
             ));
         }

@@ -43,7 +43,7 @@ cd ui && npm install && npm run build && cd ..
 
 ### Configure
 
-Create `linggen-agent.toml` in the project root:
+Create `linggen.toml` in the project root:
 
 ```toml
 [[models]]
@@ -67,7 +67,7 @@ port = 6666
 max_iters = 100
 ```
 
-Config search order: `$LINGGEN_CONFIG` env var, `./linggen-agent.toml`, `~/.config/linggen-agent/`, `~/.local/share/linggen-agent/`.
+Config search order: `$LINGGEN_CONFIG` env var, `./linggen.toml`, `~/.config/linggen/`, `~/.local/share/linggen/`.
 
 ### Run
 
@@ -147,7 +147,7 @@ linggen
 │   └── state_fs/             # Session and workspace state
 ├── agents/                   # Agent spec markdown files
 ├── ui/                       # React 19 + Vite + Tailwind v4
-└── linggen-agent.toml        # Configuration
+└── linggen.toml        # Configuration
 ```
 
 ### Tool Contract

@@ -27,7 +27,7 @@ Linggen supports multiple model providers:
 | Claude API | Cloud | `provider = "openai"` (OpenAI-compatible endpoint) |
 | AWS Bedrock | Cloud | `provider = "openai"` (via proxy) |
 
-Models are configured in `linggen-agent.toml`:
+Models are configured in `linggen.toml`:
 
 ```toml
 [[models]]

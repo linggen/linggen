@@ -4,10 +4,10 @@ import tailwindcss from '@tailwindcss/vite';
 import fs from 'fs';
 import path from 'path';
 
-// Helper to get port from linggen-agent.toml
+// Helper to get port from linggen.toml
 function getBackendPort() {
   try {
-    const tomlPath = path.resolve(__dirname, '../linggen-agent.toml');
+    const tomlPath = path.resolve(__dirname, '../linggen.toml');
     const content = fs.readFileSync(tomlPath, 'utf-8');
     const match = content.match(/\[server\][\s\S]*?port\s*=\s*(\d+)/);
     return match ? match[1] : '9898';
