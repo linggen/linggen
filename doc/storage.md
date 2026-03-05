@@ -12,7 +12,8 @@ Filesystem layout for all persistent state. No database — everything is files.
 
 ## Related docs
 
-- `agents.md`: mission system, agent overrides.
+- `agents.md`: agent lifecycle, delegation.
+- `mission-spec.md`: cron-based mission system.
 - `agentic-loop.md`: plan persistence, context management.
 - `chat-spec.md`: API endpoints that read/write this state.
 - `skills.md`: skill discovery paths.
@@ -61,9 +62,9 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── runs/
 │   └── {run_id}.json                 # Agent run records (JSON)
 ├── missions/
-│   └── {timestamp}.json              # Mission history (JSON)
-├── agent_overrides/
-│   └── {agent_id}.json               # Per-agent idle config (JSON)
+│   └── {mission_id}/
+│       ├── mission.json              # Mission definition (JSON)
+│       └── runs.jsonl                # Mission run history (JSONL)
 └── memory/
     └── ...                           # Agent memory (managed by memory skill)
 ```
@@ -139,26 +140,29 @@ One JSON object per line, append-only.
 
 Status values: `running`, `completed`, `failed`, `cancelled`.
 
-### Mission (`{timestamp}.json`)
+### Mission (`mission.json`)
 
 ```json
 {
-  "text": "Monitor production and fix issues",
-  "created_at": 1700000000,
-  "active": true,
-  "agents": [
-    { "id": "ling", "idle_prompt": "Check status", "idle_interval_secs": 60 }
-  ]
+  "id": "mission-1700000000-abc12345",
+  "schedule": "*/30 * * * *",
+  "agent_id": "ling",
+  "prompt": "Check CI/CD status and report issues",
+  "model": null,
+  "enabled": true,
+  "created_at": 1700000000
 }
 ```
 
-Only one mission is `active: true` at a time. Setting a new mission deactivates the previous one. Clearing marks it `active: false` in place. History is preserved.
+Multiple missions can be active simultaneously — each in its own `missions/{id}/` directory. See [`mission-spec.md`](mission-spec.md) for full details.
 
-### Agent override (`{agent_id}.json`)
+### Mission run history (`runs.jsonl`)
 
 ```json
-{ "agent_id": "ling", "idle_prompt": "Custom prompt", "idle_interval_secs": 120 }
+{ "run_id": "run-ling-1700000000-123456", "triggered_at": 1700000000, "status": "completed", "skipped": false }
 ```
+
+Append-only. Skipped triggers (agent busy) logged with `"skipped": true`.
 
 ### Plan (`{slug}.md`)
 

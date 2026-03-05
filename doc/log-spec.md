@@ -6,7 +6,7 @@ guide: |
   Avoid implementation details like function signatures, variable types, or code snippets.
 ---
 
-# Sanji Logging Specification
+# Logging Specification
 
 ## Goals
 

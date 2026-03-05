@@ -25,7 +25,7 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Determined by frontmatter `kind: main` or `kind: subagent`.
 
-**Frontmatter fields**: `name`, `description`, `tools`, `model`, `kind`, `work_globs`, `policy`, `idle_prompt`, `idle_interval_secs`.
+**Frontmatter fields**: `name`, `description`, `tools`, `model`, `kind`, `work_globs`, `policy`.
 
 ### Default agents
 
@@ -83,31 +83,12 @@ Tool access is hard-gated by `spec.tools`. Wildcard `tools: ["*"]` means unrestr
 
 ## Mission system (scheduler)
 
-Mission-based autonomy. No explicit mode switching.
+Cron-based scheduled agent work. A project can have **multiple active missions** — each with its own cron schedule, target agent, and prompt.
 
-- **No mission** → agents purely reactive.
-- **Active mission** → agents with `idle_prompt` self-initiate work.
+- **No missions** → agents purely reactive.
+- **Active missions** → agents triggered on cron schedules.
 
-### Idle scheduler
-
-Background task checks every 10 seconds:
-1. Is there an active mission?
-2. For each agent with `idle_prompt`: has it been idle longer than `idle_interval_secs`?
-3. If yes: fire the idle prompt (mission text + standing instruction).
-
-**idle_prompt priority** (highest wins):
-1. Mission-level per-agent config.
-2. DB override per agent.
-3. Agent frontmatter defaults.
-
-**Safety**:
-- No mission = no triggers.
-- Minimum idle interval: 30 seconds.
-- Maximum idle triggers per mission: 100.
-- Busy agents skipped.
-- All execution bounded by `max_iters`.
-
-**Implementation**: `idle_scheduler.rs`
+See [`mission-spec.md`](mission-spec.md) for full details: cron syntax, scheduling behavior, safety guards, run history, and API.
 
 ## Concurrency model
 

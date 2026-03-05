@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="logo.svg" width="120" alt="Linggen Agent" />
+  <img src="logo.svg" width="120" alt="Linggen" />
 </p>
 
-<h1 align="center">Linggen Agent</h1>
+<h1 align="center">Linggen</h1>
 
-<p align="center">A local-first, skill-driven agent framework. Manage agents, skills, and models from a Web UI or terminal.</p>
+<p align="center">The Personal AI OS — run AI agents like an OS runs apps.</p>
 
 <p align="center">
   <a href="https://linggen.dev">Website</a> &middot;
   <a href="#documentation">Docs</a>
 </p>
 
-Linggen Agent is the successor of [Linggen](https://github.com/linggen/linggen). It provides a multi-agent runtime where users can add agents and skills by dropping markdown files — no code changes needed.
+Linggen is a personal AI operating system. Add agents and skills by dropping markdown files — no code changes needed. Multiple agents, multiple models, skills, and missions, all orchestrated on your machine.
 
 ## Features
 
@@ -21,7 +21,7 @@ Linggen Agent is the successor of [Linggen](https://github.com/linggen/linggen).
 - **Skills Marketplace** — search, install, and manage community skills from the built-in marketplace UI or via `/skill` chat command.
 - **Mission system** — agents self-initiate work when a mission is active, or stay reactive without one.
 - **Web UI + TUI** — both interfaces connect to the same backend and share session state in real-time via SSE.
-- **Workspace safety** — file operations are scoped to the workspace root. Bash commands are validated against an allowlist. Agent actions are policy-gated per agent.
+- **Workspace safety** — file operations are scoped to the workspace root. Agent actions are policy-gated per agent.
 
 ## Quick Start
 
@@ -65,11 +65,6 @@ port = 6666
 
 [agent]
 max_iters = 100
-
-[[agents]]
-id = "lead"
-spec_path = "agents/lead.md"
-model = "local"
 ```
 
 Config search order: `$LINGGEN_CONFIG` env var, `./linggen-agent.toml`, `~/.config/linggen-agent/`, `~/.local/share/linggen-agent/`.
@@ -77,14 +72,14 @@ Config search order: `$LINGGEN_CONFIG` env var, `./linggen-agent.toml`, `~/.conf
 ### Run
 
 ```bash
-# Start the server (Web UI at http://localhost:6666)
-cargo run -- serve
+# Start TUI + server (default)
+cargo run
 
-# Or start the interactive TUI
-cargo run -- agent
+# Web UI only (http://localhost:6666)
+cargo run -- --web
 
 # Dev mode (backend + Vite HMR)
-cargo run -- serve --dev   # terminal 1
+cargo run -- --web --dev   # terminal 1
 cd ui && npm run dev       # terminal 2
 ```
 
@@ -96,7 +91,6 @@ Drop a markdown file in `agents/` with YAML frontmatter:
 ---
 name: coder
 description: Implementation agent that writes and edits code.
-kind: main
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 policy: [Patch, Finalize]
 ---
@@ -104,7 +98,7 @@ policy: [Patch, Finalize]
 You are a coding agent. Write clean, tested code.
 ```
 
-Frontmatter fields: `name`, `description`, `tools`, `model`, `kind` (`main`/`subagent`), `work_globs`, `policy`.
+Frontmatter fields: `name`, `description`, `tools`, `model`, `skills`, `work_globs`, `policy`, `idle_prompt`, `idle_interval_secs`.
 
 The agent is available immediately on the next startup — no code changes needed.
 
@@ -141,16 +135,16 @@ Skills are compatible across Linggen, Claude Code, and Codex (shared [Agent Skil
 ## Architecture
 
 ```
-linggen-agent
+linggen
 ├── src/
-│   ├── main.rs              # CLI entry (clap): `agent` and `serve` subcommands
+│   ├── main.rs              # CLI entry (clap)
 │   ├── config.rs             # TOML config, model/agent spec parsing
 │   ├── engine/               # Core agent loop, tool dispatch, action parsing
 │   ├── server/               # Axum HTTP server, SSE events, REST API
 │   ├── agent_manager/        # Agent lifecycle, run records, model routing
 │   ├── skills/               # Skill discovery, loading, marketplace
-│   ├── db/                   # Persistent state (redb key-value store)
-│   └── check.rs              # Bash command safety validation
+│   ├── project_store/        # Persistent state (filesystem JSON/JSONL)
+│   └── state_fs/             # Session and workspace state
 ├── agents/                   # Agent spec markdown files
 ├── ui/                       # React 19 + Vite + Tailwind v4
 └── linggen-agent.toml        # Configuration
@@ -165,21 +159,21 @@ Agents interact with the workspace through a fixed set of Claude Code-style tool
 | `Read` | Read file contents (with optional line range) |
 | `Write` | Write/overwrite file |
 | `Edit` | Exact string replacement within a file |
-| `Bash` | Execute shell commands (allowlisted, with timeout) |
+| `Bash` | Execute shell commands (with timeout) |
 | `Glob` | Find files by pattern |
 | `Grep` | Search file contents by regex |
-| `WebSearch` | Web search via external provider |
+| `WebSearch` | Web search via DuckDuckGo |
 | `WebFetch` | Fetch and extract content from a URL |
 | `Skill` | Invoke a registered skill |
 | `AskUser` | Ask the user a question mid-run |
-| `Task` | Delegate a task to a subagent |
+| `Task` | Delegate a task to another agent |
 | `capture_screenshot` | Take a screenshot of a URL |
+| `lock_paths` / `unlock_paths` | Multi-agent file locking |
 
 ### Multi-Agent Runtime
 
-- **Main agents** are long-lived and can receive user tasks.
-- **Subagents** are ephemeral workers spawned by main agents via `Task`.
-- Delegation depth is configurable via `max_delegation_depth` (default 2). Any agent can delegate to any other agent within the depth limit.
+- Agents are spawned by delegation via `Task` — like `fork()`.
+- Delegation depth is configurable via `max_delegation_depth` (default 2).
 - All actions are policy-gated per agent: `Patch`, `Finalize`, `Delegate` capabilities are declared in frontmatter.
 - Run lifecycle is persisted and cancellation cascades through the run tree.
 
@@ -187,7 +181,7 @@ Agents interact with the workspace through a fixed set of Claude Code-style tool
 
 The server publishes SSE events consumed by both Web UI and TUI:
 
-`StateUpdated`, `Message`, `Token`, `AgentStatus`, `SubagentSpawned`, `SubagentResult`, `Outcome`, `ContextUsage`, `ChangeReport`, `QueueUpdated`, `SettingsUpdated`.
+`Token`, `Message`, `AgentStatus`, `SubagentSpawned`, `SubagentResult`, `ContentBlockStart`, `ContentBlockUpdate`, `ToolProgress`, `PlanUpdate`, `Outcome`, `TurnComplete`, `ContextUsage`, `QueueUpdated`, `StateUpdated`.
 
 ## API Endpoints
 
@@ -202,16 +196,19 @@ The server publishes SSE events consumed by both Web UI and TUI:
 | `/api/sessions` | GET/POST/DELETE | Manage sessions |
 | `/api/settings` | GET/POST | Get/update settings |
 | `/api/config` | GET/POST | Get/update server config |
+| `/api/credentials` | PUT | Update model API keys |
 | `/api/marketplace/search` | GET | Search marketplace skills |
-| `/api/marketplace/list` | GET | List popular marketplace skills |
 | `/api/marketplace/install` | POST | Install a marketplace skill |
 | `/api/marketplace/uninstall` | DELETE | Uninstall a marketplace skill |
 | `/api/agent-runs` | GET | List agent runs |
+| `/api/agent-children` | GET | List child runs (delegation) |
 | `/api/agent-context` | GET | Inspect run context |
 | `/api/agent-cancel` | POST | Cancel an active run |
-| `/api/storage/roots` | GET | List detected config directories (~/.linggen, ~/.claude, etc.) |
-| `/api/storage/tree` | GET | Browse directory tree within a storage root |
-| `/api/storage/file` | GET/PUT/DELETE | Read, write, or delete a file in a storage root |
+| `/api/ask-user-response` | POST | Respond to an AskUser question |
+| `/api/plan/approve` | POST | Approve a plan |
+| `/api/storage/roots` | GET | List config directories |
+| `/api/storage/tree` | GET | Browse directory tree |
+| `/api/storage/file` | GET/PUT/DELETE | Read, write, or delete a file |
 
 ## Documentation
 
@@ -220,15 +217,17 @@ Detailed design docs live in [`doc/`](doc/):
 | Document | Description |
 |----------|-------------|
 | [Product Spec](doc/product-spec.md) | Vision, OS analogy, product goals, UX surface |
-| [Agentic Loop](doc/agentic-loop.md) | Kernel runtime loop — iteration, cancellation, context building, model calls |
-| [Agents](doc/agents.md) | Process management — lifecycle, delegation, scheduling, idle scheduler |
+| [Insight](doc/insight.md) | Market positioning, competitive landscape, strategic direction |
+| [Agentic Loop](doc/agentic-loop.md) | Kernel runtime loop — iteration, interrupts, cancellation |
+| [Agents](doc/agents.md) | Process management — lifecycle, delegation, scheduling |
 | [Skills](doc/skills.md) | Dynamic extensions — format, discovery, triggers |
-| [Tools](doc/tools.md) | Syscall interface — built-in tools, safety enforcement |
-| [Chat System](doc/chat-spec.md) | Chat system — SSE events, message model, rendering, APIs |
-| [Models](doc/models.md) | Hardware abstraction — providers, routing, credentials, auto-fallback |
-| [Storage](doc/storage.md) | Filesystem layout — persistent state, data formats |
+| [Tools](doc/tools.md) | Syscall interface — built-in tools, safety |
+| [Plan](doc/plan-spec.md) | Plan mode — research, approval, execution |
+| [Chat System](doc/chat-spec.md) | SSE events, message model, rendering, APIs |
+| [Models](doc/models.md) | Providers, routing, credentials, auto-fallback |
+| [Storage](doc/storage.md) | Filesystem layout, persistent state, data formats |
 | [CLI](doc/cli.md) | CLI reference — commands, flags, modes |
-| [Code Style](doc/code-style.md) | Code style rules — flat logic, small files, clean code |
+| [Code Style](doc/code-style.md) | Code style rules |
 | [Log Spec](doc/log-spec.md) | Logging — levels, throttling, output targets |
 
 For more information, visit [linggen.dev](https://linggen.dev).

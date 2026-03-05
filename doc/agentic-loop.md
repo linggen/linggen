@@ -25,8 +25,8 @@ for iter in 0..max_iters {
     2. Check user message queue    → inject into context if present
     3. Build context               → system prompt + history + observations
     4. Call model                  → streaming response
-    5. Parse actions               → tool calls, code execution, delegation, done
-    6. Execute actions             → dispatch tools, run code, spawn subagents
+    5. Parse actions               → tool calls, delegation, done
+    6. Execute actions             → dispatch tools, spawn subagents
     7. Feed observations           → results back into history
 }
 ```
@@ -52,23 +52,7 @@ At the **top of each iteration**, the engine checks the queue. If present, messa
 
 This is **cooperative interruption** — the loop yields at each iteration boundary. The model handles all interrupt logic, no hardcoded signal handlers.
 
-**Implementation**: `server/chat_api.rs` → `queued_chats` HashMap. Currently dequeues on lock release; target: per-iteration check inside the loop.
-
-## Code execution — PTC
-
-Model can output code blocks for the engine to execute. Model-agnostic — works with Qwen, Llama, Claude, any model.
-
-**Action**: `execute_code` with language tag and code body.
-
-**Execution**: subprocess (`python -c`, `bash -c`, `node -e`) in workspace root.
-
-**Safety**: same as Bash — workspace-scoped, timeout, output capture, command validation.
-
-**Result**: stdout/stderr/exit_code fed back as observation.
-
-**Why not just Bash?** PTC lets the model write multi-step code with loops, variables, conditionals, imports — more expressive than shell one-liners.
-
-**No sandbox needed.** Trust model is the same as Bash: local execution on user's machine.
+Messages are queued per-agent and checked at each iteration boundary via an interrupt channel.
 
 ## Cancellation (signals)
 

@@ -52,7 +52,7 @@ Tool names follow Claude Code convention (capitalized).
 
 Lets the agent pause mid-loop to ask the user structured questions. Aligned with Claude Code's `AskUserQuestion`.
 
-- **1-4 questions** per call, each with 2-4 selectable options.
+- **1-4 questions** per call, each with 2-6 selectable options.
 - User can always type custom text ("Other").
 - Blocks the agent loop until user responds (5 min timeout).
 - Not available in delegated sub-agents — returns error.
@@ -63,16 +63,6 @@ Lets the agent pause mid-loop to ask the user structured questions. Aligned with
 **Flow**: tool emits `AskUser` SSE event → UI renders card → user submits via `POST /api/ask-user-response` → oneshot channel delivers answer → loop continues.
 
 **Implementation**: `engine/tools.rs` (execution), `server/chat_api.rs` (response endpoint), `ui/src/components/AskUserCard.tsx` (UI).
-
-## Code execution
-
-Model can output `execute_code` action with language and code body.
-
-```json
-{"type": "execute_code", "language": "python", "code": "..."}
-```
-
-Engine executes via subprocess in workspace root. Same safety as Bash. Result (stdout/stderr/exit_code) fed back as observation. Model-agnostic.
 
 ## Tool dispatch
 
@@ -119,8 +109,7 @@ Reuses the AskUser bridge — no new endpoints. Web UI renders `ToolPermissionCa
 
 ## Bash safety
 
-- Commands validated against allowlist before execution.
-- Disallowed: `$(`, backticks, newline injection.
-- Shell separators (`|`, `;`, `&&`, `||`) parsed; each segment's first token must be allowlisted.
+- Commands executed via `sh -c` in workspace root.
 - Timeout enforced (default 30s).
 - Output captured (stdout + stderr).
+- Workspace-scoped: working directory set to workspace root.
