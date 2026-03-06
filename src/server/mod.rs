@@ -2,7 +2,8 @@ mod agent_api;
 mod chat_api;
 pub(crate) mod chat_helpers;
 mod config_api;
-pub(crate) mod idle_scheduler;
+pub(crate) mod mission_scheduler;
+mod missions_api;
 mod marketplace_api;
 mod projects_api;
 mod storage_api;
@@ -34,8 +35,8 @@ use tokio_stream::StreamExt;
 use tracing::info;
 
 use agent_api::{
-    cancel_agent_run, cancel_tool_execution, clear_mission, get_agent_override, get_mission,
-    list_missions, run_agent, set_agent_override, set_mission, set_task,
+    cancel_agent_run, cancel_tool_execution,
+    run_agent, set_task,
 };
 use chat_api::{approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api, edit_plan_handler, reject_plan_handler};
 use config_api::{get_config_api, get_credentials_api, get_models_health, update_config_api, update_credentials_api};
@@ -45,9 +46,13 @@ use projects_api::{
     get_status_api,
     list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api, list_projects,
     list_sessions, list_skill_files_api, list_skills, reload_skills, remove_project, remove_session_api,
-    rename_session_api, upsert_agent_file_api, upsert_skill_file_api,
+    rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
 };
 use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, marketplace_install, marketplace_list, marketplace_move_to_global, marketplace_search, marketplace_uninstall};
+use missions_api::{
+    create_mission, delete_mission, get_mission, list_mission_runs, list_missions,
+    update_mission,
+};
 use storage_api::{storage_roots, storage_tree, storage_read_file, storage_write_file, storage_delete_file};
 use workspace_api::{get_agent_tree, get_workspace_state, list_files, read_file_api, search_files};
 
@@ -194,7 +199,8 @@ pub enum ServerEvent {
         agent_id: String,
         plan: crate::engine::Plan,
     },
-    IdlePromptTriggered {
+    MissionTriggered {
+        mission_id: String,
         agent_id: String,
         project_root: String,
     },
@@ -588,21 +594,22 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             project_root: None,
             data: Some(json!({ "plan": plan })),
         }),
-        ServerEvent::IdlePromptTriggered {
+        ServerEvent::MissionTriggered {
+            mission_id,
             agent_id,
             project_root,
         } => Some(UiSseMessage {
-            id: format!("idle-trigger-{agent_id}-{seq}"),
+            id: format!("mission-trigger-{mission_id}-{seq}"),
             seq,
             rev: seq,
             ts_ms,
             kind: UI_KIND_ACTIVITY.to_string(),
             phase: Some(UI_PHASE_DOING.to_string()),
-            text: Some("Idle prompt triggered".to_string()),
+            text: Some("Mission triggered".to_string()),
             agent_id: Some(agent_id),
             session_id: None,
             project_root: Some(project_root),
-            data: Some(json!({ "status": "idle_prompt_triggered" })),
+            data: Some(json!({ "status": "mission_triggered", "mission_id": mission_id })),
         }),
         ServerEvent::TextSegment {
             agent_id,
@@ -1017,13 +1024,14 @@ pub async fn prepare_server(
         .route("/api/sessions", post(create_session))
         .route("/api/sessions", patch(rename_session_api))
         .route("/api/sessions", delete(remove_session_api))
+        .route("/api/sessions/resolve", post(resolve_session_api))
         .route("/api/task", post(set_task))
         .route("/api/run", post(run_agent))
         .route("/api/agent-cancel", post(cancel_agent_run))
         .route("/api/tool-cancel", post(cancel_tool_execution))
-        .route("/api/mission", get(get_mission).post(set_mission).delete(clear_mission))
-        .route("/api/missions", get(list_missions))
-        .route("/api/agent-override", get(get_agent_override).post(set_agent_override))
+        .route("/api/missions", get(list_missions).post(create_mission))
+        .route("/api/missions/{id}", get(get_mission).put(update_mission).delete(delete_mission))
+        .route("/api/missions/{id}/runs", get(list_mission_runs))
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))
         .route("/api/plan/approve", post(approve_plan_handler))
@@ -1046,10 +1054,10 @@ pub async fn prepare_server(
         .fallback(static_handler)
         .with_state(state.clone());
 
-    // Spawn the idle scheduler for mission-driven autonomous behavior.
+    // Spawn the cron mission scheduler.
     {
         let scheduler_state = state.clone();
-        tokio::spawn(idle_scheduler::idle_scheduler_loop(scheduler_state));
+        tokio::spawn(mission_scheduler::mission_scheduler_loop(scheduler_state));
     }
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
@@ -1136,11 +1144,20 @@ async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Resp
     }
 }
 
+/// Optional query parameter for session-scoped SSE filtering.
+#[derive(Deserialize, Default)]
+struct EventsQuery {
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
 async fn events_handler(
     State(state): State<Arc<ServerState>>,
+    axum::extract::Query(query): axum::extract::Query<EventsQuery>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = state.events_tx.subscribe();
     let agent_sessions = state.agent_sessions.clone();
+    let filter_session = query.session_id;
     let stream = BroadcastStream::new(rx).filter_map(move |msg| {
         let event = match msg {
             Ok(event) => event,
@@ -1158,6 +1175,16 @@ async fn events_handler(
                     if let Some(sid) = map.get(aid) {
                         ui_msg.session_id = Some(sid.clone());
                     }
+                }
+            }
+        }
+        // Server-side session filter: if the client requested a specific session,
+        // drop events that belong to a *different* session. Events without
+        // session_id (global) always pass through.
+        if let Some(ref wanted) = filter_session {
+            if let Some(ref event_sid) = ui_msg.session_id {
+                if event_sid != wanted {
+                    return None;
                 }
             }
         }
@@ -1305,7 +1332,8 @@ mod tests {
                     plan_text: String::new(),
                 },
             },
-            ServerEvent::IdlePromptTriggered {
+            ServerEvent::MissionTriggered {
+                mission_id: "mission-1".into(),
                 agent_id: "ling".into(),
                 project_root: "/tmp".into(),
             },

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import type { AgentInfo, AgentRunSummary, AppConfig, IdlePromptEvent, ManagementTab, MissionInfo } from '../types';
+import type { AgentInfo, AppConfig, ManagementTab } from '../types';
 import { ModelsTab } from './ModelsTab';
 import { AgentsTab } from './AgentsTab';
 import { SkillsTab } from './SkillsTab';
@@ -23,17 +23,8 @@ export const SettingsPage: React.FC<{
   onBack: () => void;
   projectRoot?: string;
   initialTab?: ManagementTab;
-  // Mission props
   missionAgents?: AgentInfo[];
-  missionAgentStatus?: Record<string, string>;
-  missionAgentRunSummary?: Record<string, AgentRunSummary>;
-  mission?: MissionInfo | null;
-  missionDraft?: string | null;
-  onMissionDraftChange?: (v: string) => void;
-  onSaveMission?: (text: string) => void;
-  onClearMission?: () => void;
-  idlePromptEvents?: IdlePromptEvent[];
-}> = ({ onBack, projectRoot = '', initialTab, missionAgents, missionAgentStatus, missionAgentRunSummary, mission, missionDraft, onMissionDraftChange, onSaveMission, onClearMission, idlePromptEvents }) => {
+}> = ({ onBack, projectRoot = '', initialTab, missionAgents }) => {
   const [activeTab, setActiveTab] = useState<ManagementTab>(initialTab || 'models');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
@@ -191,14 +182,6 @@ export const SettingsPage: React.FC<{
             onBack={onBack}
             projectRoot={projectRoot}
             agents={missionAgents ?? []}
-            agentStatus={missionAgentStatus ?? {}}
-            agentRunSummary={missionAgentRunSummary ?? {}}
-            mission={mission ?? null}
-            missionDraft={missionDraft ?? null}
-            onMissionDraftChange={onMissionDraftChange ?? (() => {})}
-            onSaveMission={onSaveMission ?? (() => {})}
-            onClearMission={onClearMission ?? (() => {})}
-            idlePromptEvents={idlePromptEvents ?? []}
           />
         )}
 

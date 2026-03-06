@@ -102,6 +102,11 @@ impl App {
                     } else {
                         self.autocomplete_selected -= 1;
                     }
+                } else if !self.queued_messages.is_empty() && self.input.is_empty() {
+                    // CC-style: Up arrow edits the last queued message
+                    if let Some(last) = self.queued_messages.pop() {
+                        self.input = last;
+                    }
                 } else {
                     self.scroll_offset = self.scroll_offset.saturating_add(1);
                 }
@@ -166,7 +171,9 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                if !self.autocomplete.is_empty() {
+                if self.overlay.is_some() {
+                    self.overlay = None;
+                } else if !self.autocomplete.is_empty() {
                     self.autocomplete.clear();
                 } else if !self.input.is_empty() {
                     self.input.clear();
@@ -328,27 +335,31 @@ impl App {
         }
 
         if line == "/help" {
-            self.push_system("Commands:");
-            self.push_system("  /agent <name>     switch default agent");
-            self.push_system("  /model            select default model");
-            self.push_system("  /clear            clear chat context");
-            self.push_system("  /status           show project status");
-            self.push_system("  @agent message    send to specific agent");
-            self.push_system("  /plan <task>      ask agent to create a plan (read-only)");
-            self.push_system("  /plan approve     approve and execute the pending plan");
-            self.push_system("  /plan reject      reject the pending plan");
-            self.push_system("  /copy             copy last agent message to clipboard");
-            self.push_system("  /image <path>     attach an image file");
-            self.push_system("  /image clear      remove all pending images");
-            self.push_system("  /paste            paste image from clipboard");
-            self.push_system("  /quit, /exit      exit");
-            self.push_system("  <text>            send message to current agent");
-            self.push_system("  Ctrl+Y            copy last agent message to clipboard");
-            self.push_system("  Ctrl+V            paste image from clipboard");
-            self.push_system("  Ctrl+O            toggle verbose/compact tool display");
-            self.push_system("  Esc               cancel running agent / clear input");
-            self.push_system("  ↑/↓, scroll       scroll output");
-            self.push_system("  PgUp/PgDn         scroll output (fast)");
+            self.overlay = Some(vec![
+                "".to_string(),
+                "  Commands:".to_string(),
+                "  /agent <name>     switch default agent".to_string(),
+                "  /model            select default model".to_string(),
+                "  /clear            clear chat context".to_string(),
+                "  /status           show project status".to_string(),
+                "  @agent message    send to specific agent".to_string(),
+                "  /plan <task>      create a plan (read-only)".to_string(),
+                "  /plan approve     approve and execute the plan".to_string(),
+                "  /plan reject      reject the pending plan".to_string(),
+                "  /copy             copy last agent message".to_string(),
+                "  /image <path>     attach an image file".to_string(),
+                "  /paste            paste image from clipboard".to_string(),
+                "  /quit, /exit      exit".to_string(),
+                "".to_string(),
+                "  Shortcuts:".to_string(),
+                "  Ctrl+Y            copy last agent message".to_string(),
+                "  Ctrl+V            paste image from clipboard".to_string(),
+                "  Ctrl+O            toggle verbose/compact display".to_string(),
+                "  Esc               dismiss overlay / cancel agent".to_string(),
+                "  ↑/↓               scroll output".to_string(),
+                "  PgUp/PgDn         scroll output (fast)".to_string(),
+                "".to_string(),
+            ]);
             return Ok(false);
         }
 
@@ -415,25 +426,32 @@ impl App {
             return Ok(false);
         }
 
-        // Status command
+        // Status command — shows as overlay below input
         if line == "/status" {
-            self.push_system("Loading status...");
+            self.overlay = Some(vec!["  Loading status...".to_string()]);
             let client = self.client.clone();
             let project_root = self.project_root.clone();
+            let session_id = self.session_id.clone().unwrap_or_else(|| "(none)".to_string());
+            let agent_id = self.agent_id.clone();
             let slot = self.status_lines_slot.clone();
+            let version = env!("CARGO_PKG_VERSION").to_string();
             tokio::spawn(async move {
                 match client.fetch_status(&project_root).await {
                     Ok(data) => {
                         let mut lines = Vec::new();
                         lines.push(String::new());
-                        lines.push("  ─── Project Status ───".to_string());
-                        lines.push(String::new());
+
+                        // Core info (CC-style)
+                        lines.push(format!("  Version:     v{version}"));
+                        lines.push(format!("  Session ID:  {session_id}"));
+                        lines.push(format!("  Workspace:   {project_root}"));
+                        lines.push(format!("  Agent:       {agent_id}"));
 
                         // Default model
                         let default_model = data.get("default_model")
                             .and_then(|v| v.as_str())
                             .unwrap_or("(none)");
-                        lines.push(format!("  Default model:  {default_model}"));
+                        lines.push(format!("  Model:       {default_model}"));
                         lines.push(String::new());
 
                         // Available models
@@ -450,6 +468,19 @@ impl App {
                             lines.push(String::new());
                         }
 
+                        // Session tokens
+                        let prompt_tok = data.get("session_prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let completion_tok = data.get("session_completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let fmt = |n: u64| -> String {
+                            if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
+                            else if n >= 1_000 { format!("{:.1}K", n as f64 / 1_000.0) }
+                            else { format!("{n}") }
+                        };
+                        if prompt_tok > 0 || completion_tok > 0 {
+                            let total = prompt_tok + completion_tok;
+                            lines.push(format!("  Tokens:      ↑ {}  ↓ {}  (total: {})", fmt(prompt_tok), fmt(completion_tok), fmt(total)));
+                        }
+
                         // Sessions & runs
                         let sessions = data.get("sessions").and_then(|v| v.as_u64()).unwrap_or(0);
                         let total = data.get("total_runs").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -458,24 +489,10 @@ impl App {
                         let cancelled = data.get("cancelled_runs").and_then(|v| v.as_u64()).unwrap_or(0);
                         let active_days = data.get("active_days").and_then(|v| v.as_u64()).unwrap_or(0);
 
-                        lines.push(format!("  Sessions:       {sessions:<12}  Runs:         {total}"));
-                        lines.push(format!("  Completed:      {completed:<12}  Failed:       {failed}"));
-                        lines.push(format!("  Cancelled:      {cancelled:<12}  Active days:  {active_days}"));
+                        lines.push(format!("  Sessions:    {sessions:<8}  Runs:        {total}"));
+                        lines.push(format!("  Completed:   {completed:<8}  Failed:      {failed}"));
+                        lines.push(format!("  Cancelled:   {cancelled:<8}  Active days: {active_days}"));
                         lines.push(String::new());
-
-                        // Session tokens
-                        let prompt_tok = data.get("session_prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let completion_tok = data.get("session_completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        if prompt_tok > 0 || completion_tok > 0 {
-                            let fmt = |n: u64| -> String {
-                                if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
-                                else if n >= 1_000 { format!("{:.1}K", n as f64 / 1_000.0) }
-                                else { format!("{n}") }
-                            };
-                            let total = prompt_tok + completion_tok;
-                            lines.push(format!("  Session tokens: ↑ {}  ↓ {}  (total: {})", fmt(prompt_tok), fmt(completion_tok), fmt(total)));
-                            lines.push(String::new());
-                        }
 
                         // Model usage
                         if let Some(usage) = data.get("model_usage").and_then(|v| v.as_array()) {
@@ -604,6 +621,39 @@ impl App {
         } else {
             (self.agent_id.clone(), line)
         };
+
+        let is_busy = self.status_state != "idle";
+
+        // CC-style: when agent is busy, queue the message as a banner
+        // instead of showing it inline in the chat.
+        if is_busy {
+            self.queued_messages.push(message.clone());
+            // Still send to server (it will queue + interrupt the agent)
+            let client = self.client.clone();
+            let project_root = self.project_root.clone();
+            let session_id = self.session_id.clone();
+            let slot = self.session_id_slot.clone();
+            let images = std::mem::take(&mut self.pending_images);
+            let send_images = if images.is_empty() { None } else { Some(images) };
+            tokio::spawn(async move {
+                if let Ok(Some(sid)) = client
+                    .send_chat(
+                        &project_root,
+                        &target_agent,
+                        &message,
+                        session_id.as_deref(),
+                        send_images,
+                    )
+                    .await
+                {
+                    let mut guard = slot.lock().unwrap();
+                    if guard.is_none() {
+                        *guard = Some(sid);
+                    }
+                }
+            });
+            return Ok(false);
+        }
 
         let images = std::mem::take(&mut self.pending_images);
         let image_count = images.len();

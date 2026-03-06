@@ -9,12 +9,14 @@ impl App {
     pub fn render(&mut self, f: &mut ratatui::Frame) {
         use ratatui::layout::{Constraint, Direction, Layout};
 
-        // Fixed bottom: spinner(1) + divider(1) + input(1) + divider(1) + status(1) = 5 lines
+        // Fixed bottom: queued(N) + spinner(1) + divider(1) + input(1) + divider(1) + status(1)
+        let queue_lines = self.queued_messages.len() as u16;
+        let bottom_height = 5 + queue_lines;
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),   // Scrollable content
-                Constraint::Length(5), // Fixed input area (includes spinner line)
+                Constraint::Min(1),              // Scrollable content
+                Constraint::Length(bottom_height), // Fixed input area
             ])
             .split(f.area());
 
@@ -296,15 +298,23 @@ impl App {
 
         // ── Fixed input area (always visible at bottom) ─────────────
         let divider = "─".repeat(width as usize);
+        let has_queued = !self.queued_messages.is_empty();
         let mut input_spans = vec![
             Span::styled(
-                "> ",
+                if has_queued { "› " } else { "> " },
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(self.input.clone()),
         ];
+        if self.input.is_empty() && has_queued {
+            input_spans.push(Span::styled(
+                "Press up to edit queued messages",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ));
+        } else {
+            input_spans.push(Span::raw(self.input.clone()));
+        }
         if !self.pending_images.is_empty() {
             input_spans.push(Span::styled(
                 format!("  [{} image{}]", self.pending_images.len(), if self.pending_images.len() == 1 { "" } else { "s" }),
@@ -338,13 +348,21 @@ impl App {
                 Style::default().fg(Color::Yellow),
             ));
         }
-        // Show "Esc to cancel" hint when agent is running
+        // Show hints in status bar
         if self.status_state != "idle" && self.prompt.is_none() {
-            status_spans.push(Span::styled("  ", Style::default()));
-            status_spans.push(Span::styled(
-                "Esc to cancel",
-                Style::default().fg(Color::DarkGray),
-            ));
+            if has_queued {
+                status_spans.push(Span::styled("  ", Style::default()));
+                status_spans.push(Span::styled(
+                    "esc to interrupt",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                status_spans.push(Span::styled("  ", Style::default()));
+                status_spans.push(Span::styled(
+                    "Esc to cancel",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
         }
         if let ConnectionStatus::Disconnected = &self.connection_status {
             status_spans.push(Span::styled("  ", Style::default()));
@@ -415,18 +433,72 @@ impl App {
             Line::from("")
         };
 
-        let bottom = Paragraph::new(vec![
-            spinner_line,
-            Line::from(Span::styled(divider.clone(), Style::default().fg(Color::DarkGray))),
-            input_line,
-            Line::from(Span::styled(divider, Style::default().fg(Color::DarkGray))),
-            Line::from(status_spans),
-        ]);
+        let mut bottom_lines: Vec<Line<'static>> = Vec::new();
+        // Queued messages — shown above spinner in the fixed bottom area
+        for qmsg in &self.queued_messages {
+            let first_line = qmsg.lines().next().unwrap_or("");
+            let max_chars = (width as usize).saturating_sub(6);
+            let truncated = if first_line.len() > max_chars {
+                format!("{}…", &first_line[..max_chars.saturating_sub(1)])
+            } else {
+                first_line.to_string()
+            };
+            bottom_lines.push(Line::from(vec![
+                Span::styled(
+                    "  › ",
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(truncated, Style::default().fg(Color::White)),
+            ]));
+        }
+        bottom_lines.push(spinner_line);
+        bottom_lines.push(Line::from(Span::styled(divider.clone(), Style::default().fg(Color::DarkGray))));
+        bottom_lines.push(input_line);
+        bottom_lines.push(Line::from(Span::styled(divider, Style::default().fg(Color::DarkGray))));
+        bottom_lines.push(Line::from(status_spans));
+
+        let bottom = Paragraph::new(bottom_lines);
         f.render_widget(bottom, input_area);
 
-        // Position cursor on the input line (3rd line of input_area, after spinner + divider)
-        let cursor_y = input_area.y + 2;
+        // Position cursor on the input line (after queued + spinner + divider)
+        let cursor_y = input_area.y + queue_lines + 2;
         let cursor_x = input_area.x + 2 + self.input.len() as u16;
         f.set_cursor_position((cursor_x, cursor_y));
+
+        // ── Overlay (e.g. /status, /help) — covers content area from bottom ──
+        if let Some(overlay_lines) = &self.overlay {
+            // +1 for the dismiss hint line
+            let total_lines = overlay_lines.len() as u16 + 1;
+            let overlay_height = total_lines.min(content_area.height);
+            if overlay_height > 0 {
+                let overlay_y = content_area.y + content_area.height - overlay_height;
+                let overlay_area = ratatui::layout::Rect {
+                    x: content_area.x,
+                    y: overlay_y,
+                    width: content_area.width,
+                    height: overlay_height,
+                };
+                let w = width as usize;
+                let mut lines: Vec<Line<'static>> = overlay_lines
+                    .iter()
+                    .take((overlay_height.saturating_sub(1)) as usize)
+                    .map(|s| {
+                        let padded = format!("{:<w$}", s);
+                        Line::from(Span::styled(
+                            padded,
+                            Style::default().fg(Color::Yellow).bg(Color::Black),
+                        ))
+                    })
+                    .collect();
+                // Dismiss hint
+                let hint = format!("{:<w$}", "  Esc to dismiss");
+                lines.push(Line::from(Span::styled(
+                    hint,
+                    Style::default().fg(Color::DarkGray).bg(Color::Black).add_modifier(Modifier::ITALIC),
+                )));
+                let overlay_widget = Paragraph::new(lines);
+                f.render_widget(overlay_widget, overlay_area);
+            }
+        }
     }
 }

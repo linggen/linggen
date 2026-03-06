@@ -103,8 +103,20 @@ export const isToolResultMessage = (from?: string, text?: string) => {
 /** Strip embedded structured JSON (plan, tool calls, finalize_task) from text,
  *  handling nested braces correctly via depth counting. */
 export const stripEmbeddedStructuredJson = (text: string): string => {
-  const MARKERS = ['"type":"plan"', '"type":"tool"', '"type":"finalize_task"', '"type": "plan"', '"type": "tool"'];
-  let result = text;
+  // Strip <tool_call>...</tool_call> XML-style blocks (Qwen/Hermes format)
+  let result = text.replace(/<\/?tool_call>/g, '');
+
+  const MARKERS = [
+    '"type":"plan"', '"type":"tool"', '"type":"finalize_task"',
+    '"type": "plan"', '"type": "tool"',
+    // Also match {"name":"ToolName","args":...} format
+    '"name":"Read"', '"name":"Write"', '"name":"Edit"', '"name":"Bash"',
+    '"name":"Glob"', '"name":"Grep"', '"name":"Task"', '"name":"WebSearch"',
+    '"name":"WebFetch"', '"name":"capture_screenshot"',
+    '"name": "Read"', '"name": "Write"', '"name": "Edit"', '"name": "Bash"',
+    '"name": "Glob"', '"name": "Grep"', '"name": "Task"', '"name": "WebSearch"',
+    '"name": "WebFetch"', '"name": "capture_screenshot"',
+  ];
 
   for (const marker of MARKERS) {
     let searchFrom = 0;

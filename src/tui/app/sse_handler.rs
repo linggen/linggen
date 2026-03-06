@@ -91,11 +91,19 @@ impl App {
                     .unwrap_or("assistant");
                 if role == "user" {
                     if let Some(text) = &msg.text {
+                        // Dedup against locally-shown messages
                         if let Some(front) = self.pending_user_messages.front() {
                             if front == text {
                                 self.pending_user_messages.pop_front();
                                 return;
                             }
+                        }
+                        // Dedup against queued messages (shown as banner, now being processed)
+                        if let Some(pos) = self.queued_messages.iter().position(|q| q == text) {
+                            self.queued_messages.remove(pos);
+                            // Show it inline now that the agent is processing it
+                            self.push_user(text);
+                            return;
                         }
                         if !text.is_empty() {
                             self.push_user(text);

@@ -142,8 +142,6 @@ export interface AgentInfo {
   name: string;
   description: string;
   model?: string | null;
-  idle_prompt?: string | null;
-  idle_interval_secs?: number | null;
 }
 
 export interface AgentFileInfo {
@@ -313,33 +311,25 @@ export interface BuiltInSkillInfo {
 
 export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'general' | 'mission' | 'storage';
 
-// --- Mission types ---
+// --- Mission types (cron-based) ---
 
-export type MissionTab = 'editor' | 'agents' | 'history' | 'activity';
+export type MissionTab = 'list' | 'create' | 'edit' | 'runs';
 
-export interface MissionInfo {
-  text: string;
-  created_at: number;
-  active: boolean;
-  agents: MissionAgentConfig[];
-}
-
-export interface MissionAgentConfig {
+export interface CronMission {
   id: string;
-  idle_prompt?: string | null;
-  idle_interval_secs?: number | null;
+  schedule: string;
+  agent_id: string;
+  prompt: string;
+  model?: string | null;
+  enabled: boolean;
+  created_at: number;
 }
 
-export interface AgentOverrideConfig {
-  agent_id: string;
-  idle_prompt: string | null;
-  idle_interval_secs: number | null;
-}
-
-export interface IdlePromptEvent {
-  agent_id: string;
-  project_root: string;
-  timestamp: number;
+export interface MissionRunEntry {
+  run_id: string;
+  triggered_at: number;
+  status: string;
+  skipped: boolean;
 }
 
 // --- Storage browser types ---

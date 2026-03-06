@@ -839,8 +839,24 @@ pub(crate) async fn chat_handler(
 
     // Auto-create a new session when none is provided, instead of falling
     // back to a hidden "default" session.
-    let session_id: Option<String> = if req.session_id.is_some() {
-        req.session_id.clone()
+    // When a session_id IS provided (e.g. from TUI), ensure it exists in the
+    // session store so the Web UI can list it.
+    let session_id: Option<String> = if let Some(sid) = req.session_id.clone() {
+        if let Ok(ctx) = state.manager.get_or_create_project(root.clone()).await {
+            let exists = ctx.sessions.list_sessions().ok()
+                .map(|ss| ss.iter().any(|s| s.id == sid))
+                .unwrap_or(false);
+            if !exists {
+                let now = crate::util::now_ts_secs();
+                let meta = crate::state_fs::sessions::SessionMeta {
+                    id: sid.clone(),
+                    title: auto_session_title(&req.message),
+                    created_at: now,
+                };
+                let _ = ctx.sessions.add_session(&meta);
+            }
+        }
+        Some(sid)
     } else {
         let now = crate::util::now_ts_secs();
         let new_id = format!("sess-{}-{}", now, &uuid::Uuid::new_v4().to_string()[..8]);
@@ -988,6 +1004,13 @@ pub(crate) async fn chat_handler(
                         &target_id_clone,
                     )
                     .await;
+                    // Emit the queued user message via SSE now that it's being processed.
+                    let _ = events_tx_clone.send(ServerEvent::Message {
+                        from: "user".to_string(),
+                        to: target_id_clone.clone(),
+                        content: clean_msg_clone.clone(),
+                        session_id: session_id.clone(),
+                    });
                 }
 
                 // Register agent → session mapping so SSE events get tagged.

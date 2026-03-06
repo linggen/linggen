@@ -116,6 +116,11 @@ pub struct App {
     pub last_run_elapsed_secs: Option<u64>,
     /// Verb used in the last completed run's summary.
     pub last_run_verb: String,
+    /// Messages queued by the user while the agent is busy (CC-style).
+    /// Displayed as a floating banner, not inline in chat.
+    pub queued_messages: Vec<String>,
+    /// Overlay content (e.g. /status, /help) shown below input. Esc to dismiss.
+    pub overlay: Option<Vec<String>>,
 }
 
 /// An autocomplete suggestion item.
@@ -235,6 +240,8 @@ impl App {
             last_agent_text: None,
             last_run_elapsed_secs: None,
             last_run_verb: String::new(),
+            queued_messages: Vec::new(),
+            overlay: None,
         }
     }
 

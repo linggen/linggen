@@ -24,8 +24,6 @@ import type {
   QueuedChatItem,
   SessionInfo,
   SkillInfo,
-  IdlePromptEvent,
-  MissionInfo,
 } from './types';
 import {
   stripEmbeddedStructuredJson,
@@ -78,7 +76,7 @@ const App: React.FC = () => {
   const [sessionCountsByProject, setSessionCountsByProject] = useState<Record<string, number>>({});
 
   const [, setLogs] = useState<string[]>([]);
-  const { chatMessages, displayMessages, chatDispatch, chatEndRef, clearChat: clearChatMessages, isInClearCooldown } = useChatMessages();
+  const { chatMessages, displayMessages, chatDispatch, chatEndRef, clearChat: clearChatMessages, isInClearCooldown, scrollToBottom } = useChatMessages();
   const [selectedAgent, setSelectedAgent] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     const stored = window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY);
@@ -91,6 +89,8 @@ const App: React.FC = () => {
     resetStatus,
   } = useAgentActivity(chatMessages);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatItem[]>([]);
+  const [overlay, setOverlay] = useState<string | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [agentRuns, setAgentRuns] = useState<AgentRunInfo[]>([]);
   const [cancellingRunIds, setCancellingRunIds] = useState<Record<string, boolean>>({});
   // Refresh icon should only refresh UI state, not run an audit skill.
@@ -101,9 +101,6 @@ const App: React.FC = () => {
   const [showAgentSpecEditor, setShowAgentSpecEditor] = useState(false);
   
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState | null>(null);
-  const [mission, setMission] = useState<MissionInfo | null>(null);
-  const [missionDraft, setMissionDraft] = useState<string | null>(null);
-  const [idlePromptEvents, setIdlePromptEvents] = useState<IdlePromptEvent[]>([]);
   const [pendingPlan, setPendingPlan] = useState<import('./types').Plan | null>(null);
   const [pendingPlanAgentId, setPendingPlanAgentId] = useState<string | null>(null);
   const [pendingAskUser, setPendingAskUser] = useState<import('./types').PendingAskUser | null>(null);
@@ -629,65 +626,6 @@ const App: React.FC = () => {
     }
   }, [selectedProjectRoot, activeSessionId, addLog]);
 
-  const missionEndpointAvailable = useRef<boolean | null>(null);
-  const prevMissionProjectRoot = useRef(selectedProjectRoot);
-
-  // Reset endpoint availability when switching projects
-  if (selectedProjectRoot !== prevMissionProjectRoot.current) {
-    missionEndpointAvailable.current = null;
-    prevMissionProjectRoot.current = selectedProjectRoot;
-  }
-
-  const fetchMission = useCallback(async () => {
-    if (!selectedProjectRoot) return;
-    if (missionEndpointAvailable.current === false) return;
-    try {
-      const url = new URL('/api/mission', window.location.origin);
-      url.searchParams.append('project_root', selectedProjectRoot);
-      const resp = await fetch(url.toString());
-      if (resp.status === 404) {
-        missionEndpointAvailable.current = false;
-        return;
-      }
-      missionEndpointAvailable.current = true;
-      if (!resp.ok) return;
-      const data = await resp.json();
-      setMission(data?.text ? data : null);
-    } catch {
-      // silently ignore — mission endpoint may not be available
-    }
-  }, [selectedProjectRoot]);
-
-  const saveMission = async (text: string) => {
-    if (!selectedProjectRoot || !text.trim()) return;
-    try {
-      await fetch('/api/mission', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: selectedProjectRoot, text: text.trim(), agents: [] }),
-      });
-      setMissionDraft(null);
-      fetchMission();
-    } catch (e) {
-      addLog(`Error setting mission: ${e}`);
-    }
-  };
-
-  const clearMission = async () => {
-    if (!selectedProjectRoot) return;
-    try {
-      await fetch('/api/mission', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: selectedProjectRoot }),
-      });
-      setMission(null);
-    } catch (e) {
-      addLog(`Error clearing mission: ${e}`);
-    }
-  };
-
-
   const cancelAgentRun = async (runId: string) => {
     if (!runId) return;
     setCancellingRunIds((prev) => ({ ...prev, [runId]: true }));
@@ -729,12 +667,11 @@ const App: React.FC = () => {
       fetchAgentRuns();
       fetchSessions();
       fetchAgents(selectedProjectRoot);
-      fetchMission();
       resetStatus();
       setQueuedMessages([]);
       setActivePlan(null);
     }
-  }, [selectedProjectRoot, fetchFiles, fetchWorkspaceState, fetchAgentTree, fetchAgentRuns, fetchSessions, fetchAgents, fetchMission, resetStatus]);
+  }, [selectedProjectRoot, fetchFiles, fetchWorkspaceState, fetchAgentTree, fetchAgentRuns, fetchSessions, fetchAgents, resetStatus]);
 
   useEffect(() => {
     if (projects.length === 0) return;
@@ -834,14 +771,15 @@ const App: React.FC = () => {
     chatDispatch,
     setAgentStatus, setAgentStatusText, setAgentContext,
     subagentParentMapRef, subagentStatsRef, runStartTsRef, latestContextTokensRef,
-    setQueuedMessages, setPendingAskUser, setActivePlan, setPendingPlan, setPendingPlanAgentId, setIdlePromptEvents,
-    fetchWorkspaceState, fetchFiles, fetchAllAgentTrees, fetchAgentRuns,
+    setQueuedMessages, setPendingAskUser, setActivePlan, setPendingPlan, setPendingPlanAgentId,
+    fetchWorkspaceState, fetchFiles, fetchAllAgentTrees, fetchAgentRuns, fetchSessions,
     currentPath, selectedProjectRoot, activeSessionId,
   });
 
   useSseConnection({
     onEvent: handleSseEvent,
     onParseError: () => { fetchWorkspaceState(); fetchAgentRuns(); },
+    sessionId: activeSessionId,
   });
 
   const sendChatMessage = async (userMessage: string, targetAgent?: string, images?: string[]) => {
@@ -850,59 +788,43 @@ const App: React.FC = () => {
     const agentToUse = targetAgent || selectedAgent;
     if (!agentToUse) return;
     const now = new Date();
+    const trimmed = userMessage.trim();
 
-    chatDispatch({
-      type: 'ADD_MESSAGE',
-      message: {
-        role: 'user',
-        from: 'user',
-        to: agentToUse,
-        text: userMessage,
-        timestamp: now.toLocaleTimeString(),
-        timestampMs: now.getTime(),
-        isGenerating: false,
-        ...(images && images.length > 0 ? { images } : {}),
-      },
-    });
+    // Commands that show overlays — intercept before adding user message to chat
+    if (trimmed === '/help' || trimmed === '/status' || trimmed === '/clear' || trimmed === '/model' || trimmed.startsWith('/model ')) {
+      // handled below — don't show as user message
+    } else {
+      chatDispatch({
+        type: 'ADD_MESSAGE',
+        message: {
+          role: 'user',
+          from: 'user',
+          to: agentToUse,
+          text: userMessage,
+          timestamp: now.toLocaleTimeString(),
+          timestampMs: now.getTime(),
+          isGenerating: false,
+          ...(images && images.length > 0 ? { images } : {}),
+        },
+      });
+      // Re-enable auto-scroll and jump to bottom when user sends a message
+      scrollToBottom();
+    }
 
-    // /model — list available models; /model <id> — switch default model
-    if (userMessage.trim() === '/model' || userMessage.trim().startsWith('/model ')) {
-      const modelArg = userMessage.trim().slice('/model'.length).trim();
-      const addSystemMsg = (text: string) => {
-        chatDispatch({
-          type: 'ADD_MESSAGE',
-          message: {
-            role: 'agent',
-            from: 'system',
-            text,
-            timestamp: now.toLocaleTimeString(),
-            timestampMs: now.getTime(),
-            isGenerating: false,
-          },
-        });
-      };
+    // /model — open model picker overlay; /model <id> — switch model
+    if (trimmed === '/model' || trimmed.startsWith('/model ')) {
+      const modelArg = trimmed.slice('/model'.length).trim();
 
       if (!modelArg) {
-        // List models
-        const lines = ['**Available models:**', ''];
-        if (models.length === 0) {
-          lines.push('_(no models configured)_');
-        } else {
-          for (const m of models) {
-            const isDefault = defaultModels.includes(m.id);
-            const marker = isDefault ? ' ✦' : '';
-            lines.push(`- \`${m.id}\`  (${m.provider}: ${m.model})${marker}`);
-          }
-          lines.push('', '_Use `/model <id>` to switch._');
-        }
-        addSystemMsg(lines.join('\n'));
+        // Open interactive model picker
+        setModelPickerOpen(true);
+        setOverlay(null);
       } else {
-        // Switch model
+        // Switch model directly
         const valid = models.length === 0 || models.some(m => m.id === modelArg);
         if (!valid) {
-          addSystemMsg(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`);
+          setOverlay(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`);
         } else {
-          // Set as the single default model
           try {
             const resp = await fetch('/api/config');
             if (resp.ok) {
@@ -916,18 +838,18 @@ const App: React.FC = () => {
               });
               if (saveResp.ok) {
                 setDefaultModels(newDefaults);
-                addSystemMsg(`Switched default model to: \`${modelArg}\``);
+                setOverlay(`Switched default model to: \`${modelArg}\``);
               }
             }
           } catch (e) {
-            addSystemMsg(`Error switching model: ${e}`);
+            setOverlay(`Error switching model: ${e}`);
           }
         }
       }
       return;
     }
 
-    // /help — show available commands
+    // /help — show available commands (overlay, not chat message)
     if (userMessage.trim() === '/help') {
       const helpLines = [
         '**Commands:**',
@@ -942,21 +864,11 @@ const App: React.FC = () => {
         '',
         '**Skills:** Type `/` to see available skills.',
       ];
-      chatDispatch({
-        type: 'ADD_MESSAGE',
-        message: {
-          role: 'agent',
-          from: 'system',
-          text: helpLines.join('\n'),
-          timestamp: now.toLocaleTimeString(),
-          timestampMs: now.getTime(),
-          isGenerating: false,
-        },
-      });
+      setOverlay(helpLines.join('\n'));
       return;
     }
 
-    // /status — show project status
+    // /status — show project status (overlay, not chat message)
     if (userMessage.trim() === '/status') {
       try {
         const resp = await fetch(`/api/status?project_root=${encodeURIComponent(selectedProjectRoot)}`);
@@ -971,10 +883,24 @@ const App: React.FC = () => {
             `- \`${entry[0]}\` — ${entry[1]} runs`
           );
 
+          const version = data.version || '?';
+          const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
+          const promptTok = data.session_prompt_tokens || 0;
+          const completionTok = data.session_completion_tokens || 0;
+
           const lines = [
-            '**Project Status**',
-            '',
-            `**Default model:** \`${defaultModel}\``,
+            `**Version:** v${version}`,
+            `**Session:** \`${activeSessionId || '(none)'}\``,
+            `**Workspace:** \`${selectedProjectRoot}\``,
+            `**Agent:** ${selectedAgent}`,
+            `**Model:** \`${defaultModel}\``,
+          ];
+
+          if (promptTok > 0 || completionTok > 0) {
+            lines.push(`**Tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
+          }
+
+          lines.push(
             '',
             '**Models:**',
             ...modelLines,
@@ -987,33 +913,18 @@ const App: React.FC = () => {
             `| Failed | ${data.failed_runs} |`,
             `| Cancelled | ${data.cancelled_runs} |`,
             `| Active days | ${data.active_days} |`,
-          ];
+          );
 
           if (usageLines.length > 0) {
             lines.push('', '**Model usage:**', ...usageLines);
           }
 
-          const promptTok = data.session_prompt_tokens || 0;
-          const completionTok = data.session_completion_tokens || 0;
-          if (promptTok > 0 || completionTok > 0) {
-            const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
-            lines.push('', `**Session tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
-          }
-
-          chatDispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'agent',
-              from: 'system',
-              text: lines.join('\n'),
-              timestamp: now.toLocaleTimeString(),
-              timestampMs: now.getTime(),
-              isGenerating: false,
-            },
-          });
+          setOverlay(lines.join('\n'));
+        } else {
+          setOverlay(`Status request failed: ${resp.status} ${resp.statusText}`);
         }
       } catch (e) {
-        addLog(`Error fetching status: ${e}`);
+        setOverlay(`Error fetching status: ${e}`);
       }
       return;
     }
@@ -1225,9 +1136,50 @@ const App: React.FC = () => {
 
   // In compact mode (VS Code sidebar), set a data attribute on <html>
   // so CSS can remap colors to match VS Code's theme.
+  // Also bridge clipboard: VS Code intercepts Cmd/Ctrl+C before it reaches
+  // the iframe. The wrapper sends postMessage; we listen and use Clipboard API.
   useEffect(() => {
     if (isCompact) {
       document.documentElement.setAttribute('data-compact', '');
+
+      // Handle postMessage from VS Code wrapper for clipboard operations
+      const handleMessage = (e: MessageEvent) => {
+        if (e.data?.type !== 'linggen-clipboard') return;
+        const sel = window.getSelection();
+        const text = sel?.toString();
+        switch (e.data.action) {
+          case 'copy':
+            if (text) navigator.clipboard.writeText(text).catch(() => {});
+            break;
+          case 'cut':
+            if (text) {
+              navigator.clipboard.writeText(text).catch(() => {});
+              document.execCommand('delete');
+            }
+            break;
+          case 'selectAll':
+            document.execCommand('selectAll');
+            break;
+        }
+      };
+      window.addEventListener('message', handleMessage);
+
+      // Also handle direct keydown in case the event does reach the iframe
+      const handleCopy = (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey && !e.altKey) {
+          const sel = window.getSelection();
+          const text = sel?.toString();
+          if (text) {
+            e.preventDefault();
+            navigator.clipboard.writeText(text).catch(() => {});
+          }
+        }
+      };
+      document.addEventListener('keydown', handleCopy);
+      return () => {
+        window.removeEventListener('message', handleMessage);
+        document.removeEventListener('keydown', handleCopy);
+      };
     }
   }, []);
 
@@ -1245,14 +1197,6 @@ const App: React.FC = () => {
         projectRoot={selectedProjectRoot}
         initialTab={initialSettingsTab}
         missionAgents={agents}
-        missionAgentStatus={agentStatus}
-        missionAgentRunSummary={agentRunSummary}
-        mission={mission}
-        missionDraft={missionDraft}
-        onMissionDraftChange={setMissionDraft}
-        onSaveMission={saveMission}
-        onClearMission={clearMission}
-        idlePromptEvents={idlePromptEvents}
       />
     )}
     <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${currentPage !== 'main' ? ' hidden' : ''}`}>
@@ -1400,6 +1344,34 @@ const App: React.FC = () => {
               onRespondToAskUser={respondToAskUser}
               verboseMode={verboseMode}
               agentStatus={agentStatus}
+              overlay={overlay}
+              onDismissOverlay={() => { setOverlay(null); setModelPickerOpen(false); }}
+              modelPickerOpen={modelPickerOpen}
+              models={models}
+              defaultModels={defaultModels}
+              onSwitchModel={async (modelId: string) => {
+                try {
+                  const resp = await fetch('/api/config');
+                  if (resp.ok) {
+                    const config = await resp.json();
+                    const newDefaults = [modelId];
+                    const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
+                    const saveResp = await fetch('/api/config', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(updated),
+                    });
+                    if (saveResp.ok) {
+                      setDefaultModels(newDefaults);
+                      setModelPickerOpen(false);
+                      setOverlay(`Switched to: \`${modelId}\``);
+                    }
+                  }
+                } catch (e) {
+                  setOverlay(`Error switching model: ${e}`);
+                  setModelPickerOpen(false);
+                }
+              }}
             />
           </div>
         </main>
@@ -1408,14 +1380,12 @@ const App: React.FC = () => {
         {!isCompact && (
         <aside className="w-72 border-l border-slate-200 dark:border-white/5 flex flex-col bg-slate-100/40 dark:bg-[#0a0a0a] p-3 gap-3 overflow-y-auto">
           <CollapsibleCard
-            title="MISSION"
+            title="MISSIONS"
             icon={<Target size={12} />}
-            iconColor={mission ? 'text-green-500' : 'text-slate-400'}
-            badge={mission ? 'Active' : 'None'}
+            iconColor={'text-slate-400'}
             defaultOpen
           >
             <MissionSidebarCard
-              mission={mission}
               projectRoot={selectedProjectRoot}
               onOpenMission={() => { setInitialSettingsTab('mission'); setCurrentPage('settings'); }}
             />
@@ -1613,6 +1583,41 @@ const App: React.FC = () => {
 
         /* Popup menus (slash commands, mentions, files) */
         html[data-compact] .dark\\:hover\\:bg-white\\/5:hover { background-color: rgba(255,255,255,0.06) !important; }
+
+        /* Markdown body — text and code readability in dark mode */
+        html[data-compact] .markdown-body { color: var(--vsc-fg, #ccc) !important; }
+        html[data-compact] .markdown-body code { background: rgba(255,255,255,0.1) !important; color: #d4d4d4 !important; }
+        html[data-compact] .markdown-body pre { background: rgba(255,255,255,0.06) !important; }
+        html[data-compact] .markdown-body pre code { color: #c9d1d9 !important; }
+        html[data-compact] .markdown-body th,
+        html[data-compact] .markdown-body td { border-color: rgba(255,255,255,0.15) !important; color: #d4d4d4 !important; }
+        html[data-compact] .markdown-body th { background: rgba(255,255,255,0.06) !important; }
+        html[data-compact] .markdown-body hr { border-top-color: rgba(255,255,255,0.12) !important; }
+        html[data-compact] .markdown-body blockquote { border-left-color: rgba(59,130,246,0.5) !important; color: #b4becd !important; }
+        html[data-compact] .markdown-body h1,
+        html[data-compact] .markdown-body h2,
+        html[data-compact] .markdown-body h3,
+        html[data-compact] .markdown-body h4 { color: #e0e0e0 !important; }
+        /* highlight.js tokens — GitHub Dark in compact mode */
+        html[data-compact] .hljs { color: #c9d1d9 !important; background: transparent !important; }
+        html[data-compact] .hljs-doctag, html[data-compact] .hljs-keyword,
+        html[data-compact] .hljs-template-tag, html[data-compact] .hljs-template-variable,
+        html[data-compact] .hljs-type, html[data-compact] .hljs-variable.language_ { color: #ff7b72 !important; }
+        html[data-compact] .hljs-title, html[data-compact] .hljs-title.class_,
+        html[data-compact] .hljs-title.function_ { color: #d2a8ff !important; }
+        html[data-compact] .hljs-attr, html[data-compact] .hljs-attribute,
+        html[data-compact] .hljs-literal, html[data-compact] .hljs-meta,
+        html[data-compact] .hljs-number, html[data-compact] .hljs-operator,
+        html[data-compact] .hljs-variable, html[data-compact] .hljs-selector-attr,
+        html[data-compact] .hljs-selector-class, html[data-compact] .hljs-selector-id { color: #79c0ff !important; }
+        html[data-compact] .hljs-regexp, html[data-compact] .hljs-string { color: #a5d6ff !important; }
+        html[data-compact] .hljs-built_in, html[data-compact] .hljs-symbol { color: #ffa657 !important; }
+        html[data-compact] .hljs-comment, html[data-compact] .hljs-code, html[data-compact] .hljs-formula { color: #8b949e !important; }
+        html[data-compact] .hljs-name, html[data-compact] .hljs-quote,
+        html[data-compact] .hljs-selector-tag, html[data-compact] .hljs-selector-pseudo { color: #7ee787 !important; }
+        html[data-compact] .hljs-subst { color: #c9d1d9 !important; }
+        html[data-compact] .hljs-addition { color: #aff5b4 !important; background-color: #033a16 !important; }
+        html[data-compact] .hljs-deletion { color: #ffdcd7 !important; background-color: #67060c !important; }
       `}</style>
     </div>
     </>

@@ -66,9 +66,6 @@ pub mod keys {
     pub const BAILOUT_MALFORMED_OUTPUT: &str = "bailout.malformed_output";
     pub const BAILOUT_REPETITION_LOOP: &str = "bailout.repetition_loop";
 
-    // -- idle.* -----------------------------------------------------------
-    pub const IDLE_MESSAGE_FORMAT: &str = "idle.message_format";
-
     // -- Single-table files (legacy compat) -------------------------------
     pub const RESPONSE_FORMAT: &str = "response-format.default";
     pub const RESPONSE_FORMAT_NATIVE: &str = "response-format.native";
@@ -98,7 +95,6 @@ const TOML_DEFAULTS: &[(&str, &str)] = &[
     ),
     ("tool-result", include_str!("../prompts/tool-result.toml")),
     ("bailout", include_str!("../prompts/bailout.toml")),
-    ("idle", include_str!("../prompts/idle.toml")),
     (
         "response-format",
         include_str!("../prompts/response-format.toml"),
@@ -245,7 +241,6 @@ mod tests {
         // New keys
         assert!(store.get(keys::SYSTEM_FALLBACK_IDENTITY).is_some());
         assert!(store.get(keys::BAILOUT_LOOP_LIMIT).is_some());
-        assert!(store.get(keys::IDLE_MESSAGE_FORMAT).is_some());
         assert!(store.get(keys::OBSERVATION_WRAPPER).is_some());
     }
 
@@ -352,7 +347,6 @@ mod tests {
             keys::BAILOUT_LOOP_LIMIT,
             keys::BAILOUT_MALFORMED_OUTPUT,
             keys::BAILOUT_REPETITION_LOOP,
-            keys::IDLE_MESSAGE_FORMAT,
             keys::RESPONSE_FORMAT,
             keys::RESPONSE_FORMAT_NATIVE,
             keys::PLAN_MODE,

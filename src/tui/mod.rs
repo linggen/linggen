@@ -28,7 +28,18 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
         anyhow::bail!("Server did not become healthy in time");
     }
 
-    let (sse_rx, sse_abort) = client.subscribe_sse();
+    // Resolve a session: reuse an empty one or create a new one server-side.
+    // A session_id is needed upfront so SSE events are filtered correctly.
+    let session_id = client.resolve_session(&project_root).await
+        .unwrap_or_else(|_| {
+            format!(
+                "tui-{}-{}",
+                crate::util::now_ts_secs(),
+                &uuid::Uuid::new_v4().to_string()[..8],
+            )
+        });
+
+    let (sse_rx, sse_abort) = client.subscribe_sse(Some(&session_id));
     let client = Arc::new(client);
     let mut terminal = setup_terminal()?;
     let mut app = app::App::new(client, sse_rx, project_root, port);
@@ -36,12 +47,7 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
     let tick_rate = Duration::from_millis(50);
     let mut event_stream = EventStream::new();
 
-    // Generate a session_id upfront so SSE events are filtered from the start.
-    app.session_id = Some(format!(
-        "tui-{}-{}",
-        crate::util::now_ts_secs(),
-        &uuid::Uuid::new_v4().to_string()[..8],
-    ));
+    app.session_id = Some(session_id);
 
     // Kick off background fetch of skills/agents for autocomplete
     app.fetch_autocomplete_data();

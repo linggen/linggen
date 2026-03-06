@@ -53,8 +53,10 @@ export const stripStructuredJsonFromText = (text: string): string => {
     '"name":"WebSearch"', '"name": "WebSearch"',
     '"name":"Task"', '"name": "Task"',
     '"name":"delegate_to_agent"', '"name": "delegate_to_agent"',
+    '"name":"capture_screenshot"', '"name": "capture_screenshot"',
   ];
-  let result = text;
+  // Strip <tool_call>...</tool_call> XML-style blocks (Qwen/Hermes format)
+  let result = text.replace(/<\/?tool_call>/g, '');
   for (const marker of MARKERS) {
     let searchFrom = 0;
     while (true) {

@@ -271,9 +271,12 @@ impl TuiClient {
     /// Subscribe to SSE events. Returns an unbounded receiver that yields parsed UiSseMessage.
     /// The SSE connection runs in a background task with automatic reconnection
     /// using exponential backoff (1s → 2s → 4s → ... capped at 30s).
-    pub fn subscribe_sse(&self) -> (mpsc::UnboundedReceiver<UiSseMessage>, AbortHandle) {
+    pub fn subscribe_sse(&self, session_id: Option<&str>) -> (mpsc::UnboundedReceiver<UiSseMessage>, AbortHandle) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let url = format!("{}/api/events", self.base_url);
+        let url = match session_id {
+            Some(sid) => format!("{}/api/events?session_id={}", self.base_url, sid),
+            None => format!("{}/api/events", self.base_url),
+        };
         let client = self.client.clone();
 
         let handle = tokio::spawn(async move {
@@ -375,6 +378,35 @@ impl TuiClient {
             anyhow::bail!("models fetch failed: {}", resp.status());
         }
         Ok(resp.json().await?)
+    }
+
+    /// Fetch sessions for a project.
+    pub async fn fetch_sessions(&self, project_root: &str) -> Result<serde_json::Value> {
+        let resp = self
+            .client
+            .get(format!("{}/api/sessions", self.base_url))
+            .query(&[("project_root", project_root)])
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("sessions fetch failed: {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Resolve a session: reuse an empty one or create a new one.
+    pub async fn resolve_session(&self, project_root: &str) -> Result<String> {
+        let resp = self
+            .client
+            .post(format!("{}/api/sessions/resolve", self.base_url))
+            .json(&serde_json::json!({ "project_root": project_root }))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("session resolve failed: {}", resp.status());
+        }
+        let body: serde_json::Value = resp.json().await?;
+        Ok(body.get("id").and_then(|v| v.as_str()).unwrap_or("default").to_string())
     }
 
     /// Fetch project status stats.

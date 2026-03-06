@@ -2,12 +2,12 @@ import React from 'react';
 import type { ChatMessage, ContentBlock } from '../../types';
 import type { SpecialBlockProps } from './types';
 import { MarkdownContent } from './MarkdownContent';
-import { ThinkingIndicator, StatusSpinner } from './ThinkingIndicator';
 import { SubagentTreeView } from './SubagentTreeView';
 import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
+import { stripEmbeddedStructuredJson } from '../../lib/messageUtils';
 
 /** Top-level agent message renderer — unified widget-list model.
  *
@@ -35,7 +35,6 @@ export const AgentMessage: React.FC<{
     (msg.activityEntries || []).some(e => !isTransientStatus(e));
   const showThinking = phase === 'thinking' && !hasAnyActivity;
 
-  const showSpinner = !!msg.isGenerating && !hasRunningTools && !isStreamingText && !showThinking;
 
   const segments: Array<{ kind: 'text'; text: string } | { kind: 'tool'; block: ContentBlock }> = [];
   if (hasToolBlocks) {
@@ -85,7 +84,7 @@ export const AgentMessage: React.FC<{
         />
       )}
 
-      {showThinking && <ThinkingIndicator text={msg.text || 'Thinking...'} />}
+      {/* Thinking indicator is now shown as the bottom spinner above the input box */}
 
       {hasToolBlocks && segments.map((seg, idx) => {
         if (seg.kind === 'text') {
@@ -108,14 +107,16 @@ export const AgentMessage: React.FC<{
         return <MarkdownContent text={fallbackText} />;
       })()}
 
-      {isStreamingText && msg.liveText && (
-        <>
-          <MarkdownContent text={msg.liveText} />
-          <span className="inline-block w-1.5 h-3.5 bg-blue-500 ml-1 animate-pulse align-middle" />
-        </>
-      )}
-
-      {showSpinner && <StatusSpinner />}
+      {isStreamingText && msg.liveText && (() => {
+        const cleaned = stripEmbeddedStructuredJson(msg.liveText);
+        if (!cleaned) return null;
+        return (
+          <>
+            <MarkdownContent text={cleaned} />
+            <span className="inline-block w-1.5 h-3.5 bg-blue-500 ml-1 animate-pulse align-middle" />
+          </>
+        );
+      })()}
 
       <TurnSummaryFooter msg={msg} />
     </>

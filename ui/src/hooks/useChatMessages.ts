@@ -568,16 +568,39 @@ export function useChatMessages() {
   const lastChatCountRef = useRef(0);
   const lastContentLenRef = useRef(0);
   const chatClearTsRef = useRef(0);
+  /** True when the scroll container is within 10% of the bottom. */
+  const isNearBottomRef = useRef(true);
 
-  // Auto-scroll when new messages arrive or new content blocks are added to the
-  // last generating message (e.g. a new tool starts running within a turn).
+  // Track scroll position: if user scrolls up, stop auto-scrolling.
+  // Re-enable when they scroll back near the bottom (within 10%).
+  const chatScrollContainerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    // Find the scroll container (parent of chatEndRef)
+    const endEl = chatEndRef.current;
+    if (!endEl) return;
+    const container = endEl.parentElement;
+    if (!container) return;
+    chatScrollContainerRef.current = container;
+
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      const threshold = scrollHeight * 0.1; // 10% of total height
+      isNearBottomRef.current = distanceFromBottom <= Math.max(threshold, 80);
+    };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => container.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Auto-scroll when new messages arrive or new content blocks are added,
+  // but only if the user hasn't scrolled up (is near bottom).
   const lastMsg = chatMessages[chatMessages.length - 1];
   const lastContentLen = lastMsg?.isGenerating ? (lastMsg.content?.length || 0) : 0;
 
   useEffect(() => {
     const newMessages = chatMessages.length > lastChatCountRef.current;
     const newContentBlocks = lastContentLen > lastContentLenRef.current;
-    if (newMessages || newContentBlocks) {
+    if ((newMessages || newContentBlocks) && isNearBottomRef.current) {
       chatEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
     }
     lastChatCountRef.current = chatMessages.length;
@@ -624,6 +647,12 @@ export function useChatMessages() {
     return [...nonPlans, ...plans];
   }, [chatMessages]);
 
+  /** Scroll to bottom and re-enable auto-scroll (e.g. when user sends a message). */
+  const scrollToBottom = () => {
+    isNearBottomRef.current = true;
+    chatEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+  };
+
   return {
     chatMessages,
     displayMessages,
@@ -631,5 +660,6 @@ export function useChatMessages() {
     chatEndRef,
     clearChat,
     isInClearCooldown,
+    scrollToBottom,
   };
 }

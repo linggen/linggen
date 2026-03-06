@@ -103,9 +103,7 @@ impl App {
         }
         let status_lines = self.status_lines_slot.lock().unwrap().take();
         if let Some(lines) = status_lines {
-            for line in lines {
-                self.push_system(&line);
-            }
+            self.overlay = Some(lines);
         }
     }
 

@@ -2,7 +2,7 @@
  * Per-kind SSE event handler functions.
  * Stateless — all side effects are performed through the deps object.
  */
-import type { UiSseMessage, ContentBlock, SubagentTreeEntry, SubagentToolStep, Plan, QueuedChatItem, IdlePromptEvent } from '../types';
+import type { UiSseMessage, ContentBlock, SubagentTreeEntry, SubagentToolStep, Plan, QueuedChatItem } from '../types';
 import type { ChatAction } from '../hooks/useChatMessages';
 import type { AgentStatusValue } from '../hooks/useAgentActivity';
 import {
@@ -36,13 +36,12 @@ export interface SseHandlerDeps {
   setActivePlan: StateSetter<Plan | null>;
   setPendingPlan: StateSetter<Plan | null>;
   setPendingPlanAgentId: StateSetter<string | null>;
-  setIdlePromptEvents: StateSetter<IdlePromptEvent[]>;
-
   // Fetch functions
   fetchWorkspaceState: () => void;
   fetchFiles: (path?: string) => void;
   fetchAllAgentTrees: () => void;
   fetchAgentRuns: () => void;
+  fetchSessions: () => void;
 
   // Current state values (read-only snapshots)
   currentPath: string;
@@ -166,6 +165,7 @@ function handleRun(item: UiSseMessage, deps: SseHandlerDeps): void {
     deps.fetchFiles(deps.currentPath);
     deps.fetchAllAgentTrees();
     deps.fetchAgentRuns();
+    deps.fetchSessions();
     return;
   }
 
@@ -299,7 +299,7 @@ function handleActivity(item: UiSseMessage, deps: SseHandlerDeps): void {
     deps.subagentParentMapRef.current[agentId.toLowerCase()] ||
     (parentIdFromData ? parentIdFromData.toLowerCase() : null);
 
-  if (parentIdForSubagent && statusRaw !== 'idle_prompt_triggered') {
+  if (parentIdForSubagent && statusRaw !== 'mission_triggered') {
     if (nextStatus === 'calling_tool') {
       if (item.phase !== 'done') {
         const stats = deps.subagentStatsRef.current[agentId.toLowerCase()];
@@ -346,19 +346,6 @@ function handleActivity(item: UiSseMessage, deps: SseHandlerDeps): void {
       });
     }
     return;
-  }
-
-  // Capture idle_prompt_triggered events for Mission activity tab
-  if (statusRaw === 'idle_prompt_triggered') {
-    deps.setIdlePromptEvents((prev) => {
-      const evt: IdlePromptEvent = {
-        agent_id: agentId,
-        project_root: String(item.project_root || ''),
-        timestamp: Date.now(),
-      };
-      const next = [evt, ...prev];
-      return next.length > 100 ? next.slice(0, 100) : next;
-    });
   }
 
   if (statusRaw) {

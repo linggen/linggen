@@ -695,6 +695,59 @@ pub(crate) async fn create_session(
     }
 }
 
+/// Resolve a session for the TUI (or any client) to use.
+/// Returns the most recent empty session, or creates a new one.
+#[derive(Deserialize)]
+pub(crate) struct ResolveSessionRequest {
+    project_root: String,
+}
+
+pub(crate) async fn resolve_session_api(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<ResolveSessionRequest>,
+) -> impl IntoResponse {
+    let root = canonical_project_root(&req.project_root);
+    match state.manager.get_or_create_project(root).await {
+        Ok(ctx) => {
+            // Check for the most recent session with no messages (empty).
+            if let Ok(sessions) = ctx.sessions.list_sessions() {
+                for s in &sessions {
+                    if let Ok(msgs) = ctx.sessions.get_chat_history(&s.id, None) {
+                        if msgs.is_empty() {
+                            return Json(serde_json::json!({
+                                "id": s.id,
+                                "title": s.title,
+                                "reused": true,
+                            }))
+                            .into_response();
+                        }
+                    }
+                }
+            }
+            // No empty session found — create a new one.
+            let now = crate::util::now_ts_secs();
+            let new_id = format!(
+                "sess-{}-{}",
+                now,
+                &uuid::Uuid::new_v4().to_string()[..8]
+            );
+            let meta = crate::state_fs::sessions::SessionMeta {
+                id: new_id.clone(),
+                title: "New Chat".to_string(),
+                created_at: now,
+            };
+            let _ = ctx.sessions.add_session(&meta);
+            Json(serde_json::json!({
+                "id": new_id,
+                "title": "New Chat",
+                "reused": false,
+            }))
+            .into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct RemoveSessionRequest {
     project_root: String,
@@ -777,6 +830,7 @@ pub(crate) struct StatusQuery {
 
 #[derive(Serialize)]
 pub(crate) struct StatusResponse {
+    pub version: String,
     pub sessions: usize,
     pub total_runs: usize,
     pub completed_runs: usize,
@@ -884,6 +938,7 @@ pub(crate) async fn get_status_api(
     };
 
     Json(StatusResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
         sessions,
         total_runs,
         completed_runs: completed,

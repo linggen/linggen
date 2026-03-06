@@ -7,9 +7,12 @@ import type { UiSseMessage } from '../types';
 export interface SseConnectionOptions {
   onEvent: (item: UiSseMessage) => void;
   onParseError?: () => void;
+  /** When provided, the SSE connection passes session_id to the server for
+   *  server-side filtering. The connection reconnects when this value changes. */
+  sessionId?: string | null;
 }
 
-export function useSseConnection({ onEvent, onParseError }: SseConnectionOptions) {
+export function useSseConnection({ onEvent, onParseError, sessionId }: SseConnectionOptions) {
   const lastSeqRef = useRef(0);
   // Use refs so the EventSource doesn't need to be recreated when callbacks change
   const onEventRef = useRef(onEvent);
@@ -21,7 +24,10 @@ export function useSseConnection({ onEvent, onParseError }: SseConnectionOptions
   }, [onEvent, onParseError]);
 
   useEffect(() => {
-    const events = new EventSource('/api/events');
+    const url = sessionId
+      ? `/api/events?session_id=${encodeURIComponent(sessionId)}`
+      : '/api/events';
+    const events = new EventSource(url);
     // Reset seq counter on (re)connect. This is safe because:
     // 1. Server restart resets seq to 0, so old seq values won't collide.
     // 2. EventSource auto-reconnects on disconnect, and we need to accept
@@ -43,5 +49,5 @@ export function useSseConnection({ onEvent, onParseError }: SseConnectionOptions
       }
     };
     return () => events.close();
-  }, []);
+  }, [sessionId]);
 }

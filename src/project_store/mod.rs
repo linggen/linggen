@@ -1,6 +1,8 @@
+pub mod missions;
 pub mod path_encoding;
 pub mod runs;
 
+pub use missions::{Mission as CronMission, MissionRunEntry};
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
 use anyhow::Result;
@@ -16,34 +18,6 @@ pub struct ProjectInfo {
     pub path: String,
     pub name: String,
     pub added_at: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Mission {
-    pub text: String,
-    pub created_at: u64,
-    pub active: bool,
-    /// Per-agent idle configurations within this mission.
-    #[serde(default)]
-    pub agents: Vec<MissionAgent>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MissionAgent {
-    pub id: String,
-    #[serde(default)]
-    pub idle_prompt: Option<String>,
-    #[serde(default)]
-    pub idle_interval_secs: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AgentOverride {
-    pub agent_id: String,
-    #[serde(default)]
-    pub idle_prompt: Option<String>,
-    #[serde(default)]
-    pub idle_interval_secs: Option<u64>,
 }
 
 pub struct ProjectStore {
@@ -132,198 +106,6 @@ impl ProjectStore {
     pub fn memory_dir(&self, project_path: &str) -> PathBuf {
         self.project_dir(project_path).join("memory")
     }
-
-    // ---- Mission storage ----
-    // Missions are stored as individual JSON files in a `missions/` directory,
-    // named by created_at timestamp: `missions/{timestamp}.json`.
-    // This preserves full history — clearing marks the file inactive in place.
-
-    fn missions_dir(&self, project_path: &str) -> PathBuf {
-        self.project_dir(project_path).join("missions")
-    }
-
-    /// Migrate legacy single `mission.json` into the `missions/` directory.
-    fn migrate_legacy_mission(&self, project_path: &str) -> Result<()> {
-        let legacy = self.project_dir(project_path).join("mission.json");
-        if !legacy.exists() {
-            return Ok(());
-        }
-        let content = fs::read_to_string(&legacy)?;
-        if let Ok(mission) = serde_json::from_str::<Mission>(&content) {
-            let dir = self.missions_dir(project_path);
-            fs::create_dir_all(&dir)?;
-            let filename = format!("{}.json", mission.created_at);
-            let dest = dir.join(&filename);
-            if !dest.exists() {
-                fs::write(&dest, serde_json::to_string_pretty(&mission)?)?;
-            }
-            fs::remove_file(&legacy)?;
-        } else {
-            tracing::warn!(
-                "Legacy mission.json at {} could not be parsed; removing",
-                legacy.display()
-            );
-            fs::remove_file(&legacy)?;
-        }
-        Ok(())
-    }
-
-    /// Return the currently active mission (if any).
-    pub fn get_mission(&self, project_path: &str) -> Result<Option<Mission>> {
-        let _ = self.migrate_legacy_mission(project_path);
-        let dir = self.missions_dir(project_path);
-        if !dir.exists() {
-            return Ok(None);
-        }
-        // Scan files sorted descending by name (newest first) to find active mission.
-        let mut files: Vec<_> = fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            })
-            .collect();
-        files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
-
-        for entry in files {
-            if let Ok(content) = fs::read_to_string(entry.path()) {
-                if let Ok(mission) = serde_json::from_str::<Mission>(&content) {
-                    if mission.active {
-                        return Ok(Some(mission));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Save a new mission. Deactivates any currently active mission first.
-    pub fn set_mission(&self, project_path: &str, mission: &Mission) -> Result<()> {
-        let _ = self.migrate_legacy_mission(project_path);
-        // Deactivate current active mission
-        if let Ok(Some(mut current)) = self.get_mission(project_path) {
-            current.active = false;
-            let dir = self.missions_dir(project_path);
-            let path = dir.join(format!("{}.json", current.created_at));
-            if path.exists() {
-                fs::write(&path, serde_json::to_string_pretty(&current)?)?;
-            }
-        }
-        let dir = self.missions_dir(project_path);
-        fs::create_dir_all(&dir)?;
-        let filename = format!("{}.json", mission.created_at);
-        let json = serde_json::to_string_pretty(mission)?;
-        fs::write(dir.join(filename), json)?;
-        Ok(())
-    }
-
-    /// Clear (deactivate) the currently active mission.
-    pub fn clear_mission(&self, project_path: &str) -> Result<()> {
-        let _ = self.migrate_legacy_mission(project_path);
-        let dir = self.missions_dir(project_path);
-        if !dir.exists() {
-            return Ok(());
-        }
-        let mut files: Vec<_> = fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            })
-            .collect();
-        files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
-
-        for entry in files {
-            let path = entry.path();
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(mut mission) = serde_json::from_str::<Mission>(&content) {
-                    if mission.active {
-                        mission.active = false;
-                        fs::write(&path, serde_json::to_string_pretty(&mission)?)?;
-                        return Ok(());
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// List all missions (active and inactive), newest first.
-    pub fn list_missions(&self, project_path: &str) -> Result<Vec<Mission>> {
-        let _ = self.migrate_legacy_mission(project_path);
-        let dir = self.missions_dir(project_path);
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let mut files: Vec<_> = fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            })
-            .collect();
-        files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
-
-        let mut missions = Vec::new();
-        for entry in files {
-            if let Ok(content) = fs::read_to_string(entry.path()) {
-                if let Ok(mission) = serde_json::from_str::<Mission>(&content) {
-                    missions.push(mission);
-                }
-            }
-        }
-        Ok(missions)
-    }
-
-    // ---- Agent override storage ----
-
-    fn agent_overrides_dir(&self, project_path: &str) -> PathBuf {
-        self.project_dir(project_path).join("agent_overrides")
-    }
-
-    pub fn get_agent_override(
-        &self,
-        project_path: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentOverride>> {
-        anyhow::ensure!(
-            !agent_id.contains('/') && !agent_id.contains('\\') && !agent_id.contains(".."),
-            "invalid agent_id: must not contain path separators"
-        );
-        let path = self
-            .agent_overrides_dir(project_path)
-            .join(format!("{}.json", agent_id));
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = fs::read_to_string(&path)?;
-        let overr: AgentOverride = serde_json::from_str(&content)?;
-        Ok(Some(overr))
-    }
-
-    pub fn set_agent_override(
-        &self,
-        project_path: &str,
-        overr: &AgentOverride,
-    ) -> Result<()> {
-        anyhow::ensure!(
-            !overr.agent_id.contains('/')
-                && !overr.agent_id.contains('\\')
-                && !overr.agent_id.contains(".."),
-            "invalid agent_id: must not contain path separators"
-        );
-        let dir = self.agent_overrides_dir(project_path);
-        fs::create_dir_all(&dir)?;
-        let json = serde_json::to_string_pretty(overr)?;
-        fs::write(dir.join(format!("{}.json", overr.agent_id)), json)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -362,7 +144,6 @@ mod tests {
         let (store, _dir) = temp_store();
         store.add_project("/tmp/p".into(), "p".into()).unwrap();
         let sessions = store.session_store("/tmp/p");
-        // Should be able to add a session
         sessions.add_session(&crate::state_fs::sessions::SessionMeta {
             id: "s1".into(),
             title: "test".into(),
@@ -392,101 +173,5 @@ mod tests {
         runs.add_run(&record).unwrap();
         let list = runs.list_runs(None).unwrap();
         assert_eq!(list.len(), 1);
-    }
-
-    #[test]
-    fn test_mission_set_get_clear() {
-        let (store, _dir) = temp_store();
-        store.add_project("/tmp/p".into(), "p".into()).unwrap();
-
-        // No mission initially
-        assert!(store.get_mission("/tmp/p").unwrap().is_none());
-
-        // Set mission
-        let mission = Mission {
-            text: "Monitor production".into(),
-            created_at: 1000,
-            active: true,
-            agents: vec![
-                MissionAgent {
-                    id: "ling".into(),
-                    idle_prompt: Some("Check status".into()),
-                    idle_interval_secs: Some(60),
-                },
-            ],
-        };
-        store.set_mission("/tmp/p", &mission).unwrap();
-
-        let loaded = store.get_mission("/tmp/p").unwrap().unwrap();
-        assert_eq!(loaded.text, "Monitor production");
-        assert!(loaded.active);
-        assert_eq!(loaded.agents.len(), 1);
-
-        // Clear mission
-        store.clear_mission("/tmp/p").unwrap();
-        assert!(store.get_mission("/tmp/p").unwrap().is_none());
-
-        // History should still contain the cleared mission
-        let history = store.list_missions("/tmp/p").unwrap();
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].text, "Monitor production");
-        assert!(!history[0].active);
-    }
-
-    #[test]
-    fn test_mission_history() {
-        let (store, _dir) = temp_store();
-        store.add_project("/tmp/p".into(), "p".into()).unwrap();
-
-        // Set first mission
-        let m1 = Mission {
-            text: "First mission".into(),
-            created_at: 1000,
-            active: true,
-            agents: vec![],
-        };
-        store.set_mission("/tmp/p", &m1).unwrap();
-
-        // Set second mission (should deactivate first)
-        let m2 = Mission {
-            text: "Second mission".into(),
-            created_at: 2000,
-            active: true,
-            agents: vec![],
-        };
-        store.set_mission("/tmp/p", &m2).unwrap();
-
-        // Active should be the second one
-        let active = store.get_mission("/tmp/p").unwrap().unwrap();
-        assert_eq!(active.text, "Second mission");
-
-        // History should have both, newest first
-        let history = store.list_missions("/tmp/p").unwrap();
-        assert_eq!(history.len(), 2);
-        assert_eq!(history[0].text, "Second mission");
-        assert!(history[0].active);
-        assert_eq!(history[1].text, "First mission");
-        assert!(!history[1].active);
-    }
-
-    #[test]
-    fn test_agent_override_set_get() {
-        let (store, _dir) = temp_store();
-        store.add_project("/tmp/p".into(), "p".into()).unwrap();
-
-        // No override initially
-        assert!(store.get_agent_override("/tmp/p", "ling").unwrap().is_none());
-
-        // Set override
-        let overr = AgentOverride {
-            agent_id: "ling".into(),
-            idle_prompt: Some("Custom idle prompt".into()),
-            idle_interval_secs: Some(120),
-        };
-        store.set_agent_override("/tmp/p", &overr).unwrap();
-
-        let loaded = store.get_agent_override("/tmp/p", "ling").unwrap().unwrap();
-        assert_eq!(loaded.idle_prompt.as_deref(), Some("Custom idle prompt"));
-        assert_eq!(loaded.idle_interval_secs, Some(120));
     }
 }
