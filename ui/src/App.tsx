@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { Bot, FilePenLine, RefreshCw, Settings, Sparkles, Target, Zap } from 'lucide-react';
+import { Bot, FilePenLine, Plus, RefreshCw, Settings, Sparkles, Target, Zap } from 'lucide-react';
 import { AgentsCard } from './components/AgentsCard';
 import { SessionNav } from './components/SessionNav';
 import { ModelsCard } from './components/ModelsCard';
@@ -47,7 +47,9 @@ const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
 
 type Page = 'main' | 'settings';
 
-const isCompact = new URLSearchParams(window.location.search).get('mode') === 'compact';
+const compactParams = new URLSearchParams(window.location.search);
+const isCompact = compactParams.get('mode') === 'compact';
+const compactProject = compactParams.get('project') || '';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('main');
@@ -290,7 +292,19 @@ const App: React.FC = () => {
       if (resp.ok) {
         const data = await resp.json();
         if (data.path) {
-          setNewProjectPath(data.path);
+          // Directly add the project after folder selection
+          try {
+            await fetch('/api/projects', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: data.path }),
+            });
+            setNewProjectPath('');
+            setShowAddProject(false);
+            fetchProjects();
+          } catch (e) {
+            addLog(`Error adding project: ${e}`);
+          }
         }
       } else if (resp.status === 204) {
         // User cancelled the folder picker — do nothing
@@ -573,9 +587,8 @@ const App: React.FC = () => {
       if (!resp.ok) return;
       const config = await resp.json();
       const current: string[] = config.routing?.default_models ?? [];
-      const newDefaults = current.includes(modelId)
-        ? current.filter((id: string) => id !== modelId)
-        : [...current, modelId];
+      // Single-select: set as default, or deselect if already the default
+      const newDefaults = current.length === 1 && current[0] === modelId ? [] : [modelId];
       const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
       const saveResp = await fetch('/api/config', {
         method: 'POST',
@@ -748,6 +761,42 @@ const App: React.FC = () => {
   }, [activeSessionId, selectedProjectRoot, fetchWorkspaceState, fetchAgentRuns]);
 
 
+  // In compact mode, force-select the project from the query param
+  // and auto-create a dedicated "VS Code" session for it.
+  const compactSessionInitRef = useRef(false);
+  useEffect(() => {
+    if (!isCompact || !compactProject || compactSessionInitRef.current) return;
+    compactSessionInitRef.current = true;
+
+    // Force-select the project
+    setSelectedProjectRoot(compactProject);
+
+    // Create or reuse a VS Code session for this project
+    (async () => {
+      try {
+        // Fetch existing sessions to see if a "VS Code" session exists
+        const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(compactProject)}`);
+        const data = await resp.json();
+        const sessionList: SessionInfo[] = data.sessions ?? data ?? [];
+        const existing = sessionList.find((s) => s.title?.startsWith('VS Code'));
+        if (existing) {
+          setActiveSessionId(existing.id);
+        } else {
+          // Create a new session
+          const createResp = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_root: compactProject, title: 'VS Code' }),
+          });
+          const created = await createResp.json();
+          setActiveSessionId(created.id);
+        }
+      } catch (e) {
+        addLog(`Compact session init error: ${e}`);
+      }
+    })();
+  }, [compactProject, addLog]);
+
   useEffect(() => {
     window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, selectedAgent);
   }, [selectedAgent]);
@@ -815,6 +864,165 @@ const App: React.FC = () => {
         ...(images && images.length > 0 ? { images } : {}),
       },
     });
+
+    // /model — list available models; /model <id> — switch default model
+    if (userMessage.trim() === '/model' || userMessage.trim().startsWith('/model ')) {
+      const modelArg = userMessage.trim().slice('/model'.length).trim();
+      const addSystemMsg = (text: string) => {
+        chatDispatch({
+          type: 'ADD_MESSAGE',
+          message: {
+            role: 'agent',
+            from: 'system',
+            text,
+            timestamp: now.toLocaleTimeString(),
+            timestampMs: now.getTime(),
+            isGenerating: false,
+          },
+        });
+      };
+
+      if (!modelArg) {
+        // List models
+        const lines = ['**Available models:**', ''];
+        if (models.length === 0) {
+          lines.push('_(no models configured)_');
+        } else {
+          for (const m of models) {
+            const isDefault = defaultModels.includes(m.id);
+            const marker = isDefault ? ' ✦' : '';
+            lines.push(`- \`${m.id}\`  (${m.provider}: ${m.model})${marker}`);
+          }
+          lines.push('', '_Use `/model <id>` to switch._');
+        }
+        addSystemMsg(lines.join('\n'));
+      } else {
+        // Switch model
+        const valid = models.length === 0 || models.some(m => m.id === modelArg);
+        if (!valid) {
+          addSystemMsg(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`);
+        } else {
+          // Set as the single default model
+          try {
+            const resp = await fetch('/api/config');
+            if (resp.ok) {
+              const config = await resp.json();
+              const newDefaults = [modelArg];
+              const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
+              const saveResp = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updated),
+              });
+              if (saveResp.ok) {
+                setDefaultModels(newDefaults);
+                addSystemMsg(`Switched default model to: \`${modelArg}\``);
+              }
+            }
+          } catch (e) {
+            addSystemMsg(`Error switching model: ${e}`);
+          }
+        }
+      }
+      return;
+    }
+
+    // /help — show available commands
+    if (userMessage.trim() === '/help') {
+      const helpLines = [
+        '**Commands:**',
+        '- `/help` — Show available commands',
+        '- `/clear` — Clear chat context',
+        '- `/status` — Show project status',
+        '- `/model` — List models; `/model <id>` — Switch default model',
+        '- `/plan <task>` — Ask agent to create a plan (read-only)',
+        '- `/image <path>` — Attach an image file',
+        '- `@path` — Mention a file',
+        '- `@@agent message` — Send to specific agent',
+        '',
+        '**Skills:** Type `/` to see available skills.',
+      ];
+      chatDispatch({
+        type: 'ADD_MESSAGE',
+        message: {
+          role: 'agent',
+          from: 'system',
+          text: helpLines.join('\n'),
+          timestamp: now.toLocaleTimeString(),
+          timestampMs: now.getTime(),
+          isGenerating: false,
+        },
+      });
+      return;
+    }
+
+    // /status — show project status
+    if (userMessage.trim() === '/status') {
+      try {
+        const resp = await fetch(`/api/status?project_root=${encodeURIComponent(selectedProjectRoot)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          const defaultModel = data.default_model || '(none)';
+          const modelLines = (data.models || []).map((m: { id: string; provider: string; model: string }) => {
+            const mark = m.id === data.default_model ? ' ✓' : '';
+            return `- \`${m.id}${mark}\`  (${m.provider}: ${m.model})`;
+          });
+          const usageLines = (data.model_usage || []).map((entry: [string, number]) =>
+            `- \`${entry[0]}\` — ${entry[1]} runs`
+          );
+
+          const lines = [
+            '**Project Status**',
+            '',
+            `**Default model:** \`${defaultModel}\``,
+            '',
+            '**Models:**',
+            ...modelLines,
+            '',
+            `| Metric | Value |`,
+            `|--------|-------|`,
+            `| Sessions | ${data.sessions} |`,
+            `| Total runs | ${data.total_runs} |`,
+            `| Completed | ${data.completed_runs} |`,
+            `| Failed | ${data.failed_runs} |`,
+            `| Cancelled | ${data.cancelled_runs} |`,
+            `| Active days | ${data.active_days} |`,
+          ];
+
+          if (usageLines.length > 0) {
+            lines.push('', '**Model usage:**', ...usageLines);
+          }
+
+          const promptTok = data.session_prompt_tokens || 0;
+          const completionTok = data.session_completion_tokens || 0;
+          if (promptTok > 0 || completionTok > 0) {
+            const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
+            lines.push('', `**Session tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
+          }
+
+          chatDispatch({
+            type: 'ADD_MESSAGE',
+            message: {
+              role: 'agent',
+              from: 'system',
+              text: lines.join('\n'),
+              timestamp: now.toLocaleTimeString(),
+              timestampMs: now.getTime(),
+              isGenerating: false,
+            },
+          });
+        }
+      } catch (e) {
+        addLog(`Error fetching status: ${e}`);
+      }
+      return;
+    }
+
+    // /clear — clear chat context
+    if (userMessage.trim() === '/clear') {
+      await clearChat();
+      return;
+    }
 
     if (userMessage.startsWith('/user_story ')) {
       const story = userMessage.substring(12).trim();
@@ -1015,6 +1223,14 @@ const App: React.FC = () => {
     }
   };
 
+  // In compact mode (VS Code sidebar), set a data attribute on <html>
+  // so CSS can remap colors to match VS Code's theme.
+  useEffect(() => {
+    if (isCompact) {
+      document.documentElement.setAttribute('data-compact', '');
+    }
+  }, []);
+
   return (
     <>
     {!isCompact && currentPage === 'settings' && (
@@ -1051,19 +1267,36 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Compact toolbar — agent & model selectors */}
+      {/* Compact toolbar — agent selector, session selector, new chat */}
       {isCompact && (
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f] flex-shrink-0">
+        <div className="flex items-center gap-1.5 px-2 py-1 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f] flex-shrink-0">
           <select
             value={selectedAgent}
             onChange={(e) => setSelectedAgent(e.target.value)}
-            className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-2 py-1 text-slate-700 dark:text-slate-300 outline-none"
+            className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none max-w-[5rem]"
           >
             {agents.map((a) => (
               <option key={a.name} value={a.name}>{a.name}</option>
             ))}
           </select>
-          <span className={`ml-auto text-[10px] ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
+          <select
+            value={activeSessionId || ''}
+            onChange={(e) => setActiveSessionId(e.target.value || null)}
+            className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none flex-1 min-w-0 truncate"
+          >
+            {sessions.length === 0 && <option value="">No sessions</option>}
+            {sessions.map((s) => (
+              <option key={s.id} value={s.id}>{s.title || s.id.slice(0, 8)}</option>
+            ))}
+          </select>
+          <button
+            onClick={createSession}
+            title="New chat session"
+            className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors flex-shrink-0"
+          >
+            <Plus size={14} />
+          </button>
+          <span className={`text-[10px] flex-shrink-0 ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
             {isRunning ? 'Running' : 'Idle'}
           </span>
         </div>
@@ -1166,6 +1399,7 @@ const App: React.FC = () => {
               pendingAskUser={pendingAskUser}
               onRespondToAskUser={respondToAskUser}
               verboseMode={verboseMode}
+              agentStatus={agentStatus}
             />
           </div>
         </main>
@@ -1264,6 +1498,121 @@ const App: React.FC = () => {
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.04); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.45); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(59, 130, 246, 0.7); }
+
+        /* VS Code dark theme overrides for compact mode */
+        html[data-compact] {
+          --vsc-bg: #1e1e1e;
+          --vsc-sidebar: #252526;
+          --vsc-input: #3c3c3c;
+          --vsc-border: #3c3c3c;
+          --vsc-fg: #cccccc;
+          --vsc-fg-muted: #858585;
+          --vsc-accent: #0e639c;
+          color-scheme: dark;
+        }
+        html[data-compact] .dark\\:bg-\\[\\#0a0a0a\\] { background-color: var(--vsc-bg) !important; }
+        html[data-compact] .dark\\:bg-\\[\\#0f0f0f\\] { background-color: var(--vsc-sidebar) !important; }
+        html[data-compact] .dark\\:bg-white\\/\\[0\\.02\\] { background-color: var(--vsc-sidebar) !important; }
+        html[data-compact] .dark\\:bg-white\\/5 { background-color: rgba(255,255,255,0.03) !important; }
+        html[data-compact] .dark\\:bg-black\\/20 { background-color: var(--vsc-input) !important; }
+        html[data-compact] .dark\\:bg-black\\/30 { background-color: var(--vsc-input) !important; }
+        html[data-compact] .dark\\:border-white\\/5,
+        html[data-compact] .dark\\:border-white\\/10 { border-color: var(--vsc-border) !important; }
+        html[data-compact] section { border-radius: 0 !important; border: none !important; }
+        /* Text colors — boost for readability */
+        html[data-compact] .dark\\:text-slate-200 { color: var(--vsc-fg) !important; }
+        html[data-compact] .dark\\:text-slate-300 { color: #d4d4d4 !important; }
+        html[data-compact] .dark\\:text-slate-400 { color: #969696 !important; }
+        html[data-compact] .text-slate-500 { color: #969696 !important; }
+        html[data-compact] .text-slate-400 { color: #969696 !important; }
+        html[data-compact] .text-slate-600 { color: #b0b0b0 !important; }
+        html[data-compact] select, html[data-compact] input, html[data-compact] textarea {
+          color: var(--vsc-fg) !important;
+          background-color: var(--vsc-input) !important;
+          border-color: var(--vsc-border) !important;
+          font-size: 13px !important;
+        }
+        html[data-compact] ::placeholder { color: var(--vsc-fg-muted) !important; opacity: 1 !important; }
+        /* Font — match VS Code */
+        html[data-compact] body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          font-size: 13px;
+          color: var(--vsc-fg);
+        }
+        /* Scrollbar — VS Code style */
+        html[data-compact] .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(121,121,121,0.4); border-radius: 0; }
+        html[data-compact] .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(121,121,121,0.7); }
+        html[data-compact] .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+
+        /* --- Dialog / widget cards (ToolPermission, AskUser, etc.) --- */
+        html[data-compact] .dark\\:bg-\\[\\#141414\\] { background-color: var(--vsc-sidebar) !important; }
+
+        /* Amber (permission) card overrides */
+        html[data-compact] .dark\\:border-amber-500\\/20,
+        html[data-compact] .dark\\:border-amber-500\\/10 { border-color: var(--vsc-border) !important; }
+        html[data-compact] .dark\\:bg-amber-500\\/5 { background-color: rgba(255,255,255,0.03) !important; }
+        html[data-compact] .dark\\:bg-amber-500\\/10 { background-color: rgba(255,255,255,0.05) !important; }
+        html[data-compact] .dark\\:text-amber-400 { color: #cca700 !important; }
+        html[data-compact] .dark\\:text-amber-300 { color: #ddb700 !important; }
+        html[data-compact] .dark\\:text-amber-300\\/80 { color: rgba(221,183,0,0.8) !important; }
+        html[data-compact] .dark\\:hover\\:border-amber-500\\/40:hover { border-color: #cca700 !important; }
+        html[data-compact] .dark\\:hover\\:bg-amber-500\\/5:hover { background-color: rgba(255,255,255,0.05) !important; }
+        html[data-compact] .dark\\:border-amber-500\\/30 { border-color: rgba(204,167,0,0.4) !important; }
+
+        /* Blue (ask-user) card overrides */
+        html[data-compact] .dark\\:border-blue-500\\/20,
+        html[data-compact] .dark\\:border-blue-500\\/10 { border-color: var(--vsc-border) !important; }
+        html[data-compact] .dark\\:bg-blue-500\\/5 { background-color: rgba(255,255,255,0.03) !important; }
+        html[data-compact] .dark\\:text-blue-400 { color: #569cd6 !important; }
+        html[data-compact] .dark\\:hover\\:border-blue-500\\/40:hover { border-color: #569cd6 !important; }
+        html[data-compact] .dark\\:bg-blue-500 { background-color: var(--vsc-accent) !important; border-color: var(--vsc-accent) !important; }
+        html[data-compact] .dark\\:hover\\:bg-blue-600:hover { background-color: #1177bb !important; }
+
+        /* Buttons — match VS Code style */
+        html[data-compact] .dark\\:bg-white\\/5 {
+          background-color: var(--vsc-input) !important;
+          border-color: var(--vsc-border) !important;
+        }
+        html[data-compact] .dark\\:hover\\:bg-white\\/10:hover { background-color: rgba(255,255,255,0.08) !important; }
+        html[data-compact] .dark\\:hover\\:border-red-500\\/40:hover { border-color: #f14c4c !important; }
+        html[data-compact] .dark\\:hover\\:text-red-400:hover { color: #f14c4c !important; }
+        html[data-compact] .dark\\:hover\\:border-slate-400\\/30:hover { border-color: var(--vsc-fg-muted) !important; }
+        html[data-compact] .dark\\:hover\\:text-slate-400:hover { color: #b0b0b0 !important; }
+        html[data-compact] .dark\\:hover\\:text-slate-300:hover { color: #d4d4d4 !important; }
+        html[data-compact] .dark\\:hover\\:text-amber-400:hover { color: #cca700 !important; }
+        html[data-compact] .dark\\:hover\\:border-amber-500\\/30:hover { border-color: rgba(204,167,0,0.4) !important; }
+
+        /* Amber accent buttons (Send) */
+        html[data-compact] .dark\\:bg-amber-600 { background-color: #b8860b !important; }
+        html[data-compact] .dark\\:hover\\:bg-amber-700:hover { background-color: #996f0a !important; }
+
+        /* Section / card shape — flat VS Code look */
+        html[data-compact] section { border-radius: 2px !important; border: 1px solid var(--vsc-border) !important; }
+        html[data-compact] .rounded-xl { border-radius: 2px !important; }
+        html[data-compact] .rounded-lg { border-radius: 2px !important; }
+        html[data-compact] .rounded-md { border-radius: 2px !important; }
+        html[data-compact] .shadow-sm { box-shadow: none !important; }
+        html[data-compact] .shadow-xl { box-shadow: 0 2px 8px rgba(0,0,0,0.36) !important; }
+
+        /* Status badge colors */
+        html[data-compact] .dark\\:text-green-300 { color: #89d185 !important; }
+        html[data-compact] .dark\\:text-blue-300 { color: #569cd6 !important; }
+        html[data-compact] .dark\\:text-amber-300 { color: #cca700 !important; }
+        html[data-compact] .dark\\:text-indigo-300 { color: #b4a0ff !important; }
+
+        /* Disabled state */
+        html[data-compact] .dark\\:text-slate-600 { color: #5a5a5a !important; }
+        html[data-compact] .dark\\:text-slate-500 { color: #6e6e6e !important; }
+
+        /* Focus rings — VS Code style */
+        html[data-compact] .dark\\:focus\\:border-amber-500\\/40:focus { border-color: var(--vsc-accent) !important; }
+        html[data-compact] .dark\\:focus\\:border-blue-500\\/40:focus { border-color: var(--vsc-accent) !important; }
+
+        /* Chat input area */
+        html[data-compact] .dark\\:bg-white\\/\\[0\\.02\\] { background-color: var(--vsc-sidebar) !important; }
+
+        /* Popup menus (slash commands, mentions, files) */
+        html[data-compact] .dark\\:hover\\:bg-white\\/5:hover { background-color: rgba(255,255,255,0.06) !important; }
       `}</style>
     </div>
     </>

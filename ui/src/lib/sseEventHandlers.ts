@@ -135,6 +135,12 @@ function parseToolActivity(text: string): { toolName: string; args: string } | n
 // ---------------------------------------------------------------------------
 
 export function dispatchSseEvent(item: UiSseMessage, deps: SseHandlerDeps): void {
+  // Filter events by session: ignore events from other sessions.
+  // Events without session_id (global events like StateUpdated) pass through.
+  if (item.session_id && deps.activeSessionId && item.session_id !== deps.activeSessionId) {
+    return;
+  }
+
   switch (item.kind) {
     case 'run':          handleRun(item, deps); return;
     case 'queue':        handleQueue(item, deps); return;

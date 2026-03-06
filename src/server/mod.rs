@@ -42,6 +42,7 @@ use config_api::{get_config_api, get_credentials_api, get_models_health, update_
 use projects_api::{
     add_project, create_session, delete_agent_file_api, delete_skill_file_api,
     get_agent_context_api, get_agent_file_api, get_skill_file_api, list_agent_children_api,
+    get_status_api,
     list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api, list_projects,
     list_sessions, list_skill_files_api, list_skills, reload_skills, remove_project, remove_session_api,
     rename_session_api, upsert_agent_file_api, upsert_skill_file_api,
@@ -71,6 +72,11 @@ pub struct ServerState {
     active_statuses: Arc<Mutex<HashMap<String, ActiveStatusRecord>>>,
     pub queue_seq: AtomicU64,
     pub event_seq: AtomicU64,
+    /// Accumulated token usage per session (in-memory, resets on restart).
+    /// Key: "{project_root}:{session_id}", Value: (prompt_tokens, completion_tokens).
+    pub session_tokens: Arc<Mutex<HashMap<String, (usize, usize)>>>,
+    /// Maps running agent_id → session_id so SSE events can be tagged with their session.
+    pub agent_sessions: Arc<Mutex<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -130,6 +136,7 @@ pub enum ServerEvent {
         from: String,
         to: String,
         content: String,
+        session_id: Option<String>,
     },
     SubagentSpawned {
         parent_id: String,
@@ -254,7 +261,7 @@ impl ServerEvent {
         match event {
             AgentEvent::StateUpdated => Some(Self::StateUpdated),
             AgentEvent::Message { from, to, content } => {
-                Some(Self::Message { from, to, content })
+                Some(Self::Message { from, to, content, session_id: None })
             }
             AgentEvent::SubagentSpawned { parent_id, subagent_id, task } => {
                 Some(Self::SubagentSpawned { parent_id, subagent_id, task })
@@ -358,7 +365,7 @@ fn default_status_text(status: AgentStatusKind) -> String {
 fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseMessage> {
     let ts_ms = crate::util::now_ts_ms();
     match event {
-        ServerEvent::Message { from, to, content } => {
+        ServerEvent::Message { from, to, content, session_id } => {
             let cleaned = crate::server::chat_helpers::sanitize_message_for_ui(&from, &content)?;
             Some(UiSseMessage {
                 id: format!("msg-{seq}"),
@@ -369,7 +376,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
                 phase: None,
                 text: Some(cleaned),
                 agent_id: Some(from.clone()),
-                session_id: None,
+                session_id,
                 project_root: None,
                 data: Some(json!({
                     "from": from,
@@ -909,6 +916,8 @@ pub async fn prepare_server(
         active_statuses: Arc::new(Mutex::new(HashMap::new())),
         queue_seq: AtomicU64::new(1),
         event_seq: AtomicU64::new(1),
+        session_tokens: Arc::new(Mutex::new(HashMap::new())),
+        agent_sessions: Arc::new(Mutex::new(HashMap::new())),
     });
 
     // Bridge internal AgentManager events to SSE for the UI.
@@ -930,6 +939,41 @@ pub async fn prepare_server(
                     }
                     // All other variants have a 1:1 ServerEvent equivalent.
                     other => {
+                        // Accumulate token usage from ContextUsage events.
+                        if let crate::agent_manager::AgentEvent::ContextUsage {
+                            agent_id: ctx_agent_id,
+                            actual_prompt_tokens: Some(prompt),
+                            actual_completion_tokens: Some(completion),
+                            ..
+                        } = &other {
+                            let sessions = state_clone.agent_sessions.lock().await;
+                            let sid = sessions.get(ctx_agent_id).cloned()
+                                .unwrap_or_else(|| "current".to_string());
+                            drop(sessions);
+                            let mut tokens = state_clone.session_tokens.lock().await;
+                            let entry = tokens.entry(sid).or_insert((0, 0));
+                            entry.0 += prompt;
+                            entry.1 += completion;
+                        }
+                        // Register subagent → parent's session_id so SSE events
+                        // from subagents are tagged with the correct session.
+                        if let crate::agent_manager::AgentEvent::SubagentSpawned {
+                            parent_id, subagent_id, ..
+                        } = &other {
+                            let map = state_clone.agent_sessions.lock().await;
+                            if let Some(sid) = map.get(parent_id).cloned() {
+                                drop(map);
+                                state_clone.agent_sessions.lock().await
+                                    .insert(subagent_id.clone(), sid);
+                            }
+                        }
+                        // Deregister subagent when it finishes.
+                        if let crate::agent_manager::AgentEvent::SubagentResult {
+                            subagent_id, ..
+                        } = &other {
+                            state_clone.agent_sessions.lock().await
+                                .remove(subagent_id);
+                        }
                         if let Some(se) = ServerEvent::from_agent_event(other) {
                             let _ = state_clone.events_tx.send(se);
                         }
@@ -992,6 +1036,7 @@ pub async fn prepare_server(
         .route("/api/file", get(read_file_api))
         .route("/api/workspace/state", get(get_workspace_state))
         .route("/api/events", get(events_handler))
+        .route("/api/status", get(get_status_api))
         .route("/api/health", get(health_handler))
         .route("/api/utils/pick-folder", get(pick_folder))
         .route("/api/utils/ollama-status", get(get_ollama_status))
@@ -1095,6 +1140,7 @@ async fn events_handler(
     State(state): State<Arc<ServerState>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = state.events_tx.subscribe();
+    let agent_sessions = state.agent_sessions.clone();
     let stream = BroadcastStream::new(rx).filter_map(move |msg| {
         let event = match msg {
             Ok(event) => event,
@@ -1104,7 +1150,17 @@ async fn events_handler(
             },
         };
         let seq = state.event_seq.fetch_add(1, Ordering::Relaxed);
-        let ui_msg = map_server_event_to_ui_message(event, seq)?;
+        let mut ui_msg = map_server_event_to_ui_message(event, seq)?;
+        // Enrich with session_id from agent_sessions map if not already set.
+        if ui_msg.session_id.is_none() {
+            if let Some(aid) = &ui_msg.agent_id {
+                if let Ok(map) = agent_sessions.try_lock() {
+                    if let Some(sid) = map.get(aid) {
+                        ui_msg.session_id = Some(sid.clone());
+                    }
+                }
+            }
+        }
         let data = serde_json::to_string(&ui_msg).unwrap_or_default();
         Some(Ok(Event::default().data(data)))
     });
@@ -1193,6 +1249,7 @@ mod tests {
                 from: "ling".into(),
                 to: "user".into(),
                 content: "hello".into(),
+                session_id: None,
             },
             ServerEvent::SubagentSpawned {
                 parent_id: "ling".into(),

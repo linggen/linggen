@@ -559,6 +559,7 @@ async fn run_plan_execution(
                             from: ctx.agent_id.clone(),
                             to: "user".to_string(),
                             content: text.clone(),
+                            session_id: ctx.session_id.clone(),
                         });
                     }
                 }
@@ -796,6 +797,7 @@ async fn run_structured_loop(
                         from: ctx.agent_id.clone(),
                         to: "user".to_string(),
                         content: text.clone(),
+                        session_id: ctx.session_id.clone(),
                     });
                 }
             }
@@ -988,6 +990,16 @@ pub(crate) async fn chat_handler(
                     .await;
                 }
 
+                // Register agent → session mapping so SSE events get tagged.
+                // Must happen before any events are emitted for this run.
+                if let Some(sid) = &session_id {
+                    state_clone.agent_sessions.lock().await
+                        .insert(target_id_clone.clone(), sid.clone());
+                }
+
+                // Set session_id on engine tools so subagent delegations inherit it.
+                engine.tools.builtins.set_session_id(session_id.clone());
+
                 let model_label = &engine.model_id;
                 state_clone
                     .send_agent_status(
@@ -1072,6 +1084,12 @@ pub(crate) async fn chat_handler(
                         None,
                     )
                     .await;
+                // Small yield so the SSE event handler can enrich the
+                // final events with session_id before we remove the mapping.
+                tokio::task::yield_now().await;
+                // Deregister agent → session mapping.
+                state_clone.agent_sessions.lock().await
+                    .remove(&target_id_clone);
             });
 
             let status = if was_busy { "queued" } else { "started" };

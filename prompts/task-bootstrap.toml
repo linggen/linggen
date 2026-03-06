@@ -11,11 +11,10 @@ Workspace root: {ws_root}
 Platform: {platform}
 Current Role: {role}
 
-Global paths (outside workspace, accessible via absolute paths):
-- ~/.linggen/agents/ — installed agent specs
-- ~/.linggen/skills/ — installed skills (each skill is a directory with SKILL.md)
-- ~/.linggen/config/ — configuration files
-- ~/.linggen/logs/ — log files
+Environment notes:
+- Read and Glob accept absolute paths to access files anywhere on the system.
+- Bash working directory persists across calls — `cd /some/path` is remembered by subsequent Bash calls.
+- Write and Edit are restricted to the workspace root for safety.
 
 Workspace contents:
 {workspace_listing}

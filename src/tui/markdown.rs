@@ -14,14 +14,14 @@ pub fn markdown_to_lines(input: &str) -> Vec<Line<'static>> {
         if raw_line.trim_start().starts_with("```") {
             in_code_block = !in_code_block;
             if in_code_block {
-                // Opening fence — render a dim separator
+                // Opening fence — dim horizontal rule
                 lines.push(Line::from(Span::styled(
-                    "  ┌──────────────────────────────────────",
+                    format!("  ┌{}", "─".repeat(76)),
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
                 lines.push(Line::from(Span::styled(
-                    "  └──────────────────────────────────────",
+                    format!("  └{}", "─".repeat(76)),
                     Style::default().fg(Color::DarkGray),
                 )));
             }

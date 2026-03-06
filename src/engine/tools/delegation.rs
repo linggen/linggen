@@ -88,6 +88,7 @@ impl Tools {
         let max_delegation_depth = self.max_delegation_depth;
         let ws_root = self.root.clone();
         let parent_run_id = self.run_id.clone();
+        let session_id = self.session_id.clone();
 
         let ask_bridge = self.ask_user_bridge.clone();
         block_on_async(run_delegation(
@@ -100,6 +101,7 @@ impl Tools {
             delegation_depth,
             max_delegation_depth,
             ask_bridge,
+            session_id,
         ))
     }
 
@@ -161,6 +163,7 @@ pub(crate) async fn run_delegation(
     delegation_depth: usize,
     max_delegation_depth: usize,
     ask_user_bridge: Option<Arc<AskUserBridge>>,
+    session_id: Option<String>,
 ) -> Result<ToolResult> {
     let run_id = manager
         .begin_agent_run(
@@ -209,13 +212,14 @@ pub(crate) async fn run_delegation(
     engine.set_delegation_depth(delegation_depth + 1, max_delegation_depth);
     engine.set_run_id(Some(run_id.clone()));
     engine.set_task(task);
+    engine.tools.builtins.set_session_id(session_id.clone());
 
     // Wire AskUser bridge so the subagent can prompt for permissions and user questions.
     if let Some(bridge) = ask_user_bridge {
         engine.tools.set_ask_user_bridge(bridge);
     }
 
-    let run_result = engine.run_agent_loop(None).await;
+    let run_result = engine.run_agent_loop(session_id.as_deref()).await;
     // Capture sub-agent's last response before engine is dropped.
     let last_text = engine.last_assistant_text.take();
 

@@ -59,6 +59,7 @@ impl App {
                     if !self.input.is_empty() {
                         self.input.clear();
                     } else {
+                        self.pending_model_select = false;
                         self.prompt = None;
                     }
                 }
@@ -131,8 +132,27 @@ impl App {
             }
             KeyCode::Enter => {
                 if !self.autocomplete.is_empty() {
-                    // Apply autocomplete selection on Enter (don't send)
-                    self.apply_autocomplete();
+                    // If input already matches the selected autocomplete label exactly,
+                    // send it as a command instead of appending a trailing space.
+                    let trimmed = self.input.trim();
+                    let exact_match = self.autocomplete.get(self.autocomplete_selected)
+                        .map(|item| {
+                            let cmd = item.label.split_whitespace().next().unwrap_or(&item.label);
+                            trimmed == cmd && !item.label.contains(' ')
+                        })
+                        .unwrap_or(false);
+                    if exact_match {
+                        let line = trimmed.to_string();
+                        self.input.clear();
+                        self.autocomplete.clear();
+                        self.scroll_offset = 0;
+                        if self.handle_command(line)? {
+                            return Ok(true);
+                        }
+                    } else {
+                        // Apply autocomplete selection on Enter (don't send)
+                        self.apply_autocomplete();
+                    }
                 } else {
                     let line = self.input.trim().to_string();
                     self.input.clear();
@@ -186,6 +206,28 @@ impl App {
     }
 
     pub(super) fn handle_prompt_choice_custom(&mut self, custom_text: &str) -> Result<bool> {
+        // Handle model selector with typed model id.
+        if self.pending_model_select {
+            self.pending_model_select = false;
+            let model_id = custom_text.trim();
+            let valid = self.cached_models.is_empty()
+                || self.cached_models.iter().any(|(id, _)| id == model_id);
+            if !valid {
+                self.push_system(&format!("Unknown model: {model_id}"));
+                self.push_system("Use /model to see available models.");
+            } else {
+                self.push_system(&format!("Switching default model to: {model_id}"));
+                let client = self.client.clone();
+                let mid = model_id.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = client.set_default_model(&mid).await {
+                        tracing::warn!("Failed to set default model: {}", e);
+                    }
+                });
+            }
+            return Ok(false);
+        }
+
         if let Some(question_id) = self.pending_ask_user_id.take() {
             self.push_system(&format!("Other: {}", custom_text));
             let client = self.client.clone();
@@ -200,6 +242,24 @@ impl App {
     }
 
     pub(super) fn handle_prompt_choice(&mut self, choice: &str) -> Result<bool> {
+        // Handle model selector prompt.
+        if self.pending_model_select {
+            self.pending_model_select = false;
+            // Options are "id[✓]\tdesc" — extract the id part (strip checkmark)
+            let name_part = choice.split('\t').next().unwrap_or(choice);
+            let model_id = name_part.trim_end_matches(" ✓").trim();
+            self.current_default_model = Some(model_id.to_string());
+            self.push_system(&format!("Switched default model to: {model_id}"));
+            let client = self.client.clone();
+            let mid = model_id.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = client.set_default_model(&mid).await {
+                    tracing::warn!("Failed to set default model: {}", e);
+                }
+            });
+            return Ok(false);
+        }
+
         // Handle AskUser/permission prompts.
         if let Some(question_id) = self.pending_ask_user_id.take() {
             self.push_system(&format!("Selected: {}", choice));
@@ -270,7 +330,9 @@ impl App {
         if line == "/help" {
             self.push_system("Commands:");
             self.push_system("  /agent <name>     switch default agent");
-            self.push_system("  /model <id>       switch default model");
+            self.push_system("  /model            select default model");
+            self.push_system("  /clear            clear chat context");
+            self.push_system("  /status           show project status");
             self.push_system("  @agent message    send to specific agent");
             self.push_system("  /plan <task>      ask agent to create a plan (read-only)");
             self.push_system("  /plan approve     approve and execute the pending plan");
@@ -353,9 +415,113 @@ impl App {
             return Ok(false);
         }
 
+        // Status command
+        if line == "/status" {
+            self.push_system("Loading status...");
+            let client = self.client.clone();
+            let project_root = self.project_root.clone();
+            let slot = self.status_lines_slot.clone();
+            tokio::spawn(async move {
+                match client.fetch_status(&project_root).await {
+                    Ok(data) => {
+                        let mut lines = Vec::new();
+                        lines.push(String::new());
+                        lines.push("  ─── Project Status ───".to_string());
+                        lines.push(String::new());
+
+                        // Default model
+                        let default_model = data.get("default_model")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(none)");
+                        lines.push(format!("  Default model:  {default_model}"));
+                        lines.push(String::new());
+
+                        // Available models
+                        if let Some(models) = data.get("models").and_then(|v| v.as_array()) {
+                            lines.push("  Models:".to_string());
+                            for m in models {
+                                let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                                let provider = m.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                                let model = m.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+                                let is_default = id == default_model;
+                                let mark = if is_default { " ✓" } else { "" };
+                                lines.push(format!("    {id}{mark}  ({provider}: {model})"));
+                            }
+                            lines.push(String::new());
+                        }
+
+                        // Sessions & runs
+                        let sessions = data.get("sessions").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let total = data.get("total_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let completed = data.get("completed_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let failed = data.get("failed_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let cancelled = data.get("cancelled_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let active_days = data.get("active_days").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                        lines.push(format!("  Sessions:       {sessions:<12}  Runs:         {total}"));
+                        lines.push(format!("  Completed:      {completed:<12}  Failed:       {failed}"));
+                        lines.push(format!("  Cancelled:      {cancelled:<12}  Active days:  {active_days}"));
+                        lines.push(String::new());
+
+                        // Session tokens
+                        let prompt_tok = data.get("session_prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let completion_tok = data.get("session_completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        if prompt_tok > 0 || completion_tok > 0 {
+                            let fmt = |n: u64| -> String {
+                                if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
+                                else if n >= 1_000 { format!("{:.1}K", n as f64 / 1_000.0) }
+                                else { format!("{n}") }
+                            };
+                            let total = prompt_tok + completion_tok;
+                            lines.push(format!("  Session tokens: ↑ {}  ↓ {}  (total: {})", fmt(prompt_tok), fmt(completion_tok), fmt(total)));
+                            lines.push(String::new());
+                        }
+
+                        // Model usage
+                        if let Some(usage) = data.get("model_usage").and_then(|v| v.as_array()) {
+                            if !usage.is_empty() {
+                                lines.push("  Model usage:".to_string());
+                                for entry in usage {
+                                    if let Some(arr) = entry.as_array() {
+                                        let name = arr.first().and_then(|v| v.as_str()).unwrap_or("?");
+                                        let count = arr.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+                                        lines.push(format!("    {name:<30} {count} runs"));
+                                    }
+                                }
+                                lines.push(String::new());
+                            }
+                        }
+
+                        *slot.lock().unwrap() = Some(lines);
+                    }
+                    Err(e) => {
+                        *slot.lock().unwrap() = Some(vec![format!("  Error fetching status: {e}")]);
+                    }
+                }
+            });
+            return Ok(false);
+        }
+
         // Copy command
         if line == "/copy" {
             self.copy_last_agent_message();
+            return Ok(false);
+        }
+
+        // Clear context
+        if line == "/clear" {
+            self.blocks.clear();
+            self.active_tool_group = None;
+            self.scroll_offset = 0;
+            self.push_system("Context cleared.");
+            let client = self.client.clone();
+            let project_root = self.project_root.clone();
+            let session_id = self.session_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = client.clear_chat(&project_root, session_id.as_deref()).await {
+                    tracing::warn!("Failed to clear chat: {}", e);
+                }
+            });
             return Ok(false);
         }
 
@@ -375,18 +541,29 @@ impl App {
 
         // Model commands
         if line == "/model" {
-            self.push_system("Usage: /model <id>  — switch default model");
-            self.push_system("");
-            self.push_system("Available models:");
-            // Determine the current default (first in routing.default_models is unknown
-            // client-side, so mark the first cached model if any for now)
             if self.cached_models.is_empty() {
-                self.push_system("  (loading...)");
+                self.push_system("No models available (loading...)");
             } else {
-                let models = self.cached_models.clone();
-                for (id, desc) in &models {
-                    self.push_system(&format!("  {id}  ({desc})"));
-                }
+                let default_id = self.current_default_model.as_deref();
+                let mut default_idx = 0;
+                let options: Vec<String> = self
+                    .cached_models
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (id, desc))| {
+                        let is_default = default_id == Some(id.as_str());
+                        if is_default {
+                            default_idx = i;
+                        }
+                        let mark = if is_default { " ✓" } else { "" };
+                        format!("{id}{mark}\t{desc}")
+                    })
+                    .collect();
+                self.prompt = Some(super::InteractivePrompt {
+                    options,
+                    selected: default_idx,
+                });
+                self.pending_model_select = true;
             }
             return Ok(false);
         }
@@ -466,6 +643,8 @@ impl App {
         ("/help", "Show available commands"),
         ("/agent <name>", "Switch default agent"),
         ("/model <id>", "Switch default model"),
+        ("/clear", "Clear chat context"),
+        ("/status", "Show project status"),
         ("/plan <task>", "Create a plan"),
         ("/copy", "Copy last response to clipboard"),
         ("/image <path>", "Attach an image file"),

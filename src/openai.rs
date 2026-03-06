@@ -55,6 +55,7 @@ impl OpenAiClient {
             model: model.to_string(),
             messages: oai_messages,
             stream: true,
+            stream_options: Some(OaiStreamOptions { include_usage: true }),
             response_format: None,
             tools: None,
         };
@@ -162,6 +163,7 @@ impl OpenAiClient {
             "model": model,
             "messages": oai_messages,
             "stream": true,
+            "stream_options": {"include_usage": true},
             "tools": tools,
         });
 
@@ -395,11 +397,19 @@ struct OaiRequest {
     model: String,
     messages: Vec<OaiMessage>,
     stream: bool,
+    /// Request token usage in the final streaming chunk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OaiStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<OaiResponseFormat>,
     /// OpenAI-compatible tool definitions for native function calling.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize)]
+struct OaiStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Debug, Serialize)]

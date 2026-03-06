@@ -26,6 +26,7 @@ pub(crate) async fn persist_and_emit_message(
         from: from.to_string(),
         to: to.to_string(),
         content: content.to_string(),
+        session_id: session_id.map(|s| s.to_string()),
     });
     persist_message_only(manager, root, agent_id, from, to, content, session_id, is_observation)
         .await;
@@ -602,6 +603,7 @@ pub(crate) fn emit_outcome_event(
                     "packet": packet
                 })
                 .to_string(),
+                session_id: None, // enriched via agent_sessions map
             });
         }
         AgentOutcome::Patch(diff) => {
@@ -613,6 +615,7 @@ pub(crate) fn emit_outcome_event(
                     "diff": diff
                 })
                 .to_string(),
+                session_id: None,
             });
         }
         AgentOutcome::Plan(plan) => {
@@ -624,6 +627,7 @@ pub(crate) fn emit_outcome_event(
                     "plan": plan
                 })
                 .to_string(),
+                session_id: None,
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),
@@ -639,6 +643,7 @@ pub(crate) fn emit_outcome_event(
                     "plan": plan
                 })
                 .to_string(),
+                session_id: None,
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),

@@ -36,6 +36,13 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
     let tick_rate = Duration::from_millis(50);
     let mut event_stream = EventStream::new();
 
+    // Generate a session_id upfront so SSE events are filtered from the start.
+    app.session_id = Some(format!(
+        "tui-{}-{}",
+        crate::util::now_ts_secs(),
+        &uuid::Uuid::new_v4().to_string()[..8],
+    ));
+
     // Kick off background fetch of skills/agents for autocomplete
     app.fetch_autocomplete_data();
 

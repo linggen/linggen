@@ -15,6 +15,14 @@ impl App {
             self.last_seq = msg.seq;
         }
 
+        // Session filter: skip events from other sessions.
+        // Events without session_id (global events) pass through.
+        if let (Some(event_sid), Some(my_sid)) = (&msg.session_id, &self.session_id) {
+            if event_sid != my_sid {
+                return;
+            }
+        }
+
         match msg.kind.as_str() {
             "token" => {
                 let text = msg.text.unwrap_or_default();
@@ -27,6 +35,10 @@ impl App {
                     .unwrap_or(false);
 
                 if is_thinking {
+                    if !self.is_thinking_phase {
+                        self.thinking_started_at = Some(std::time::Instant::now());
+                        self.thinking_verb = pick_thinking_verb().to_string();
+                    }
                     self.is_thinking_phase = true;
                     // Don't accumulate thinking text in streaming_buffer
                 } else if !text.is_empty() {
@@ -270,7 +282,23 @@ impl App {
             return;
         }
 
-        // Update status bar
+        // Update status bar + thinking indicator
+        if status == "thinking" {
+            if !self.is_thinking_phase {
+                self.thinking_started_at = Some(std::time::Instant::now());
+                self.thinking_verb = pick_thinking_verb().to_string();
+                self.is_thinking_phase = true;
+                self.last_run_elapsed_secs = None; // clear old summary
+            }
+        } else if status == "calling_tool" || status == "idle" {
+            if status == "idle" && self.thinking_started_at.is_some() {
+                // Record elapsed for the "Churned for Xs" summary
+                let elapsed = self.thinking_started_at.unwrap().elapsed().as_secs();
+                self.last_run_elapsed_secs = Some(elapsed);
+                self.last_run_verb = self.thinking_verb.clone();
+            }
+            self.is_thinking_phase = false;
+        }
         self.status_state = status.to_string();
         self.status_tool = if text.is_empty()
             || text.eq_ignore_ascii_case(status)
@@ -764,4 +792,20 @@ impl App {
         self.status_state = "idle".to_string();
         self.status_tool = None;
     }
+}
+
+const THINKING_VERBS: &[&str] = &[
+    "Thinking", "Pondering", "Brewing", "Cogitating", "Reticulating",
+    "Noodling", "Musing", "Simmering", "Percolating", "Ruminating",
+    "Contemplating", "Marinating", "Conjuring", "Scheming", "Tinkering",
+    "Crafting", "Hatching", "Computing", "Deliberating",
+];
+
+fn pick_thinking_verb() -> &'static str {
+    use std::time::SystemTime;
+    let seed = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as usize)
+        .unwrap_or(0);
+    THINKING_VERBS[seed % THINKING_VERBS.len()]
 }

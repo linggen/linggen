@@ -377,6 +377,57 @@ impl TuiClient {
         Ok(resp.json().await?)
     }
 
+    /// Fetch project status stats.
+    pub async fn fetch_status(&self, project_root: &str) -> Result<serde_json::Value> {
+        let resp = self
+            .client
+            .get(format!("{}/api/status", self.base_url))
+            .query(&[("project_root", project_root)])
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("status fetch failed: {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Clear chat history for the given project/session.
+    pub async fn clear_chat(&self, project_root: &str, session_id: Option<&str>) -> Result<()> {
+        let resp = self
+            .client
+            .post(format!("{}/api/chat/clear", self.base_url))
+            .json(&serde_json::json!({
+                "project_root": project_root,
+                "session_id": session_id,
+            }))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("clear chat failed: {}", resp.status());
+        }
+        Ok(())
+    }
+
+    /// Fetch the current default model id (first in `routing.default_models`).
+    pub async fn fetch_default_model(&self) -> Result<Option<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/config", self.base_url))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("config fetch failed: {}", resp.status());
+        }
+        let config: serde_json::Value = resp.json().await?;
+        Ok(config
+            .get("routing")
+            .and_then(|r| r.get("default_models"))
+            .and_then(|arr| arr.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .map(String::from))
+    }
+
     /// Set the default model by reordering `routing.default_models` to put the
     /// chosen model first, then POST the updated config.
     pub async fn set_default_model(&self, model_id: &str) -> Result<()> {
@@ -391,30 +442,15 @@ impl TuiClient {
         }
         let mut config: serde_json::Value = resp.json().await?;
 
-        // Reorder routing.default_models: chosen model first, keep others as fallbacks
+        // Set default_models to a single-element list with the chosen model.
         let routing = config
             .as_object_mut()
             .and_then(|o| o.get_mut("routing"))
             .and_then(|r| r.as_object_mut());
         if let Some(routing) = routing {
-            let existing: Vec<String> = routing
-                .get("default_models")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let mut new_list = vec![model_id.to_string()];
-            for m in &existing {
-                if m != model_id {
-                    new_list.push(m.clone());
-                }
-            }
             routing.insert(
                 "default_models".to_string(),
-                json!(new_list),
+                json!([model_id]),
             );
         }
 

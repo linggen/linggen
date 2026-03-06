@@ -43,13 +43,13 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "Read",
-            "Read a file's contents. Path is relative to workspace root. Always read a file before modifying it.",
+            "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it.",
             json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "File path to read (relative to workspace root)"
+                        "description": "File path to read (relative to workspace root, or absolute)"
                     },
                     "max_bytes": {
                         "type": "integer",
@@ -135,7 +135,7 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "Bash",
-            "Run a shell command via sh -c. Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents.",
+            "Run a shell command via sh -c. Working directory persists across calls (cd is remembered). Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents.",
             json!({
                 "type": "object",
                 "properties": {

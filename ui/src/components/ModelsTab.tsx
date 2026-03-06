@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Plus, Star, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Eye, EyeOff, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
@@ -69,9 +69,6 @@ export const ModelsTab: React.FC<{
   const [credsDirty, setCredsDirty] = useState(false);
 
   const defaultModels = config.routing?.default_models ?? [];
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  const dragRef = useRef<number | null>(null);
 
   const fetchOllamaStatus = useCallback(async () => {
     try {
@@ -193,65 +190,14 @@ export const ModelsTab: React.FC<{
   const isDefault = (modelId: string) => defaultModels.includes(modelId);
 
   const toggleDefault = (modelId: string) => {
-    let newDefaults: string[];
-    if (isDefault(modelId)) {
-      newDefaults = defaultModels.filter((id) => id !== modelId);
-    } else {
-      newDefaults = [...defaultModels, modelId];
-    }
+    // Single-select: set as default, or deselect if already the default
+    const newDefaults = defaultModels.length === 1 && defaultModels[0] === modelId ? [] : [modelId];
     onChange({
       ...config,
       routing: { ...config.routing, default_models: newDefaults },
     });
   };
 
-  const moveDefaultUp = (modelId: string) => {
-    const idx = defaultModels.indexOf(modelId);
-    if (idx <= 0) return;
-    const newDefaults = [...defaultModels];
-    [newDefaults[idx - 1], newDefaults[idx]] = [newDefaults[idx], newDefaults[idx - 1]];
-    onChange({ ...config, routing: { ...config.routing, default_models: newDefaults } });
-  };
-
-  const moveDefaultDown = (modelId: string) => {
-    const idx = defaultModels.indexOf(modelId);
-    if (idx < 0 || idx >= defaultModels.length - 1) return;
-    const newDefaults = [...defaultModels];
-    [newDefaults[idx], newDefaults[idx + 1]] = [newDefaults[idx + 1], newDefaults[idx]];
-    onChange({ ...config, routing: { ...config.routing, default_models: newDefaults } });
-  };
-
-  const handleDragStart = (idx: number) => {
-    dragRef.current = idx;
-    setDragIdx(idx);
-  };
-
-  const handleDragOver = (e: React.DragEvent, idx: number) => {
-    e.preventDefault();
-    setDragOverIdx(idx);
-  };
-
-  const handleDrop = (targetIdx: number) => {
-    const sourceIdx = dragRef.current;
-    if (sourceIdx === null || sourceIdx === targetIdx) {
-      setDragIdx(null);
-      setDragOverIdx(null);
-      return;
-    }
-    const newDefaults = [...defaultModels];
-    const [moved] = newDefaults.splice(sourceIdx, 1);
-    newDefaults.splice(targetIdx, 0, moved);
-    onChange({ ...config, routing: { ...config.routing, default_models: newDefaults } });
-    setDragIdx(null);
-    setDragOverIdx(null);
-    dragRef.current = null;
-  };
-
-  const handleDragEnd = () => {
-    setDragIdx(null);
-    setDragOverIdx(null);
-    dragRef.current = null;
-  };
 
   const updateTags = (index: number, tagsStr: string) => {
     const tags = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
@@ -262,67 +208,33 @@ export const ModelsTab: React.FC<{
 
   return (
     <div className="space-y-6">
-      {/* Default Models section */}
+      {/* Default Model section */}
       {defaultModels.length > 0 && (
         <section className={sectionCls}>
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
-            Default Models (Priority Order)
+            Default Model
           </h2>
-          <p className="text-[10px] text-slate-400 mb-3">
-            Models are tried in order. If the first model fails (rate limit, quota), the next one is used automatically.
-          </p>
-          <div className="space-y-1.5">
-            {defaultModels.map((modelId, idx) => {
-              const model = config.models.find((m) => m.id === modelId);
-              const health = healthMap[modelId];
-              const isDragging = dragIdx === idx;
-              const isOver = dragOverIdx === idx;
-              return (
-                <div
-                  key={modelId}
-                  draggable
-                  onDragStart={() => handleDragStart(idx)}
-                  onDragOver={(e) => handleDragOver(e, idx)}
-                  onDrop={() => handleDrop(idx)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border transition-all cursor-grab active:cursor-grabbing ${
-                    isDragging ? 'opacity-40 border-amber-300' : isOver ? 'border-blue-400 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-100 dark:border-white/5'
-                  }`}
+          {(() => {
+            const modelId = defaultModels[0];
+            const model = config.models.find((m) => m.id === modelId);
+            const health = healthMap[modelId];
+            return (
+              <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border border-slate-100 dark:border-white/5">
+                <span className="text-xs font-medium flex-1">
+                  {modelId}
+                  {model && model.model && <span className="text-[10px] text-slate-400 ml-1.5">({model.model})</span>}
+                </span>
+                <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />
+                <button
+                  onClick={() => toggleDefault(modelId)}
+                  className="p-0.5 text-slate-400 hover:text-red-500"
+                  title="Clear default"
                 >
-                  <GripVertical size={12} className="text-slate-300 shrink-0" />
-                  <span className="text-[10px] font-bold text-amber-500 w-5">{idx + 1}.</span>
-                  <span className="text-xs font-medium flex-1">
-                    {modelId}
-                    {model && model.model && <span className="text-[10px] text-slate-400 ml-1.5">({model.model})</span>}
-                  </span>
-                  <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />
-                  <button
-                    onClick={() => moveDefaultUp(modelId)}
-                    disabled={idx === 0}
-                    className="p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-30"
-                    title="Move up"
-                  >
-                    <ArrowUp size={12} />
-                  </button>
-                  <button
-                    onClick={() => moveDefaultDown(modelId)}
-                    disabled={idx === defaultModels.length - 1}
-                    className="p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-30"
-                    title="Move down"
-                  >
-                    <ArrowDown size={12} />
-                  </button>
-                  <button
-                    onClick={() => toggleDefault(modelId)}
-                    className="p-0.5 text-slate-400 hover:text-red-500"
-                    title="Remove from defaults"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            );
+          })()}
         </section>
       )}
 

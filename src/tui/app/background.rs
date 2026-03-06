@@ -9,6 +9,7 @@ impl App {
         let skills_slot = self.skills_slot.clone();
         let agents_slot = self.agents_slot.clone();
         let models_slot = self.models_slot.clone();
+        let default_model_slot = self.default_model_slot.clone();
         tokio::spawn(async move {
             // Fetch skills
             match client.fetch_skills().await {
@@ -74,6 +75,15 @@ impl App {
                     tracing::debug!("Failed to fetch models for autocomplete: {}", e);
                 }
             }
+            // Fetch current default model from config
+            match client.fetch_default_model().await {
+                Ok(default_id) => {
+                    *default_model_slot.lock().unwrap() = Some(default_id);
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to fetch default model: {}", e);
+                }
+            }
         });
     }
 
@@ -87,6 +97,15 @@ impl App {
         }
         if let Some(models) = self.models_slot.lock().unwrap().take() {
             self.cached_models = models;
+        }
+        if let Some(default_model) = self.default_model_slot.lock().unwrap().take() {
+            self.current_default_model = default_model;
+        }
+        let status_lines = self.status_lines_slot.lock().unwrap().take();
+        if let Some(lines) = status_lines {
+            for line in lines {
+                self.push_system(&line);
+            }
         }
     }
 

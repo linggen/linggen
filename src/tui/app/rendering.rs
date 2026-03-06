@@ -9,12 +9,12 @@ impl App {
     pub fn render(&mut self, f: &mut ratatui::Frame) {
         use ratatui::layout::{Constraint, Direction, Layout};
 
-        // Fixed bottom: divider(1) + input(1) + divider(1) + status(1) = 4 lines
+        // Fixed bottom: spinner(1) + divider(1) + input(1) + divider(1) + status(1) = 5 lines
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(1),   // Scrollable content
-                Constraint::Length(4), // Fixed input area
+                Constraint::Length(5), // Fixed input area (includes spinner line)
             ])
             .split(f.area());
 
@@ -27,7 +27,14 @@ impl App {
         let mut all_lines: Vec<Line<'static>> = Vec::new();
         all_lines.extend(self.banner.iter().cloned());
 
+        let mut last_user_msg: Option<String> = None;
+        let mut last_user_msg_line_idx: usize = 0;
+
         for block in &self.blocks {
+            if let DisplayBlock::UserMessage { text, .. } = block {
+                last_user_msg = Some(text.clone());
+                last_user_msg_line_idx = all_lines.len();
+            }
             // Skip inline plan blocks that are executing — sticky footer handles them.
             if matches!(block, DisplayBlock::PlanBlock { status, .. } if status != "planned" && status != "completed") {
                 continue;
@@ -54,6 +61,53 @@ impl App {
                     )));
                     all_lines.push(Line::from(""));
                 }
+            }
+        }
+
+        // Model selector prompt — CC-style layout
+        if self.pending_model_select {
+            if let Some(prompt) = &self.prompt {
+                all_lines.push(Line::from(""));
+                all_lines.push(Line::from(Span::styled(
+                    "  Select model",
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                )));
+                all_lines.push(Line::from(Span::styled(
+                    "  Switch between models. Applies to this and future sessions.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                all_lines.push(Line::from(""));
+                for (i, option) in prompt.options.iter().enumerate() {
+                    let is_selected = i == prompt.selected;
+                    let marker = if is_selected { "› " } else { "  " };
+                    // Options are formatted as "id[✓]\tdesc"
+                    let (name_part, desc_part) = option.split_once('\t').unwrap_or((option, ""));
+                    let name_style = if is_selected {
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let desc_style = if is_selected {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    // Pad name to align descriptions
+                    let padded_name = format!("{:<30}", name_part);
+                    let num = format!("{}. ", i + 1);
+                    all_lines.push(Line::from(vec![
+                        Span::styled(format!("  {marker}"), name_style),
+                        Span::styled(num, Style::default().fg(Color::DarkGray)),
+                        Span::styled(padded_name, name_style),
+                        Span::styled(desc_part.to_string(), desc_style),
+                    ]));
+                }
+                all_lines.push(Line::from(""));
+                all_lines.push(Line::from(Span::styled(
+                    "  Enter to confirm · Esc to exit",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                all_lines.push(Line::from(""));
             }
         }
 
@@ -91,15 +145,9 @@ impl App {
             all_lines.extend(render::render_subagent_group_live(&entries));
         }
 
-        // Thinking animation (replaces raw thinking tokens)
-        if self.is_thinking_phase && self.streaming_buffer.is_empty() {
-            let tick = (self.app_start.elapsed().as_millis() / 200) % 4;
-            let dots = ".".repeat(tick as usize);
-            all_lines.push(Line::from(Span::styled(
-                format!("  Thinking{dots}"),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-            )));
-        }
+        // Spinner state — show during thinking and tool calling phases.
+        let is_thinking = self.is_thinking_phase
+            || (self.status_state != "idle" && self.status_state != "model_loading" && self.streaming_buffer.is_empty());
 
         // Streaming buffer
         if self.is_streaming && !self.streaming_buffer.is_empty() {
@@ -128,17 +176,17 @@ impl App {
         }
 
         // Compute total wrapped rows (accounts for line wrapping)
-        let total_wrapped: usize = all_lines
+        let wrapped_rows: Vec<usize> = all_lines
             .iter()
             .map(|line| {
                 let w = line.width();
-                if w == 0 || width == 0 {
-                    1
-                } else {
-                    (w + width as usize - 1) / width as usize
-                }
+                if w == 0 || width == 0 { 1 } else { (w + width as usize - 1) / width as usize }
             })
-            .sum();
+            .collect();
+        let total_wrapped: usize = wrapped_rows.iter().sum();
+
+        // Wrapped row where the last user message starts
+        let last_user_wrapped_row: usize = wrapped_rows.iter().take(last_user_msg_line_idx).sum();
 
         let max_scroll = total_wrapped.saturating_sub(content_height);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
@@ -150,8 +198,30 @@ impl App {
             .scroll((scroll_y as u16, 0));
         f.render_widget(output, content_area);
 
-        // Scroll indicator overlay when not at the bottom
-        if self.scroll_offset > 0 {
+        if let Some(ref user_text) = last_user_msg {
+            if last_user_wrapped_row < scroll_y {
+                // Use first line, truncate to fit
+                let first_line = user_text.lines().next().unwrap_or("");
+                let max_chars = (width as usize).saturating_sub(8); // "  You: " prefix
+                let truncated = if first_line.len() > max_chars {
+                    format!("{}…", &first_line[..max_chars.saturating_sub(1)])
+                } else {
+                    first_line.to_string()
+                };
+                let banner = Paragraph::new(Line::from(vec![
+                    Span::styled("  You: ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+                    Span::styled(truncated, Style::default().fg(Color::White)),
+                ])).style(Style::default().bg(Color::DarkGray));
+                let banner_area = ratatui::layout::Rect {
+                    x: content_area.x,
+                    y: content_area.y,
+                    width: content_area.width,
+                    height: 1,
+                };
+                f.render_widget(banner, banner_area);
+            }
+        } else if self.scroll_offset > 0 {
+            // Fallback scroll indicator when no user message
             let indicator = Paragraph::new(Line::from(Span::styled(
                 format!("  ··· {} more rows above ···", scroll_y),
                 Style::default()
@@ -284,7 +354,69 @@ impl App {
             ));
         }
 
+        // Build spinner line — always visible.
+        // Active: animated "✦ Thinking… (10s · ↑ 1.0K tokens)"
+        // Idle:   static  "✻ Churned for 38s"
+        let spinner_line = if is_thinking {
+            let symbols = ["✦", "✶", "✧", "✷"];
+            let symbol = symbols[(self.app_start.elapsed().as_millis() / 300) as usize % symbols.len()];
+
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(started) = self.thinking_started_at {
+                let elapsed = started.elapsed().as_secs();
+                if elapsed >= 1 {
+                    if elapsed >= 60 {
+                        parts.push(format!("{}m {}s", elapsed / 60, elapsed % 60));
+                    } else {
+                        parts.push(format!("{}s", elapsed));
+                    }
+                }
+            }
+            if let Some(&tokens) = self.last_context_tokens.get(&self.agent_id) {
+                if tokens > 0 {
+                    let label = if tokens >= 100_000 {
+                        format!("↑ {:.0}k tokens", tokens as f64 / 1000.0)
+                    } else if tokens >= 1000 {
+                        format!("↑ {:.1}k tokens", tokens as f64 / 1000.0)
+                    } else {
+                        format!("↑ {} tokens", tokens)
+                    };
+                    parts.push(label);
+                }
+            }
+            let suffix = if parts.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", parts.join(" · "))
+            };
+
+            Line::from(vec![
+                Span::styled(
+                    format!("{symbol} "),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::styled(
+                    format!("{}…{suffix}", self.thinking_verb),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                ),
+            ])
+        } else if let Some(elapsed) = self.last_run_elapsed_secs {
+            let time_str = if elapsed >= 60 {
+                format!("{}m {}s", elapsed / 60, elapsed % 60)
+            } else {
+                format!("{}s", elapsed)
+            };
+            let verb = if self.last_run_verb.is_empty() { "Worked" } else { &self.last_run_verb };
+            Line::from(Span::styled(
+                format!("✻ {} for {}", verb, time_str),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ))
+        } else {
+            Line::from("")
+        };
+
         let bottom = Paragraph::new(vec![
+            spinner_line,
             Line::from(Span::styled(divider.clone(), Style::default().fg(Color::DarkGray))),
             input_line,
             Line::from(Span::styled(divider, Style::default().fg(Color::DarkGray))),
@@ -292,8 +424,8 @@ impl App {
         ]);
         f.render_widget(bottom, input_area);
 
-        // Position cursor on the input line (2nd line of input_area)
-        let cursor_y = input_area.y + 1;
+        // Position cursor on the input line (3rd line of input_area, after spinner + divider)
+        let cursor_y = input_area.y + 2;
         let cursor_x = input_area.x + 2 + self.input.len() as u16;
         f.set_cursor_position((cursor_x, cursor_y));
     }

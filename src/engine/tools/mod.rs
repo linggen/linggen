@@ -175,6 +175,7 @@ pub struct Tools {
     ask_user_bridge: Option<Arc<AskUserBridge>>,
     progress_tx: Option<ToolProgressSender>,
     prompt_store: Option<Arc<crate::prompts::PromptStore>>,
+    pub(crate) session_id: Option<String>,
 }
 
 impl Tools {
@@ -193,6 +194,7 @@ impl Tools {
             ask_user_bridge: None,
             progress_tx: None,
             prompt_store: None,
+            session_id: None,
         })
     }
 
@@ -247,6 +249,10 @@ impl Tools {
 
     pub fn set_prompt_store(&mut self, store: Arc<crate::prompts::PromptStore>) {
         self.prompt_store = Some(store);
+    }
+
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.session_id = session_id;
     }
 
     /// Render a prompt template with fallback.

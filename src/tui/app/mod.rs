@@ -53,6 +53,10 @@ pub struct App {
     pub is_streaming: bool,
     /// True while model is in thinking phase (for animated indicator).
     pub is_thinking_phase: bool,
+    /// When the current thinking phase started (for elapsed time display).
+    pub thinking_started_at: Option<Instant>,
+    /// Random verb for the thinking spinner (CC style), picked per thinking phase.
+    pub thinking_verb: String,
     /// App start time for animation timing.
     pub app_start: Instant,
     // Tool step tracking
@@ -77,6 +81,8 @@ pub struct App {
     pub pending_images: Vec<String>,
     /// Question ID for a pending AskUser/permission prompt.
     pub pending_ask_user_id: Option<String>,
+    /// True when the interactive prompt is a model selector.
+    pub pending_model_select: bool,
     /// Autocomplete suggestions currently showing.
     pub autocomplete: Vec<AutocompleteItem>,
     /// Selected index in autocomplete list.
@@ -87,12 +93,18 @@ pub struct App {
     pub cached_agents: Vec<(String, String)>,
     /// Cached models (id, "provider: model_name") fetched from server.
     pub cached_models: Vec<(String, String)>,
+    /// Current default model id (first in routing.default_models).
+    pub current_default_model: Option<String>,
     /// Shared slot for background task to deliver fetched skills.
     pub skills_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
     /// Shared slot for background task to deliver fetched agents.
     pub agents_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
     /// Shared slot for background task to deliver fetched models.
     pub models_slot: Arc<StdMutex<Option<Vec<(String, String)>>>>,
+    /// Shared slot for background task to deliver fetched default model.
+    pub default_model_slot: Arc<StdMutex<Option<Option<String>>>>,
+    /// Shared slot for background task to deliver status lines.
+    pub status_lines_slot: Arc<StdMutex<Option<Vec<String>>>>,
     /// SSE connection status (for reconnection indicator).
     pub connection_status: ConnectionStatus,
     /// Last seen SSE sequence number for dedup. Reset on reconnection.
@@ -100,6 +112,10 @@ pub struct App {
     /// Text of the last agent message pushed (for deduplication across
     /// token-stream finalize, text_segment, and message events).
     pub last_agent_text: Option<String>,
+    /// Elapsed seconds of the last completed run (for "Churned for Xs" display).
+    pub last_run_elapsed_secs: Option<u64>,
+    /// Verb used in the last completed run's summary.
+    pub last_run_verb: String,
 }
 
 /// An autocomplete suggestion item.
@@ -187,6 +203,8 @@ impl App {
             streaming_buffer: String::new(),
             is_streaming: false,
             is_thinking_phase: false,
+            thinking_started_at: None,
+            thinking_verb: "Thinking".to_string(),
             app_start: Instant::now(),
             active_tool_group: None,
             active_subagents: HashMap::new(),
@@ -200,17 +218,23 @@ impl App {
             prompt: None,
             pending_images: Vec::new(),
             pending_ask_user_id: None,
+            pending_model_select: false,
             autocomplete: Vec::new(),
             autocomplete_selected: 0,
             cached_skills: Vec::new(),
             cached_agents: Vec::new(),
             cached_models: Vec::new(),
+            current_default_model: None,
             skills_slot: Arc::new(StdMutex::new(None)),
             agents_slot: Arc::new(StdMutex::new(None)),
             models_slot: Arc::new(StdMutex::new(None)),
+            default_model_slot: Arc::new(StdMutex::new(None)),
+            status_lines_slot: Arc::new(StdMutex::new(None)),
             connection_status: ConnectionStatus::Connected,
             last_seq: 0,
             last_agent_text: None,
+            last_run_elapsed_secs: None,
+            last_run_verb: String::new(),
         }
     }
 

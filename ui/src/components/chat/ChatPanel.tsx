@@ -60,6 +60,7 @@ export const ChatPanel: React.FC<{
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
   isRunning?: boolean;
   verboseMode?: boolean;
+  agentStatus?: Record<string, string>;
 }> = ({
   chatMessages,
   queuedMessages,
@@ -91,6 +92,7 @@ export const ChatPanel: React.FC<{
   onCancelAgentRun,
   isRunning,
   verboseMode,
+  agentStatus,
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [pendingImages, setPendingImages] = useState<string[]>([]);
@@ -129,6 +131,11 @@ export const ChatPanel: React.FC<{
 
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
+  const [showLastUserMsg, setShowLastUserMsg] = useState(false);
+  const thinkingStartRef = useRef<number | null>(null);
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
 
   // When chat is cleared (chatMessages becomes empty), also clear cached run
   // context so stale messages from previous runs don't keep showing.
@@ -147,6 +154,52 @@ export const ChatPanel: React.FC<{
       chatEndRef?.current?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
     }
   }, [pendingAskUser, chatEndRef]);
+
+  // Track agent active state and elapsed time
+  const currentStatus = agentStatus?.[selectedAgent];
+  const isAgentActive = !!currentStatus && currentStatus !== 'idle';
+  const isThinking = currentStatus === 'thinking' || currentStatus === 'model_loading';
+  const [spinnerVerb, setSpinnerVerb] = useState('');
+  const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
+  useEffect(() => {
+    if (isAgentActive) {
+      if (!thinkingStartRef.current) {
+        thinkingStartRef.current = Date.now();
+        const verbs = [
+          'Thinking', 'Pondering', 'Brewing', 'Cogitating', 'Reticulating',
+          'Noodling', 'Musing', 'Simmering', 'Percolating', 'Ruminating',
+          'Contemplating', 'Marinating', 'Conjuring', 'Scheming', 'Tinkering',
+          'Crafting', 'Hatching', 'Computing', 'Deliberating',
+        ];
+        setSpinnerVerb(verbs[Math.floor(Math.random() * verbs.length)]);
+        setLastRunSummary(null);
+      }
+      const interval = setInterval(() => {
+        setThinkingElapsed(Math.floor((Date.now() - (thinkingStartRef.current || Date.now())) / 1000));
+      }, 500);
+      return () => clearInterval(interval);
+    } else {
+      if (thinkingStartRef.current) {
+        const elapsed = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
+        if (elapsed > 0) setLastRunSummary({ verb: spinnerVerb || 'Worked', elapsed });
+      }
+      thinkingStartRef.current = null;
+      setThinkingElapsed(0);
+    }
+  }, [isAgentActive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Show floating banner when last user message scrolls out of view
+  useEffect(() => {
+    const el = lastUserMsgRef.current;
+    const container = chatScrollRef.current;
+    if (!el || !container) { setShowLastUserMsg(false); return; }
+    const observer = new IntersectionObserver(
+      ([entry]) => setShowLastUserMsg(!entry.isIntersecting),
+      { root: container, threshold: 0.1 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   const mainAgentIds = useMemo(
     () => mainAgents.map((agent) => normalizeAgentKey(agent.name)),
@@ -288,6 +341,14 @@ export const ChatPanel: React.FC<{
       );
     });
   }, [displayedMainMessages, mainMessageFilter]);
+  const lastUserMsgInfo = useMemo(() => {
+    for (let i = filteredMainMessages.length - 1; i >= 0; i--) {
+      if (filteredMainMessages[i].role === 'user') {
+        return { index: i, text: filteredMainMessages[i].text };
+      }
+    }
+    return null;
+  }, [filteredMainMessages]);
   const filteredSubagentMessages = useMemo(() => {
     const q = subagentMessageFilter.trim().toLowerCase();
     if (!q) return displayedSubagentMessages;
@@ -473,7 +534,7 @@ export const ChatPanel: React.FC<{
 
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
-    const userMessage = chatInput;
+    const userMessage = chatInput.trim();
     const imagesToSend = pendingImages.length > 0 ? [...pendingImages] : undefined;
     setChatInput('');
     setPendingImages([]);
@@ -608,6 +669,32 @@ export const ChatPanel: React.FC<{
 
     const beforeSlash = chatInput.substring(0, chatInput.lastIndexOf('/'));
 
+    // Built-in commands (aligned with TUI)
+    const builtinCommands: [string, string][] = [
+      ['/help', 'Show available commands'],
+      ['/clear', 'Clear chat context'],
+      ['/status', 'Show project status'],
+      ['/model', 'Switch default model'],
+      ['/plan', 'Ask agent to create a plan'],
+      ['/image', 'Attach an image file'],
+    ];
+
+    for (const [cmd, desc] of builtinCommands) {
+      const name = cmd.slice(1); // strip leading /
+      if (skillFilter === '' || name.includes(skillFilter) || desc.toLowerCase().includes(skillFilter)) {
+        suggestions.push({
+          key: `cmd-${name}`,
+          label: cmd,
+          description: desc,
+          apply: () => {
+            setChatInput(`${beforeSlash}${cmd} `);
+            setShowSkillDropdown(false);
+          },
+        });
+      }
+    }
+
+    // Skills from API
     skills
       .filter(
         (skill) =>
@@ -747,7 +834,17 @@ export const ChatPanel: React.FC<{
         )}
       </div>
 
-      <div className="flex-1 overflow-y-scroll px-2 py-1.5 flex flex-col gap-2 custom-scrollbar min-h-0">
+      <div ref={chatScrollRef} className="relative flex-1 overflow-y-scroll px-2 py-1.5 flex flex-col gap-2 custom-scrollbar min-h-0">
+        {showLastUserMsg && lastUserMsgInfo && (
+          <div
+            className="sticky top-0 z-20 mx-1 mb-1 px-3 py-1.5 rounded-md bg-slate-100/95 dark:bg-white/10 backdrop-blur text-[12px] text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-white/10 truncate cursor-pointer"
+            onClick={() => lastUserMsgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            title={lastUserMsgInfo.text}
+          >
+            <span className="font-medium text-slate-500 dark:text-slate-400 mr-1.5">You:</span>
+            {lastUserMsgInfo.text.length > 120 ? lastUserMsgInfo.text.slice(0, 120) + '…' : lastUserMsgInfo.text}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2 mb-1">
           {selectedMainTimeline.length > 0 ? (
             <details className="text-[10px] text-slate-500">
@@ -801,9 +898,11 @@ export const ChatPanel: React.FC<{
               return next;
             });
           };
+          const isLastUser = isUser && lastUserMsgInfo?.index === i;
           return (
             <div
               key={key}
+              ref={isLastUser ? lastUserMsgRef : undefined}
               className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
             >
               <div
@@ -857,6 +956,41 @@ export const ChatPanel: React.FC<{
         <div ref={chatEndRef} />
       </div>
 
+      {/* Status spinner — always visible when active or just completed */}
+      {isAgentActive ? (
+        <div className="px-3 py-1.5">
+          <div className="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
+            <span className="text-blue-500">✶</span>
+            <span>
+              {currentStatus === 'model_loading' ? 'Loading model' : spinnerVerb || 'Thinking'}…
+              {(thinkingElapsed > 0 || (agentContext?.[selectedAgent]?.tokens ?? 0) > 0) && (
+                <span className="font-normal text-slate-400 dark:text-slate-500 ml-1">
+                  ({[
+                    thinkingElapsed >= 60
+                      ? `${Math.floor(thinkingElapsed / 60)}m ${thinkingElapsed % 60}s`
+                      : thinkingElapsed > 0 ? `${thinkingElapsed}s` : '',
+                    (agentContext?.[selectedAgent]?.tokens ?? 0) > 0
+                      ? `↑ ${((agentContext?.[selectedAgent]?.tokens ?? 0) / 1000).toFixed(1)}k tokens`
+                      : '',
+                  ].filter(Boolean).join(' · ')})
+                </span>
+              )}
+            </span>
+          </div>
+        </div>
+      ) : lastRunSummary && (
+        <div className="px-3 py-1.5">
+          <div className="flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500 italic">
+            <span>✻</span>
+            <span>
+              {lastRunSummary.verb} for{' '}
+              {lastRunSummary.elapsed >= 60
+                ? `${Math.floor(lastRunSummary.elapsed / 60)}m ${lastRunSummary.elapsed % 60}s`
+                : `${lastRunSummary.elapsed}s`}
+            </span>
+          </div>
+        </div>
+      )}
       <div className="sticky bottom-0 z-10 p-2 border-t border-slate-200 dark:border-white/5 space-y-2 bg-slate-50 dark:bg-white/[0.02]">
         {visibleQueued.length > 0 && (
           <div className="px-2 py-1.5 text-[11px] rounded-md border border-amber-300/40 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20">
@@ -897,7 +1031,7 @@ export const ChatPanel: React.FC<{
           {showSkillDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-52 overflow-y-auto z-[70]">
               <div className="px-3 py-2 text-[10px] text-slate-500 border-b border-slate-200 dark:border-white/10">
-                Type to filter skills • Press Enter to send
+                Commands &amp; Skills • Type to filter
               </div>
               {(() => {
                 const suggestions = buildSkillSuggestions();
@@ -912,13 +1046,13 @@ export const ChatPanel: React.FC<{
                         : 'hover:bg-slate-100 dark:hover:bg-white/5'
                     )}
                   >
-                    <div className="font-bold text-blue-500">{item.label}</div>
+                    <div className={cn('font-bold', item.key.startsWith('cmd-') ? 'text-amber-500' : 'text-blue-500')}>{item.label}</div>
                     {item.description && <div className="text-slate-500 text-[10px]">{item.description}</div>}
                   </button>
                 ));
               })()}
               {buildSkillSuggestions().length === 0 && (
-                <div className="p-3 text-[10px] text-slate-500 italic">No matching skills found</div>
+                <div className="p-3 text-[10px] text-slate-500 italic">No matching commands or skills</div>
               )}
             </div>
           )}
@@ -1094,6 +1228,14 @@ export const ChatPanel: React.FC<{
                   return;
                 }
                 if (e.key === 'Enter') {
+                  // If the input exactly matches a complete built-in command, send it directly
+                  const exactCommands = ['/help', '/clear', '/status', '/model'];
+                  if (exactCommands.includes(chatInput.trim())) {
+                    e.preventDefault();
+                    setShowSkillDropdown(false);
+                    send();
+                    return;
+                  }
                   e.preventDefault();
                   suggestions[selectedSuggestionIndex]?.apply();
                   return;
