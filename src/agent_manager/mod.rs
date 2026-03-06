@@ -603,6 +603,12 @@ impl AgentManager {
         engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         engine.load_skill_tools(&self.skill_manager).await;
         engine.load_available_skills_metadata(&self.skill_manager).await;
+        if let Ok(specs) = self.list_agent_specs(&project_root).await {
+            engine.available_agents_metadata = specs
+                .iter()
+                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
+                .collect();
+        }
 
         // Set up auto memory directory
         let repo_path_str = project_root.to_string_lossy().to_string();
@@ -681,6 +687,12 @@ impl AgentManager {
         engine.set_manager_context(self.clone());
         engine.load_skill_tools(&self.skill_manager).await;
         engine.load_available_skills_metadata(&self.skill_manager).await;
+        if let Ok(specs) = self.list_agent_specs(&project_root).await {
+            engine.available_agents_metadata = specs
+                .iter()
+                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
+                .collect();
+        }
 
         // Set up auto memory directory
         let repo_path_str = project_root.to_string_lossy().to_string();

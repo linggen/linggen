@@ -149,6 +149,8 @@ pub struct AgentEngine {
     pub active_skill: Option<Skill>,
     /// Metadata for skills available to the model via the Skill tool: (name, description).
     pub available_skills_metadata: Vec<(String, String)>,
+    /// Metadata for agents available for delegation via the Task tool: (id, description).
+    pub available_agents_metadata: Vec<(String, String)>,
     pub parent_agent_id: Option<String>,
     pub run_id: Option<String>,
     pub thinking_tx: Option<mpsc::UnboundedSender<ThinkingEvent>>,
@@ -340,6 +342,7 @@ impl AgentEngine {
             chat_history: Vec::new(),
             active_skill: None,
             available_skills_metadata: Vec::new(),
+            available_agents_metadata: Vec::new(),
             parent_agent_id: None,
             run_id: None,
             thinking_tx: None,

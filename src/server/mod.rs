@@ -81,7 +81,9 @@ pub struct ServerState {
     /// Key: "{project_root}:{session_id}", Value: (prompt_tokens, completion_tokens).
     pub session_tokens: Arc<Mutex<HashMap<String, (usize, usize)>>>,
     /// Maps running agent_id → session_id so SSE events can be tagged with their session.
-    pub agent_sessions: Arc<Mutex<HashMap<String, String>>>,
+    /// Uses `std::sync::RwLock` so SSE readers never block on each other and only
+    /// briefly contend with writers (register/deregister are single insert/remove).
+    pub agent_sessions: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -924,7 +926,7 @@ pub async fn prepare_server(
         queue_seq: AtomicU64::new(1),
         event_seq: AtomicU64::new(1),
         session_tokens: Arc::new(Mutex::new(HashMap::new())),
-        agent_sessions: Arc::new(Mutex::new(HashMap::new())),
+        agent_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
     });
 
     // Bridge internal AgentManager events to SSE for the UI.
@@ -953,10 +955,9 @@ pub async fn prepare_server(
                             actual_completion_tokens: Some(completion),
                             ..
                         } = &other {
-                            let sessions = state_clone.agent_sessions.lock().await;
-                            let sid = sessions.get(ctx_agent_id).cloned()
+                            let sid = state_clone.agent_sessions.read().unwrap()
+                                .get(ctx_agent_id).cloned()
                                 .unwrap_or_else(|| "current".to_string());
-                            drop(sessions);
                             let mut tokens = state_clone.session_tokens.lock().await;
                             let entry = tokens.entry(sid).or_insert((0, 0));
                             entry.0 += prompt;
@@ -967,10 +968,10 @@ pub async fn prepare_server(
                         if let crate::agent_manager::AgentEvent::SubagentSpawned {
                             parent_id, subagent_id, ..
                         } = &other {
-                            let map = state_clone.agent_sessions.lock().await;
-                            if let Some(sid) = map.get(parent_id).cloned() {
-                                drop(map);
-                                state_clone.agent_sessions.lock().await
+                            let sid = state_clone.agent_sessions.read().unwrap()
+                                .get(parent_id).cloned();
+                            if let Some(sid) = sid {
+                                state_clone.agent_sessions.write().unwrap()
                                     .insert(subagent_id.clone(), sid);
                             }
                         }
@@ -978,7 +979,7 @@ pub async fn prepare_server(
                         if let crate::agent_manager::AgentEvent::SubagentResult {
                             subagent_id, ..
                         } = &other {
-                            state_clone.agent_sessions.lock().await
+                            state_clone.agent_sessions.write().unwrap()
                                 .remove(subagent_id);
                         }
                         if let Some(se) = ServerEvent::from_agent_event(other) {
@@ -1171,7 +1172,7 @@ async fn events_handler(
         // Enrich with session_id from agent_sessions map if not already set.
         if ui_msg.session_id.is_none() {
             if let Some(aid) = &ui_msg.agent_id {
-                if let Ok(map) = agent_sessions.try_lock() {
+                if let Ok(map) = agent_sessions.read() {
                     if let Some(sid) = map.get(aid) {
                         ui_msg.session_id = Some(sid.clone());
                     }

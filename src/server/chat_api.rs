@@ -1016,7 +1016,7 @@ pub(crate) async fn chat_handler(
                 // Register agent → session mapping so SSE events get tagged.
                 // Must happen before any events are emitted for this run.
                 if let Some(sid) = &session_id {
-                    state_clone.agent_sessions.lock().await
+                    state_clone.agent_sessions.write().unwrap()
                         .insert(target_id_clone.clone(), sid.clone());
                 }
 
@@ -1107,11 +1107,8 @@ pub(crate) async fn chat_handler(
                         None,
                     )
                     .await;
-                // Small yield so the SSE event handler can enrich the
-                // final events with session_id before we remove the mapping.
-                tokio::task::yield_now().await;
                 // Deregister agent → session mapping.
-                state_clone.agent_sessions.lock().await
+                state_clone.agent_sessions.write().unwrap()
                     .remove(&target_id_clone);
             });
 

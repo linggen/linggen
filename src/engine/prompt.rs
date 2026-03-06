@@ -94,6 +94,15 @@ impl AgentEngine {
             ));
         }
 
+        // Inject available agents for Task delegation
+        if !self.available_agents_metadata.is_empty() {
+            prompt.push_str("\n\n## Available Agents for Delegation\n\nYou can delegate tasks to the following agents using the Task tool:\n");
+            for (name, description) in &self.available_agents_metadata {
+                prompt.push_str(&format!("\n- **{}**: {}", name, description));
+            }
+            prompt.push('\n');
+        }
+
         prompt
     }
 

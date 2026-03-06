@@ -13,10 +13,10 @@ use super::display::*;
 use super::markdown;
 
 /// Render a single DisplayBlock into terminal lines.
-pub fn render_block(block: &DisplayBlock, _width: u16) -> Vec<Line<'static>> {
+pub fn render_block(block: &DisplayBlock, width: u16) -> Vec<Line<'static>> {
     match block {
         DisplayBlock::UserMessage { text, image_count } => render_user_message(text, *image_count),
-        DisplayBlock::AgentMessage { agent_id, text } => render_agent_message(agent_id, text),
+        DisplayBlock::AgentMessage { agent_id, text } => render_agent_message(agent_id, text, width),
         DisplayBlock::SystemMessage { text } => render_system_message(text),
         DisplayBlock::ToolGroup {
             steps,
@@ -61,9 +61,9 @@ fn render_user_message(text: &str, image_count: usize) -> Vec<Line<'static>> {
     vec![Line::from(spans)]
 }
 
-fn render_agent_message(agent_id: &str, text: &str) -> Vec<Line<'static>> {
+fn render_agent_message(agent_id: &str, text: &str, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let md_lines = markdown::markdown_to_lines(text);
+    let md_lines = markdown::markdown_to_lines(text, width);
 
     if md_lines.is_empty() {
         return lines;

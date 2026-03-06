@@ -6,22 +6,25 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-pub fn markdown_to_lines(input: &str) -> Vec<Line<'static>> {
+pub fn markdown_to_lines(input: &str, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
+    // Box width: terminal width minus 2-char left margin, minus 1 for safety
+    let box_inner = (width as usize).saturating_sub(4); // "  ┌" + "┐" = 4 chars of framing
 
     for raw_line in input.lines() {
         if raw_line.trim_start().starts_with("```") {
             in_code_block = !in_code_block;
             if in_code_block {
-                // Opening fence — dim horizontal rule
+                // Opening fence: ┌───────┐
                 lines.push(Line::from(Span::styled(
-                    format!("  ┌{}", "─".repeat(76)),
+                    format!("  ┌{}┐", "─".repeat(box_inner)),
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
+                // Closing fence: └───────┘
                 lines.push(Line::from(Span::styled(
-                    format!("  └{}", "─".repeat(76)),
+                    format!("  └{}┘", "─".repeat(box_inner)),
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -29,11 +32,21 @@ pub fn markdown_to_lines(input: &str) -> Vec<Line<'static>> {
         }
 
         if in_code_block {
+            // Pad content to fill box width: │ content     │
+            let content = raw_line;
+            let content_display_len = content.chars().count();
+            // Inner space: box_inner minus "│ " prefix (2) minus "│" suffix (0, it's outside)
+            // Actually: "  │ {content padded} │" → left margin(2) + │(1) + space(1) + content + pad + space(0) + │(1)
+            let pad = box_inner.saturating_sub(content_display_len + 2); // 2 = "│ " prefix inside box
             lines.push(Line::from(vec![
                 Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     raw_line.to_string(),
                     Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!("{}│", " ".repeat(pad)),
+                    Style::default().fg(Color::DarkGray),
                 ),
             ]));
             continue;

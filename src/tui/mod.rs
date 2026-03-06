@@ -6,10 +6,12 @@ pub mod render;
 use crate::tui_client::TuiClient;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use futures_util::StreamExt;
 use ratatui::backend::CrosstermBackend;
-use ratatui::{Terminal, TerminalOptions, Viewport};
+use ratatui::Terminal;
 use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,20 +98,16 @@ pub async fn run_tui(port: u16, project_root: String) -> Result<()> {
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
+    crossterm::execute!(io::stdout(), EnterAlternateScreen)?;
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
-    let (_, rows) = crossterm::terminal::size()?;
-    let terminal = Terminal::with_options(
-        backend,
-        TerminalOptions {
-            viewport: Viewport::Inline(rows),
-        },
-    )?;
+    let terminal = Terminal::new(backend)?;
     Ok(terminal)
 }
 
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode()?;
+    crossterm::execute!(io::stdout(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
 }
