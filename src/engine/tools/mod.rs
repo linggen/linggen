@@ -165,7 +165,9 @@ pub type ToolProgressSender = tokio::sync::mpsc::UnboundedSender<(String, String
 #[derive(Clone)]
 pub struct Tools {
     root: PathBuf,
-    cwd: Arc<std::sync::Mutex<PathBuf>>,
+    /// Per-session working directory. Key = session_id, value = cwd.
+    /// Sessions without an entry default to `root`.
+    cwd_by_session: Arc<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>>,
     manager: Option<Arc<AgentManager>>,
     agent_id: Option<String>,
     delegation_depth: usize,
@@ -181,10 +183,10 @@ pub struct Tools {
 
 impl Tools {
     pub fn new(root: PathBuf) -> Result<Self> {
-        let cwd = Arc::new(std::sync::Mutex::new(root.clone()));
+        let cwd_by_session = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         Ok(Self {
             root,
-            cwd,
+            cwd_by_session,
             manager: None,
             agent_id: None,
             delegation_depth: 0,
@@ -277,7 +279,12 @@ impl Tools {
     }
 
     pub fn cwd(&self) -> PathBuf {
-        self.cwd.lock().unwrap().clone()
+        let map = self.cwd_by_session.lock().unwrap();
+        if let Some(sid) = &self.session_id {
+            map.get(sid).cloned().unwrap_or_else(|| self.root.clone())
+        } else {
+            self.root.clone()
+        }
     }
 
     // ── Execute dispatcher ──────────────────────────────────────────────

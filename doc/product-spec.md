@@ -10,7 +10,7 @@ guide: |
 
 ## Vision
 
-Linggen is a **personal AI operating system**. The core runtime manages agent processes, communication, and execution — everything else is userspace, built on top as skills and agents.
+Linggen is **the root system for AI agents**. The core runtime manages agent processes, communication, and execution — everything else grows on top as skills and agents.
 
 Users manage agents, skills, and models through Web UI and TUI. Each agent has its own context, skill set, and mission — from a social chat skill to a coding agent to a scheduled architecture guardian. Skills follow the [Agent Skills](https://agentskills.io) open standard (aligned with Claude Code) and work across AI tools.
 
@@ -83,15 +83,14 @@ Users configure multiple providers (Ollama, OpenAI, Claude, Bedrock). Named rout
 
 ### 6. Cross-tool skill ecosystem
 
-- Skills written for Linggen work in Claude Code and Codex (shared standard).
-- The `linggen` skill lets other AI tools dispatch tasks to Linggen.
+- Skills written for Linggen work in Claude Code and Codex (shared Agent Skills standard).
 - Users manage all agents, skills, and models from one place.
 
 ---
 
 ## Product Goals
 
-- **Agent OS** — robust core runtime (agentic loop, message queue, agent lifecycle, event bus).
+- **Root system** — robust core runtime (agentic loop, message queue, agent lifecycle, event bus).
 - **Skills-first** — add capabilities by dropping a `SKILL.md`. Built-in tools only for core ops.
 - **User interrupt** — users can message a running agent; model sees it and adapts.
 - **Multi-agent concurrency** — multiple agents running simultaneously.

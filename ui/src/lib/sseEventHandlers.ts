@@ -99,6 +99,7 @@ export function dispatchSseEvent(item: UiSseMessage): void {
     case 'turn_complete':   handleTurnComplete(item); return;
     case 'tool_progress': handleToolProgress(item); return;
     case 'app_launched':   handleAppLaunched(item); return;
+    case 'mission_completed': handleMissionCompleted(item); return;
   }
 }
 
@@ -552,4 +553,21 @@ function handleModelFallback(item: UiSseMessage): void {
       [agentId]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
     }));
   }
+}
+
+function handleMissionCompleted(item: UiSseMessage): void {
+  const data = item.data;
+  if (!data) return;
+  const name = String(data.mission_name || data.mission_id || 'Mission');
+  const status = String(data.status || 'completed');
+  const variant = status === 'completed' ? 'success' as const : 'error' as const;
+  const label = status === 'completed' ? 'completed' : 'failed';
+
+  useUiStore.getState().addToast({
+    message: `Mission "${name}" ${label}`,
+    variant,
+  });
+
+  // Refresh mission data so the runs list updates.
+  useUiStore.getState().bumpMissionRefreshKey();
 }

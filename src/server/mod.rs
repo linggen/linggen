@@ -48,7 +48,7 @@ use projects_api::{
     list_sessions, list_skill_files_api, list_skills, reload_skills, remove_project, remove_session_api,
     rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
 };
-use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, marketplace_install, marketplace_list, marketplace_move_to_global, marketplace_search, marketplace_uninstall};
+use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, community_search, marketplace_install, marketplace_move_to_global, marketplace_uninstall};
 use missions_api::{
     create_mission, delete_mission, delete_mission_session, get_mission,
     get_mission_session_state, list_mission_runs, list_mission_sessions, list_missions,
@@ -209,6 +209,13 @@ pub enum ServerEvent {
         mission_id: String,
         agent_id: String,
         project_root: String,
+    },
+    MissionCompleted {
+        mission_id: String,
+        mission_name: String,
+        status: String,
+        run_id: String,
+        session_id: Option<String>,
     },
     TextSegment {
         agent_id: String,
@@ -626,6 +633,31 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             session_id: None,
             project_root: Some(project_root),
             data: Some(json!({ "status": "mission_triggered", "mission_id": mission_id })),
+        }),
+        ServerEvent::MissionCompleted {
+            mission_id,
+            mission_name,
+            status,
+            run_id,
+            session_id,
+        } => Some(UiSseMessage {
+            id: format!("mission-done-{mission_id}-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "mission_completed".to_string(),
+            phase: None,
+            text: Some(format!("Mission '{}' {}", mission_name, status)),
+            agent_id: None,
+            session_id: session_id.clone(),
+            project_root: None,
+            data: Some(json!({
+                "mission_id": mission_id,
+                "mission_name": mission_name,
+                "status": status,
+                "run_id": run_id,
+                "session_id": session_id,
+            })),
         }),
         ServerEvent::TextSegment {
             agent_id,
@@ -1054,8 +1086,7 @@ pub async fn prepare_server(
         .route("/api/auth/codex/logout", post(codex_auth_logout))
         .route("/api/skills", get(list_skills))
         .route("/api/skills/reload", post(reload_skills))
-        .route("/api/marketplace/search", get(marketplace_search))
-        .route("/api/marketplace/list", get(marketplace_list))
+        .route("/api/community-skills/search", get(community_search))
         .route("/api/marketplace/install", post(marketplace_install))
         .route("/api/marketplace/uninstall", delete(marketplace_uninstall))
         .route("/api/marketplace/move-to-global", post(marketplace_move_to_global))
@@ -1300,13 +1331,22 @@ async fn events_handler(
             }
         }
         // Server-side session filter: if the client requested a specific session,
-        // drop events that belong to a *different* session. Events without
-        // session_id (global) always pass through.
+        // drop events that belong to a *different* session.
+        // Only truly global event kinds (state sync, resync) pass without session_id.
         if let Some(ref wanted) = filter_session {
-            if let Some(ref event_sid) = ui_msg.session_id {
-                if event_sid != wanted {
-                    return None;
+            match &ui_msg.session_id {
+                Some(event_sid) if event_sid != wanted => return None,
+                None => {
+                    // Allow global events (sync/resync) through; drop everything else.
+                    let is_global = matches!(
+                        (ui_msg.kind.as_str(), ui_msg.phase.as_deref()),
+                        ("run", Some("sync")) | ("run", Some("resync"))
+                    );
+                    if !is_global {
+                        return None;
+                    }
                 }
+                _ => {} // session matches — pass through
             }
         }
         let data = serde_json::to_string(&ui_msg).unwrap_or_default();
@@ -1440,6 +1480,7 @@ mod tests {
                 outcome: crate::engine::AgentOutcome::None,
             },
             ServerEvent::Token {
+                session_id: None,
                 agent_id: "ling".into(),
                 token: "Hello".into(),
                 done: false,

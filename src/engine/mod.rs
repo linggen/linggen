@@ -167,6 +167,10 @@ impl AgentEngine {
         }
 
         let use_native_tools = self.model_manager.supports_tools(&self.model_id);
+        info!(
+            "Agent loop: model_id={}, native_tools={}",
+            self.model_id, use_native_tools
+        );
         let (messages, allowed_tools, read_paths) =
             self.prepare_loop_messages(&task, use_native_tools);
 
@@ -201,6 +205,7 @@ impl AgentEngine {
         };
         self.native_tool_mode = use_native_tools;
 
+        let mut interrupted_by_user = false;
         for _ in 0..self.cfg.max_iters {
             if self.is_cancelled().await {
                 anyhow::bail!("run cancelled");
@@ -213,6 +218,7 @@ impl AgentEngine {
             if let Some(rx) = &mut self.interrupt_rx {
                 if rx.try_recv().is_ok() {
                     info!("Breaking loop: user sent a new message");
+                    interrupted_by_user = true;
                     break;
                 }
             }
@@ -472,14 +478,8 @@ impl AgentEngine {
                     if self.plan_mode {
                         info!("Text-only response in plan mode → implicit ExitPlanMode");
                         let plan_text = raw.trim().to_string();
-                        let (outcome, feedback) = self.finalize_plan_mode(plan_text).await;
-                        if let Some(feedback) = feedback {
-                            self.inject_plan_feedback(&mut state.messages, &feedback);
-                            // Continue loop so the model can revise the plan.
-                        } else {
-                            return Ok(outcome);
-                        }
-                        continue;
+                        let outcome = self.finalize_plan_mode(plan_text).await;
+                        return Ok(outcome);
                     }
 
                     // Pure conversational text — content tokens were already streamed
@@ -723,21 +723,27 @@ impl AgentEngine {
         }
 
         self.active_skill = None;
-        let fallback = self.prompt_store.render_or_fallback(
-            crate::prompts::keys::BAILOUT_LOOP_LIMIT,
-            &[],
-        );
-        self.push_context_record(
-            ContextType::Status,
-            Some("loop_limit_reached".to_string()),
-            self.agent_id.clone(),
-            Some("user".to_string()),
-            fallback.clone(),
-            serde_json::json!({ "max_iters": self.cfg.max_iters }),
-        );
-        let _ = self
-            .persist_assistant_message(&fallback, session_id)
-            .await;
+
+        // Only emit the bailout message when we actually hit the iteration
+        // limit.  If the loop exited because the user sent a new message,
+        // silently yield so the next chat round can start cleanly.
+        if !interrupted_by_user {
+            let fallback = self.prompt_store.render_or_fallback(
+                crate::prompts::keys::BAILOUT_LOOP_LIMIT,
+                &[],
+            );
+            self.push_context_record(
+                ContextType::Status,
+                Some("loop_limit_reached".to_string()),
+                self.agent_id.clone(),
+                Some("user".to_string()),
+                fallback.clone(),
+                serde_json::json!({ "max_iters": self.cfg.max_iters }),
+            );
+            let _ = self
+                .persist_assistant_message(&fallback, session_id)
+                .await;
+        }
         Ok(AgentOutcome::None)
     }
 }

@@ -638,40 +638,14 @@ async fn run_plan_dispatch(
 
     engine.thinking_tx = None;
     unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
-    // Note: plan_mode is managed by ask_plan_approval (approve/reject both
-    // set it to false). Don't reset it unconditionally here — the Plan
-    // outcome with custom feedback needs plan_mode to stay true for revision.
+    engine.plan_mode = false;
 
     match outcome {
-        Ok(crate::engine::AgentOutcome::PlanApproved(plan)) => {
-            // User approved inline via AskUser — start execution immediately.
+        Ok(ref out) => {
             persist_and_emit_last_assistant_text(ctx, engine).await;
-            emit_outcome_event(
-                &crate::engine::AgentOutcome::PlanApproved(plan.clone()),
-                &ctx.events_tx,
-                &ctx.agent_id,
-            );
-            persist_and_emit_message(
-                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                "user", &ctx.agent_id,
-                "Plan approved. Starting execution.",
-                ctx.session_id.as_deref(), false,
-            )
-            .await;
-
-            engine.plan = Some(plan);
-            engine.observations.clear();
-            engine.task = Some(format!(
-                "Execute the approved plan: {}",
-                engine.plan.as_ref().map(|p| p.summary.as_str()).unwrap_or("Plan")
-            ));
-            run_plan_execution(ctx, engine).await;
-        }
-        Ok(ref outcome) => {
-            persist_and_emit_last_assistant_text(ctx, engine).await;
-            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
-            if let crate::engine::AgentOutcome::Plan(ref plan) = outcome {
-                // Fallback: no inline approval — store for manual approval via UI buttons.
+            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id);
+            if let crate::engine::AgentOutcome::Plan(ref plan) = out {
+                // Store pending plan — user approves via PlanBlock buttons in UI.
                 ctx.manager
                     .set_pending_plan(
                         &ctx.root.to_string_lossy(),
@@ -1178,7 +1152,7 @@ pub(crate) async fn chat_handler(
             let queued_item_id = queued_item.as_ref().map(|q| q.id.clone());
             let session_id_for_queue = effective_session_id.clone();
             let project_root_for_queue = project_root_str.clone();
-            let req_mode = req.mode.clone();
+            let _req_mode = req.mode.clone();
             let req_model_id = req.model_id.clone();
             let req_images = req.images.clone();
             let mission_root_for_spawn = mission_sessions_root.clone();
@@ -1359,13 +1333,7 @@ pub(crate) async fn chat_handler(
                     }
                 }
 
-                let is_plan_mode = req_mode.as_deref() == Some("plan")
-                    || clean_msg_clone.trim_start().starts_with("/plan ");
-
-                if is_plan_mode {
-                    // 0. Plan mode dispatch
-                    run_plan_dispatch(&ctx, &mut engine).await;
-                } else if clean_msg_clone.trim_start().starts_with('/') {
+                if clean_msg_clone.trim_start().starts_with('/') {
                     // 1. Slash-command skill dispatch
                     run_skill_dispatch(&ctx, &mut engine).await;
                 } else if let Some((skill_name, remaining)) =

@@ -119,8 +119,8 @@ pub async fn run(action: SkillsAction, _config: &Config) -> Result<()> {
             }
         }
         SkillsAction::Search { query } => {
-            println!("Searching marketplace for '{}' ...\n", query);
-            let results = marketplace::search_marketplace(&query).await?;
+            println!("Searching community skills for '{}' ...\n", query);
+            let results = marketplace::search_community(&query).await?;
             if results.is_empty() {
                 println!("  No results found.");
                 return Ok(());

@@ -548,11 +548,16 @@ impl ModelManager {
     /// Uses explicit config if set, otherwise auto-detects based on provider.
     pub fn supports_tools(&self, model_id: &str) -> bool {
         let Some(instance) = self.models.get(model_id) else {
-            return false;
+            tracing::warn!(
+                "supports_tools: model '{}' not found in configured models (have: {:?}), defaulting to true",
+                model_id,
+                self.models.keys().collect::<Vec<_>>()
+            );
+            return true;
         };
-        // Default to true — most providers support native tool calling.
-        // Users can set `supports_tools = false` in config for providers that don't.
-        instance.config.supports_tools.unwrap_or(true)
+        let result = instance.config.supports_tools.unwrap_or(true);
+        tracing::debug!("supports_tools: model='{}' → {}", model_id, result);
+        result
     }
 
     /// Check if a model ID exists in the configured models.

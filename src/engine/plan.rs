@@ -1,7 +1,6 @@
 use super::types::*;
 use crate::config::AgentPolicyCapability;
 use crate::engine::patch::validate_unified_diff;
-use crate::engine::tools;
 use crate::ollama::ChatMessage;
 use rand::RngExt;
 use tracing::{info, warn};
@@ -100,10 +99,11 @@ impl AgentEngine {
     }
 
     /// Called when the model signals plan completion (via ExitPlanMode tool or
-    /// fallback: done in plan_mode). Extracts the plan text, persists it, and
-    /// asks for user approval via the AskUser bridge (if available).
-    /// Returns `(outcome, custom_feedback)` — see `ask_plan_approval`.
-    pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> (AgentOutcome, Option<String>) {
+    /// fallback: done in plan_mode). Persists the plan, emits a PlanUpdate SSE
+    /// event so the PlanBlock renders in the UI, and returns `AgentOutcome::Plan`
+    /// for the server to store as pending. The user reviews and approves via
+    /// PlanBlock buttons (CC-aligned — no modal AskUser dialog).
+    pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> AgentOutcome {
         let summary = Self::extract_plan_summary(&plan_text);
         let plan = Plan {
             summary,
@@ -111,99 +111,8 @@ impl AgentEngine {
             plan_text,
             items: Vec::new(),
         };
-        // Write to disk but don't emit SSE yet — ask_plan_approval will
-        // emit a single PlanUpdate at the final status (Approved/Planned).
-        self.write_plan_file(&plan);
-        self.plan = Some(plan);
-        self.ask_plan_approval().await
-    }
-
-    /// Send an AskUser event with Approve/Reject options for the current plan
-    /// and wait for the user's response. Returns `(outcome, custom_feedback)`.
-    ///
-    /// - Approve → `(PlanApproved, None)`
-    /// - Reject → `(None, None)`
-    /// - Custom feedback → `(Plan, Some(feedback))`
-    /// - Timeout / no bridge → `(Plan, None)`
-    pub(crate) async fn ask_plan_approval(&mut self) -> (AgentOutcome, Option<String>) {
-        let Some(bridge) = self.tools.ask_user_bridge().cloned() else {
-            // No AskUser bridge (CLI/TUI) — fall back to pending plan.
-            return (AgentOutcome::Plan(self.plan.clone().unwrap()), None);
-        };
-
-        let question_id = uuid::Uuid::new_v4().to_string();
-        let agent_id = self.agent_id.clone().unwrap_or_default();
-
-        let questions = vec![tools::AskUserQuestion {
-            question: "Plan is ready for review. How would you like to proceed?".to_string(),
-            header: "Plan".to_string(),
-            options: vec![
-                tools::AskUserOption {
-                    label: "Start building".to_string(),
-                    description: Some("Start executing the plan".to_string()),
-                    preview: None,
-                },
-                tools::AskUserOption {
-                    label: "Reject".to_string(),
-                    description: Some("Discard the plan".to_string()),
-                    preview: None,
-                },
-            ],
-            multi_select: false,
-        }];
-        let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
-            agent_id: agent_id.clone(),
-            question_id: question_id.clone(),
-            questions: questions.clone(),
-        });
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        bridge.pending.lock().await.insert(
-            question_id.clone(),
-            tools::PendingAskUser { agent_id, questions, sender: tx },
-        );
-
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(600),
-            rx,
-        ).await;
-        bridge.pending.lock().await.remove(&question_id);
-
-        match response {
-            Ok(Ok(answers)) => {
-                let selected = answers.first()
-                    .and_then(|a| a.selected.first())
-                    .map(|s| s.as_str());
-                let custom = answers.first()
-                    .and_then(|a| a.custom_text.clone());
-
-                if matches!(selected, Some("Start building") | Some("Approve")) {
-                    info!("Plan approved inline");
-                    self.plan_mode = false;
-                    if let Some(ref mut p) = self.plan {
-                        p.status = PlanStatus::Approved;
-                    }
-                    let approved = self.plan.clone().unwrap();
-                    self.persist_and_emit_plan(approved.clone()).await;
-                    (AgentOutcome::PlanApproved(approved), None)
-                } else if let Some("Reject") = selected {
-                    info!("Plan rejected inline");
-                    self.plan_mode = false;
-                    self.plan = None;
-                    (AgentOutcome::None, None)
-                } else if custom.is_some() {
-                    info!("User feedback on plan");
-                    (AgentOutcome::Plan(self.plan.clone().unwrap()), custom)
-                } else {
-                    // Unknown selection — fall back to pending plan.
-                    (AgentOutcome::Plan(self.plan.clone().unwrap()), None)
-                }
-            }
-            _ => {
-                // Timeout or cancelled — fall back to pending plan.
-                (AgentOutcome::Plan(self.plan.clone().unwrap()), None)
-            }
-        }
+        self.persist_and_emit_plan(plan.clone()).await;
+        AgentOutcome::Plan(plan)
     }
 
     /// Persist the plan to self.plan + plan file, and emit a PlanUpdate SSE event.

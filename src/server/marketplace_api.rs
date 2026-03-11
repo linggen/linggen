@@ -21,11 +21,6 @@ pub(crate) struct SearchQuery {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct ListQuery {
-    limit: Option<usize>,
-}
-
-#[derive(Deserialize)]
 pub(crate) struct InstallRequest {
     name: String,
     repo_url: Option<String>,
@@ -47,7 +42,7 @@ pub(crate) struct UninstallRequest {
 // Handlers
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn marketplace_search(
+pub(crate) async fn community_search(
     Query(query): Query<SearchQuery>,
 ) -> impl IntoResponse {
     let q = query.q.unwrap_or_default();
@@ -55,24 +50,10 @@ pub(crate) async fn marketplace_search(
         return (StatusCode::BAD_REQUEST, "Missing query parameter 'q'").into_response();
     }
 
-    match marketplace::search_marketplace(&q).await {
+    match marketplace::search_community(&q).await {
         Ok(skills) => axum::Json(skills).into_response(),
         Err(e) => {
-            tracing::error!(err = %e, "Marketplace search failed");
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-        }
-    }
-}
-
-pub(crate) async fn marketplace_list(
-    Query(query): Query<ListQuery>,
-) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(20);
-
-    match marketplace::list_marketplace(limit).await {
-        Ok(skills) => axum::Json(skills).into_response(),
-        Err(e) => {
-            tracing::error!(err = %e, "Marketplace list failed");
+            tracing::error!(err = %e, "Community skills search failed");
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }

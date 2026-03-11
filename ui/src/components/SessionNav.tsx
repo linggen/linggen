@@ -7,9 +7,8 @@ import {
   FileText,
   FolderOpen,
   FolderPlus,
-  MessageSquarePlus,
   MoreHorizontal,
-  Search,
+  Plus,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { AgentTreeItem, ProjectInfo, SessionInfo } from '../types';
@@ -143,11 +142,6 @@ export interface SessionNavProps {
   treesByProject: Record<string, Record<string, AgentTreeItem>>;
   onSelectPath: (projectRoot: string, path: string) => void;
 
-  showAddProject: boolean;
-  setShowAddProject: (v: boolean) => void;
-  newProjectPath: string;
-  setNewProjectPath: (v: string) => void;
-  addProject: () => void;
   pickFolder: () => void;
   removeProject: (path: string) => void;
 }
@@ -167,18 +161,12 @@ export const SessionNav: React.FC<SessionNavProps> = ({
   sessionCountsByProject,
   treesByProject,
   onSelectPath,
-  showAddProject,
-  setShowAddProject,
-  newProjectPath,
-  setNewProjectPath,
-  addProject,
   pickFolder,
   removeProject,
 }) => {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() =>
     selectedProjectRoot ? new Set([selectedProjectRoot]) : new Set(),
   );
-  const [searchQuery, setSearchQuery] = useState('');
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
@@ -248,8 +236,6 @@ export const SessionNav: React.FC<SessionNavProps> = ({
     }
   }, [selectedProjectRoot]);
 
-  const lowerQuery = searchQuery.toLowerCase();
-
   // Compute live activity entries for selected project
   const liveEntries = useMemo(() => {
     if (!selectedProjectRoot) return [];
@@ -258,62 +244,25 @@ export const SessionNav: React.FC<SessionNavProps> = ({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Header: New Chat + New Project */}
-      <div className="p-3 border-b border-slate-200 dark:border-white/5 flex items-center gap-2">
-        <button
-          onClick={createSession}
-          disabled={!selectedProjectRoot}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40"
-        >
-          <MessageSquarePlus size={13} />
-          New Chat
-        </button>
-        <button
-          onClick={() => setShowAddProject(!showAddProject)}
-          className="p-1.5 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg text-slate-500 transition-colors"
-          title="Add Project"
-        >
-          <FolderPlus size={15} />
-        </button>
-      </div>
-
-      {/* Add Project inline form */}
-      {showAddProject && (
-        <div className="p-3 border-b border-slate-200 dark:border-white/5 space-y-2">
-          <div className="flex gap-1.5">
-            <input
-              value={newProjectPath}
-              onChange={(e) => setNewProjectPath(e.target.value)}
-              placeholder="Path to repository..."
-              className="flex-1 bg-slate-100 dark:bg-white/5 border-none rounded-lg px-2.5 py-1.5 text-[11px] outline-none"
-              onKeyDown={(e) => e.key === 'Enter' && addProject()}
-            />
-            <button
-              onClick={pickFolder}
-              className="px-2 py-1.5 bg-slate-200 dark:bg-white/10 rounded-lg text-[10px] font-bold hover:bg-slate-300 dark:hover:bg-white/20 transition-colors"
-            >
-              Browse
-            </button>
-          </div>
+      {/* Header: New Chat + Add Project */}
+      <div className="px-3 py-2 border-b border-slate-200 dark:border-white/5 flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sessions</span>
+        <div className="flex items-center gap-1">
           <button
-            onClick={addProject}
-            className="w-full py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-bold"
+            onClick={createSession}
+            disabled={!selectedProjectRoot}
+            className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40"
+            title="New Chat"
           >
-            Add Project
+            <Plus size={14} strokeWidth={2.5} />
           </button>
-        </div>
-      )}
-
-      {/* Search */}
-      <div className="px-3 py-2 border-b border-slate-200 dark:border-white/5">
-        <div className="flex items-center gap-2 bg-slate-100 dark:bg-white/5 rounded-lg px-2.5 py-1.5">
-          <Search size={13} className="text-slate-400 shrink-0" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search sessions..."
-            className="flex-1 bg-transparent text-[11px] outline-none placeholder:text-slate-400"
-          />
+          <button
+            onClick={pickFolder}
+            className="p-1.5 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg text-slate-500 transition-colors"
+            title="Add Project"
+          >
+            <FolderPlus size={14} />
+          </button>
         </div>
       </div>
 
@@ -332,15 +281,6 @@ export const SessionNav: React.FC<SessionNavProps> = ({
             ? (isSelected ? sessions : [])
             : [];
           const sessionCount = sessionCountsByProject[project.path] ?? 0;
-
-          // Filter sessions by search query
-          const filteredSessions = lowerQuery
-            ? projectSessions.filter((s) => s.title.toLowerCase().includes(lowerQuery))
-            : projectSessions;
-
-          // If searching and no matches, and this isn't the selected project, skip
-          if (lowerQuery && !isSelected && sessionCount === 0) return null;
-          if (lowerQuery && isExpanded && filteredSessions.length === 0) return null;
 
           return (
             <div key={project.path} className="rounded-lg">
@@ -405,7 +345,7 @@ export const SessionNav: React.FC<SessionNavProps> = ({
               {isExpanded && (
                 <div className="ml-3 mt-0.5 space-y-0.5">
                   {/* Sessions */}
-                  {filteredSessions.map((session) => {
+                  {projectSessions.map((session) => {
                     const isActive = isSelected && activeSessionId === session.id;
                     const isRenaming = renamingSessionId === session.id;
 
@@ -488,11 +428,6 @@ export const SessionNav: React.FC<SessionNavProps> = ({
                     );
                   })}
 
-                  {isSelected && filteredSessions.length === 0 && lowerQuery && (
-                    <div className="px-2.5 py-2 text-[10px] text-slate-400 italic">
-                      No matching sessions
-                    </div>
-                  )}
                 </div>
               )}
             </div>

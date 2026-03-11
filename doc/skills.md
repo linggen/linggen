@@ -181,4 +181,4 @@ Linggen follows the [Agent Skills](https://agentskills.io) open standard. Skills
 
 Claude Code now treats `.claude/commands/` and `.claude/skills/` as equivalent — a command at `.claude/commands/deploy.md` and a skill at `.claude/skills/deploy/SKILL.md` both create `/deploy`. Linggen supports both via compat discovery paths.
 
-The `linggen` skill (in `~/.claude/skills/linggen/`) lets other AI tools dispatch tasks to Linggen.
+Skills installed in `~/.claude/skills/` or `.claude/skills/` are discovered by Linggen, Claude Code, and Codex automatically.

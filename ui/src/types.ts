@@ -73,7 +73,7 @@ export interface UiSseMessage {
   seq: number;
   rev: number;
   ts_ms: number;
-  kind: 'message' | 'activity' | 'queue' | 'run' | 'token' | 'text_segment' | 'ask_user' | 'model_fallback' | 'content_block' | 'turn_complete' | 'app_launched' | 'tool_progress';
+  kind: 'message' | 'activity' | 'queue' | 'run' | 'token' | 'text_segment' | 'ask_user' | 'model_fallback' | 'content_block' | 'turn_complete' | 'app_launched' | 'tool_progress' | 'mission_completed';
   phase?: string;
   text?: string;
   agent_id?: string;
@@ -313,6 +313,7 @@ export interface MarketplaceSkill {
   install_count: number;
   git_ref?: string | null;
   content?: string | null;
+  updated_at?: string | null;
 }
 
 export interface BuiltInSkillInfo {

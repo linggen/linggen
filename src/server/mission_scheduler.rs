@@ -419,6 +419,15 @@ async fn dispatch_mission_prompt(
 
     // Record mission run
     record_mission_run(&state, mission, &run_id, session_id.as_deref(), status, false);
+
+    // Notify UI that the mission finished.
+    let _ = state.events_tx.send(ServerEvent::MissionCompleted {
+        mission_id: mission.id.clone(),
+        mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
+        status: status.to_string(),
+        run_id: run_id.clone(),
+        session_id: session_id.clone(),
+    });
 }
 
 /// Configure engine restrictions based on the mission's permission tier.

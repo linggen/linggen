@@ -8,7 +8,7 @@
 
 ## What Linggen Is
 
-Linggen is a **Personal AI OS** — the runtime on your machine that runs AI agents as apps. Agents, skills, and missions are files (markdown + scripts), not code plugins. Multiple agents run concurrently with multi-model routing, delegation, and cooperative interruption. See `product-spec.md` for the full system design.
+Linggen is **the root system for AI agents** — an open agent system where skills, agents, and missions are files (markdown + scripts), not code plugins. Multiple agents run concurrently with multi-model routing, delegation, and cooperative interruption. See `product-spec.md` for the full system design.
 
 ---
 
@@ -66,11 +66,11 @@ AIOS, ElizaOS, Palantir AIP, Siemens-NVIDIA Industrial AI OS — all target ente
 
 Linggen is **none of these categories**:
 - Not a coding assistant (agents can code, but also clean disks, chat on Discord, guard architecture)
-- Not an enterprise orchestration platform (personal, local-first)
+- Not an enterprise orchestration platform (personal, model-agnostic)
 - Not a messaging hub (rich Web UI, not chat-app text tubes)
 - Not a model provider (routes to any model)
 
-**Linggen is the personal AI OS** — combining multi-agent orchestration, file-based extensibility, cron missions, and a rich UI for personal/developer use.
+**Linggen is the root system for AI agents** — combining multi-agent orchestration, file-based extensibility, cron missions, and a rich UI for personal/developer use.
 
 ### Linggen vs OpenClaw
 
@@ -78,12 +78,12 @@ OpenClaw (264K stars) looks similar on the surface — local-first, personal, ex
 
 | | **OpenClaw** | **Linggen** |
 |---|---|---|
-| Core metaphor | AI in your messaging apps | AI OS on your workstation |
+| Core metaphor | AI in your messaging apps | Root system for your agents |
 | Interface | WhatsApp, Telegram, Discord (20+ channels) | Web UI, TUI, CLI, VS Code |
 | Agent model | Single agent (Pi) | Multi-agent with delegation |
 | Autonomy | Cron jobs, webhooks | Missions (cron-scheduled agent tasks) |
 | Extensibility | Skills (ClawHub registry) | Skills + Agents + Missions (all files) |
-| Optimizes for | **Reach** (20+ chat channels) | **Richness** (full OS interface) |
+| Optimizes for | **Reach** (20+ chat channels) | **Depth** (full agent system) |
 
 ---
 
@@ -91,13 +91,13 @@ OpenClaw (264K stars) looks similar on the surface — local-first, personal, ex
 
 | Problem | Current State | Linggen's Answer |
 |---|---|---|
-| AI tools are single-purpose | Each tool does one thing (IDE, terminal, chat) | One OS runs diverse agents (coding, social, devops, cleanup) |
+| AI tools are single-purpose | Each tool does one thing (IDE, terminal, chat) | One root cultivates diverse agents (coding, social, devops, cleanup) |
 | Extending AI requires code | MCP servers, plugins, SDKs | Drop a folder (markdown + scripts) |
 | AI is single-shot | One conversation, no recurring tasks | Missions = real cron jobs for AI agents |
 | AI doesn't understand your system | Architecture-blind code generation | Agents with filesystem memory + missions |
-| Privacy concerns | Most tools send code to cloud | Local-first, model-agnostic, user-controlled |
+| Privacy concerns | Most tools send code to cloud | Model-agnostic, user-controlled |
 | Unpredictable costs | $5-15/session, credit exhaustion | Route to local models for routine tasks |
-| "Agent OS" is enterprise-only | AIOS, Palantir, etc. target workflows | Personal AI OS for developers and power users |
+| "Agent OS" is enterprise-only | AIOS, Palantir, etc. target workflows | Open agent system for developers and power users |
 
 ---
 
@@ -105,10 +105,10 @@ OpenClaw (264K stars) looks similar on the surface — local-first, personal, ex
 
 ### Focus areas
 
-- **OS kernel** — scheduling, interruption, multi-agent coordination, tool execution, safety
-- **Apps as files** — zero-code-change extensibility via markdown agents, skills, and missions
+- **Core runtime** — scheduling, interruption, multi-agent coordination, tool execution, safety
+- **Skills as files** — zero-code-change extensibility via markdown agents, skills, and missions
 - **Open standards** — MCP, Agent Skills, AGENTS.md
-- **Local-first** — privacy + cost control as a core differentiator
+- **Model-agnostic** — connect any model, route intelligently
 - **Skills marketplace** — community-driven skill ecosystem
 - **Real "apps"** — disk cleanup, Discord, architect guardian — show the OS is general-purpose
 

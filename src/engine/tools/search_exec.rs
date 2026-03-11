@@ -239,7 +239,9 @@ impl Tools {
                 if pos + 1 < lines.len() {
                     let new_cwd = std::path::PathBuf::from(lines[pos + 1]);
                     if new_cwd.is_absolute() && new_cwd.exists() {
-                        *self.cwd.lock().unwrap() = new_cwd;
+                        if let Some(sid) = &self.session_id {
+                            self.cwd_by_session.lock().unwrap().insert(sid.clone(), new_cwd);
+                        }
                     }
                 }
                 // Remove sentinel line and pwd line from output.

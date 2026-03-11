@@ -7,6 +7,16 @@ import type { CronMission, ManagementTab, Plan, PendingAskUser, QueuedChatItem }
 export type Page = 'main' | 'settings' | 'mission-editor';
 export type SidebarTab = 'projects' | 'missions';
 
+export interface Toast {
+  id: string;
+  message: string;
+  variant: 'success' | 'error' | 'info';
+  /** Auto-dismiss after this many ms (default 5000). 0 = no auto-dismiss. */
+  duration?: number;
+  /** Optional callback when the toast is clicked. */
+  onClick?: () => void;
+}
+
 export interface AppPanelState {
   skill: string;
   launcher: string;
@@ -47,6 +57,15 @@ interface UiState {
   activePlan: Plan | null;
   verboseMode: boolean;
   copyChatStatus: 'idle' | 'copied' | 'error';
+
+  // SSE connection status
+  sseStatus: 'connected' | 'reconnecting';
+  setSseStatus: (status: 'connected' | 'reconnecting') => void;
+
+  // Toasts
+  toasts: Toast[];
+  addToast: (toast: Omit<Toast, 'id'>) => void;
+  removeToast: (id: string) => void;
 
   // Actions
   setCurrentPage: (page: Page) => void;
@@ -98,6 +117,20 @@ export const useUiStore = create<UiState>((set) => ({
   activePlan: null,
   verboseMode: typeof window !== 'undefined' ? window.localStorage.getItem(VERBOSE_MODE_STORAGE_KEY) === 'true' : false,
   copyChatStatus: 'idle',
+  sseStatus: 'connected',
+  setSseStatus: (status) => set({ sseStatus: status }),
+  toasts: [],
+  addToast: (toast) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const duration = toast.duration ?? 5000;
+    set((s) => ({ toasts: [...s.toasts, { ...toast, id }] }));
+    if (duration > 0) {
+      setTimeout(() => {
+        set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+      }, duration);
+    }
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   setCurrentPage: (page) => set({ currentPage: page }),
   setSidebarTab: (tab) => set({ sidebarTab: tab }),

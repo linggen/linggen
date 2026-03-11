@@ -226,7 +226,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ['/compact', 'Compact context (summarize old messages)'],
       ['/status', 'Show project status'],
       ['/model', 'Switch default model'],
-      ['/plan', 'Ask agent to create a plan'],
       ['/image', 'Attach an image file'],
     ];
 

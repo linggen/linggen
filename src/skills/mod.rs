@@ -583,10 +583,10 @@ No app."#;
 
     #[test]
     fn test_parse_frontmatter_meta() {
-        let text = "---\nname: memory\ndescription: A memory skill\n---\nContent here.";
+        let text = "---\nname: my-skill\ndescription: A sample skill\n---\nContent here.";
         let (name, desc) = parse_frontmatter_meta(text).unwrap();
-        assert_eq!(name, "memory");
-        assert_eq!(desc, "A memory skill");
+        assert_eq!(name, "my-skill");
+        assert_eq!(desc, "A sample skill");
     }
 
     #[test]

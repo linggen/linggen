@@ -6,7 +6,6 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use zip::ZipArchive;
 
-const REGISTRY_URL: &str = "https://linggen-analytics.liangatbc.workers.dev";
 const SKILLS_SH_API: &str = "https://skills.sh/api/search";
 const DEFAULT_SKILLS_REPO: &str = "https://github.com/linggen/skills";
 
@@ -34,34 +33,6 @@ pub struct MarketplaceSkill {
     pub updated_at: Option<String>,
 }
 
-impl MarketplaceSkill {
-    /// Extract description from YAML frontmatter in `content` if `description` is None.
-    pub fn fill_description(&mut self) {
-        if self.description.is_some() {
-            return;
-        }
-        let Some(content) = &self.content else { return };
-        let trimmed = content.trim_start();
-        if !trimmed.starts_with("---") {
-            return;
-        }
-        // Find the closing `---`
-        if let Some(end) = trimmed[3..].find("\n---") {
-            let frontmatter = &trimmed[3..3 + end];
-            for line in frontmatter.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("description:") {
-                    let desc = rest.trim().trim_matches('"').trim_matches('\'');
-                    if !desc.is_empty() {
-                        self.description = Some(desc.to_string());
-                    }
-                    return;
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillScope {
@@ -79,15 +50,8 @@ impl Default for SkillScope {
 // Registry response envelope
 // ---------------------------------------------------------------------------
 
-/// The registry wraps results in `{"success": true, "skills": [...], "pagination": {...}}`.
-#[derive(Debug, Deserialize)]
-struct RegistryResponse {
-    #[serde(default)]
-    skills: Vec<MarketplaceSkill>,
-}
-
 // ---------------------------------------------------------------------------
-// Registry / search
+// HTTP client / community search
 // ---------------------------------------------------------------------------
 
 pub fn http_client() -> Result<reqwest::Client> {
@@ -98,30 +62,13 @@ pub fn http_client() -> Result<reqwest::Client> {
         .context("Failed to build HTTP client")
 }
 
-pub async fn search_marketplace(query: &str) -> Result<Vec<MarketplaceSkill>> {
+/// Search community skills via skills.sh.
+pub async fn search_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
     let client = http_client()?;
     let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+    let url = format!("{}?q={}&limit=50", SKILLS_SH_API, encoded);
 
-    // Try registry first
-    let registry_url = format!("{}/skills/search?q={}", REGISTRY_URL, encoded);
-    if let Ok(resp) = client.get(&registry_url).send().await {
-        if resp.status().is_success() {
-            match resp.json::<RegistryResponse>().await {
-                Ok(mut envelope) if !envelope.skills.is_empty() => {
-                    for s in &mut envelope.skills { s.fill_description(); }
-                    return Ok(envelope.skills);
-                }
-                Ok(_) => {} // empty results, fall through
-                Err(e) => {
-                    tracing::warn!("Failed to parse registry search response: {e}");
-                }
-            }
-        }
-    }
-
-    // Fallback to skills.sh
-    let fallback_url = format!("{}?q={}&limit=50", SKILLS_SH_API, encoded);
-    let resp = client.get(&fallback_url).send().await?;
+    let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
         return Ok(vec![]);
     }
@@ -147,28 +94,6 @@ pub async fn search_marketplace(query: &str) -> Result<Vec<MarketplaceSkill>> {
         .collect();
 
     Ok(results)
-}
-
-pub async fn list_marketplace(limit: usize) -> Result<Vec<MarketplaceSkill>> {
-    let client = http_client()?;
-    let url = format!("{}/skills?limit={}", REGISTRY_URL, limit);
-
-    let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
-        tracing::warn!("Registry returned status {}", resp.status());
-        return Ok(vec![]);
-    }
-
-    match resp.json::<RegistryResponse>().await {
-        Ok(mut envelope) => {
-            for s in &mut envelope.skills { s.fill_description(); }
-            Ok(envelope.skills)
-        }
-        Err(e) => {
-            tracing::warn!("Failed to parse registry list response: {e}");
-            Ok(vec![])
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -835,20 +760,20 @@ mod tests {
     #[test]
     fn test_skill_target_dir_project() {
         let root = Path::new("/tmp/my-project");
-        let result = skill_target_dir("memory", SkillScope::Project, Some(root)).unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/my-project/.linggen/skills/memory"));
+        let result = skill_target_dir("my-skill", SkillScope::Project, Some(root)).unwrap();
+        assert_eq!(result, PathBuf::from("/tmp/my-project/.linggen/skills/my-skill"));
     }
 
     #[test]
     fn test_skill_target_dir_project_no_root() {
-        let err = skill_target_dir("memory", SkillScope::Project, None).unwrap_err();
+        let err = skill_target_dir("my-skill", SkillScope::Project, None).unwrap_err();
         assert!(err.to_string().contains("Project root required"));
     }
 
     #[test]
     fn test_skill_target_dir_global() {
-        let result = skill_target_dir("memory", SkillScope::Global, None).unwrap();
-        let expected = crate::paths::global_skills_dir().join("memory");
+        let result = skill_target_dir("my-skill", SkillScope::Global, None).unwrap();
+        let expected = crate::paths::global_skills_dir().join("my-skill");
         assert_eq!(result, expected);
     }
 
@@ -872,8 +797,8 @@ mod tests {
     #[test]
     fn test_marketplace_skill_serde() {
         let skill = MarketplaceSkill {
-            skill_id: "memory".into(),
-            name: "memory".into(),
+            skill_id: "my-skill".into(),
+            name: "my-skill".into(),
             url: "https://github.com/linggen/skills".into(),
             description: Some("Memory skill".into()),
             install_count: 42,
@@ -883,7 +808,7 @@ mod tests {
         };
         let json = serde_json::to_string(&skill).unwrap();
         let parsed: MarketplaceSkill = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.skill_id, "memory");
+        assert_eq!(parsed.skill_id, "my-skill");
         assert_eq!(parsed.install_count, 42);
     }
 }

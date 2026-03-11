@@ -4,14 +4,14 @@
 
 <h1 align="center">Linggen</h1>
 
-<p align="center">The Personal AI OS — run AI agents like an OS runs apps.</p>
+<p align="center">The root system for AI agents — plant skills, cultivate agents, channel any model.</p>
 
 <p align="center">
   <a href="https://linggen.dev">Website</a> &middot;
   <a href="#documentation">Docs</a>
 </p>
 
-Linggen is a personal AI operating system. Add agents and skills by dropping markdown files — no code changes needed. Multiple agents, multiple models, skills, and missions, all orchestrated on your machine.
+Linggen is an open agent system. Add agents and skills by dropping markdown files — no code changes needed. Multiple agents, multiple models, skills, and missions, all orchestrated from one root.
 
 ## Features
 
@@ -25,25 +25,29 @@ Linggen is a personal AI operating system. Add agents and skills by dropping mar
 
 ## Quick Start
 
-### Prerequisites
-
-- Rust toolchain (1.75+)
-- Node.js (18+) for the Web UI
-- An LLM provider: [Ollama](https://ollama.com) for local models, or an OpenAI-compatible API key
-
-### Build
+### Install
 
 ```bash
-# Backend
-cargo build
+curl -fsSL https://linggen.dev/install.sh | bash
+```
 
-# Web UI
+Or build from source:
+
+```bash
+# Prerequisites: Rust 1.75+, Node.js 18+
 cd ui && npm install && npm run build && cd ..
+cargo build --release
+```
+
+### Initialize
+
+```bash
+ling init    # scaffolds ~/.linggen/ (dirs, agents, config, skills)
 ```
 
 ### Configure
 
-Create `linggen.toml` in the project root:
+Run `ling init` to scaffold your environment, or create `linggen.runtime.toml` manually:
 
 ```toml
 [[models]]
@@ -61,13 +65,13 @@ keep_alive = "20m"
 # api_key = "sk-..."
 
 [server]
-port = 6666
+port = 9898
 
 [agent]
 max_iters = 100
 ```
 
-Config search order: `$LINGGEN_CONFIG` env var, `./linggen.toml`, `~/.config/linggen/`, `~/.local/share/linggen/`.
+Config search order: `$LINGGEN_CONFIG` env var, `./linggen.runtime.toml`, `~/.config/linggen/`, `~/.local/share/linggen/`.
 
 ### Run
 
@@ -75,7 +79,7 @@ Config search order: `$LINGGEN_CONFIG` env var, `./linggen.toml`, `~/.config/lin
 # Start TUI + server (default)
 cargo run
 
-# Web UI only (http://localhost:6666)
+# Web UI only (http://localhost:9898)
 cargo run -- --web
 
 # Dev mode (backend + Vite HMR)
@@ -147,7 +151,7 @@ linggen
 │   └── state_fs/             # Session and workspace state
 ├── agents/                   # Agent spec markdown files
 ├── ui/                       # React 19 + Vite + Tailwind v4
-└── linggen.toml        # Configuration
+└── linggen.runtime.toml  # Configuration
 ```
 
 ### Tool Contract
@@ -231,6 +235,10 @@ Detailed design docs live in [`doc/`](doc/):
 | [Log Spec](doc/log-spec.md) | Logging — levels, throttling, output targets |
 
 For more information, visit [linggen.dev](https://linggen.dev).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 

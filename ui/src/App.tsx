@@ -13,6 +13,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { MissionSessionNav } from './components/MissionSessionNav';
 import { MissionEditor } from './components/MissionPage';
 import { AgentSpecEditorModal } from './components/AgentSpecEditorModal';
+import { ToastContainer } from './components/ToastContainer';
 import { AppPanel } from './components/AppPanel';
 import type { AgentRunInfo, AgentRunSummary } from './types';
 import {
@@ -730,6 +731,7 @@ const App: React.FC = () => {
   // --- Render ---
   return (
     <>
+    <ToastContainer />
     {!isCompact && currentPage === 'mission-editor' && (
       <div className="flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden">
         <MissionEditor
@@ -823,11 +825,6 @@ const App: React.FC = () => {
             sessionCountsByProject={projectStore.sessionCountsByProject}
             treesByProject={agentTreesByProject}
             onSelectPath={selectAgentPathFromTree}
-            showAddProject={projectStore.showAddProject}
-            setShowAddProject={projectStore.setShowAddProject}
-            newProjectPath={projectStore.newProjectPath}
-            setNewProjectPath={projectStore.setNewProjectPath}
-            addProject={() => projectStore.addProject()}
             pickFolder={() => projectStore.pickFolder()}
             removeProject={(path) => projectStore.removeProject(path)}
           />

@@ -3,6 +3,27 @@ import { ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePl
 import type { BuiltInSkillInfo, MarketplaceSkill, SkillInfoFull, SkillFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
 
+/* ── Helpers ── */
+function formatRelativeDate(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    const now = Date.now();
+    const diffMs = now - date.getTime();
+    if (diffMs < 0 || isNaN(diffMs)) return dateStr;
+    const mins = Math.floor(diffMs / 60_000);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo ago`;
+    return `${Math.floor(months / 12)}y ago`;
+  } catch {
+    return dateStr;
+  }
+}
+
 /* ── Source badge colors by type ── */
 const sourceBadgeCls: Record<string, string> = {
   Global: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-200/50 dark:border-indigo-500/20',
@@ -115,30 +136,20 @@ export const SkillsTab: React.FC<{
     } catch { /* ignore */ }
   }, [projectRoot]);
 
-  const fetchMarketplaceList = useCallback(async () => {
-    setMpLoading(true);
-    try {
-      const resp = await fetch('/api/marketplace/list?limit=20');
-      if (resp.ok) setMpResults(await resp.json());
-    } catch { /* ignore */ }
-    setMpLoading(false);
-  }, []);
-
   useEffect(() => {
     fetchSkills();
     fetchSkillFiles();
     fetchBuiltInSkills();
-    fetchMarketplaceList();
-  }, [fetchSkills, fetchSkillFiles, fetchBuiltInSkills, fetchMarketplaceList]);
+  }, [fetchSkills, fetchSkillFiles, fetchBuiltInSkills]);
 
-  const searchMarketplace = async (q: string) => {
+  const searchCommunity = async (q: string) => {
     if (!q.trim()) {
-      fetchMarketplaceList();
+      setMpResults([]);
       return;
     }
     setMpLoading(true);
     try {
-      const resp = await fetch(`/api/marketplace/search?q=${encodeURIComponent(q)}`);
+      const resp = await fetch(`/api/community-skills/search?q=${encodeURIComponent(q)}`);
       if (resp.ok) setMpResults(await resp.json());
     } catch { /* ignore */ }
     setMpLoading(false);
@@ -147,7 +158,7 @@ export const SkillsTab: React.FC<{
   const handleMpQueryChange = (val: string) => {
     setMpQuery(val);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => searchMarketplace(val), 400);
+    debounceRef.current = setTimeout(() => searchCommunity(val), 400);
   };
 
   const installedNames = new Set(allSkills.map((s) => s.name));
@@ -690,7 +701,7 @@ export const SkillsTab: React.FC<{
                     className="flex-1 text-xs bg-transparent outline-none placeholder:text-slate-400"
                   />
                   {mpQuery && (
-                    <button onClick={() => { setMpQuery(''); fetchMarketplaceList(); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    <button onClick={() => { setMpQuery(''); setMpResults([]); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
                       <X size={12} />
                     </button>
                   )}
@@ -765,6 +776,8 @@ export const SkillsTab: React.FC<{
                   {filteredMpResults.map((skill) => {
                     const isInstalled = installedNames.has(skill.name);
                     const isInstalling = mpInstalling.has(skill.name);
+                    // Extract owner/repo from GitHub URL for display
+                    const repoSlug = skill.url ? skill.url.replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '') : '';
 
                     return (
                       <div
@@ -777,30 +790,44 @@ export const SkillsTab: React.FC<{
                       >
                         <div className="flex items-start gap-2.5">
                           <div className="flex-1 min-w-0">
+                            {/* Row 1: name + installs */}
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{skill.name}</span>
                               {skill.install_count > 0 && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
                                   <Download size={8} />
-                                  {skill.install_count}
+                                  {skill.install_count.toLocaleString()}
                                 </span>
                               )}
                             </div>
+                            {/* Row 2: description */}
                             {skill.description && (
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{skill.description}</p>
                             )}
-                            {skill.url && (
-                              <a
-                                href={skill.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-blue-500 mt-1 transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ExternalLink size={8} />
-                                source
-                              </a>
-                            )}
+                            {/* Row 3: metadata line — source repo + updated_at */}
+                            <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                              {skill.url && (
+                                <a
+                                  href={skill.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-0.5 hover:text-blue-500 transition-colors truncate max-w-[200px]"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title={skill.url}
+                                >
+                                  <ExternalLink size={8} className="shrink-0" />
+                                  {repoSlug || 'source'}
+                                </a>
+                              )}
+                              {skill.updated_at && (
+                                <>
+                                  <span className="text-slate-300 dark:text-white/10">·</span>
+                                  <span title={skill.updated_at}>
+                                    {formatRelativeDate(skill.updated_at)}
+                                  </span>
+                                </>
+                              )}
+                            </div>
                           </div>
                           <div className="shrink-0 pt-0.5">
                             {isInstalled ? (

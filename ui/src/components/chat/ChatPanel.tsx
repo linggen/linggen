@@ -487,7 +487,7 @@ export const ChatPanel: React.FC<{
     [selectedSubagentContext]
   );
   const displayedMainMessages = useMemo(
-    () => collapseProgressMessages(mergeMessageStreams(mainContextMessages, visibleMessages)),
+    () => collapseProgressMessages(mergeMessageStreams(mainContextMessages, sortMessagesByTime(visibleMessages))),
     [mainContextMessages, visibleMessages]
   );
   const displayedSubagentMessages = useMemo(

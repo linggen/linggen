@@ -1,6 +1,7 @@
 import React from 'react';
 import { Copy, Eraser, Settings } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useUiStore } from '../stores/uiStore';
 
 export const HeaderBar: React.FC<{
   copyChat: () => void;
@@ -15,6 +16,7 @@ export const HeaderBar: React.FC<{
   isRunning,
   onOpenSettings,
 }) => {
+  const sseStatus = useUiStore((s) => s.sseStatus);
   return (
     <header className="flex items-center justify-between px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
       {/* Left: Logo */}
@@ -51,8 +53,17 @@ export const HeaderBar: React.FC<{
       {/* Right: Status + Settings */}
       <div className="flex items-center gap-3 bg-slate-100 dark:bg-white/5 px-3 py-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-sm">
         <div className="flex items-center gap-2">
-          <div className={cn('w-2 h-2 rounded-full', isRunning ? 'bg-green-500 animate-pulse' : 'bg-slate-400')} />
-          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{isRunning ? 'Active' : 'Standby'}</span>
+          {sseStatus === 'reconnecting' ? (
+            <>
+              <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-amber-500">Reconnecting</span>
+            </>
+          ) : (
+            <>
+              <div className={cn('w-2 h-2 rounded-full', isRunning ? 'bg-green-500 animate-pulse' : 'bg-slate-400')} />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{isRunning ? 'Active' : 'Standby'}</span>
+            </>
+          )}
         </div>
         {onOpenSettings && (
           <>

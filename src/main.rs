@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 #[command(name = "ling", version)]
-#[command(about = "Linggen — AI coding agent", long_about = None)]
+#[command(about = "Linggen — the root system for AI agents", long_about = None)]
 struct Cli {
     /// Workspace root. If omitted, detects by walking up for .git.
     #[arg(long, global = true)]
@@ -84,12 +84,8 @@ enum Command {
         #[arg(long, default_value_t = false)]
         verbose: bool,
     },
-    /// Install all skills from linggen/skills repository
-    Init {
-        /// Install to global ~/.linggen/skills/ instead of project
-        #[arg(long, default_value_t = false)]
-        global: bool,
-    },
+    /// Set up ~/.linggen/ environment (directories, agents, config, skills)
+    Init,
     /// Install/update the ling binary to latest
     Install,
     /// Update the ling binary to latest
@@ -183,9 +179,8 @@ async fn main() -> Result<()> {
         Some(Command::Status) => {
             return cli::daemon::status(&config, config_path.as_deref()).await;
         }
-        Some(Command::Init { global }) => {
-            let root = if *global { None } else { global_root.clone() };
-            return cli::init::run(*global, root).await;
+        Some(Command::Init) => {
+            return cli::init::run(true, None).await;
         }
         Some(Command::Install) | Some(Command::Update) => {
             return cli::self_update::run().await;
@@ -396,7 +391,7 @@ async fn main() -> Result<()> {
         Some(Command::Doctor)
         | Some(Command::Stop)
         | Some(Command::Status)
-        | Some(Command::Init { .. })
+        | Some(Command::Init)
         | Some(Command::Install)
         | Some(Command::Update)
         | Some(Command::Skills { .. })

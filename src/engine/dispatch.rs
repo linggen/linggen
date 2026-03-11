@@ -330,7 +330,7 @@ impl AgentEngine {
         match action {
             ModelAction::Tool { ref tool, .. } if tool == "ExitPlanMode" => {
                 if self.plan_mode {
-                    info!("ExitPlanMode → asking user for approval");
+                    info!("ExitPlanMode → submitting plan for review");
                     // Extract the plan prose before any JSON tool calls.
                     let plan_text = crate::engine::actions::text_before_first_json(
                         &state.last_assistant_response,
@@ -351,14 +351,10 @@ impl AgentEngine {
                         &tc_id, "ExitPlanMode",
                     ));
 
-                    // Persist + ask for approval via shared helper.
-                    let (outcome, feedback) = self.finalize_plan_mode(plan_text).await;
-
-                    if let Some(feedback) = feedback {
-                        self.inject_plan_feedback(&mut state.messages, &feedback);
-                    } else {
-                        return Some(outcome);
-                    }
+                    // Persist plan + emit PlanUpdate SSE. The PlanBlock in the
+                    // UI handles approval (no AskUser dialog — CC-aligned).
+                    let outcome = self.finalize_plan_mode(plan_text).await;
+                    return Some(outcome);
                 } else {
                     state.messages.push(self.tool_result_msg_for(
                         self.prompt_store.render_or_fallback(
@@ -421,12 +417,8 @@ impl AgentEngine {
                     let plan_text = crate::engine::actions::text_before_first_json(
                         &state.last_assistant_response,
                     );
-                    let (outcome, feedback) = self.finalize_plan_mode(plan_text).await;
-                    if let Some(feedback) = feedback {
-                        self.inject_plan_feedback(&mut state.messages, &feedback);
-                    } else {
-                        return Some(outcome);
-                    }
+                    let outcome = self.finalize_plan_mode(plan_text).await;
+                    return Some(outcome);
                 }
                 return Some(AgentOutcome::None);
             }
@@ -439,16 +431,6 @@ impl AgentEngine {
             }
         }
         None
-    }
-
-    /// Inject user feedback on a plan into the message stream so the model
-    /// can revise. Used by both the ExitPlanMode and Done-in-plan-mode paths.
-    pub(crate) fn inject_plan_feedback(&self, messages: &mut Vec<ChatMessage>, feedback: &str) {
-        info!("User feedback on plan: {}", feedback);
-        messages.push(self.tool_result_msg(format!(
-            "User feedback on plan:\n{}\n\nPlease revise the plan based on this feedback.",
-            feedback
-        )));
     }
 
     /// Handle an `update_plan` action from the model: convert task items into
