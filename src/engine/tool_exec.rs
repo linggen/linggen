@@ -736,7 +736,8 @@ impl AgentEngine {
                     parent_id: self.parent_agent_id.clone(),
                 })
                 .await;
-            // Persist tool call to session store (no SSE — ContentBlockStart replaces Message).
+            // Persist tool call to session store as an observation (not loaded
+            // into chat history on reload — tool results are ephemeral context).
             let tool_msg = serde_json::json!({
                 "type": "tool",
                 "tool": canonical_tool.clone(),
@@ -753,7 +754,7 @@ impl AgentEngine {
                         to_id: target,
                         content: tool_msg,
                         timestamp: crate::util::now_ts_secs(),
-                        is_observation: false,
+                        is_observation: true,
                     },
                 )
                 .await;

@@ -269,11 +269,6 @@ fn extract_file_references(content: &str) -> Vec<String> {
     files
 }
 
-/// Generate a new plan file path in `~/.linggen/plans/`.
-fn new_plan_file_path() -> std::path::PathBuf {
-    crate::paths::plans_dir().join(crate::engine::generate_plan_filename())
-}
-
 /// Shared context for the async chat dispatch functions.
 struct ChatRunCtx {
     state: Arc<ServerState>,
@@ -571,8 +566,6 @@ async fn run_plan_dispatch(
     engine.plan = None;
     engine.observations.clear();
     engine.task = Some(task_text.to_string());
-    engine.plan_file_path = Some(new_plan_file_path());
-
     // Add user message to chat history so subsequent turns have conversational context.
     engine.chat_history.push(crate::ollama::ChatMessage::new("user", ctx.clean_msg.clone()));
     engine.truncate_chat_history();
@@ -643,6 +636,15 @@ async fn run_plan_dispatch(
     match outcome {
         Ok(ref out) => {
             persist_and_emit_last_assistant_text(ctx, engine).await;
+            if let crate::engine::AgentOutcome::Plan(ref plan) = out {
+                // Persist the plan as a JSON message so it survives session reload.
+                let plan_json = serde_json::json!({ "type": "plan", "plan": plan }).to_string();
+                persist_message_only(
+                    &ctx.manager, &ctx.root, &ctx.agent_id,
+                    &ctx.agent_id, "user", &plan_json,
+                    ctx.session_id.as_deref(), false,
+                ).await;
+            }
             emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id);
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 // Store pending plan — user approves via PlanBlock buttons in UI.
@@ -858,8 +860,6 @@ async fn run_structured_loop(
     }
     let task_for_loop = ctx.clean_msg.trim().to_string();
     engine.task = Some(task_for_loop);
-    engine.plan_file_path = Some(new_plan_file_path());
-
     // Add user message to chat history so subsequent turns have conversational context.
     engine.chat_history.push(crate::ollama::ChatMessage::new("user", ctx.clean_msg.clone()));
     engine.truncate_chat_history();
@@ -933,8 +933,14 @@ async fn run_structured_loop(
 
     // Agent created a plan that needs approval — store as pending.
     if let Ok(ref ok_outcome @ crate::engine::AgentOutcome::Plan(ref plan)) = outcome {
-        // Emit assistant text preceding the plan so the UI can finalize liveText → text.
-        persist_and_emit_last_assistant_text(ctx, engine).await;
+        // Persist the plan as a JSON message so it survives session reload.
+        // The UI renders it as a PlanBlock via tryRenderSpecialBlock.
+        let plan_json = serde_json::json!({ "type": "plan", "plan": plan }).to_string();
+        persist_message_only(
+            &ctx.manager, &ctx.root, &ctx.agent_id,
+            &ctx.agent_id, "user", &plan_json,
+            ctx.session_id.as_deref(), false,
+        ).await;
         emit_outcome_event(ok_outcome, &ctx.events_tx, &ctx.agent_id);
         ctx.manager
             .set_pending_plan(
@@ -1301,9 +1307,9 @@ pub(crate) async fn chat_handler(
                     let sid = ctx.session_id.as_deref().unwrap_or("default");
                     let history_result = if let Some(ref missions_dir) = mission_root_for_spawn {
                         let store = crate::state_fs::SessionStore::with_sessions_dir(missions_dir.clone());
-                        store.get_chat_history(sid, Some(&ctx.agent_id))
+                        store.get_chat_history(sid)
                     } else if let Ok(proj_ctx) = ctx.manager.get_or_create_project(ctx.root.clone()).await {
-                        proj_ctx.sessions.get_chat_history(sid, Some(&ctx.agent_id))
+                        proj_ctx.sessions.get_chat_history(sid)
                     } else {
                         Err(anyhow::anyhow!("no session store"))
                     };
@@ -1312,12 +1318,13 @@ pub(crate) async fn chat_handler(
                             if m.is_observation || m.from_id == "system" {
                                 continue;
                             }
+                            // Session owns the conversation — any non-user
+                            // message is assistant context regardless of
+                            // which agent produced it.
                             let role = if m.from_id == "user" {
                                 "user"
-                            } else if m.from_id == ctx.agent_id {
-                                "assistant"
                             } else {
-                                continue;
+                                "assistant"
                             };
                             engine.chat_history.push(
                                 crate::ollama::ChatMessage::new(role, &m.content),
@@ -1430,17 +1437,13 @@ pub(crate) async fn approve_plan_handler(
     tokio::spawn(async move {
         let mut engine = agent.lock().await;
 
-        // Set the approved plan on the engine and persist to disk.
+        // Set the approved plan on the engine and emit to UI.
         engine.plan = Some(plan);
         engine.plan_mode = false;
-        if engine.plan_file_path.is_none() {
-            engine.plan_file_path = Some(new_plan_file_path());
-        }
         let plan_snapshot = engine.plan.clone().unwrap();
         engine.persist_and_emit_plan(plan_snapshot).await;
 
         if clear_context {
-            // Full context clear — plan file is the sole source of truth
             engine.observations.clear();
             engine.context_records.clear();
             engine.next_context_id = 1;
@@ -1507,6 +1510,14 @@ pub(crate) async fn reject_plan_handler(
         )
             .into_response();
     }
+
+    // Emit PlanUpdate with rejected status so the UI clears approval buttons.
+    let mut rejected_plan = removed.unwrap();
+    rejected_plan.status = crate::engine::PlanStatus::Rejected;
+    let _ = state.events_tx.send(ServerEvent::PlanUpdate {
+        agent_id: req.agent_id.clone(),
+        plan: rejected_plan,
+    });
 
     persist_and_emit_message(
         &state.manager,

@@ -367,7 +367,7 @@ export interface StorageEntry {
 }
 
 // Plan mode types
-export type PlanStatus = 'planned' | 'approved' | 'executing' | 'completed';
+export type PlanStatus = 'planned' | 'approved' | 'executing' | 'completed' | 'rejected';
 
 export interface PlanItem {
   id: string;

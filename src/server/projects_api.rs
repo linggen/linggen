@@ -349,7 +349,7 @@ pub(crate) async fn get_agent_context_api(
 
     let all_messages = match ctx
         .sessions
-        .get_chat_history(&run.session_id, Some(&run.agent_id))
+        .get_chat_history(&run.session_id)
     {
         Ok(messages) => messages,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),

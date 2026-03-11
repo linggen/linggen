@@ -328,13 +328,21 @@ impl AgentEngine {
         tc_id: Option<String>,
     ) -> Option<AgentOutcome> {
         match action {
-            ModelAction::Tool { ref tool, .. } if tool == "ExitPlanMode" => {
+            ModelAction::Tool { ref tool, ref args } if tool == "ExitPlanMode" => {
                 if self.plan_mode {
                     info!("ExitPlanMode → submitting plan for review");
-                    // Extract the plan prose before any JSON tool calls.
-                    let plan_text = crate::engine::actions::text_before_first_json(
-                        &state.last_assistant_response,
-                    );
+                    // Primary: plan_text from tool args (required for models like
+                    // GPT 5.4 that put everything in tool args, not response text).
+                    // Fallback: extract from last_assistant_response text.
+                    let plan_text = args.get("plan_text")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            crate::engine::actions::text_before_first_json(
+                                &state.last_assistant_response,
+                            )
+                        });
 
                     // Capture the assistant text so the outer chat handler can
                     // persist and emit it as a Message.
@@ -405,10 +413,20 @@ impl AgentEngine {
                     self.agent_id.clone(), Some("user".to_string()),
                     msg.clone(), serde_json::json!({ "kind": "done" }),
                 );
-                let _ = self.persist_assistant_message(&msg, session_id).await;
-                self.chat_history.push(ChatMessage::new("assistant", msg.clone()));
+                // Persist the full model response text (before JSON actions) so
+                // follow-up messages in the same session have the detailed findings.
+                let response_text = crate::engine::actions::text_before_first_json(
+                    &state.last_assistant_response,
+                );
+                let full_msg = if response_text.is_empty() {
+                    msg.clone()
+                } else {
+                    format!("{}\n\n{}", response_text, msg)
+                };
+                let _ = self.persist_assistant_message(&full_msg, session_id).await;
+                self.chat_history.push(ChatMessage::new("assistant", full_msg.clone()));
                 self.truncate_chat_history();
-                self.last_assistant_text = Some(msg.clone());
+                self.last_assistant_text = Some(full_msg.clone());
                 self.active_skill = None;
                 if self.plan_mode {
                     // Fallback: model emitted done in plan mode without calling ExitPlanMode.
@@ -426,8 +444,8 @@ impl AgentEngine {
                 info!("EnterPlanMode: {:?}", reason);
                 return Some(AgentOutcome::PlanModeRequested { reason });
             }
-            ModelAction::UpdatePlan { items } => {
-                self.handle_update_plan_action(items, &mut state.messages, session_id, &tc_id).await;
+            ModelAction::UpdatePlan { plan_text, items } => {
+                self.handle_update_plan_action(plan_text, items, &mut state.messages, session_id, &tc_id).await;
             }
         }
         None
@@ -437,12 +455,13 @@ impl AgentEngine {
     /// a Plan and emit a PlanUpdate event so the UI can display progress.
     async fn handle_update_plan_action(
         &mut self,
+        explicit_plan_text: Option<String>,
         items: Vec<serde_json::Value>,
         messages: &mut Vec<ChatMessage>,
         session_id: Option<&str>,
         tc_id: &Option<String>,
     ) {
-        // Build structured items + markdown plan text.
+        // Build structured items + markdown checklist.
         let mut plan_items = Vec::new();
         let mut lines = Vec::new();
         for item in &items {
@@ -462,12 +481,22 @@ impl AgentEngine {
             lines.push(format!("{} {}{}", checkbox, title, suffix));
             plan_items.push(PlanItem { id, title, status });
         }
-        let plan_text = lines.join("\n");
+        // Use explicit plan_text if provided, otherwise preserve existing,
+        // otherwise fall back to auto-generated checklist.
+        let plan_text = explicit_plan_text
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| self.plan.as_ref().map(|p| p.plan_text.clone()).filter(|s| !s.trim().is_empty()))
+            .unwrap_or_else(|| lines.join("\n"));
         let summary = Self::extract_plan_summary(&plan_text);
 
+        // Preserve pre-approval status — don't promote Planned to Executing.
+        let status = self.plan.as_ref()
+            .map(|p| p.status.clone())
+            .filter(|s| *s == PlanStatus::Planned || *s == PlanStatus::Approved)
+            .unwrap_or(PlanStatus::Executing);
         let plan = Plan {
             summary,
-            status: PlanStatus::Executing,
+            status,
             plan_text,
             items: plan_items,
         };

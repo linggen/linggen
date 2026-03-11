@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useReducer, useMemo } from 'react';
 import { ArrowLeft, Target, Plus, Play, Trash2, Clock, Edit3, Check, X, Eye, ExternalLink, ChevronDown, ChevronRight, Pause, Send, Square } from 'lucide-react';
 import { cn } from '../lib/cn';
-import type { AgentInfo, ChatMessage, ContentBlock, CronMission, MissionRunEntry, ProjectInfo, UiSseMessage } from '../types';
+import type { AgentInfo, ChatMessage, ContentBlock, CronMission, MissionRunEntry, Plan, ProjectInfo, UiSseMessage } from '../types';
 import { AgentMessage } from './chat/AgentMessage';
 import { getMessagePhase } from './chat/MessagePhase';
 import { stripEmbeddedStructuredJson, reconstructContentFromText, shouldHideInternalChatMessage, isPersistedToolOnlyMessage, isStatusLineText } from '../lib/messageUtils';
@@ -123,6 +123,13 @@ async function fetchSessionMessages(projectRoot: string, sessionId: string): Pro
     .flatMap(([meta, body]: any) => {
       const isUser = meta.from === 'user' || meta.from === 'system';
       let bodyStr = String(body || '');
+      // Preserve plan JSON messages (rendered as PlanBlock by the UI).
+      try {
+        const parsed = JSON.parse(bodyStr);
+        if (parsed?.type === 'plan' && parsed?.plan) {
+          return [{ role: 'agent' as const, from: meta.from, to: meta.to, text: bodyStr, ts: meta.timestamp }];
+        }
+      } catch { /* not JSON */ }
       if (!isUser) bodyStr = stripEmbeddedStructuredJson(bodyStr);
       if (!isUser && !bodyStr) return [];
       const restored = !isUser ? reconstructContentFromText(bodyStr) : null;
@@ -252,6 +259,7 @@ const MissionChatPanel: React.FC<{
   const [messages, dispatch] = useReducer(miniChatReducer, []);
   const [inputValue, setInputValue] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  const [pendingPlanAgentId, setPendingPlanAgentId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const shouldAutoScroll = useRef(true);
@@ -261,6 +269,7 @@ const MissionChatPanel: React.FC<{
   // Load persisted messages
   useEffect(() => {
     dispatch({ type: 'CLEAR' });
+    setPendingPlanAgentId(null);
     fetchSessionMessages(resolvedProject, sessionId).then(msgs => {
       dispatch({ type: 'SYNC_PERSISTED', messages: msgs });
     });
@@ -351,6 +360,21 @@ const MissionChatPanel: React.FC<{
         }
         return;
       }
+      case 'run': {
+        if (item.phase === 'plan_update' && item.data?.plan) {
+          const plan = item.data.plan as Plan;
+          const match = agentId.match(/^run-(.+?)-\d+/);
+          const logicalId = match ? match[1] : agentId;
+          const planText = JSON.stringify({ type: 'plan', plan });
+          dispatch({ type: 'FINALIZE_MESSAGE', agentId: logicalId, content: planText, tsMs: item.ts_ms || Date.now() });
+          if (plan.status === 'planned') {
+            setPendingPlanAgentId(logicalId);
+          } else {
+            setPendingPlanAgentId(null);
+          }
+        }
+        return;
+      }
     }
   }, []);
 
@@ -411,7 +435,45 @@ const MissionChatPanel: React.FC<{
     }
   };
 
-  const dummyPlanProps = { inputRef: inputRef as React.RefObject<HTMLTextAreaElement | null> };
+  const approvePlan = useCallback(async (clearContext = false) => {
+    if (!pendingPlanAgentId || !resolvedProject) return;
+    try {
+      await fetch('/api/plan/approve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_root: resolvedProject, agent_id: pendingPlanAgentId, session_id: sessionId, clear_context: clearContext }),
+      });
+      setPendingPlanAgentId(null);
+    } catch (e) { console.error('Error approving plan:', e); }
+  }, [pendingPlanAgentId, resolvedProject, sessionId]);
+
+  const rejectPlan = useCallback(async () => {
+    if (!pendingPlanAgentId || !resolvedProject) return;
+    try {
+      await fetch('/api/plan/reject', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_root: resolvedProject, agent_id: pendingPlanAgentId, session_id: sessionId }),
+      });
+      setPendingPlanAgentId(null);
+    } catch (e) { console.error('Error rejecting plan:', e); }
+  }, [pendingPlanAgentId, resolvedProject, sessionId]);
+
+  const editPlan = useCallback(async (text: string) => {
+    if (!pendingPlanAgentId || !resolvedProject) return;
+    try {
+      await fetch('/api/plan/edit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_root: resolvedProject, agent_id: pendingPlanAgentId, text }),
+      });
+    } catch (e) { console.error('Error editing plan:', e); }
+  }, [pendingPlanAgentId, resolvedProject]);
+
+  const planProps = useMemo(() => ({
+    pendingPlanAgentId: pendingPlanAgentId ?? undefined,
+    onApprovePlan: approvePlan,
+    onRejectPlan: rejectPlan,
+    onEditPlan: editPlan,
+    inputRef: inputRef as React.RefObject<HTMLTextAreaElement | null>,
+  }), [pendingPlanAgentId, approvePlan, rejectPlan, editPlan]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -453,7 +515,7 @@ const MissionChatPanel: React.FC<{
                   </div>
                 )}
                 {isUser ? <span>{msg.text}</span> : (
-                  <AgentMessage msg={msg} isExpanded={false} onToggle={() => {}} planProps={dummyPlanProps} />
+                  <AgentMessage msg={msg} isExpanded={false} onToggle={() => {}} planProps={planProps} />
                 )}
               </div>
             </div>

@@ -29,6 +29,8 @@ pub enum ModelAction {
     #[serde(rename = "update_plan")]
     UpdatePlan {
         #[serde(default)]
+        plan_text: Option<String>,
+        #[serde(default)]
         items: Vec<serde_json::Value>,
     },
 }
@@ -710,7 +712,8 @@ Now let me also search:
         let actions = parse_all_actions(raw).unwrap();
         assert_eq!(actions.len(), 1);
         match &actions[0] {
-            ModelAction::UpdatePlan { items } => {
+            ModelAction::UpdatePlan { plan_text, items } => {
+                assert!(plan_text.is_none());
                 assert_eq!(items.len(), 3);
                 assert_eq!(items[0]["title"], "Step one");
                 assert_eq!(items[1]["status"], "in_progress");

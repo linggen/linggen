@@ -15,14 +15,14 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - `agentic-loop.md`: kernel loop, termination.
 - `tools.md`: syscall interface, permissions.
 - `chat-spec.md`: SSE events, APIs.
-- `storage.md`: plan file persistence.
+- `storage.md`: session message persistence.
 
 ## Design principles
 
 1. **Enforce at infrastructure, not model level.** Remove tools from the API call — don't trust the model to not call them.
 2. **Plans are free-form markdown, not structured JSON.** Any model can write text. No JSON parsing for plan creation.
 3. **Progress tracking is separate from planning.** `update_plan` is for execution-time task tracking, decoupled from plan mode.
-4. **Global plan persistence.** Plans persist to `~/.linggen/plans/{adjective-gerund-noun}.md` with unique generated filenames. Each plan gets its own file.
+4. **Session-inlined persistence.** Plans are stored as JSON messages in the session's `messages.jsonl`. No separate plan files — the session is the single source of truth. Context compaction handles token cost; compaction is skipped during plan execution.
 5. **Self-contained plans.** Plans must include file paths, line numbers, and code snippets so they work as the sole context after clearing.
 6. **Unified flow.** No `PlanOrigin` enum — all plans use the same approval flow. Plan mode requires user initiation and approval.
 
@@ -31,10 +31,11 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 ### Dropped
 
 - `PlanOrigin` enum — single unified flow, no `ModelManaged` vs `UserRequested` distinction.
-- Per-session plan persistence — now global `~/.linggen/plans/` with unique filenames.
+- Per-session plan persistence to separate files — now inlined in session `messages.jsonl`.
 - Plan auto-resume (`load_latest_plan()`) — session resume replaces it.
-- `session_plan_dir` field — replaced by `plan_file_path` (full path to the plan file).
-- Sidecar `.meta.json` files — simplified to single `.md` file per plan.
+- `plan_file_path` field — removed. No separate plan files.
+- `generate_plan_filename()` — removed. No `~/.linggen/plans/` directory.
+- Sidecar `.meta.json` files — removed.
 - Stale `Planned` → `Executing` auto-promotion — no silent approval bypass.
 - Bash in plan mode — blocked entirely for safety.
 
@@ -43,7 +44,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - SSE `PlanUpdate` events.
 - `update_plan` action for execution-time progress (separate feature).
 - `plan_mode: bool` on engine.
-- Status lifecycle: `Planned` → `Approved` → `Executing`.
+- Status lifecycle: `Planned` → `Approved` → `Executing` → `Completed`. Also `Planned` → `Rejected`.
 
 ### Added
 
@@ -52,7 +53,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - **Direct plan editing** — user can edit plan markdown before approving (TUI: `$EDITOR`, Web UI: inline editor).
 - **Approval UI** — inline: "Start building" / "Reject" / custom feedback. Web UI: approve endpoint with `clear_context` option.
 - **Self-contained plan prompts** — plan-mode prompt emphasizes code snippets and line numbers.
-- **Global plan dir** — `plan_file_path` field on engine, unique filename generated per plan via `generate_plan_filename()`.
+- **Compaction guard** — context compaction is skipped when plan status is `Approved` or `Executing`, ensuring the model retains full tool-result context during plan execution.
 
 ## Lifecycle
 
@@ -82,21 +83,25 @@ Web UI approval (via `/api/plan/approve`):
 
 ### Execution
 
-Plan text injected into system prompt. Model executes with full tools. Progress tracking via `update_plan` is optional and independent.
+Plan text injected into system prompt. Model executes with full tools. Progress tracking via `update_plan` is optional and independent. Context compaction is skipped during execution to preserve tool-result context.
 
 ### Completion
 
-Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped`, set plan status → `Completed`, update file, emit SSE event.
+Not yet implemented. Future: on `done`, mark remaining tracked items as `Skipped`, set plan status → `Completed`, emit SSE event.
 
 ## Progress tracking
 
-`update_plan` remains as an independent feature — not coupled to plan mode. Used during execution or spontaneously for complex tasks. Drives the sidebar task list UI.
+`update_plan` remains as an independent feature — not coupled to plan mode. Used during execution or spontaneously for complex tasks. Drives the sidebar task list UI. Both `plan_text` and `items` are optional — the model can update either or both.
 
 ## Storage
 
-Plan file: `~/.linggen/plans/{adjective-gerund-noun}.md`
+Plans are persisted as JSON messages in the session's `messages.jsonl`:
 
-Each plan gets a unique filename generated from adjective-gerund-noun word lists (e.g., `bright-running-falcon.md`), collision-checked against the plans directory. Single file per plan, no sidecar metadata. Written on every plan update, overwritten in place.
+```json
+{"type":"plan","plan":{"summary":"...","status":"planned","plan_text":"...","items":[...]}}
+```
+
+No separate plan files. The session is the single source of truth. On reload, the UI parses these messages and renders them as PlanBlock components via `tryRenderSpecialBlock`.
 
 ## Model compatibility
 

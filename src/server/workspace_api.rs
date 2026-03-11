@@ -193,7 +193,7 @@ pub(crate) async fn get_workspace_state(
         let messages = match query.session_id.as_deref() {
             Some(sid) if !sid.is_empty() => ctx
                 .sessions
-                .get_chat_history(sid, None)
+                .get_chat_history(sid)
                 .unwrap_or_default(),
             _ => Vec::new(),
         };

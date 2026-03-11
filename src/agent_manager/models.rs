@@ -375,16 +375,47 @@ impl ModelManager {
 
         match &instance.client {
             ProviderClient::Ollama(client) => {
-                let stream = client
-                    .chat_tool_stream_with_keep_alive(
-                        &instance.config.model,
-                        messages,
-                        instance.config.keep_alive.clone(),
-                        tools,
-                    )
-                    .await?;
-                let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
-                    Box::pin(stream);
+                // Retry up to 3 times with backoff for 503 errors (model loading),
+                // matching the retry logic in chat_text_stream.
+                let mut last_err = None;
+                let mut boxed_stream: Option<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> = None;
+                for attempt in 0..3u32 {
+                    if attempt > 0 {
+                        let delay = std::time::Duration::from_millis(1000 * (1 << attempt));
+                        tracing::info!(
+                            "Retry {}/3 for tool stream model '{}' after 503 (waiting {}ms)",
+                            attempt + 1, instance.config.model, delay.as_millis()
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
+                    match client
+                        .chat_tool_stream_with_keep_alive(
+                            &instance.config.model,
+                            messages,
+                            instance.config.keep_alive.clone(),
+                            tools.clone(),
+                        )
+                        .await
+                    {
+                        Ok(stream) => {
+                            boxed_stream = Some(Box::pin(stream));
+                            break;
+                        }
+                        Err(e) if e.to_string().contains("503") => {
+                            tracing::info!(
+                                "Tool stream returned 503 for model '{}', retrying...",
+                                instance.config.model
+                            );
+                            last_err = Some(e);
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                let boxed_stream = match boxed_stream {
+                    Some(s) => s,
+                    None => return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("503 after retries"))),
+                };
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {

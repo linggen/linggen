@@ -39,8 +39,6 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── linggen.runtime.toml    # Runtime config overrides (TOML)
 ├── logs/
 │   └── linggen-{YYYY-MM-DD}.log  # Daily rolling logs (text)
-├── plans/
-│   └── {slug}.md                     # Plan files (markdown)
 ├── agents/
 │   └── {name}.md                     # Global agent specs (markdown + YAML frontmatter)
 ├── skills/
@@ -177,23 +175,16 @@ Mission runs create sessions at `~/.linggen/missions/{mission_id}/sessions/` (pe
 
 Append-only. Skipped triggers (agent busy) logged with `"skipped": true`.
 
-### Plan (`{slug}.md`)
+### Plan messages (in `messages.jsonl`)
 
-```markdown
-# Plan: Refactor auth module
+Plans are persisted as JSON messages inlined in the session's `messages.jsonl` — no separate plan files.
 
-**Status:** approved
-**Origin:** model_managed
-
-- [x] Read existing auth code
-  src/auth.rs — understand current session handling
-- [~] Implement JWT validation
-- [ ] Add tests
-- [-] Skipped: migration script
+```json
+{"type":"plan","plan":{"summary":"Refactor auth module","status":"planned","plan_text":"# Refactor auth module\n\n1. Read existing auth code\n2. Implement JWT validation\n3. Add tests","items":[]}}
 ```
 
-Status values: `planned`, `approved`, `executing`, `completed`.
-Item markers: `[x]` done, `[~]` in progress, `[ ]` pending, `[-]` skipped.
+Status values: `planned`, `approved`, `executing`, `completed`, `rejected`.
+The UI renders these as PlanBlock components via `tryRenderSpecialBlock`.
 
 ## Configuration
 
@@ -214,7 +205,7 @@ Search order for `linggen.toml`:
 | `project_store/path_encoding.rs` | Path → directory name encoding |
 | `state_fs/sessions.rs` | Sessions, chat messages (CRUD) |
 | `state_fs/mod.rs` | Workspace-level state files |
-| `engine/mod.rs` | Plan file persistence |
+| `engine/plan.rs` | Plan lifecycle (finalize, emit SSE) |
 | `config.rs` | Config loading/saving |
 | `logging.rs` | Log file rotation |
 

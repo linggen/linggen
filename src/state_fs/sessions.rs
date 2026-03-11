@@ -184,7 +184,6 @@ impl SessionStore {
     pub fn get_chat_history(
         &self,
         session_id: &str,
-        agent_id: Option<&str>,
     ) -> Result<Vec<ChatMsg>> {
         Self::validate_id(session_id)?;
         let msgs_path = self.session_dir(session_id).join("messages.jsonl");
@@ -202,11 +201,6 @@ impl SessionStore {
             }
             match serde_json::from_str::<ChatMsg>(trimmed) {
                 Ok(msg) => {
-                    if let Some(aid) = agent_id {
-                        if msg.agent_id != aid {
-                            continue;
-                        }
-                    }
                     messages.push(msg);
                 }
                 Err(e) => {
@@ -351,14 +345,14 @@ mod tests {
         store.add_chat_message("s1", &msg1).unwrap();
         store.add_chat_message("s1", &msg2).unwrap();
 
-        let history = store.get_chat_history("s1", None).unwrap();
+        let history = store.get_chat_history("s1").unwrap();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].content, "Hello");
         assert_eq!(history[1].content, "Hi there");
     }
 
     #[test]
-    fn test_chat_filter_by_agent() {
+    fn test_chat_loads_all_agents_in_session() {
         let (store, _dir) = temp_store();
         store
             .add_session(&SessionMeta {
@@ -395,12 +389,11 @@ mod tests {
             )
             .unwrap();
 
-        let ling_msgs = store.get_chat_history("s1", Some("ling")).unwrap();
-        assert_eq!(ling_msgs.len(), 1);
-        assert_eq!(ling_msgs[0].content, "for ling");
-
-        let all_msgs = store.get_chat_history("s1", None).unwrap();
+        // Session loads all messages regardless of agent_id
+        let all_msgs = store.get_chat_history("s1").unwrap();
         assert_eq!(all_msgs.len(), 2);
+        assert_eq!(all_msgs[0].content, "for ling");
+        assert_eq!(all_msgs[1].content, "for coder");
     }
 
     #[test]
@@ -429,7 +422,7 @@ mod tests {
 
         let cleared = store.clear_chat_history("s1").unwrap();
         assert_eq!(cleared, 1);
-        assert_eq!(store.get_chat_history("s1", None).unwrap().len(), 0);
+        assert_eq!(store.get_chat_history("s1").unwrap().len(), 0);
     }
 
     #[test]
@@ -458,7 +451,7 @@ mod tests {
 
         store.remove_session("s1").unwrap();
         // Messages file is gone with the directory
-        assert!(store.get_chat_history("s1", None).unwrap().is_empty());
+        assert!(store.get_chat_history("s1").unwrap().is_empty());
     }
 
     #[test]
@@ -504,7 +497,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let history = store.get_chat_history("auto-created", None).unwrap();
+        let history = store.get_chat_history("auto-created").unwrap();
         assert_eq!(history.len(), 1);
     }
 }

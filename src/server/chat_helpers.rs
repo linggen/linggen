@@ -521,12 +521,19 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
         }
 
         // Suppress raw JSON objects/arrays that are internal structured data
-        // (e.g. plan items, finalize payloads) — not meant for display.
+        // (e.g. finalize payloads) — not meant for display.
+        // Exception: plan and finalize_task JSON are rendered as special blocks
+        // by the UI (PlanBlock, TaskBlock) so they must pass through.
         if (line.starts_with('{') && line.ends_with('}'))
             || (line.starts_with('[') && line.ends_with(']'))
         {
-            if serde_json::from_str::<serde_json::Value>(line).is_ok() {
-                continue;
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                let is_special_block = val.get("type").and_then(|t| t.as_str())
+                    .map(|t| t == "plan" || t == "finalize_task")
+                    .unwrap_or(false);
+                if !is_special_block {
+                    continue;
+                }
             }
         }
 
@@ -670,6 +677,8 @@ pub(crate) fn emit_outcome_event(
             });
         }
         AgentOutcome::Plan(plan) => {
+            // Emit plan as a Message so it persists in chat history and
+            // renders as a PlanBlock via tryRenderSpecialBlock.
             let _ = events_tx.send(ServerEvent::Message {
                 from: from_id.to_string(),
                 to: "user".to_string(),
@@ -680,10 +689,8 @@ pub(crate) fn emit_outcome_event(
                 .to_string(),
                 session_id: None,
             });
-            let _ = events_tx.send(ServerEvent::PlanUpdate {
-                agent_id: from_id.to_string(),
-                plan: plan.clone(),
-            });
+            // Note: PlanUpdate SSE is already emitted by the engine's
+            // finalize_plan_mode → persist_and_emit_plan. Don't duplicate.
         }
         AgentOutcome::PlanApproved(plan) => {
             let _ = events_tx.send(ServerEvent::Message {

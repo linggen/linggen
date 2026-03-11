@@ -22,7 +22,8 @@ function SkillRow({ skill, projectName, onClick }: {
   const sourceLabel = sourceType === 'Compat'
     ? (skill.source as { type: string; label?: string })?.label || 'Compat'
     : sourceType === 'Global' ? 'Linggen' : (projectName || 'Project');
-  const trigger = skill.trigger || `/${skill.name}`;
+  const displayName = `/${skill.name}`;
+  const trigger = skill.trigger && skill.trigger !== `/${skill.name}` ? skill.trigger : null;
   const argHint = skill.argument_hint ? ` ${skill.argument_hint}` : '';
   const isApp = !!skill.app;
 
@@ -33,7 +34,10 @@ function SkillRow({ skill, projectName, onClick }: {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-[11px]">
-          {trigger}
+          {displayName}
+          {trigger && (
+            <span className="text-slate-400 dark:text-slate-500 font-normal"> {trigger}</span>
+          )}
           {argHint && (
             <span className="text-slate-400 dark:text-slate-500 font-normal">{argHint}</span>
           )}

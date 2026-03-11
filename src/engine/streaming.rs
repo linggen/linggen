@@ -270,13 +270,11 @@ impl AgentEngine {
                     if in_think_block && accumulated_text.contains("</think>") {
                         in_think_block = false;
                     }
-                    // Forward visible content tokens (outside <think> blocks) to
-                    // the UI for real-time streaming display.
-                    if !in_think_block {
-                        if let Some(tx) = &self.thinking_tx {
-                            let _ = tx.send(ThinkingEvent::ContentToken(token));
-                        }
-                    }
+                    // Do NOT stream content tokens here. Some models (e.g. GPT 5.4)
+                    // emit tool call JSON as plain text instead of native function
+                    // calls. Streaming tokens would show raw JSON to the user.
+                    // Text content is emitted as a complete block by the engine's
+                    // main loop after confirming it's not a JSON action.
                 }
                 StreamChunk::Usage(usage) => {
                     token_usage = Some(usage);
@@ -308,12 +306,18 @@ impl AgentEngine {
             let _ = tx.send(ThinkingEvent::ContentDone);
         }
 
-        // Build ParsedToolCall objects from accumulated deltas
+        // Build ParsedToolCall objects from accumulated deltas.
+        // Skip phantom entries (empty name + empty args) caused by Responses API
+        // output_index gaps (text blocks occupy indices before function calls).
         let mut tool_calls = Vec::new();
         for i in 0..tc_ids.len() {
-            let id = tc_ids[i].clone().unwrap_or_else(|| format!("call_{}", i));
             let name = tc_names[i].clone().unwrap_or_default();
             let args_str = &tc_args[i];
+            if name.is_empty() && args_str.is_empty() {
+                tracing::debug!("Skipping phantom tool call at index {} (empty name and args)", i);
+                continue;
+            }
+            let id = tc_ids[i].clone().unwrap_or_else(|| format!("fc_fallback_{}", i));
             let arguments = if args_str.is_empty() {
                 serde_json::json!({})
             } else {

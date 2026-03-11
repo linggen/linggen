@@ -300,9 +300,12 @@ const App: React.FC = () => {
       const isSessionAdoption = prev === null && activeSessionId !== null;
       if (!isSessionAdoption) {
         useChatStore.getState().clear(false);
-        useUiStore.getState().setQueuedMessages([]);
-        useUiStore.getState().setActivePlan(null);
-        useUiStore.getState().setSessionModel(null);
+        const ui = useUiStore.getState();
+        ui.setQueuedMessages([]);
+        ui.setActivePlan(null);
+        ui.setPendingPlan(null);
+        ui.setPendingPlanAgentId(null);
+        ui.setSessionModel(null);
       }
       useChatStore.getState().fetchWorkspaceState();
       useAgentStore.getState().fetchAgentRuns();

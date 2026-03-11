@@ -44,6 +44,7 @@ pub enum PlanStatus {
     Approved,
     Executing,
     Completed,
+    Rejected,
 }
 
 
@@ -178,8 +179,6 @@ pub struct AgentEngine {
     // Plan mode
     pub plan_mode: bool,
     pub plan: Option<Plan>,
-    /// Path to the plan file in `~/.linggen/plans/`.
-    pub plan_file_path: Option<PathBuf>,
     /// Base64-encoded images to attach to the next user message.
     pub pending_images: Vec<String>,
     /// Tool permission store (session + project scoped allows).
@@ -368,7 +367,6 @@ impl AgentEngine {
             interrupt_rx: None,
             plan_mode: false,
             plan: None,
-            plan_file_path: None,
             pending_images: Vec::new(),
             permission_store: perm_store,
             default_models: Vec::new(),

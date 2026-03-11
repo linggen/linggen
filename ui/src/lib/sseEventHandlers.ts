@@ -163,6 +163,10 @@ function handleRun(item: UiSseMessage): void {
     if (plan.status === 'planned') {
       uiStore.setPendingPlan(plan);
       uiStore.setPendingPlanAgentId(agentId);
+    } else {
+      // approved, executing, completed, rejected — no longer waiting for user decision
+      uiStore.setPendingPlan(null);
+      uiStore.setPendingPlanAgentId(null);
     }
     const planText = JSON.stringify({ type: 'plan', plan });
     chatStore.upsertPlan(agentId, planText);

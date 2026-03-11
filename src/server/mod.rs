@@ -1335,13 +1335,20 @@ async fn events_handler(
         // Only truly global event kinds (state sync, resync) pass without session_id.
         if let Some(ref wanted) = filter_session {
             match &ui_msg.session_id {
-                Some(event_sid) if event_sid != wanted => return None,
+                Some(event_sid) if event_sid != wanted => {
+                    // Allow mission_completed through regardless of session —
+                    // missions run in their own session but notifications
+                    // should reach the active UI session.
+                    if ui_msg.kind != "mission_completed" {
+                        return None;
+                    }
+                }
                 None => {
-                    // Allow global events (sync/resync) through; drop everything else.
+                    // Allow global events (sync/resync) and mission notifications through.
                     let is_global = matches!(
                         (ui_msg.kind.as_str(), ui_msg.phase.as_deref()),
                         ("run", Some("sync")) | ("run", Some("resync"))
-                    );
+                    ) || ui_msg.kind == "mission_completed";
                     if !is_global {
                         return None;
                     }

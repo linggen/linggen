@@ -20,7 +20,6 @@ pub use types::{
     AgentEngine, AgentOutcome, AgentRole, ContextRecord, ContextType, EngineConfig,
     InterfaceMode, Plan, PlanStatus, TaskPacket, ThinkingEvent,
 };
-pub use plan::generate_plan_filename;
 
 pub use actions::{
     looks_like_final_answer, model_message_log_parts, parse_all_actions, text_before_first_json,
@@ -55,11 +54,14 @@ impl AgentEngine {
                         Some(ModelAction::EnterPlanMode { reason })
                     }
                     "UpdatePlan" => {
+                        let plan_text = tc.arguments.get("plan_text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         let items = tc.arguments.get("items")
                             .and_then(|v| v.as_array())
                             .cloned()
                             .unwrap_or_default();
-                        Some(ModelAction::UpdatePlan { items })
+                        Some(ModelAction::UpdatePlan { plan_text, items })
                     }
                     "Patch" => {
                         let diff = tc.arguments.get("diff").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -71,6 +73,11 @@ impl AgentEngine {
                             Ok(p) => Some(ModelAction::FinalizeTask { packet: p }),
                             Err(_) => None,
                         }
+                    }
+                    "" => {
+                        // Empty tool name — skip (some models produce phantom calls)
+                        tracing::warn!("Skipping native tool call with empty name");
+                        None
                     }
                     _ => {
                         // Regular tool call
@@ -238,7 +245,16 @@ impl AgentEngine {
                     .await;
             }
 
-            let summary_count = self.maybe_compact_model_messages(&mut state.messages, "loop_iter").await;
+            // Skip compaction while executing an approved plan — the model
+            // needs full tool-result context to track progress against plan steps.
+            let executing_plan = self.plan.as_ref()
+                .map(|p| p.status == PlanStatus::Executing || p.status == PlanStatus::Approved)
+                .unwrap_or(false);
+            let summary_count = if executing_plan {
+                0
+            } else {
+                self.maybe_compact_model_messages(&mut state.messages, "loop_iter").await
+            };
             self.emit_context_usage_event("loop_iter", &state.messages, summary_count)
                 .await;
 
@@ -277,8 +293,9 @@ impl AgentEngine {
 
             // --- Native tool calling path ---
             if !native_tool_calls.is_empty() {
-                // Emit text content if present
-                if !raw.is_empty() {
+                // Emit visible text content (strip any embedded JSON actions).
+                let visible_text = text_before_first_json(&raw);
+                if !visible_text.is_empty() {
                     if let Some(manager) = self.tools.get_manager() {
                         let agent_id = self
                             .agent_id
@@ -287,7 +304,7 @@ impl AgentEngine {
                         manager
                             .send_event(crate::agent_manager::AgentEvent::TextSegment {
                                 agent_id: agent_id.clone(),
-                                text: raw.clone(),
+                                text: visible_text.clone(),
                                 parent_id: self.parent_agent_id.clone(),
                             })
                             .await;
@@ -297,7 +314,7 @@ impl AgentEngine {
                                 block_id: uuid::Uuid::new_v4().to_string(),
                                 block_type: "text".to_string(),
                                 tool: None,
-                                args: Some(raw.clone()),
+                                args: Some(visible_text),
                                 parent_id: self.parent_agent_id.clone(),
                             })
                             .await;
@@ -482,8 +499,30 @@ impl AgentEngine {
                         return Ok(outcome);
                     }
 
-                    // Pure conversational text — content tokens were already streamed
-                    // to the UI in real-time via ContentToken events.
+                    // Pure conversational text — emit as a complete block.
+                    if let Some(manager) = self.tools.get_manager() {
+                        let agent_id = self
+                            .agent_id
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        manager
+                            .send_event(crate::agent_manager::AgentEvent::TextSegment {
+                                agent_id: agent_id.clone(),
+                                text: raw.clone(),
+                                parent_id: self.parent_agent_id.clone(),
+                            })
+                            .await;
+                        manager
+                            .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
+                                agent_id,
+                                block_id: uuid::Uuid::new_v4().to_string(),
+                                block_type: "text".to_string(),
+                                tool: None,
+                                args: Some(raw.clone()),
+                                parent_id: self.parent_agent_id.clone(),
+                            })
+                            .await;
+                    }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                     self.truncate_chat_history();

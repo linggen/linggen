@@ -252,11 +252,12 @@ pub(crate) async fn get_mission_session_state(
         crate::paths::mission_sessions_dir(&mission_id),
     );
     let messages = store
-        .get_chat_history(&session_id, None)
+        .get_chat_history(&session_id)
         .unwrap_or_default();
 
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
+        .filter(|m| !m.is_observation)
         .filter_map(|m| {
             let cleaned =
                 crate::server::chat_helpers::sanitize_message_for_ui(&m.from_id, &m.content)?;

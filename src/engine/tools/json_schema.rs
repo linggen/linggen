@@ -276,11 +276,16 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "ExitPlanMode",
-            "Submit your plan for user approval. The system will prompt the user to approve, reject, or give feedback — do NOT ask for confirmation in your response text. Just call this tool when the plan is ready.",
+            "Submit your plan for user approval. You MUST include the full plan text in the plan_text parameter. The system will prompt the user to approve, reject, or give feedback — do NOT ask for confirmation in your response text. Just call this tool when the plan is ready.",
             json!({
                 "type": "object",
-                "properties": {},
-                "required": []
+                "properties": {
+                    "plan_text": {
+                        "type": "string",
+                        "description": "The full markdown plan text to submit for user review. Include all steps, file paths, and implementation details."
+                    }
+                },
+                "required": ["plan_text"]
             }),
         ),
         // Non-tool actions promoted to tools for native function calling
@@ -314,10 +319,14 @@ fn builtin_tool_schemas() -> Vec<Value> {
         ),
         tool_def(
             "UpdatePlan",
-            "Update the progress checklist for a task in progress. This is for tracking execution progress (marking steps as completed/in_progress/pending) — NOT for creating plans. To plan a task, use EnterPlanMode instead.",
+            "Update the plan content and/or progress checklist. Use plan_text for the detailed implementation plan (markdown with file paths, code snippets, explanations). Use items for the progress checklist. Both can be provided together.",
             json!({
                 "type": "object",
                 "properties": {
+                    "plan_text": {
+                        "type": "string",
+                        "description": "Detailed markdown plan text with implementation steps, file paths, and code snippets. If omitted, existing plan_text is preserved."
+                    },
                     "items": {
                         "type": "array",
                         "items": {
@@ -334,7 +343,7 @@ fn builtin_tool_schemas() -> Vec<Value> {
                         }
                     }
                 },
-                "required": ["items"]
+                "required": []
             }),
         ),
         tool_def(

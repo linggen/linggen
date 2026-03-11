@@ -61,7 +61,7 @@ impl OllamaClient {
         let url = format!("{}/api/chat", self.base_url);
         let req = ChatRequest {
             model: model.to_string(),
-            messages: messages.to_vec(),
+            messages: messages.iter().map(|m| m.sanitize_for_ollama()).collect(),
             stream: Some(false),
             format: None,
             keep_alive,
@@ -125,7 +125,7 @@ impl OllamaClient {
         let url = format!("{}/api/chat", self.base_url);
         let req = ChatRequest {
             model: model.to_string(),
-            messages: messages.to_vec(),
+            messages: messages.iter().map(|m| m.sanitize_for_ollama()).collect(),
             stream: Some(true),
             format: None,
             keep_alive,
@@ -235,7 +235,7 @@ impl OllamaClient {
         let url = format!("{}/api/chat", self.base_url);
         let req = ChatRequest {
             model: model.to_string(),
-            messages: messages.to_vec(),
+            messages: messages.iter().map(|m| m.sanitize_for_ollama()).collect(),
             stream: Some(true),
             format: None,
             keep_alive,
@@ -279,88 +279,91 @@ impl OllamaClient {
 
         use crate::agent_manager::models::ToolCallChunk;
 
-        let token_stream = lines.filter_map(|line_result| async move {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(e) => return Some(Err(anyhow::anyhow!("stream error: {}", e))),
-            };
-            if line.trim().is_empty() {
-                return None;
-            }
-
-            // Parse as generic JSON to handle both text tokens and tool_calls.
-            let payload: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(p) => p,
-                Err(e) => {
-                    let truncated = if line.len() > 300 {
-                        format!("{}… ({} chars)", &line[..300], line.len())
-                    } else {
-                        line.clone()
-                    };
-                    return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated)));
-                }
-            };
-
-            let done = payload.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
-
-            if done {
-                let prompt_eval = payload.get("prompt_eval_count").and_then(|v| v.as_u64());
-                let eval = payload.get("eval_count").and_then(|v| v.as_u64());
-                let usage = TokenUsage {
-                    prompt_tokens: prompt_eval.map(|v| v as usize),
-                    completion_tokens: eval.map(|v| v as usize),
-                    total_tokens: match (prompt_eval, eval) {
-                        (Some(p), Some(c)) => Some((p + c) as usize),
-                        _ => None,
-                    },
+        // Use map + flat_map instead of filter_map so that a single Ollama
+        // response line can yield multiple StreamChunks (e.g. parallel tool calls).
+        let token_stream = lines
+            .map(|line_result| {
+                let line = match line_result {
+                    Ok(l) => l,
+                    Err(e) => return vec![Err(anyhow::anyhow!("stream error: {}", e))],
                 };
-                return Some(Ok(StreamChunk::Usage(usage)));
-            }
-
-            let message = payload.get("message")?;
-
-            // Check for tool_calls in the message
-            if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
-                // Ollama emits complete tool calls (not incremental)
-                let mut chunks = Vec::new();
-                for (idx, tc) in tool_calls.iter().enumerate() {
-                    let func = tc.get("function")?;
-                    let name = func.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let arguments = func.get("arguments").map(|v| v.to_string());
-                    // Generate a unique ID since Ollama doesn't provide one
-                    let id = format!("call_{}", uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string());
-                    chunks.push(StreamChunk::ToolCall(ToolCallChunk {
-                        index: idx,
-                        id: Some(id),
-                        name,
-                        arguments_delta: arguments,
-                    }));
+                if line.trim().is_empty() {
+                    return vec![];
                 }
-                // Return the first chunk; remaining ones would need multi-yield.
-                // Since Ollama sends all tool_calls at once, emit them as separate items.
-                if chunks.len() == 1 {
-                    return Some(Ok(chunks.into_iter().next().unwrap()));
-                }
-                // For multiple tool calls, emit first one (others come in subsequent chunks from Ollama).
-                // In practice, Ollama sends one message with all tool_calls at the end.
-                return Some(Ok(chunks.into_iter().next().unwrap()));
-            }
 
-            // Regular text content — only emit `content`, not `thinking`.
-            // Ollama separates reasoning into message.thinking; we discard it
-            // here because in native tool calling mode text goes directly to
-            // the user and thinking is internal model reasoning.
-            let result = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if result.is_empty() {
-                None
-            } else {
-                Some(Ok(StreamChunk::Token(result)))
-            }
-        });
+                // Parse as generic JSON to handle both text tokens and tool_calls.
+                let payload: serde_json::Value = match serde_json::from_str(&line) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let truncated = if line.len() > 300 {
+                            format!("{}… ({} chars)", &line[..300], line.len())
+                        } else {
+                            line.clone()
+                        };
+                        return vec![Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated))];
+                    }
+                };
+
+                let done = payload.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                if done {
+                    let prompt_eval = payload.get("prompt_eval_count").and_then(|v| v.as_u64());
+                    let eval = payload.get("eval_count").and_then(|v| v.as_u64());
+                    let usage = TokenUsage {
+                        prompt_tokens: prompt_eval.map(|v| v as usize),
+                        completion_tokens: eval.map(|v| v as usize),
+                        total_tokens: match (prompt_eval, eval) {
+                            (Some(p), Some(c)) => Some((p + c) as usize),
+                            _ => None,
+                        },
+                    };
+                    return vec![Ok(StreamChunk::Usage(usage))];
+                }
+
+                let message = match payload.get("message") {
+                    Some(m) => m,
+                    None => return vec![],
+                };
+
+                // Check for tool_calls in the message.
+                // Ollama emits all tool_calls at once in the final chunk,
+                // so we yield one StreamChunk per tool call.
+                if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+                    let mut chunks = Vec::with_capacity(tool_calls.len());
+                    for (idx, tc) in tool_calls.iter().enumerate() {
+                        let func = match tc.get("function") {
+                            Some(f) => f,
+                            None => continue,
+                        };
+                        let name = func.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let arguments = func.get("arguments").map(|v| v.to_string());
+                        let id = format!("call_{}", uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string());
+                        chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
+                            index: idx,
+                            id: Some(id),
+                            name,
+                            arguments_delta: arguments,
+                        })));
+                    }
+                    return chunks;
+                }
+
+                // Regular text content — only emit `content`, not `thinking`.
+                // Ollama separates reasoning into message.thinking; we discard it
+                // here because in native tool calling mode text goes directly to
+                // the user and thinking is internal model reasoning.
+                let result = message
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if result.is_empty() {
+                    vec![]
+                } else {
+                    vec![Ok(StreamChunk::Token(result))]
+                }
+            })
+            .flat_map(futures_util::stream::iter);
 
         Ok(token_stream)
     }
@@ -633,6 +636,22 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    /// Strip fields that Ollama doesn't understand (cache_control, name,
+    /// thinking from prior turns) to avoid payload noise and potential
+    /// re-injection of model reasoning.
+    pub fn sanitize_for_ollama(&self) -> Self {
+        Self {
+            role: self.role.clone(),
+            content: self.content.clone(),
+            thinking: None,
+            images: self.images.clone(),
+            cache_control: None,
+            tool_calls: self.tool_calls.clone(),
+            tool_call_id: self.tool_call_id.clone(),
+            name: None,
+        }
+    }
+
     pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: role.into(),

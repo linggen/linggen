@@ -45,7 +45,6 @@ fn ensure_directories() {
         crate::paths::logs_dir(),
         crate::paths::global_agents_dir(),
         crate::paths::global_skills_dir(),
-        crate::paths::plans_dir(),
         crate::paths::global_missions_dir(),
         crate::paths::projects_dir(),
     ];

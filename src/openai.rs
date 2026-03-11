@@ -287,6 +287,12 @@ impl OpenAiClient {
             model, messages.len(), total_len, tools.len()
         );
 
+        // ChatGPT Responses API requires tool call IDs starting with 'fc'.
+        // Sanitize IDs that may come from other providers or legacy sessions.
+        let ensure_fc_prefix = |id: &str| -> String {
+            if id.starts_with("fc") { id.to_string() } else { format!("fc_{id}") }
+        };
+
         let rb = if self.uses_responses_api() {
             // ChatGPT Responses API with tools
             let url = format!("{}/responses", self.base_url);
@@ -300,9 +306,10 @@ impl OpenAiClient {
                     instructions.push_str(&msg.content);
                 } else if msg.role == "tool" {
                     // Tool result messages → function_call_output items
+                    let call_id = msg.tool_call_id.as_deref().map(|id| ensure_fc_prefix(id)).unwrap_or_default();
                     input_items.push(serde_json::json!({
                         "type": "function_call_output",
-                        "call_id": msg.tool_call_id.as_deref().unwrap_or(""),
+                        "call_id": call_id,
                         "output": msg.content,
                     }));
                 } else if msg.role == "assistant" && !msg.tool_calls.is_empty() {
@@ -314,10 +321,11 @@ impl OpenAiClient {
                         }));
                     }
                     for tc in &msg.tool_calls {
+                        let tc_id = ensure_fc_prefix(&tc.id);
                         input_items.push(serde_json::json!({
                             "type": "function_call",
-                            "id": tc.id,
-                            "call_id": tc.id,
+                            "id": tc_id,
+                            "call_id": tc_id,
                             "name": tc.function.name,
                             "arguments": match &tc.function.arguments {
                                 serde_json::Value::String(s) => s.clone(),
@@ -391,146 +399,146 @@ impl OpenAiClient {
         use crate::agent_manager::models::ToolCallChunk;
         use futures_util::StreamExt;
         let is_responses_api = self.uses_responses_api();
-        let token_stream = lines.filter_map(move |line_result| async move {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(e) => return Some(Err(anyhow::anyhow!("stream error: {}", e))),
-            };
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            if trimmed.starts_with("event:") {
-                return None;
-            }
-            let data = match trimmed.strip_prefix("data: ") {
-                Some(d) => d.trim(),
-                None => return None,
-            };
-            if data == "[DONE]" {
-                return None;
-            }
-
-            if is_responses_api {
-                let val: serde_json::Value = match serde_json::from_str(data) {
-                    Ok(v) => v,
-                    Err(_) => return None,
+        // Use map + flat_map so a single SSE line can yield multiple
+        // StreamChunks (e.g. batched tool call deltas from Gemini/Groq).
+        let token_stream = lines
+            .map(move |line_result| {
+                let line = match line_result {
+                    Ok(l) => l,
+                    Err(e) => return vec![Err(anyhow::anyhow!("stream error: {}", e))],
                 };
-                let event_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                match event_type {
-                    "response.output_text.delta" => {
-                        let delta = val.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                        if delta.is_empty() { None } else { Some(Ok(StreamChunk::Token(delta.to_string()))) }
-                    }
-                    "response.function_call_arguments.delta" => {
-                        // Incremental tool call arguments
-                        let args_delta = val.get("delta").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let item_id = val.get("item_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                            index: output_index,
-                            id: item_id,
-                            name: None,
-                            arguments_delta: Some(args_delta),
-                        })))
-                    }
-                    "response.function_call_arguments.done" => {
-                        // Final tool call — emit with name so the caller knows it's complete
-                        let call_id = val.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let name = val.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let args = val.get("arguments").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                            index: output_index,
-                            id: call_id,
-                            name,
-                            arguments_delta: Some(args),
-                        })))
-                    }
-                    "response.output_item.added" => {
-                        // New output item — if it's a function_call, emit the name
-                        if let Some(item) = val.get("item") {
-                            if item.get("type").and_then(|v| v.as_str()) == Some("function_call") {
-                                let call_id = item.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                let name = item.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                                return Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                                    index: output_index,
-                                    id: call_id,
-                                    name,
-                                    arguments_delta: None,
-                                })));
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with("event:") {
+                    return vec![];
+                }
+                let data = match trimmed.strip_prefix("data: ") {
+                    Some(d) => d.trim(),
+                    None => return vec![],
+                };
+                if data == "[DONE]" {
+                    return vec![];
+                }
+
+                if is_responses_api {
+                    let val: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => return vec![],
+                    };
+                    let event_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    match event_type {
+                        "response.output_text.delta" => {
+                            let delta = val.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                            if delta.is_empty() { vec![] } else { vec![Ok(StreamChunk::Token(delta.to_string()))] }
+                        }
+                        "response.function_call_arguments.delta" => {
+                            let args_delta = val.get("delta").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let item_id = val.get("item_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            vec![Ok(StreamChunk::ToolCall(ToolCallChunk {
+                                index: output_index,
+                                id: item_id,
+                                name: None,
+                                arguments_delta: Some(args_delta),
+                            }))]
+                        }
+                        "response.function_call_arguments.done" => {
+                            // Emit name/id only — deltas already accumulated the full args.
+                            let call_id = val.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let name = val.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            vec![Ok(StreamChunk::ToolCall(ToolCallChunk {
+                                index: output_index,
+                                id: call_id,
+                                name,
+                                arguments_delta: None,
+                            }))]
+                        }
+                        "response.output_item.added" => {
+                            if let Some(item) = val.get("item") {
+                                if item.get("type").and_then(|v| v.as_str()) == Some("function_call") {
+                                    let call_id = item.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    let name = item.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    let output_index = val.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                                    return vec![Ok(StreamChunk::ToolCall(ToolCallChunk {
+                                        index: output_index,
+                                        id: call_id,
+                                        name,
+                                        arguments_delta: None,
+                                    }))];
+                                }
+                            }
+                            vec![]
+                        }
+                        "response.completed" => {
+                            if let Some(usage) = val.get("response").and_then(|r| r.get("usage")) {
+                                let input = usage.get("input_tokens").and_then(|v| v.as_u64()).map(|v| v as usize);
+                                let output = usage.get("output_tokens").and_then(|v| v.as_u64()).map(|v| v as usize);
+                                vec![Ok(StreamChunk::Usage(TokenUsage {
+                                    prompt_tokens: input,
+                                    completion_tokens: output,
+                                    total_tokens: input.zip(output).map(|(a, b)| a + b),
+                                }))]
+                            } else {
+                                vec![]
                             }
                         }
-                        None
-                    }
-                    "response.completed" => {
-                        if let Some(usage) = val.get("response").and_then(|r| r.get("usage")) {
-                            let input = usage.get("input_tokens").and_then(|v| v.as_u64()).map(|v| v as usize);
-                            let output = usage.get("output_tokens").and_then(|v| v.as_u64()).map(|v| v as usize);
-                            Some(Ok(StreamChunk::Usage(TokenUsage {
-                                prompt_tokens: input,
-                                completion_tokens: output,
-                                total_tokens: input.zip(output).map(|(a, b)| a + b),
-                            })))
-                        } else {
-                            None
+                        "error" => {
+                            let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                            vec![Err(anyhow::anyhow!("Responses API error: {}", msg))]
                         }
+                        _ => vec![],
                     }
-                    "error" => {
-                        let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
-                        Some(Err(anyhow::anyhow!("Responses API error: {}", msg)))
-                    }
-                    _ => None,
-                }
-            } else {
-                // Standard Chat Completions SSE
-                let sanitized = sanitize_json(data);
-                let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        return Some(Err(anyhow::anyhow!(
-                            "openai json parse error: {} (data: {})",
-                            e, data
-                        )));
-                    }
-                };
-
-                // Check for usage data
-                if let Some(usage) = chunk.usage {
-                    return Some(Ok(StreamChunk::Usage(TokenUsage {
-                        prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
-                        completion_tokens: usage.completion_tokens.map(|v| v as usize),
-                        total_tokens: usage.total_tokens.map(|v| v as usize),
-                    })));
-                }
-
-                let choice = chunk.choices.into_iter().next()?;
-
-                // Check for tool_call deltas
-                if let Some(tool_calls) = choice.delta.tool_calls {
-                    for tc in tool_calls {
-                        let name = tc.function.as_ref().and_then(|f| f.name.clone());
-                        let args_delta = tc.function.as_ref().and_then(|f| f.arguments.clone());
-                        return Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                            index: tc.index,
-                            id: tc.id,
-                            name,
-                            arguments_delta: args_delta,
-                        })));
-                    }
-                    return None;
-                }
-
-                // Regular content
-                let content = choice.delta.content.unwrap_or_default();
-                if content.is_empty() {
-                    None
                 } else {
-                    Some(Ok(StreamChunk::Token(content)))
+                    // Standard Chat Completions SSE
+                    let sanitized = sanitize_json(data);
+                    let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return vec![Err(anyhow::anyhow!(
+                                "openai json parse error: {} (data: {})",
+                                e, data
+                            ))];
+                        }
+                    };
+
+                    if let Some(usage) = chunk.usage {
+                        return vec![Ok(StreamChunk::Usage(TokenUsage {
+                            prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
+                            completion_tokens: usage.completion_tokens.map(|v| v as usize),
+                            total_tokens: usage.total_tokens.map(|v| v as usize),
+                        }))];
+                    }
+
+                    let Some(choice) = chunk.choices.into_iter().next() else {
+                        return vec![];
+                    };
+
+                    // Emit ALL tool call deltas from this chunk (not just the first)
+                    if let Some(tool_calls) = choice.delta.tool_calls {
+                        return tool_calls
+                            .into_iter()
+                            .map(|tc| {
+                                let name = tc.function.as_ref().and_then(|f| f.name.clone());
+                                let args_delta = tc.function.as_ref().and_then(|f| f.arguments.clone());
+                                Ok(StreamChunk::ToolCall(ToolCallChunk {
+                                    index: tc.index,
+                                    id: tc.id,
+                                    name,
+                                    arguments_delta: args_delta,
+                                }))
+                            })
+                            .collect();
+                    }
+
+                    let content = choice.delta.content.unwrap_or_default();
+                    if content.is_empty() {
+                        vec![]
+                    } else {
+                        vec![Ok(StreamChunk::Token(content))]
+                    }
                 }
-            }
-        });
+            })
+            .flat_map(futures_util::stream::iter);
 
         Ok(token_stream)
     }
@@ -582,6 +590,15 @@ struct OaiMessageWithTools {
 
 impl OaiMessage {
     fn from_chat(msg: &crate::ollama::ChatMessage) -> Self {
+        // In text mode (no native tools), convert tool-related messages to
+        // plain roles so the API doesn't see orphaned tool_call_id/tool_calls.
+        let role = if msg.role == "tool" {
+            // Tool results become user messages — avoids 400 errors from
+            // orphaned role="tool" without matching tool_calls in history.
+            "user".to_string()
+        } else {
+            msg.role.clone()
+        };
         let content = if msg.images.is_empty() {
             OaiContent::Text(msg.content.clone())
         } else {
@@ -598,7 +615,7 @@ impl OaiMessage {
             OaiContent::Parts(parts)
         };
         Self {
-            role: msg.role.clone(),
+            role,
             content,
         }
     }
