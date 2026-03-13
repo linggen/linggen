@@ -177,9 +177,13 @@ pub(crate) async fn get_system_prompt_api(
     };
     let agents = ctx.agents.lock().await;
     if let Some(agent_mutex) = agents.get(&query.agent_id) {
-        let engine = agent_mutex.lock().await;
-        let (content, _hash) = engine.build_stable_system_content();
-        Json(serde_json::json!({ "system_prompt": content })).into_response()
+        let mut engine = agent_mutex.lock().await;
+        // Build the full system prompt including tool schemas, plan mode, delegation, etc.
+        let (messages, _, _) = engine.prepare_loop_messages("(export)", true);
+        let system_prompt = messages.first()
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        Json(serde_json::json!({ "system_prompt": system_prompt })).into_response()
     } else {
         (StatusCode::NOT_FOUND, format!("Agent '{}' not found", query.agent_id)).into_response()
     }
@@ -1510,6 +1514,35 @@ pub(crate) async fn chat_handler(
     }
 }
 
+/// Recover a pending plan from persisted session messages after server restart.
+/// Scans the session history backwards for the last plan message with status "planned".
+async fn recover_plan_from_session(
+    state: &Arc<ServerState>,
+    root: &std::path::Path,
+    agent_id: &str,
+    session_id: Option<&str>,
+) -> Option<crate::engine::Plan> {
+    let sid = session_id.unwrap_or("default");
+    let ctx = state.manager.get_or_create_project(root.to_path_buf()).await.ok()?;
+    let messages = ctx.sessions.get_chat_history(sid).ok()?;
+    // Scan backwards for the last plan message.
+    for msg in messages.iter().rev() {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+            if parsed.get("type").and_then(|v| v.as_str()) == Some("plan") {
+                if let Some(plan_val) = parsed.get("plan") {
+                    if let Ok(plan) = serde_json::from_value::<crate::engine::Plan>(plan_val.clone()) {
+                        if plan.status == crate::engine::PlanStatus::Planned {
+                            tracing::info!("Recovered pending plan from session history for {agent_id}");
+                            return Some(plan);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(crate) async fn approve_plan_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<PlanActionRequest>,
@@ -1523,6 +1556,12 @@ pub(crate) async fn approve_plan_handler(
         .manager
         .take_pending_plan(&root_str, &req.agent_id)
         .await;
+    // Fallback: after server restart the in-memory pending_plans map is empty.
+    // Reconstruct from the last persisted plan message in the session.
+    let plan = match plan {
+        Some(p) => Some(p),
+        None => recover_plan_from_session(&state, &root, &req.agent_id, session_id.as_deref()).await,
+    };
     let Some(mut plan) = plan else {
         return (
             StatusCode::NOT_FOUND,
@@ -1566,6 +1605,13 @@ pub(crate) async fn approve_plan_handler(
     let root_clone = root.clone();
 
     tokio::spawn(async move {
+        // Register agent → session mapping so SSE events get tagged with
+        // the correct session_id (same as chat_handler does).
+        if let Some(ref sid) = session_id {
+            state_clone.agent_sessions.write().unwrap()
+                .insert(agent_id.clone(), sid.clone());
+        }
+
         let mut engine = agent.lock().await;
 
         // Set the approved plan on the engine and emit to UI.
@@ -1617,6 +1663,15 @@ pub(crate) async fn approve_plan_handler(
         state_clone
             .send_agent_status(agent_id.clone(), AgentStatusKind::Idle, Some("Idle".to_string()), None)
             .await;
+
+        // Deregister agent → session mapping after a short delay so the
+        // TurnComplete and idle events still get enriched with session_id.
+        let sessions_ref = state_clone.agent_sessions.clone();
+        let agent_key = agent_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sessions_ref.write().unwrap().remove(&agent_key);
+        });
     });
 
     Json(serde_json::json!({ "status": "approved" })).into_response()
@@ -1633,6 +1688,10 @@ pub(crate) async fn reject_plan_handler(
         .manager
         .take_pending_plan(&root_str, &req.agent_id)
         .await;
+    let removed = match removed {
+        Some(p) => Some(p),
+        None => recover_plan_from_session(&state, &root, &req.agent_id, req.session_id.as_deref()).await,
+    };
 
     if removed.is_none() {
         return (

@@ -24,6 +24,7 @@ import {
   reconstructContentFromText,
 } from '../lib/messageUtils';
 import { useProjectStore } from './projectStore';
+import { useUiStore } from './uiStore';
 
 interface ChatState {
   messages: ChatMessage[];
@@ -631,6 +632,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }];
           });
         state.syncPersisted(msgs);
+
+        // Restore pending plan state from persisted messages (e.g. after server restart).
+        // Find the last plan message with status "planned" and set it as pending.
+        const uiState = useUiStore.getState();
+        if (!uiState.pendingPlanAgentId) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i];
+            if (!isPlanMessage(m)) continue;
+            try {
+              const parsed = JSON.parse(m.text);
+              if (parsed?.plan?.status === 'planned') {
+                uiState.setPendingPlan(parsed.plan);
+                uiState.setPendingPlanAgentId(m.from || m.role || '');
+                break;
+              }
+            } catch { /* ignore */ }
+          }
+        }
       }
     } catch (e) {
       console.error('Error fetching workspace state:', e);

@@ -1361,6 +1361,11 @@ async fn events_handler(
                 if let Ok(map) = agent_sessions.read() {
                     if let Some(sid) = map.get(aid) {
                         ui_msg.session_id = Some(sid.clone());
+                    } else if filter_session.is_some() {
+                        tracing::debug!(
+                            "SSE enrich: agent '{}' not in agent_sessions (kind={}, keys={:?})",
+                            aid, ui_msg.kind, map.keys().collect::<Vec<_>>(),
+                        );
                     }
                 }
             }
@@ -1379,14 +1384,12 @@ async fn events_handler(
                     }
                 }
                 None => {
-                    // Allow global events (sync/resync) and mission notifications through.
-                    let is_global = matches!(
-                        (ui_msg.kind.as_str(), ui_msg.phase.as_deref()),
-                        ("run", Some("sync")) | ("run", Some("resync"))
-                    ) || ui_msg.kind == "mission_completed";
-                    if !is_global {
-                        return None;
-                    }
+                    // Events without session_id are either global (sync/resync) or
+                    // events where the agent_sessions enrichment didn't match.
+                    // Let them through — the client-side filter provides a second
+                    // layer of session filtering. Being too strict here causes
+                    // content_block, ask_user, and other events to be silently
+                    // dropped when agent_sessions has a timing gap.
                 }
                 _ => {} // session matches — pass through
             }

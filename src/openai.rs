@@ -150,19 +150,25 @@ impl OpenAiClient {
             let url = format!("{}/chat/completions", self.base_url);
             let oai_messages: Vec<OaiMessage> =
                 messages.iter().map(OaiMessage::from_chat).collect();
-            let stream_options = if self.base_url.contains("googleapis.com") {
+            let is_gemini = self.base_url.contains("googleapis.com");
+            let stream_options = if is_gemini {
                 None
             } else {
                 Some(OaiStreamOptions { include_usage: true })
             };
-            let req = OaiRequest {
-                model: model.to_string(),
-                messages: oai_messages,
-                stream: true,
-                stream_options,
-                response_format: None,
-                tools: None,
-            };
+            let mut req = serde_json::json!({
+                "model": model,
+                "messages": oai_messages,
+                "stream": true,
+            });
+            if let Some(opts) = stream_options {
+                req["stream_options"] = serde_json::json!({"include_usage": opts.include_usage});
+            }
+            // Gemini 2.5 thinking models can exhaust their output budget on
+            // internal reasoning and return empty responses.
+            if is_gemini && model.contains("2.5") {
+                req["max_completion_tokens"] = serde_json::json!(65536);
+            }
             self.apply_auth(self.http.post(url).json(&req))
         };
         let resp = rb.send().await?;
@@ -413,10 +419,17 @@ impl OpenAiClient {
                     "stream": true,
                     "tools": tools,
                 });
+                let is_gemini = self.base_url.contains("googleapis.com");
                 // Only include stream_options for providers known to support it.
                 // Gemini's OpenAI-compatible API doesn't support stream_options.
-                if !self.base_url.contains("googleapis.com") {
+                if !is_gemini {
                     req["stream_options"] = serde_json::json!({"include_usage": true});
+                }
+                // Gemini 2.5 thinking models can exhaust their output budget on
+                // internal reasoning and return empty responses. Set a generous
+                // max_completion_tokens so there's room for both thinking and output.
+                if is_gemini && model.contains("2.5") {
+                    req["max_completion_tokens"] = serde_json::json!(65536);
                 }
                 self.apply_auth(self.http.post(url).json(&req))
             };
@@ -868,30 +881,12 @@ impl OaiMessageWithTools {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct OaiRequest {
-    model: String,
-    messages: Vec<OaiMessage>,
-    stream: bool,
-    /// Request token usage in the final streaming chunk.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream_options: Option<OaiStreamOptions>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<OaiResponseFormat>,
-    /// OpenAI-compatible tool definitions for native function calling.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<serde_json::Value>>,
-}
 
 #[derive(Debug, Serialize)]
 struct OaiStreamOptions {
     include_usage: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct OaiResponseFormat {
-    r#type: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct OaiStreamChunk {

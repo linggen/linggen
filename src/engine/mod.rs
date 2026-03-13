@@ -278,6 +278,58 @@ impl AgentEngine {
                 );
                 if state.empty_response_streak >= 3 {
                     warn!("Bailing out after {} consecutive empty responses from {}", state.empty_response_streak, self.model_id);
+
+                    // In plan mode, auto-finalize with whatever research was gathered
+                    // instead of showing an error. The user can still see and approve the plan.
+                    if self.plan_mode {
+                        let plan_text = if !state.last_assistant_response.is_empty() {
+                            state.last_assistant_response.clone()
+                        } else {
+                            format!(
+                                "Plan could not be completed — model '{}' stopped responding after research phase. \
+                                 Please review the tool results above and try again or switch models.",
+                                self.model_id
+                            )
+                        };
+                        info!("Empty response streak in plan mode → auto-finalizing plan");
+                        let outcome = self.finalize_plan_mode(plan_text).await;
+                        return Ok(outcome);
+                    }
+
+                    // Try to fall back to the next model in the chain before giving up.
+                    let failed_model = self.model_id.clone();
+                    let chain = self.build_model_chain();
+                    let cur_idx = chain.iter().position(|m| m == &failed_model);
+                    let health = self.model_manager.health.clone();
+                    let mut switched = false;
+                    if let Some(idx) = cur_idx {
+                        for candidate in chain.iter().skip(idx + 1) {
+                            if health.is_available(candidate).await {
+                                info!(
+                                    "Empty response fallback: {} → {} (after {} empty responses)",
+                                    failed_model, candidate, state.empty_response_streak
+                                );
+                                health.mark_error(&failed_model, "consecutive empty responses").await;
+                                self.model_id = candidate.to_string();
+                                self.cached_system_prompt = None; // rebuild with new model context
+                                state.empty_response_streak = 0;
+                                self.emit_model_fallback_event(
+                                    &failed_model,
+                                    candidate,
+                                    "consecutive empty responses",
+                                ).await;
+                                switched = true;
+                                break;
+                            }
+                        }
+                    }
+                    if switched {
+                        // Remove the nudge messages we added for empty responses
+                        // and retry with the new model.
+                        continue;
+                    }
+
+                    // No fallback available — bail out with error message.
                     let msg = format!(
                         "Model '{}' returned {} consecutive empty responses. This usually means the model doesn't support the tool calling format being used. Please check the model configuration.",
                         self.model_id, state.empty_response_streak

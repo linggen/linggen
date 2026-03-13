@@ -373,7 +373,7 @@ impl AgentEngine {
     ///
     /// Order: primary model → `routing.default_models` → remaining configured models.
     /// Filters out models marked unavailable by the health tracker (keeps at least one).
-    fn build_model_chain(&self) -> Vec<String> {
+    pub(crate) fn build_model_chain(&self) -> Vec<String> {
         let primary = self.model_id.clone();
         let all_ids = self.model_manager.model_ids();
 
@@ -458,7 +458,7 @@ impl AgentEngine {
     }
 
     /// Emit a ModelFallback event via the agent manager.
-    async fn emit_model_fallback_event(&self, preferred: &str, actual: &str, reason: &str) {
+    pub(crate) async fn emit_model_fallback_event(&self, preferred: &str, actual: &str, reason: &str) {
         let Some(manager) = self.tools.get_manager() else { return };
         let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
         manager

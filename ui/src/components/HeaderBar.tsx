@@ -48,20 +48,32 @@ export const HeaderBar: React.FC<{
           onClick={async () => {
             const projectRoot = useProjectStore.getState().selectedProjectRoot;
             const agentId = useAgentStore.getState().selectedAgent;
-            if (!projectRoot) return;
+            if (!projectRoot) { setSpStatus('error'); setTimeout(() => setSpStatus('idle'), 1500); return; }
             try {
               const url = new URL('/api/chat/system-prompt', window.location.origin);
               url.searchParams.append('project_root', projectRoot);
               url.searchParams.append('agent_id', agentId);
               const resp = await fetch(url.toString());
+              if (!resp.ok) { setSpStatus('error'); setTimeout(() => setSpStatus('idle'), 1500); return; }
               const data = await resp.json();
-              if (data.system_prompt) {
-                await navigator.clipboard.writeText(data.system_prompt);
-                setSpStatus('copied');
-              } else {
-                setSpStatus('error');
+              const text = data.system_prompt;
+              if (!text) { setSpStatus('error'); setTimeout(() => setSpStatus('idle'), 1500); return; }
+              // Try clipboard API first, fall back to textarea+execCommand.
+              try {
+                await navigator.clipboard.writeText(text);
+              } catch {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
               }
-            } catch {
+              setSpStatus('copied');
+            } catch (e) {
+              console.error('Failed to copy system prompt:', e);
               setSpStatus('error');
             }
             setTimeout(() => setSpStatus('idle'), 1500);
