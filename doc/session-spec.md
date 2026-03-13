@@ -52,7 +52,7 @@ Each session carries:
 | `id` | creation | no | Unique identifier (`sess-{timestamp}-{uuid8}`) |
 | `title` | creation | yes | Human-readable name, can be auto-generated |
 | `created_at` | creation | no | Unix timestamp |
-| `creator` | creation | no | Who created this session: `user`, `skill`, `agent`, `mission` |
+| `creator` | creation | promotion only | Who owns this session: `user`, `skill`, `agent`, `mission`. Changes from `mission` → `user` on promotion. |
 | `skill` | creation | no | Bound skill name (if any) — active for the session's lifetime |
 | `agent_id` | creation | yes | Which agent runs in this session |
 | `model` | creation | yes | Model override for this session |
@@ -68,7 +68,7 @@ Each session carries:
 ### What's fixed for the session lifetime
 
 - **Bound skill** — set at creation, cannot be changed. Start a new session for a different skill.
-- **Creator** — immutable fact about how the session was born.
+- **Creator** — immutable except for promotion (mission → user when a human takes over).
 
 ## System prompt assembly
 
@@ -138,16 +138,57 @@ Each persisted session directory contains:
 
 See `storage-spec.md` for the full filesystem layout.
 
+## Session promotion (mission → user)
+
+When a user sends a message to a mission-created session, the session is **promoted** to a user session. The mission ran autonomously; now the user is taking over the conversation interactively.
+
+### What triggers promotion
+
+A `POST /api/chat` request where:
+- `mission_id` is present (the UI is viewing a mission session), AND
+- the message comes from a real user (not the mission scheduler)
+
+The chat handler detects this by checking the session's current `creator` field. If it's `"mission"`, promotion happens before the agent loop runs.
+
+### What changes on promotion
+
+| Aspect | Before (mission) | After (user) |
+|:-------|:-----------------|:-------------|
+| `creator` field | `"mission"` | `"user"` |
+| `tool_permission_mode` | `Auto` (forced by scheduler) | Config default (from `linggen.toml`) |
+| `mission_allowed_tools` | Set by permission tier | Cleared |
+| `bash_allow_prefixes` | Set by permission tier | Cleared |
+| System prompt | Rebuilt from `ling.md` | Same — but cache invalidated to pick up any config changes |
+| Chat history | Mission messages | Preserved — user sees full mission context |
+| Session files | Stay in `~/.linggen/missions/{mission_id}/sessions/` | No move — files stay in place |
+
+### What stays the same
+
+- **Session ID** — unchanged.
+- **Message history** — all mission messages are preserved. The user's conversation builds on top of the mission's context.
+- **Session file location** — files remain in the mission sessions directory. No file moves.
+- **Agent** — still `ling`. The mission agent IS ling.
+
+### Why not create a new session?
+
+The user wants to continue the conversation — give feedback on the mission's plan, ask follow-up questions, approve/reject work. Creating a new session would lose the mission context. Promotion keeps the context and switches the interaction mode.
+
+### Promotion is one-way and permanent
+
+Once promoted, the session stays as `"user"`. If the mission scheduler needs to run again, it creates a new session.
+
 ## Session lifecycle
 
 ```
 created → active → idle
+                 → promoted (mission → user, on first user message)
                  → archived (future: manual or auto-cleanup)
 ```
 
 - **Created**: session.yaml written, empty messages file.
 - **Active**: agent is running, messages being appended.
 - **Idle**: no active agent run. Resumes on next user message.
+- **Promoted**: mission session taken over by user. Creator updated, engine reconfigured.
 
 ## Sub-agent sessions
 

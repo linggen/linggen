@@ -66,23 +66,40 @@ impl AgentEngine {
             .and_then(|s| s.personality.as_deref())
             .unwrap_or("");
 
-        let body = self
-            .spec_system_prompt
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                self.prompt_store.render_or_fallback(keys::SYSTEM_FALLBACK_IDENTITY, &[])
-            });
+        // App skills override the agent body — the agent's coding/workflow instructions
+        // are irrelevant when the skill runs its own UI (e.g. game-table).
+        // The agent's personality traits still carry through.
+        let is_app_skill = self
+            .active_skill
+            .as_ref()
+            .is_some_and(|s| s.app.is_some());
+
+        let body = if is_app_skill {
+            // Skip agent body; skill content becomes the primary prompt.
+            String::new()
+        } else {
+            self.spec_system_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    self.prompt_store
+                        .render_or_fallback(keys::SYSTEM_FALLBACK_IDENTITY, &[])
+                })
+        };
 
         let mut prompt = if personality.is_empty() {
             body
+        } else if body.is_empty() {
+            personality.trim().to_string()
         } else {
             format!("{}\n\n{}", personality.trim(), body)
         };
 
-        if !self.available_skills_metadata.is_empty() {
+        // Don't list available skills for app skill sessions — the model
+        // should focus entirely on the active skill.
+        if !is_app_skill && !self.available_skills_metadata.is_empty() {
             prompt.push_str(&self.prompt_store.render_or_fallback(
                 keys::SYSTEM_SKILLS_HEADER,
                 &[],

@@ -241,6 +241,7 @@ impl AgentEngine {
         let mut tc_ids: Vec<Option<String>> = Vec::new();
         let mut tc_names: Vec<Option<String>> = Vec::new();
         let mut tc_args: Vec<String> = Vec::new();
+        let mut tc_thought_sigs: Vec<Option<String>> = Vec::new();
 
         loop {
             let chunk_timeout = if accumulated_text.is_empty() && tc_ids.is_empty() {
@@ -288,6 +289,7 @@ impl AgentEngine {
                         tc_ids.push(None);
                         tc_names.push(None);
                         tc_args.push(String::new());
+                        tc_thought_sigs.push(None);
                     }
                     if let Some(id) = tc.id {
                         tc_ids[idx] = Some(id);
@@ -297,6 +299,9 @@ impl AgentEngine {
                     }
                     if let Some(args_delta) = tc.arguments_delta {
                         tc_args[idx].push_str(&args_delta);
+                    }
+                    if tc.thought_signature.is_some() {
+                        tc_thought_sigs[idx] = tc.thought_signature;
                     }
                 }
             }
@@ -333,15 +338,24 @@ impl AgentEngine {
                     })
                 })
             };
+            let thought_signature = tc_thought_sigs.get(i).and_then(|s| s.clone());
             tool_calls.push(ParsedToolCall {
                 id,
                 name,
                 arguments,
+                thought_signature,
             });
         }
 
         // Strip <think>...</think> blocks from the accumulated text.
         let accumulated_text = strip_think_tags(&accumulated_text);
+
+        if accumulated_text.is_empty() && tool_calls.is_empty() {
+            warn!(
+                "Model '{}' returned empty response (no text, no tool calls). Raw accumulated len={}, tool call deltas={}",
+                model_id, accumulated_text.len(), tc_ids.len()
+            );
+        }
 
         Ok(StreamResult {
             full_text: accumulated_text,

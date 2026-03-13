@@ -19,6 +19,10 @@ The conversation context from planning is available. You do NOT need to re-read 
 - If a step needs adjustment, proceed with the corrected approach.
 - If a step is no longer needed, skip it and note why.
 
+### Progress tracking
+
+Use UpdatePlan to report progress as you work through the plan. Before starting, call UpdatePlan with items for each step (all `pending`). As you begin each step, update that item to `in_progress`. When a step is done, update it to `completed`. This drives the progress checklist UI so the user can see what's been done and what's left.
+
 ### The Plan
 
 {plan_text}'''

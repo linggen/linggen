@@ -59,6 +59,7 @@ export interface ChatMessage {
   toolCount?: number;
   durationMs?: number;
   images?: string[];
+  imageCount?: number;
   subagentTree?: SubagentTreeEntry[];
   segments?: MessageSegment[];
   liveText?: string;

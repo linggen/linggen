@@ -34,7 +34,7 @@ use crate::ollama::ChatMessage;
 use anyhow::Result;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 impl AgentEngine {
     /// Convert native ParsedToolCalls into ModelActions for dispatch.
@@ -181,6 +181,7 @@ impl AgentEngine {
             last_assistant_response: String::new(),
             identical_response_streak: 0,
             loop_nudge_count: 0,
+            empty_response_streak: 0,
             progress_rx,
         };
         self.native_tool_mode = use_native_tools;
@@ -264,6 +265,44 @@ impl AgentEngine {
                 );
             }
 
+            // --- Empty response protection ---
+            // Some providers (e.g. Gemini) may return empty text with no tool calls.
+            // Bail out after consecutive empty responses to avoid infinite loops.
+            if raw.trim().is_empty() && native_tool_calls.is_empty() {
+                state.empty_response_streak += 1;
+                warn!(
+                    "Empty model response (streak {}): model={} native_tools={}",
+                    state.empty_response_streak,
+                    self.model_id,
+                    native_tools.is_some(),
+                );
+                if state.empty_response_streak >= 3 {
+                    warn!("Bailing out after {} consecutive empty responses from {}", state.empty_response_streak, self.model_id);
+                    let msg = format!(
+                        "Model '{}' returned {} consecutive empty responses. This usually means the model doesn't support the tool calling format being used. Please check the model configuration.",
+                        self.model_id, state.empty_response_streak
+                    );
+                    let _ = self.persist_assistant_message(&msg, session_id).await;
+                    if let Some(manager) = self.tools.get_manager() {
+                        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
+                        manager.send_event(crate::agent_manager::AgentEvent::TextSegment {
+                            agent_id,
+                            text: msg.clone(),
+                            parent_id: self.parent_agent_id.clone(),
+                        }).await;
+                    }
+                    self.active_skill = None;
+                    return Ok(AgentOutcome::None);
+                }
+                // Push a nudge and retry
+                let nudge = self.tool_result_msg(
+                    "Your response was empty. Please respond with either a tool call or text.".to_string(),
+                );
+                self.push_tracked_message(&mut state.messages, nudge, MessageImportance::Normal);
+                continue;
+            }
+            state.empty_response_streak = 0;
+
             // --- Native tool calling path ---
             if !native_tool_calls.is_empty() {
                 // Emit visible text content (strip any embedded JSON actions).
@@ -306,6 +345,7 @@ impl AgentEngine {
                             name: tc.name.clone(),
                             arguments: tc.arguments.clone(),
                         },
+                        thought_signature: tc.thought_signature.clone(),
                     })
                     .collect();
                 let mut assistant_msg = ChatMessage::assistant_with_tool_calls(tool_call_msgs);
@@ -320,6 +360,17 @@ impl AgentEngine {
                 // All native tool calls were filtered (e.g. all were "Done") →
                 // treat as text-only response and end the loop.
                 if actions.is_empty() {
+                    // Plan mode fallback: model emitted Done without calling
+                    // ExitPlanMode.  Treat the text as the plan and auto-finalize.
+                    if self.plan_mode {
+                        info!("Done-only tool call in plan mode → implicit ExitPlanMode");
+                        let plan_text = raw.trim().to_string();
+                        if !plan_text.is_empty() {
+                            self.last_assistant_text = Some(plan_text.clone());
+                        }
+                        let outcome = self.finalize_plan_mode(plan_text).await;
+                        return Ok(outcome);
+                    }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                     self.truncate_chat_history();

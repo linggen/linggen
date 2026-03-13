@@ -423,7 +423,7 @@ const App: React.FC = () => {
       chat.addMessage({
         role: 'user', from: 'user', to: agentToUse, text: userMessage,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
-        ...(images && images.length > 0 ? { images } : {}),
+        ...(images && images.length > 0 ? { images, imageCount: images.length } : {}),
       });
       scrollToBottom();
     }

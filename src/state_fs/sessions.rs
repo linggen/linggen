@@ -178,6 +178,17 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn update_session_meta(&self, meta: &SessionMeta) -> Result<()> {
+        Self::validate_id(&meta.id)?;
+        let yaml_path = self.session_dir(&meta.id).join("session.yaml");
+        if !yaml_path.exists() {
+            bail!("Session not found: {}", meta.id);
+        }
+        let yaml = serde_yml::to_string(meta)?;
+        fs::write(yaml_path, yaml)?;
+        Ok(())
+    }
+
     pub fn remove_session(&self, session_id: &str) -> Result<()> {
         Self::validate_id(session_id)?;
         let dir = self.session_dir(session_id);

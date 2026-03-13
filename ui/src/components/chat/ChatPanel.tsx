@@ -60,13 +60,13 @@ const ChatMessageRow = React.memo<{
         {isUser ? (
           <>
             {msg.text}
-            {msg.images && msg.images.length > 0 && (
-              <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                {msg.images.map((img, imgIdx) => (
-                  <img key={`b64-${imgIdx}`} src={`data:image/png;base64,${img}`} alt={`Image ${imgIdx + 1}`}
-                    className="max-w-[200px] max-h-[200px] rounded-md border border-slate-200 dark:border-white/10 object-contain" />
-                ))}
-              </div>
+            {(msg.imageCount ?? msg.images?.length ?? 0) > 0 && (
+              <span className="text-slate-400 dark:text-slate-500 ml-1">
+                {(() => {
+                  const count = msg.imageCount ?? msg.images?.length ?? 0;
+                  return Array.from({ length: count }, (_, i) => `[image${count > 1 ? `#${i + 1}` : ''}]`).join(' ');
+                })()}
+              </span>
             )}
           </>
         ) : (

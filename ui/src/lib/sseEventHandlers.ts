@@ -84,7 +84,9 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
 
 export function dispatchSseEvent(item: UiSseMessage): void {
   const { activeSessionId } = useProjectStore.getState();
-  if (item.session_id && activeSessionId && item.session_id !== activeSessionId) return;
+  // Allow mission_completed through regardless — missions run in their own
+  // session but notifications should reach the active UI session.
+  if (item.kind !== 'mission_completed' && item.session_id && activeSessionId && item.session_id !== activeSessionId) return;
 
   switch (item.kind) {
     case 'run':          handleRun(item); return;
@@ -515,6 +517,11 @@ function handleTurnComplete(item: UiSseMessage): void {
 
   useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens);
   useUiStore.getState().setPendingAskUser(null);
+
+  // Ensure agent status transitions to idle — the subsequent AgentStatus(idle)
+  // event may arrive late or be missed, leaving the spinner stuck on "Thinking…".
+  agentStore.setAgentStatus((prev) => ({ ...prev, [agentId]: 'idle' }));
+  agentStore.setAgentStatusText((prev) => ({ ...prev, [agentId]: 'Idle' }));
 }
 
 function handleToolProgress(item: UiSseMessage): void {

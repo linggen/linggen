@@ -22,7 +22,7 @@
       "runtimeArgs": [
         "--user-data-dir=${workspaceFolder}/.vscode/chrome-debug"
       ],
-      "url": "http://localhost:5173",
+      "url": "http://0.0.0.0:5173",
       "webRoot": "${workspaceFolder}/ui",
       "preLaunchTask": "build and dev agent ui"
     }

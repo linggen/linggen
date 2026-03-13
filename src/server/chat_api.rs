@@ -1316,6 +1316,32 @@ pub(crate) async fn chat_handler(
                 engine.cfg.mission_allowed_tools = None;
                 engine.cfg.bash_allow_prefixes = None;
 
+                // --- Session promotion: mission → user ---
+                // The mission scheduler never goes through chat_handler (it calls
+                // dispatch_mission_prompt directly), so any request here with a
+                // mission session is from a real user taking over the conversation.
+                if sessions_override_for_spawn.is_some() {
+                    if let Some(ref sid) = session_id {
+                        if let Some(ref alt_dir) = sessions_override_for_spawn {
+                            let store = crate::state_fs::SessionStore::with_sessions_dir(alt_dir.clone());
+                            if let Ok(Some(mut meta)) = store.get_session_meta(sid) {
+                                if meta.creator == "mission" {
+                                    meta.creator = "user".to_string();
+                                    let _ = store.update_session_meta(&meta);
+                                }
+                            }
+                        }
+                    }
+
+                    // Reset tool_permission_mode from Auto (forced by mission scheduler)
+                    // back to the configured default.
+                    let cfg = state_clone.manager.get_config_snapshot().await;
+                    engine.cfg.tool_permission_mode = cfg.agent.tool_permission_mode;
+
+                    // Force system prompt rebuild to reflect new permission context.
+                    engine.cached_system_prompt = None;
+                }
+
                 let model_label = &engine.model_id;
                 state_clone
                     .send_agent_status(
@@ -1432,9 +1458,15 @@ pub(crate) async fn chat_handler(
                         None,
                     )
                     .await;
-                // Deregister agent → session mapping.
-                state_clone.agent_sessions.write().unwrap()
-                    .remove(&target_id_clone);
+                // Deregister agent → session mapping after a short delay so the
+                // SSE filter can still enrich the TurnComplete and idle AgentStatus
+                // events with the correct session_id before they are streamed out.
+                let sessions_ref = state_clone.agent_sessions.clone();
+                let agent_key = target_id_clone.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    sessions_ref.write().unwrap().remove(&agent_key);
+                });
             });
 
             let status = if was_busy { "queued" } else { "started" };

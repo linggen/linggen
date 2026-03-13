@@ -1148,7 +1148,7 @@ pub async fn prepare_server(
         tokio::spawn(mission_scheduler::mission_scheduler_loop(scheduler_state));
     }
 
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     let actual_port = listener.local_addr()?.port();
     info!("Server running on http://localhost:{}", actual_port);
 

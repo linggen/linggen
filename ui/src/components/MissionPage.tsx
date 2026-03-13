@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer, useMemo } from 'react';
-import { ArrowLeft, Target, Plus, Play, Trash2, Clock, Edit3, Check, X, Eye, ExternalLink, ChevronDown, ChevronRight, Pause, Send, Square } from 'lucide-react';
+import { ArrowLeft, Target, Plus, Play, Trash2, Clock, Edit3, Check, X, Eye, ExternalLink, ChevronDown, ChevronRight, Pause, Send, Square, Bot, Cpu } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { AgentInfo, ChatMessage, ContentBlock, CronMission, MissionRunEntry, Plan, ProjectInfo, UiSseMessage } from '../types';
 import { AgentMessage } from './chat/AgentMessage';
@@ -243,6 +243,79 @@ function miniChatReducer(state: ChatMessage[], action: MiniChatAction): ChatMess
   }
 }
 
+// ---- Mission Agents Bar (compact status for active agents) ------------------
+
+type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working';
+
+interface MissionAgentState {
+  status: AgentStatusValue;
+  statusText: string;
+  contextTokens?: number;
+  contextLimit?: number;
+}
+
+const agentStatusStyle = (status: AgentStatusValue) => {
+  switch (status) {
+    case 'calling_tool': return 'bg-amber-500/20 text-amber-600 dark:text-amber-400 animate-pulse';
+    case 'model_loading': return 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 animate-pulse';
+    case 'thinking': return 'bg-blue-500/20 text-blue-500 animate-pulse';
+    case 'working': return 'bg-green-500/20 text-green-500 animate-pulse';
+    default: return 'bg-slate-200/60 dark:bg-white/5 text-slate-400 dark:text-slate-500';
+  }
+};
+
+const agentStatusLabel = (status: AgentStatusValue, text?: string) => {
+  if (text && status !== 'idle') return text;
+  switch (status) {
+    case 'calling_tool': return 'Tool';
+    case 'model_loading': return 'Loading';
+    case 'thinking': return 'Thinking';
+    case 'working': return 'Working';
+    default: return 'Idle';
+  }
+};
+
+const MissionAgentsBar: React.FC<{
+  agents: Record<string, MissionAgentState>;
+}> = ({ agents }) => {
+  const entries = Object.entries(agents);
+  if (entries.length === 0) return null;
+
+  // Sort: active agents first, then alphabetical
+  entries.sort(([aName, a], [bName, b]) => {
+    const aActive = a.status !== 'idle' ? 0 : 1;
+    const bActive = b.status !== 'idle' ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    return aName.localeCompare(bName);
+  });
+
+  return (
+    <div className="shrink-0 px-4 py-2 border-b border-slate-200 dark:border-white/5 flex items-center gap-2 overflow-x-auto">
+      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 shrink-0">Agents</span>
+      {entries.map(([name, state]) => (
+        <div key={name} className={cn(
+          'flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] shrink-0',
+          state.status !== 'idle'
+            ? 'bg-blue-50/50 dark:bg-blue-500/5 border-blue-200 dark:border-blue-500/15'
+            : 'bg-slate-50/50 dark:bg-white/[0.02] border-slate-100 dark:border-white/5',
+        )}>
+          <Bot size={11} className={state.status !== 'idle' ? 'text-blue-500' : 'text-slate-400'} />
+          <span className="font-bold uppercase tracking-tight">{name}</span>
+          <span className={cn('text-[8px] font-bold px-1.5 py-px rounded-full uppercase tracking-wide', agentStatusStyle(state.status))}>
+            {agentStatusLabel(state.status, state.statusText)}
+          </span>
+          {state.contextTokens != null && state.contextTokens > 0 && (
+            <span className="text-[8px] text-slate-400 dark:text-slate-500 font-mono flex items-center gap-0.5">
+              <Cpu size={8} />
+              {state.contextTokens >= 1000 ? `${Math.round(state.contextTokens / 100) / 10}k` : state.contextTokens}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // ---- Mission Chat Panel (interactive) ---------------------------------------
 
 const MISSION_AGENT_ID = 'mission';
@@ -260,6 +333,7 @@ const MissionChatPanel: React.FC<{
   const [inputValue, setInputValue] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [pendingPlanAgentId, setPendingPlanAgentId] = useState<string | null>(null);
+  const [agentStates, setAgentStates] = useState<Record<string, MissionAgentState>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const shouldAutoScroll = useRef(true);
@@ -270,8 +344,25 @@ const MissionChatPanel: React.FC<{
   useEffect(() => {
     dispatch({ type: 'CLEAR' });
     setPendingPlanAgentId(null);
+    setAgentStates({});
     fetchSessionMessages(resolvedProject, sessionId).then(msgs => {
       dispatch({ type: 'SYNC_PERSISTED', messages: msgs });
+      // Seed agent states from persisted messages
+      const seen = new Set<string>();
+      for (const m of msgs) {
+        if (m.role === 'agent' && m.from && m.from !== 'user') seen.add(m.from);
+      }
+      if (seen.size > 0) {
+        setAgentStates(prev => {
+          const next = { ...prev };
+          for (const name of seen) {
+            if (!next[name]) {
+              next[name] = { status: 'idle', statusText: '', contextTokens: undefined, contextLimit: undefined };
+            }
+          }
+          return next;
+        });
+      }
     });
   }, [sessionId, resolvedProject]);
 
@@ -349,6 +440,19 @@ const MissionChatPanel: React.FC<{
           contextTokens: typeof data.context_tokens === 'number' ? data.context_tokens : undefined,
         });
         setIsRunning(false);
+        // Update context tokens on the agent
+        if (agentId && typeof data.context_tokens === 'number') {
+          setAgentStates(prev => ({
+            ...prev,
+            [agentId]: {
+              ...prev[agentId],
+              status: 'idle' as AgentStatusValue,
+              statusText: '',
+              contextTokens: data.context_tokens,
+              contextLimit: typeof data.context_limit === 'number' ? data.context_limit : prev[agentId]?.contextLimit,
+            },
+          }));
+        }
         return;
       }
       case 'activity': {
@@ -357,6 +461,45 @@ const MissionChatPanel: React.FC<{
           setIsRunning(false);
         } else if (status === 'working' || status === 'thinking' || status === 'calling_tool' || status === 'model_loading') {
           setIsRunning(true);
+        }
+        // Track per-agent status for the agents bar
+        if (agentId) {
+          const statusText = String(item.data?.text || item.text || '');
+          const mapped: AgentStatusValue =
+            status === 'calling_tool' ? 'calling_tool'
+              : status === 'model_loading' ? 'model_loading'
+                : status === 'thinking' ? 'thinking'
+                  : status === 'working' ? 'working'
+                    : 'idle';
+          setAgentStates(prev => ({
+            ...prev,
+            [agentId]: {
+              ...prev[agentId],
+              status: mapped,
+              statusText: mapped !== 'idle' ? statusText : '',
+            },
+          }));
+        }
+        return;
+      }
+      case 'agent_status': {
+        if (agentId) {
+          const statusText = String(item.data?.text || item.text || '');
+          const raw = String(item.data?.status || '');
+          const mapped: AgentStatusValue =
+            raw === 'calling_tool' ? 'calling_tool'
+              : raw === 'model_loading' ? 'model_loading'
+                : raw === 'thinking' ? 'thinking'
+                  : raw === 'working' ? 'working'
+                    : 'idle';
+          setAgentStates(prev => ({
+            ...prev,
+            [agentId]: {
+              ...prev[agentId],
+              status: mapped,
+              statusText: mapped !== 'idle' ? statusText : '',
+            },
+          }));
         }
         return;
       }
@@ -494,6 +637,11 @@ const MissionChatPanel: React.FC<{
           </button>
         )}
       </div>
+
+      {/* Agents bar */}
+      {Object.keys(agentStates).length > 0 && (
+        <MissionAgentsBar agents={agentStates} />
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-5 py-4 space-y-3">

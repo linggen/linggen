@@ -26,7 +26,7 @@ export const ModelsCard: React.FC<{
   const tps = Number.isFinite(Number(tokensPerSec)) ? Number(tokensPerSec) : 0;
 
   return (
-    <div className="px-3 py-2 space-y-2">
+    <div className="px-3 py-2 space-y-2 max-h-48 overflow-y-auto">
       {models.map((m) => {
         const isActive = ollamaStatus?.models.some((om) => om.name.includes(m.model) || m.model.includes(om.name));
         const activeInfo = ollamaStatus?.models.find((om) => om.name.includes(m.model) || m.model.includes(om.name));

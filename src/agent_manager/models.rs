@@ -48,6 +48,8 @@ pub struct ToolCallChunk {
     pub name: Option<String>,
     /// Incremental arguments JSON string fragment.
     pub arguments_delta: Option<String>,
+    /// Gemini thought signature (opaque token that must be echoed back).
+    pub thought_signature: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

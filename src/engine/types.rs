@@ -256,6 +256,8 @@ pub(crate) struct ParsedToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Gemini thought signature (must be echoed back in conversation history).
+    pub thought_signature: Option<String>,
 }
 
 /// Result of streaming model output, including early-detected first action.
@@ -303,6 +305,7 @@ pub(crate) struct LoopState {
     pub last_assistant_response: String,
     pub identical_response_streak: usize,
     pub loop_nudge_count: usize,
+    pub empty_response_streak: usize,
     pub progress_rx: mpsc::UnboundedReceiver<(String, String, String)>,
 }
 

@@ -10,9 +10,17 @@ impl AgentEngine {
     pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> AgentOutcome {
         let summary = Self::extract_plan_summary(&plan_text);
         // Preserve items from any prior UpdatePlan call during plan mode.
-        let items = self.plan.as_ref()
+        // If no items exist (model didn't call UpdatePlan), auto-extract from
+        // numbered headings/steps in the plan text.
+        let mut items = self.plan.as_ref()
             .map(|p| p.items.clone())
             .unwrap_or_default();
+        if items.is_empty() {
+            items = Self::extract_plan_items(&plan_text);
+            if !items.is_empty() {
+                info!("Auto-extracted {} plan items from headings", items.len());
+            }
+        }
         let plan = Plan {
             summary,
             status: PlanStatus::Planned,
@@ -41,6 +49,59 @@ impl AgentEngine {
                     plan,
                 })
                 .await;
+        }
+    }
+
+    /// Extract todo items from plan text by finding numbered headings or steps.
+    /// Matches patterns like "### 1. Do something", "### Step 1: Do something",
+    /// "## 2. Something else", or numbered list items "1. Do this".
+    pub(crate) fn extract_plan_items(text: &str) -> Vec<PlanItem> {
+        let mut items = Vec::new();
+        let mut counter = 1u32;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            // Match "### 1. Title", "### Step 1: Title", "## 2. Title"
+            if let Some(rest) = trimmed.strip_prefix("###").or_else(|| trimmed.strip_prefix("##")) {
+                let rest = rest.trim();
+                // "Step N: Title" or "Step N. Title" or "N. Title" or "N: Title"
+                let title = Self::extract_step_title(rest);
+                if let Some(title) = title {
+                    items.push(PlanItem {
+                        id: counter.to_string(),
+                        title,
+                        status: "pending".to_string(),
+                    });
+                    counter += 1;
+                }
+            }
+        }
+        items
+    }
+
+    /// Try to extract a step title from text like "1. Foo", "Step 2: Foo", etc.
+    fn extract_step_title(text: &str) -> Option<String> {
+        let s = text.strip_prefix("Step").or(Some(text)).unwrap().trim();
+        // Match leading number followed by . or :
+        let mut chars = s.chars().peekable();
+        if !chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+            return None;
+        }
+        // Skip digits
+        while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+            chars.next();
+        }
+        // Expect . or :
+        match chars.peek() {
+            Some('.') | Some(':') => { chars.next(); }
+            _ => return None,
+        }
+        let title: String = chars.collect::<String>().trim().to_string();
+        if title.is_empty() { return None; }
+        // Truncate overly long titles
+        if title.len() > 120 {
+            Some(format!("{}...", &title[..117]))
+        } else {
+            Some(title)
         }
     }
 
@@ -75,5 +136,54 @@ mod tests {
         );
         assert_eq!(AgentEngine::extract_plan_summary(""), "Plan");
         assert_eq!(AgentEngine::extract_plan_summary("   \n  "), "Plan");
+    }
+
+    #[test]
+    fn extract_plan_items_numbered_headings() {
+        let text = r#"# Improve the UI
+
+## Summary
+Make it look better.
+
+### 1. Update the header
+Change colors and layout.
+
+### 2. Fix the sidebar
+Adjust widths.
+
+### 3. Polish the footer
+Add links.
+"#;
+        let items = AgentEngine::extract_plan_items(text);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].title, "Update the header");
+        assert_eq!(items[1].title, "Fix the sidebar");
+        assert_eq!(items[2].title, "Polish the footer");
+        assert!(items.iter().all(|i| i.status == "pending"));
+    }
+
+    #[test]
+    fn extract_plan_items_step_prefix() {
+        let text = "### Step 1: Read the file\n### Step 2: Edit the code\n";
+        let items = AgentEngine::extract_plan_items(text);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Read the file");
+        assert_eq!(items[1].title, "Edit the code");
+    }
+
+    #[test]
+    fn extract_plan_items_no_steps() {
+        let text = "# Plan\n\nJust some text without numbered steps.\n\n## Risks\nNone.";
+        let items = AgentEngine::extract_plan_items(text);
+        assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn extract_step_title_variants() {
+        assert_eq!(AgentEngine::extract_step_title("1. Foo bar"), Some("Foo bar".into()));
+        assert_eq!(AgentEngine::extract_step_title("Step 3: Baz"), Some("Baz".into()));
+        assert_eq!(AgentEngine::extract_step_title("12. Long step"), Some("Long step".into()));
+        assert_eq!(AgentEngine::extract_step_title("No number"), None);
+        assert_eq!(AgentEngine::extract_step_title("1."), None);
     }
 }

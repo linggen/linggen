@@ -343,6 +343,7 @@ impl OllamaClient {
                             id: Some(id),
                             name,
                             arguments_delta: arguments,
+                            thought_signature: None,
                         })));
                     }
                     return chunks;
@@ -599,6 +600,10 @@ pub struct ToolCallMessage {
     #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
     pub call_type: String, // "function"
     pub function: ToolCallFunction,
+    /// Gemini thought signature — opaque token that must be echoed back in
+    /// conversation history for Gemini 3+ models to work with tool calling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
