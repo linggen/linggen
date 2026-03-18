@@ -138,6 +138,10 @@ enum SkillsAction {
         /// Overwrite existing installation
         #[arg(long, default_value_t = false)]
         force: bool,
+
+        /// Source registry (e.g. "clawhub")
+        #[arg(long)]
+        source: Option<String>,
     },
     /// Remove an installed skill
     Remove {
@@ -230,12 +234,14 @@ async fn main() -> Result<()> {
                     git_ref,
                     global,
                     force,
+                    source,
                 } => cli::skills_cmd::SkillsAction::Add {
                     name: name.clone(),
                     repo: repo.clone(),
                     git_ref: git_ref.clone(),
                     global: *global,
                     force: *force,
+                    source: source.clone(),
                 },
                 SkillsAction::Remove { name, global } => cli::skills_cmd::SkillsAction::Remove {
                     name: name.clone(),

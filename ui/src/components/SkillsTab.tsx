@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePlus2, Package, Pencil, RefreshCw, Save, Search, Sparkles, Trash2, Wrench, X, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePlus2, Package, Pencil, RefreshCw, Save, Search, Shield, ShieldAlert, Sparkles, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { BuiltInSkillInfo, MarketplaceSkill, SkillInfoFull, SkillFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
 
@@ -86,6 +86,22 @@ export const SkillsTab: React.FC<{
   const [mpUninstalling, setMpUninstalling] = useState<Set<string>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Trending community skills (auto-loaded)
+  const [trendingSkills, setTrendingSkills] = useState<MarketplaceSkill[]>([]);
+  const fetchTrending = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/community-skills/search?q=agent');
+      if (resp.ok) {
+        const skills: MarketplaceSkill[] = await resp.json();
+        // Show top 10 by install count, preferring ones with descriptions
+        const sorted = skills
+          .sort((a, b) => (b.install_count || 0) - (a.install_count || 0))
+          .slice(0, 10);
+        setTrendingSkills(sorted);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   // Built-in skills state
   const [builtInSkills, setBuiltInSkills] = useState<BuiltInSkillInfo[]>([]);
   const [biInstalling, setBiInstalling] = useState<Set<string>>(new Set());
@@ -140,7 +156,8 @@ export const SkillsTab: React.FC<{
     fetchSkills();
     fetchSkillFiles();
     fetchBuiltInSkills();
-  }, [fetchSkills, fetchSkillFiles, fetchBuiltInSkills]);
+    fetchTrending();
+  }, [fetchSkills, fetchSkillFiles, fetchBuiltInSkills, fetchTrending]);
 
   const searchCommunity = async (q: string) => {
     if (!q.trim()) {
@@ -177,6 +194,7 @@ export const SkillsTab: React.FC<{
           scope,
           project_root: scope === 'project' ? projectRoot : undefined,
           force: false,
+          source: skill.source_registry || undefined,
         }),
       });
       if (!resp.ok) {
@@ -263,7 +281,9 @@ export const SkillsTab: React.FC<{
     : builtInSkills;
 
   // Library: marketplace results excluding built-in names (avoid duplication)
-  const filteredMpResults = mpResults.filter((s) => !builtInNames.has(s.name));
+  // When no search query, show trending community skills
+  const communitySource = mpQuery.trim() ? mpResults : trendingSkills;
+  const filteredMpResults = communitySource.filter((s) => !builtInNames.has(s.name));
 
   const toggleExpanded = (name: string) => {
     setExpandedSkills((prev) => {
@@ -378,7 +398,7 @@ export const SkillsTab: React.FC<{
 
   const refreshAll = async () => {
     setRefreshing(true);
-    await Promise.all([fetchSkills(), fetchSkillFiles(), fetchBuiltInSkills(true), fetchMarketplaceList()]);
+    await Promise.all([fetchSkills(), fetchSkillFiles(), fetchBuiltInSkills(true), fetchTrending()]);
     setRefreshing(false);
   };
 
@@ -680,7 +700,7 @@ export const SkillsTab: React.FC<{
         </div>
 
         {/* ═══════ RIGHT PANEL: Library ═══════ */}
-        <div className="flex-[2] min-w-0 flex flex-col min-h-0">
+        <div className="flex-[3] min-w-0 flex flex-col min-h-0">
           <div className="bg-white dark:bg-[#141414] rounded-xl border border-slate-200/80 dark:border-white/5 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden">
             {/* Sticky header + search */}
             <div className="shrink-0">
@@ -708,6 +728,15 @@ export const SkillsTab: React.FC<{
                   {mpLoading && (
                     <div className="w-3.5 h-3.5 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
                   )}
+                </div>
+              </div>
+              {/* Third-party warning — always visible */}
+              <div className="px-3 py-2 border-b border-amber-200/60 dark:border-amber-500/10 bg-amber-50/60 dark:bg-amber-500/[0.04]">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert size={13} className="text-amber-500 shrink-0" />
+                  <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 leading-snug">
+                    Community skills are third-party code — review before installing, use at your own risk.
+                  </p>
                 </div>
               </div>
             </div>
@@ -767,10 +796,13 @@ export const SkillsTab: React.FC<{
                   {filteredBuiltIn.length > 0 && filteredMpResults.length > 0 && (
                     <div className="flex items-center gap-2 py-1.5 px-1">
                       <div className="flex-1 border-t border-slate-200/60 dark:border-white/5" />
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Community</span>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                        {mpQuery.trim() ? 'Community' : 'Trending'}
+                      </span>
                       <div className="flex-1 border-t border-slate-200/60 dark:border-white/5" />
                     </div>
                   )}
+
 
                   {/* Marketplace / community skills */}
                   {filteredMpResults.map((skill) => {
@@ -790,9 +822,14 @@ export const SkillsTab: React.FC<{
                       >
                         <div className="flex items-start gap-2.5">
                           <div className="flex-1 min-w-0">
-                            {/* Row 1: name + installs */}
+                            {/* Row 1: name + source badge + installs */}
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{skill.name}</span>
+                              {skill.source_registry === 'clawhub' ? (
+                                <span className="text-[9px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 py-0.5 rounded">ClawHub</span>
+                              ) : skill.source_registry === 'skills.sh' ? (
+                                <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 px-1 py-0.5 rounded">skills.sh</span>
+                              ) : null}
                               {skill.install_count > 0 && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
                                   <Download size={8} />
@@ -861,12 +898,12 @@ export const SkillsTab: React.FC<{
                       <Book size={20} className="text-blue-400" />
                     </div>
                     <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">
-                      {mpQuery ? 'No skills found' : 'Discover skills'}
+                      {mpQuery ? 'No skills found' : 'Loading skills...'}
                     </p>
                     <p className="text-[10px] text-slate-400 mt-1 text-center max-w-[180px]">
                       {mpQuery
                         ? 'Try a different search term'
-                        : 'Search above to find built-in and community skills'}
+                        : 'Fetching community skills'}
                     </p>
                   </div>
                 )

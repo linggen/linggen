@@ -31,7 +31,7 @@ for iter in 0..max_iters {
 }
 ```
 
-**Termination**: Done (plain text answer), Patch, FinalizeTask, EnterPlanMode, cancellation, or `max_iters` reached.
+**Termination**: Done (plain text answer), EnterPlanMode, cancellation, or `max_iters` reached.
 
 Same loop for all execution types: user chat, idle prompt, delegation.
 

@@ -74,7 +74,7 @@ export interface UiSseMessage {
   seq: number;
   rev: number;
   ts_ms: number;
-  kind: 'message' | 'activity' | 'queue' | 'run' | 'token' | 'text_segment' | 'ask_user' | 'model_fallback' | 'content_block' | 'turn_complete' | 'app_launched' | 'tool_progress' | 'mission_completed';
+  kind: 'message' | 'activity' | 'queue' | 'run' | 'token' | 'text_segment' | 'ask_user' | 'model_fallback' | 'content_block' | 'turn_complete' | 'app_launched' | 'tool_progress' | 'notification';
   phase?: string;
   text?: string;
   agent_id?: string;
@@ -158,6 +158,7 @@ export interface ModelInfo {
   provider: string;
   model: string;
   url: string;
+  reasoning_effort?: string | null;
 }
 
 export interface OllamaPsModel {
@@ -181,7 +182,7 @@ export interface AppConfig {
   agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
-  routing?: { default_models?: string[]; default_policy?: string | null };
+  routing?: { default_models?: string[]; default_policy?: string | null; auto_fallback?: boolean };
 }
 
 export type ModelHealthStatus = 'healthy' | 'quota_exhausted' | 'down' | 'unknown';
@@ -204,6 +205,7 @@ export interface ModelConfigUI {
   context_window?: number | null;
   tags?: string[];
   auth_mode?: string | null;
+  reasoning_effort?: string | null;
 }
 
 export interface SessionInfo {
@@ -315,6 +317,7 @@ export interface MarketplaceSkill {
   git_ref?: string | null;
   content?: string | null;
   updated_at?: string | null;
+  source_registry?: string | null;
 }
 
 export interface BuiltInSkillInfo {

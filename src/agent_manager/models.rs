@@ -343,7 +343,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_text_stream(&instance.config.model, messages)
+                    .chat_text_stream(&instance.config.model, messages, instance.config.reasoning_effort.as_deref())
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -430,7 +430,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_tool_stream(&instance.config.model, messages, tools)
+                    .chat_tool_stream(&instance.config.model, messages, tools, instance.config.reasoning_effort.as_deref())
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -630,7 +630,67 @@ pub fn is_context_limit_error(err: &anyhow::Error) -> bool {
             || msg.contains("content_too_large"))
 }
 
-/// Returns true if the error is a rate limit or context limit that warrants trying another model.
+/// Returns true if the error indicates a transient connectivity or availability issue.
+fn is_transient_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("timed out")
+        || msg.contains("timeout")
+        || msg.contains("(502)")
+        || msg.contains("(503)")
+        || msg.contains("connection refused")
+        || msg.contains("connection reset")
+        || msg.contains("dns error")
+        || msg.contains("connect error")
+}
+
+/// Returns true if the error is a rate limit, context limit, or transient failure
+/// that warrants trying another model.
 pub fn is_fallback_worthy_error(err: &anyhow::Error) -> bool {
-    is_rate_limit_error(err) || is_context_limit_error(err)
+    is_rate_limit_error(err) || is_context_limit_error(err) || is_transient_error(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn err(msg: &str) -> anyhow::Error {
+        anyhow::anyhow!("{}", msg)
+    }
+
+    #[test]
+    fn test_rate_limit() {
+        assert!(is_fallback_worthy_error(&err("HTTP error (429) Too Many Requests")));
+        assert!(is_fallback_worthy_error(&err("rate limit exceeded")));
+    }
+
+    #[test]
+    fn test_context_limit() {
+        assert!(is_fallback_worthy_error(&err(
+            "HTTP error (400) context length exceeded, max_tokens 8192"
+        )));
+        assert!(is_fallback_worthy_error(&err(
+            "HTTP error (413) content_too_large"
+        )));
+    }
+
+    #[test]
+    fn test_transient_errors() {
+        assert!(is_fallback_worthy_error(&err(
+            "Model streaming timed out after 60s (no data received)"
+        )));
+        assert!(is_fallback_worthy_error(&err("request timeout")));
+        assert!(is_fallback_worthy_error(&err("HTTP error (502) Bad Gateway")));
+        assert!(is_fallback_worthy_error(&err("HTTP error (503) after retries")));
+        assert!(is_fallback_worthy_error(&err("connection refused")));
+        assert!(is_fallback_worthy_error(&err("connection reset by peer")));
+        assert!(is_fallback_worthy_error(&err("dns error: name resolution failed")));
+        assert!(is_fallback_worthy_error(&err("connect error: network unreachable")));
+    }
+
+    #[test]
+    fn test_non_fallback_errors() {
+        assert!(!is_fallback_worthy_error(&err("invalid JSON in response")));
+        assert!(!is_fallback_worthy_error(&err("HTTP error (401) Unauthorized")));
+        assert!(!is_fallback_worthy_error(&err("unknown model")));
+    }
 }

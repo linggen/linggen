@@ -255,7 +255,7 @@ impl AgentEngine {
         let mut allowed_tools = self.allowed_tool_names();
         if self.plan_mode {
             let read_only: HashSet<String> = [
-                "Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUser", "ExitPlanMode", "UpdatePlan",
+                "Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUser", "ExitPlanMode", "UpdatePlan", "Task",
             ]
             .iter()
             .map(|s| s.to_string())

@@ -419,6 +419,20 @@ pub(crate) async fn list_skills(State(state): State<Arc<ServerState>>) -> impl I
     Json(skills).into_response()
 }
 
+/// Reload agents from disk by invalidating the agent cache.
+pub(crate) async fn reload_agents(
+    State(state): State<Arc<ServerState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let project_root = body.get("project_root").and_then(|v| v.as_str());
+    if let Some(root) = project_root {
+        let root_buf = std::path::PathBuf::from(root);
+        let _ = state.manager.invalidate_agent_cache(&root_buf, None).await;
+    }
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
+}
+
 /// Reload skills from disk and invalidate agent caches so they pick up changes.
 pub(crate) async fn reload_skills(
     State(state): State<Arc<ServerState>>,

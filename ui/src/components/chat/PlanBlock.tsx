@@ -72,7 +72,7 @@ export const PlanBlock: React.FC<{
           </div>
         </div>
       ) : (
-        <div className="text-[11px] bg-slate-50 dark:bg-white/5 rounded-md p-3 border border-slate-200 dark:border-white/10 max-h-96 overflow-y-auto">
+        <div className="text-[11px] bg-slate-50 dark:bg-white/5 rounded-md p-3 border border-slate-200 dark:border-white/10">
           <MarkdownContent text={plan.plan_text || ''} />
         </div>
       )}

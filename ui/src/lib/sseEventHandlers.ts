@@ -84,9 +84,22 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
 
 export function dispatchSseEvent(item: UiSseMessage): void {
   const { activeSessionId } = useProjectStore.getState();
-  // Allow mission_completed through regardless — missions run in their own
-  // session but notifications should reach the active UI session.
-  if (item.kind !== 'mission_completed' && item.session_id && activeSessionId && item.session_id !== activeSessionId) return;
+  // Allow notifications through regardless — they are global events.
+  if (item.kind !== 'notification' && item.session_id && activeSessionId && item.session_id !== activeSessionId) return;
+
+  // SDK bridge: forward events to parent window when running in iframe (compact/embed mode)
+  if (window.parent !== window) {
+    if (item.kind === 'token' && item.text) {
+      window.parent.postMessage({ type: 'linggen-sdk-event', event: 'stream_token', payload: { text: item.text, done: item.phase === 'done' } }, '*');
+    } else if (item.kind === 'turn_complete') {
+      // Gather the last assistant message text for onStreamEnd
+      const msgs = useChatStore.getState().messages;
+      const lastMsg = [...msgs].reverse().find(m => m.role === 'assistant');
+      window.parent.postMessage({ type: 'linggen-sdk-event', event: 'stream_end', payload: { text: lastMsg?.text || '' } }, '*');
+    } else if (item.kind === 'message' && item.data?.role === 'assistant') {
+      window.parent.postMessage({ type: 'linggen-sdk-event', event: 'message', payload: { text: item.text || '', role: 'assistant' } }, '*');
+    }
+  }
 
   switch (item.kind) {
     case 'run':          handleRun(item); return;
@@ -101,7 +114,7 @@ export function dispatchSseEvent(item: UiSseMessage): void {
     case 'turn_complete':   handleTurnComplete(item); return;
     case 'tool_progress': handleToolProgress(item); return;
     case 'app_launched':   handleAppLaunched(item); return;
-    case 'mission_completed': handleMissionCompleted(item); return;
+    case 'notification':   handleNotification(item); return;
   }
 }
 
@@ -229,6 +242,9 @@ function handleAskUser(item: UiSseMessage): void {
     });
   }
 }
+
+// Re-export for use by SDK and other consumers
+export { handleAskUser };
 
 function handleTextSegment(item: UiSseMessage): void {
   const agentId = String(item.agent_id || '');
@@ -566,19 +582,21 @@ function handleModelFallback(item: UiSseMessage): void {
   }
 }
 
-function handleMissionCompleted(item: UiSseMessage): void {
+function handleNotification(item: UiSseMessage): void {
   const data = item.data;
   if (!data) return;
-  const name = String(data.mission_name || data.mission_id || 'Mission');
-  const status = String(data.status || 'completed');
-  const variant = status === 'completed' ? 'success' as const : 'error' as const;
-  const label = status === 'completed' ? 'completed' : 'failed';
 
-  useUiStore.getState().addToast({
-    message: `Mission "${name}" ${label}`,
-    variant,
-  });
-
-  // Refresh mission data so the runs list updates.
-  useUiStore.getState().bumpMissionRefreshKey();
+  switch (data.kind as string) {
+    case 'mission_completed': {
+      const name = String(data.mission_name || data.mission_id || 'Mission');
+      const status = String(data.status || 'completed');
+      const variant = status === 'completed' ? 'success' as const : 'error' as const;
+      const label = status === 'completed' ? 'completed' : 'failed';
+      useUiStore.getState().addToast({ message: `Mission "${name}" ${label}`, variant });
+      useUiStore.getState().bumpMissionRefreshKey();
+      return;
+    }
+    default:
+      return;
+  }
 }

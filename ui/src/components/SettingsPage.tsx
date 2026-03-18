@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { AgentInfo, AppConfig, ManagementTab } from '../types';
 import { ModelsTab } from './ModelsTab';
@@ -31,12 +31,15 @@ export const SettingsPage: React.FC<{
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [credsDirty, setCredsDirty] = useState(false);
+  const saveCredsRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab]);
 
-  const dirty = config !== null && originalConfig !== null && JSON.stringify(config) !== JSON.stringify(originalConfig);
+  const configDirty = config !== null && originalConfig !== null && JSON.stringify(config) !== JSON.stringify(originalConfig);
+  const dirty = configDirty || credsDirty;
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -62,17 +65,23 @@ export const SettingsPage: React.FC<{
     setError(null);
     setSuccess(false);
     try {
-      const resp = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        setError(text || 'Save failed');
-        return;
+      if (configDirty) {
+        const resp = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          setError(text || 'Save failed');
+          return;
+        }
+        setOriginalConfig(config);
       }
-      setOriginalConfig(config);
+      // Also save credentials if dirty
+      if (credsDirty && saveCredsRef.current) {
+        await saveCredsRef.current();
+      }
       setSuccess(true);
       setTimeout(() => setSuccess(false), 2000);
     } catch (e) {
@@ -143,7 +152,7 @@ export const SettingsPage: React.FC<{
         {activeTab === 'models' && (
           <div className="h-full overflow-y-auto p-6">
             <div className="max-w-4xl mx-auto">
-              <ModelsTab config={config} onChange={setConfig} />
+              <ModelsTab config={config} onChange={setConfig} onCredsDirtyChange={setCredsDirty} saveCredsRef={saveCredsRef} />
             </div>
           </div>
         )}

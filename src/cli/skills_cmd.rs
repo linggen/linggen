@@ -11,6 +11,7 @@ pub enum SkillsAction {
         git_ref: Option<String>,
         global: bool,
         force: bool,
+        source: Option<String>,
     },
     Remove {
         name: String,
@@ -30,6 +31,7 @@ pub async fn run(action: SkillsAction, _config: &Config) -> Result<()> {
             git_ref,
             global,
             force,
+            source,
         } => {
             let scope = if global {
                 SkillScope::Global
@@ -50,6 +52,7 @@ pub async fn run(action: SkillsAction, _config: &Config) -> Result<()> {
                 git_ref.as_deref(),
                 &target_dir,
                 force,
+                source.as_deref(),
             )
             .await?;
             println!("{}", msg);

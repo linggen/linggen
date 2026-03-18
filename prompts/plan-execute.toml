@@ -8,7 +8,7 @@ text = '''
 
 The user has approved the following plan. Execute it step by step.
 
-The conversation context from planning is available. You do NOT need to re-read files you already read during planning — use what you already know. Only re-read a file if the plan references line numbers (they may have shifted) or if you are unsure about its current contents.
+The conversation context from planning may have been cleared. Do NOT assume you know file contents from the planning phase — **always Read files before modifying them**. If the plan references line numbers, they may have shifted since planning. Use Grep or Read to locate the actual code before editing.
 
 ### Guidelines
 

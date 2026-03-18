@@ -1,7 +1,24 @@
 import React from 'react';
-import { Bot, Star } from 'lucide-react';
+import { Bot, Brain, Star } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { AgentInfo, ChatMessage, ModelInfo, OllamaPsResponse } from '../types';
+
+/** Check if a model supports reasoning effort control. */
+function supportsReasoningEffort(model: ModelInfo): boolean {
+  const m = (model.model || '').toLowerCase();
+  const p = (model.provider || '').toLowerCase();
+  // OpenAI reasoning models
+  if (m.includes('gpt-5') || m.includes('o3') || m.includes('o4') || m.includes('o1')) return true;
+  // Gemini 2.5 thinking models
+  if (m.includes('gemini') && m.includes('2.5')) return true;
+  // Claude models with extended thinking
+  if (p === 'anthropic' || m.includes('claude')) return true;
+  // ChatGPT provider (likely GPT-5/o-series)
+  if (p === 'chatgpt') return true;
+  // DeepSeek reasoning models
+  if (m.includes('deepseek-r') || m.includes('deepseek-reasoner')) return true;
+  return false;
+}
 
 const formatCompactInt = (n: number) => {
   if (!Number.isFinite(n)) return '';
@@ -21,8 +38,9 @@ export const ModelsCard: React.FC<{
   agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
   defaultModels?: string[];
   onToggleDefault?: (modelId: string) => void;
+  onChangeReasoningEffort?: (modelId: string, effort: string | null) => void;
   sessionTokens?: { prompt: number; completion: number };
-}> = ({ models, agents, ollamaStatus, tokensPerSec, activeModelId, agentContext, defaultModels = [], onToggleDefault, sessionTokens }) => {
+}> = ({ models, agents, ollamaStatus, tokensPerSec, activeModelId, agentContext, defaultModels = [], onToggleDefault, onChangeReasoningEffort, sessionTokens }) => {
   const tps = Number.isFinite(Number(tokensPerSec)) ? Number(tokensPerSec) : 0;
 
   return (
@@ -70,6 +88,40 @@ export const ModelsCard: React.FC<{
                 )}
               </div>
             </div>
+
+            {/* Reasoning effort switcher — only for models that support it */}
+            {onChangeReasoningEffort && supportsReasoningEffort(m) && (() => {
+              // Effective effort: explicit setting, or 'medium' as default
+              const effective = m.reasoning_effort || 'medium';
+              const isDefault = !m.reasoning_effort;
+              return (
+                <div className="flex items-center gap-1.5 text-[9px]">
+                  <Brain size={9} className="text-purple-400 shrink-0" />
+                  <span className="text-slate-400">Reasoning:</span>
+                  {(['low', 'medium', 'high'] as const).map((level) => {
+                    const isActive = effective === level;
+                    const isDefaultMedium = isDefault && level === 'medium';
+                    return (
+                      <button
+                        key={level}
+                        onClick={() => onChangeReasoningEffort(m.id, level === 'medium' ? null : level)}
+                        className={cn(
+                          'px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase transition-all',
+                          isActive
+                            ? level === 'high' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                              : level === 'medium' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                            : 'text-slate-500 hover:text-slate-300 border border-transparent hover:border-slate-600'
+                        )}
+                        title={isDefaultMedium ? 'Default' : ''}
+                      >
+                        {level === 'low' ? 'Lo' : level === 'medium' ? 'Med' : 'Hi'}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Model stats when active */}
             {(activeInfo || showTps) && (

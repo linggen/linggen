@@ -8,6 +8,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useAgentStore } from '../stores/agentStore';
 import { useProjectStore } from '../stores/projectStore';
 
+
 export interface SseConnectionOptions {
   onEvent: (item: UiSseMessage) => void;
   onParseError?: () => void;
@@ -22,6 +23,7 @@ function resyncState() {
   useAgentStore.getState().fetchAgentRuns();
   useProjectStore.getState().fetchSessions();
   useProjectStore.getState().fetchAllAgentTrees();
+  useUiStore.getState().fetchPendingAskUser();
 }
 
 export function useSseConnection({ onEvent, onParseError, sessionId }: SseConnectionOptions) {

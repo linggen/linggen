@@ -90,6 +90,7 @@ interface UiState {
   setPendingPlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
   setPendingPlanAgentId: (id: string | null) => void;
   setPendingAskUser: (ask: PendingAskUser | null | ((prev: PendingAskUser | null) => PendingAskUser | null)) => void;
+  fetchPendingAskUser: () => Promise<void>;
   setActivePlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
   setVerboseMode: (mode: boolean) => void;
   setCopyChatStatus: (status: 'idle' | 'copied' | 'error') => void;
@@ -160,6 +161,38 @@ export const useUiStore = create<UiState>((set) => ({
   setPendingAskUser: (updater) => set((s) => ({
     pendingAskUser: typeof updater === 'function' ? updater(s.pendingAskUser) : updater,
   })),
+  fetchPendingAskUser: async () => {
+    try {
+      const resp = await fetch('/api/pending-ask-user');
+      if (!resp.ok) return;
+      const items = await resp.json();
+      if (Array.isArray(items) && items.length > 0) {
+        // Get current active session from project store
+        const { useProjectStore } = await import('./projectStore');
+        const activeSessionId = useProjectStore.getState().activeSessionId;
+        // Only show ask_user for the current session, or if no session is active
+        // show ask_user items that have no session_id (legacy/global)
+        const filtered = items.filter((item: { session_id?: string | null }) => {
+          if (!activeSessionId) return !item.session_id; // main page: only show global
+          return item.session_id === activeSessionId || !item.session_id;
+        });
+        if (filtered.length > 0) {
+          const item = filtered[0];
+          set({
+            pendingAskUser: {
+              questionId: item.question_id,
+              agentId: item.agent_id,
+              questions: item.questions,
+            },
+          });
+        } else {
+          set({ pendingAskUser: null });
+        }
+      } else {
+        set({ pendingAskUser: null });
+      }
+    } catch { /* ignore */ }
+  },
   setActivePlan: (updater) => set((s) => ({
     activePlan: typeof updater === 'function' ? updater(s.activePlan) : updater,
   })),

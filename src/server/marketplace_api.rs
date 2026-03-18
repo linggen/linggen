@@ -29,6 +29,7 @@ pub(crate) struct InstallRequest {
     project_root: Option<String>,
     #[serde(default)]
     force: bool,
+    source: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +78,7 @@ pub(crate) async fn marketplace_install(
         req.git_ref.as_deref(),
         &target_dir,
         req.force,
+        req.source.as_deref(),
     )
     .await
     {
@@ -192,6 +194,7 @@ pub(crate) async fn builtin_skills_install(
         Some("main"),
         &target_dir,
         true, // force overwrite to get latest version
+        None,
     )
     .await
     {
@@ -240,6 +243,32 @@ pub(crate) async fn builtin_skills_install_all(
         }
         Err(e) => {
             tracing::error!(err = %e, "Failed to extract skills from ZIP");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClawHub scan
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(crate) struct ClawHubScanQuery {
+    slug: Option<String>,
+}
+
+pub(crate) async fn clawhub_scan(
+    Query(query): Query<ClawHubScanQuery>,
+) -> impl IntoResponse {
+    let slug = match query.slug {
+        Some(s) if !s.is_empty() => s,
+        _ => return (StatusCode::BAD_REQUEST, "Missing query parameter 'slug'").into_response(),
+    };
+
+    match marketplace::fetch_clawhub_scan(&slug).await {
+        Ok(scan) => axum::Json(scan).into_response(),
+        Err(e) => {
+            tracing::error!(err = %e, slug = %slug, "ClawHub scan fetch failed");
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }

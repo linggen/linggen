@@ -381,6 +381,9 @@ const MissionChatPanel: React.FC<{
 
   // SSE connection for live updates
   const handleSseEvent = useCallback((item: UiSseMessage) => {
+    // Filter out events from other sessions (same guard as main chat)
+    if (item.kind !== 'notification' && item.session_id && sessionId && item.session_id !== sessionId) return;
+
     const agentId = String(item.agent_id || '');
 
     switch (item.kind) {
@@ -519,7 +522,7 @@ const MissionChatPanel: React.FC<{
         return;
       }
     }
-  }, []);
+  }, [sessionId]);
 
   useSseConnection({ onEvent: handleSseEvent, sessionId });
 

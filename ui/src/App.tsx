@@ -80,6 +80,10 @@ function useAutoScroll(messages: { length: number }, lastMsg: { isGenerating?: b
 const compactParams = new URLSearchParams(window.location.search);
 const isCompact = compactParams.get('mode') === 'compact';
 const compactProject = compactParams.get('project') || '';
+const compactSkill = compactParams.get('skill') || '';
+const compactSession = compactParams.get('session') || '';
+const compactModel = compactParams.get('model') || '';
+const compactHideToolbar = compactParams.get('hide_toolbar') === '1';
 
 // ---------------------------------------------------------------------------
 // App
@@ -94,7 +98,7 @@ const App: React.FC = () => {
 
   // Shortcuts
   const { projects, selectedProjectRoot, sessions, activeSessionId, isMissionSession, agentTreesByProject } = projectStore;
-  const { agents, models, skills, agentRuns, selectedAgent, agentStatus, agentStatusText, agentContext, defaultModels, ollamaStatus, sessionTokens, tokensPerSec, cancellingRunIds, reloadingSkills } = agentStore;
+  const { agents, models, skills, agentRuns, selectedAgent, agentStatus, agentStatusText, agentContext, defaultModels, ollamaStatus, sessionTokens, tokensPerSec, cancellingRunIds, reloadingSkills, reloadingAgents } = agentStore;
   const { displayMessages, messages: chatMessages } = chatStore;
   const { currentPage, sidebarTab, editingMission, missionRefreshKey, overlay, modelPickerOpen, showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath, queuedMessages, pendingPlan, pendingPlanAgentId, pendingAskUser, activePlan, verboseMode, copyChatStatus } = uiStore;
 
@@ -272,24 +276,8 @@ const App: React.FC = () => {
     }
   }, [projects]);
 
-  // Fetch any pending AskUser/permission prompts from the server.
-  const fetchPendingAskUser = useCallback(async () => {
-    try {
-      const resp = await fetch('/api/pending-ask-user');
-      if (!resp.ok) return;
-      const items = await resp.json();
-      if (Array.isArray(items) && items.length > 0) {
-        // Pick the first pending question (there's typically at most one active).
-        const item = items[0];
-        useUiStore.getState().setPendingAskUser({
-          questionId: item.question_id,
-          agentId: item.agent_id,
-          questions: item.questions,
-        });
-      } else {
-        useUiStore.getState().setPendingAskUser(null);
-      }
-    } catch { /* ignore */ }
+  const fetchPendingAskUser = useCallback(() => {
+    useUiStore.getState().fetchPendingAskUser();
   }, []);
 
   // --- React to session changes ---
@@ -335,8 +323,17 @@ const App: React.FC = () => {
   // --- Compact mode init ---
   const compactSessionInitRef = useRef(false);
   useEffect(() => {
-    if (!isCompact || !compactProject || compactSessionInitRef.current) return;
+    if (!isCompact || compactSessionInitRef.current) return;
     compactSessionInitRef.current = true;
+
+    // Skill-bound embed mode: session is created by the SDK wrapper
+    if (compactSession) {
+      useProjectStore.getState().setActiveSessionId(compactSession);
+      return;
+    }
+
+    // VS Code compact mode: auto-create/resume project session
+    if (!compactProject) return;
     useProjectStore.getState().setSelectedProjectRoot(compactProject);
     (async () => {
       try {
@@ -382,21 +379,61 @@ const App: React.FC = () => {
         if (text) { e.preventDefault(); navigator.clipboard.writeText(text).catch(() => {}); }
       }
     };
+    // SDK command bridge: parent iframe sends commands via postMessage
+    const handleSdkCommand = (e: MessageEvent) => {
+      if (e.data?.type !== 'linggen-sdk') return;
+      const { action, payload } = e.data;
+      switch (action) {
+        case 'send': {
+          // Trigger chat send — simulate user input
+          const input = document.querySelector<HTMLTextAreaElement>('.lc-chat-input textarea, [data-chat-input] textarea');
+          if (input) {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+            nativeInputValueSetter?.call(input, payload?.text || '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            // Trigger form submit
+            const form = input.closest('form');
+            if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }
+          break;
+        }
+        case 'add_message':
+          useChatStore.getState().addMessage(payload?.role === 'user' ? 'user' : 'assistant', payload?.text || '');
+          break;
+        case 'clear':
+          clearChat();
+          break;
+      }
+    };
+    window.addEventListener('message', handleSdkCommand);
+
     window.addEventListener('message', handleMessage);
     document.addEventListener('keydown', handleCopy);
-    return () => { window.removeEventListener('message', handleMessage); document.removeEventListener('keydown', handleCopy); };
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      window.removeEventListener('message', handleSdkCommand);
+      document.removeEventListener('keydown', handleCopy);
+    };
   }, []);
 
   // --- Chat actions ---
   const clearChat = useCallback(async () => {
     const { selectedProjectRoot: root, activeSessionId: sid } = useProjectStore.getState();
     if (!root) return;
+
+    // Cancel any running agent first
+    const runId = runningMainRunIds[selectedAgent];
+    if (runId) {
+      agentStore.cancelAgentRun(runId);
+    }
+
     useChatStore.getState().clear();
     const ui = useUiStore.getState();
     ui.setQueuedMessages([]);
     ui.setActivePlan(null);
     ui.setPendingPlan(null);
     ui.setPendingPlanAgentId(null);
+    ui.setPendingAskUser(null);
     try {
       const resp = await fetch('/api/chat/clear', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -405,7 +442,7 @@ const App: React.FC = () => {
       if (!resp.ok) console.error('Clear chat API error:', resp.status);
       useChatStore.getState().clear();
     } catch (e) { console.error('Error clearing chat:', e); }
-  }, []);
+  }, [runningMainRunIds, selectedAgent]);
 
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[]) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
@@ -772,8 +809,8 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Compact toolbar */}
-      {isCompact && (
+      {/* Compact toolbar (hidden when embedded by SDK) */}
+      {isCompact && !compactHideToolbar && (
         <div className="flex items-center gap-1.5 px-2 py-1 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0f0f0f] flex-shrink-0">
           <select value={selectedAgent} onChange={(e) => agentStore.setSelectedAgent(e.target.value)}
             className="text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 outline-none max-w-[5rem]">
@@ -834,10 +871,16 @@ const App: React.FC = () => {
           <div className="border-t border-slate-200 dark:border-white/5">
             <CollapsibleCard title="AGENTS" icon={<Bot size={12} />} iconColor="text-blue-500" badge={`${mainAgents.length}`} defaultOpen
               headerAction={
-                <button onClick={() => uiStore.setShowAgentSpecEditor(true)} disabled={!selectedProjectRoot}
-                  title="Edit agent markdown specs" className="p-1 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 disabled:opacity-30 transition-colors">
-                  <FilePenLine size={12} />
-                </button>
+                <div className="flex items-center gap-0.5">
+                  <button onClick={() => agentStore.reloadAgents()} disabled={reloadingAgents}
+                    className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500 disabled:opacity-50" title="Reload agents from disk">
+                    <RefreshCw size={12} className={reloadingAgents ? 'animate-spin' : ''} />
+                  </button>
+                  <button onClick={() => uiStore.setShowAgentSpecEditor(true)} disabled={!selectedProjectRoot}
+                    title="Edit agent markdown specs" className="p-1 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 disabled:opacity-30 transition-colors">
+                    <FilePenLine size={12} />
+                  </button>
+                </div>
               }>
               <AgentsCard agents={mainAgents} workspaceState={chatStore.workspaceState} isRunning={isRunning}
                 selectedAgent={selectedAgent} setSelectedAgent={agentStore.setSelectedAgent}
@@ -922,7 +965,7 @@ const App: React.FC = () => {
             }>
             <ModelsCard models={models} agents={mainAgents} ollamaStatus={ollamaStatus} chatMessages={chatMessages}
               tokensPerSec={tokensPerSec} activeModelId={activeModelId} agentContext={agentContext}
-              defaultModels={defaultModels} onToggleDefault={agentStore.toggleDefaultModel} sessionTokens={sessionTokens} />
+              defaultModels={defaultModels} onToggleDefault={agentStore.toggleDefaultModel} onChangeReasoningEffort={agentStore.setReasoningEffort} sessionTokens={sessionTokens} />
           </CollapsibleCard>
           <CollapsibleCard title="SKILLS" icon={<Zap size={12} />} iconColor="text-amber-500" badge={`${skills.length} loaded`} defaultOpen
             headerAction={

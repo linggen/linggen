@@ -177,10 +177,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const searchFiles = useCallback((query: string) => {
     if (!projectRoot) return;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    if (!query) {
-      setFileEntries([]);
-      return;
-    }
     searchTimeoutRef.current = setTimeout(async () => {
       setFileEntriesLoading(true);
       try {
@@ -192,7 +188,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       } finally {
         setFileEntriesLoading(false);
       }
-    }, 150);
+    }, query ? 150 : 0);
   }, [projectRoot]);
 
   const filteredFileEntries = useMemo(() => {

@@ -455,7 +455,7 @@ async fn run_skill_dispatch(
         .await;
 
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine);
+    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     let outcome = run_loop_with_tracking(
         &ctx.manager, &ctx.root, engine, &ctx.agent_id,
@@ -549,7 +549,7 @@ async fn run_trigger_dispatch(
         .await;
 
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine);
+    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     let outcome = run_loop_with_tracking(
         &ctx.manager, &ctx.root, engine, &ctx.agent_id,
@@ -617,15 +617,16 @@ async fn run_plan_dispatch(
 
     // Wire up the interrupt channel so user messages reach the running loop.
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine);
+    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     let events_tx_clone = ctx.events_tx.clone();
     let agent_id_clone = ctx.agent_id.clone();
+    let session_id_for_thinking = ctx.session_id.clone();
     tokio::spawn(async move {
         while let Some(event) = thinking_rx.recv().await {
             match event {
                 crate::engine::ThinkingEvent::Token(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token,
                         done: false,
@@ -633,7 +634,7 @@ async fn run_plan_dispatch(
                     });
                 }
                 crate::engine::ThinkingEvent::ContentToken(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token,
                         done: false,
@@ -641,7 +642,7 @@ async fn run_plan_dispatch(
                     });
                 }
                 crate::engine::ThinkingEvent::Done => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token: String::new(),
                         done: true,
@@ -649,7 +650,7 @@ async fn run_plan_dispatch(
                     });
                 }
                 crate::engine::ThinkingEvent::ContentDone => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token: String::new(),
                         done: true,
@@ -725,30 +726,31 @@ async fn run_plan_execution(
     let (thinking_tx, mut thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.thinking_tx = Some(thinking_tx);
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine);
+    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     let events_tx_clone = ctx.events_tx.clone();
     let agent_id_clone = ctx.agent_id.clone();
+    let session_id_for_thinking = ctx.session_id.clone();
     tokio::spawn(async move {
         while let Some(event) = thinking_rx.recv().await {
             match event {
                 crate::engine::ThinkingEvent::Token(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(), token, done: false, thinking: true,
                     });
                 }
                 crate::engine::ThinkingEvent::ContentToken(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(), token, done: false, thinking: false,
                     });
                 }
                 crate::engine::ThinkingEvent::Done => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(), token: String::new(), done: true, thinking: true,
                     });
                 }
                 crate::engine::ThinkingEvent::ContentDone => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(), token: String::new(), done: true, thinking: false,
                     });
                 }
@@ -840,10 +842,12 @@ async fn unwire_interrupt_channel(
 fn wire_ask_user_bridge(
     state: &Arc<ServerState>,
     engine: &mut crate::engine::AgentEngine,
+    session_id: Option<String>,
 ) {
     let bridge = Arc::new(crate::engine::tools::AskUserBridge {
         events_tx: state.events_tx.clone(),
         pending: state.pending_ask_user.clone(),
+        session_id,
     });
     engine.tools.set_ask_user_bridge(bridge);
 }
@@ -917,15 +921,16 @@ async fn run_structured_loop(
 
     // Wire up the interrupt channel so user messages reach the running loop.
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine);
+    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     let events_tx_clone = ctx.events_tx.clone();
     let agent_id_clone = ctx.agent_id.clone();
+    let session_id_for_thinking = ctx.session_id.clone();
     tokio::spawn(async move {
         while let Some(event) = thinking_rx.recv().await {
             match event {
                 crate::engine::ThinkingEvent::Token(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token,
                         done: false,
@@ -933,7 +938,7 @@ async fn run_structured_loop(
                     });
                 }
                 crate::engine::ThinkingEvent::ContentToken(token) => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token,
                         done: false,
@@ -941,7 +946,7 @@ async fn run_structured_loop(
                     });
                 }
                 crate::engine::ThinkingEvent::Done => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token: String::new(),
                         done: true,
@@ -949,7 +954,7 @@ async fn run_structured_loop(
                     });
                 }
                 crate::engine::ThinkingEvent::ContentDone => {
-                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: None,
+                    let _ = events_tx_clone.send(ServerEvent::Token { session_id: session_id_for_thinking.clone(),
                         agent_id: agent_id_clone.clone(),
                         token: String::new(),
                         done: true,
@@ -1293,6 +1298,13 @@ pub(crate) async fn chat_handler(
                 }
             }
 
+            // Register agent → session mapping BEFORE spawn so SSE events are
+            // tagged correctly even while awaiting the agent lock.
+            if let Some(sid) = &session_id {
+                state.agent_sessions.write().unwrap()
+                    .insert(target_id.clone(), sid.clone());
+            }
+
             tokio::spawn(async move {
                 let mut engine = agent.lock().await;
                 if let Some(queued_id) = queued_item_id.as_deref() {
@@ -1326,12 +1338,7 @@ pub(crate) async fn chat_handler(
                     });
                 }
 
-                // Register agent → session mapping so SSE events get tagged.
-                // Must happen before any events are emitted for this run.
-                if let Some(sid) = &session_id {
-                    state_clone.agent_sessions.write().unwrap()
-                        .insert(target_id_clone.clone(), sid.clone());
-                }
+                // agent_sessions already registered before spawn — no need to repeat here.
 
                 // Apply session-level model override if provided.
                 if let Some(ref mid) = req_model_id {
@@ -1499,11 +1506,19 @@ pub(crate) async fn chat_handler(
                 // Deregister agent → session mapping after a short delay so the
                 // SSE filter can still enrich the TurnComplete and idle AgentStatus
                 // events with the correct session_id before they are streamed out.
+                // Only remove if the session_id still matches — a newer run may have
+                // re-registered the same agent with a different session.
                 let sessions_ref = state_clone.agent_sessions.clone();
                 let agent_key = target_id_clone.clone();
+                let old_sid = session_id.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    sessions_ref.write().unwrap().remove(&agent_key);
+                    let mut map = sessions_ref.write().unwrap();
+                    if let Some(current_sid) = map.get(&agent_key) {
+                        if old_sid.as_ref() == Some(current_sid) {
+                            map.remove(&agent_key);
+                        }
+                    }
                 });
             });
 
@@ -1640,6 +1655,7 @@ pub(crate) async fn approve_plan_handler(
         }
 
         // Build a ChatRunCtx so we can reuse run_plan_execution.
+        let session_id_for_cleanup = session_id.clone();
         let ctx = ChatRunCtx {
             state: state_clone.clone(),
             manager,
@@ -1666,11 +1682,19 @@ pub(crate) async fn approve_plan_handler(
 
         // Deregister agent → session mapping after a short delay so the
         // TurnComplete and idle events still get enriched with session_id.
+        // Only remove if the session_id still matches — a newer run may have
+        // re-registered the same agent with a different session.
         let sessions_ref = state_clone.agent_sessions.clone();
         let agent_key = agent_id.clone();
+        let old_sid = session_id_for_cleanup;
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            sessions_ref.write().unwrap().remove(&agent_key);
+            let mut map = sessions_ref.write().unwrap();
+            if let Some(current_sid) = map.get(&agent_key) {
+                if old_sid.as_ref() == Some(current_sid) {
+                    map.remove(&agent_key);
+                }
+            }
         });
     });
 
@@ -1794,6 +1818,7 @@ pub(crate) async fn pending_ask_user_handler(
                 "question_id": qid,
                 "agent_id": entry.agent_id,
                 "questions": entry.questions,
+                "session_id": entry.session_id,
             })
         })
         .collect();

@@ -590,6 +590,7 @@ impl AgentManager {
         )?;
 
         engine.default_models = config.routing.default_models.clone();
+        engine.auto_fallback = config.routing.auto_fallback;
         engine.set_spec(
             normalized_id.clone(),
             agent_spec.spec,
@@ -670,6 +671,7 @@ impl AgentManager {
         )?;
 
         engine.default_models = config.routing.default_models.clone();
+        engine.auto_fallback = config.routing.auto_fallback;
         engine.set_spec(
             normalized_id.clone(),
             agent_spec.spec,

@@ -139,12 +139,14 @@ pub struct AskUserAnswer {
 pub struct AskUserBridge {
     pub events_tx: broadcast::Sender<crate::server::ServerEvent>,
     pub pending: Arc<Mutex<HashMap<String, PendingAskUser>>>,
+    pub session_id: Option<String>,
 }
 
 pub struct PendingAskUser {
     pub agent_id: String,
     pub questions: Vec<AskUserQuestion>,
     pub sender: tokio::sync::oneshot::Sender<Vec<AskUserAnswer>>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -436,6 +438,7 @@ impl Tools {
                     agent_id: agent_id.clone(),
                     question_id: question_id.clone(),
                     questions: args.questions,
+                    session_id: bridge.session_id.clone(),
                 });
 
                 // Create a oneshot channel and register it for the response endpoint.
@@ -443,7 +446,7 @@ impl Tools {
                 block_on_async(async {
                     bridge.pending.lock().await.insert(
                         question_id.clone(),
-                        PendingAskUser { agent_id, questions: questions_clone, sender: tx },
+                        PendingAskUser { agent_id, questions: questions_clone, sender: tx, session_id: bridge.session_id.clone() },
                     );
                 });
 

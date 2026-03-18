@@ -100,12 +100,68 @@ impl OpenAiClient {
         None
     }
 
+    /// Apply reasoning effort to a request based on provider.
+    /// - OpenAI (GPT-5, o3, o4-mini): `reasoning_effort` field
+    /// - Gemini 2.5: `generationConfig.thinkingConfig.thinkingBudget`
+    /// - Others: no-op (unknown params are silently ignored by most providers)
+    /// Check if a model supports reasoning effort control.
+    fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
+        let m = model.to_lowercase();
+        // OpenAI reasoning models
+        if m.contains("gpt-5") || m.contains("o3") || m.contains("o4") || m.contains("o1") {
+            return true;
+        }
+        // Gemini 2.5 thinking models
+        if is_gemini && m.contains("2.5") {
+            return true;
+        }
+        // DeepSeek reasoning
+        if m.contains("deepseek-r") || m.contains("deepseek-reasoner") {
+            return true;
+        }
+        false
+    }
+
+    fn apply_reasoning_effort(
+        req: &mut serde_json::Value,
+        effort: Option<&str>,
+        is_gemini: bool,
+        model: &str,
+    ) {
+        let Some(effort) = effort else { return };
+        let effort_lower = effort.to_lowercase();
+        if !["low", "medium", "high"].contains(&effort_lower.as_str()) {
+            return;
+        }
+
+        // Only send to models that support it — avoid API errors on others
+        if !Self::model_supports_reasoning(model, is_gemini) {
+            return;
+        }
+
+        if is_gemini && model.to_lowercase().contains("2.5") {
+            // Gemini uses thinkingBudget (token count): low=1024, medium=8192, high=32768
+            let budget = match effort_lower.as_str() {
+                "low" => 1024,
+                "high" => 32768,
+                _ => 8192, // medium
+            };
+            req["generationConfig"] = serde_json::json!({
+                "thinkingConfig": { "thinkingBudget": budget }
+            });
+        } else {
+            // OpenAI-compatible: reasoning_effort field (GPT-5, o3, o4-mini)
+            req["reasoning_effort"] = serde_json::json!(effort_lower);
+        }
+    }
+
     /// Streaming text chat completion (SSE format).
     /// Uses Responses API for ChatGPT OAuth, Chat Completions for standard API.
     pub async fn chat_text_stream(
         &self,
         model: &str,
         messages: &[crate::ollama::ChatMessage],
+        reasoning_effort: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
         tracing::info!(
@@ -169,6 +225,8 @@ impl OpenAiClient {
             if is_gemini && model.contains("2.5") {
                 req["max_completion_tokens"] = serde_json::json!(65536);
             }
+            // Apply reasoning effort per provider
+            Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
             self.apply_auth(self.http.post(url).json(&req))
         };
         let resp = rb.send().await?;
@@ -313,6 +371,7 @@ impl OpenAiClient {
         model: &str,
         messages: &[crate::ollama::ChatMessage],
         tools: Vec<serde_json::Value>,
+        reasoning_effort: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
         tracing::info!(
@@ -431,6 +490,8 @@ impl OpenAiClient {
                 if is_gemini && model.contains("2.5") {
                     req["max_completion_tokens"] = serde_json::json!(65536);
                 }
+                // Apply reasoning effort per provider
+                Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
                 self.apply_auth(self.http.post(url).json(&req))
             };
 

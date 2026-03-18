@@ -119,6 +119,7 @@ mod tests {
             tags: Vec::new(),
             supports_tools: None,
             auth_mode: None,
+            reasoning_effort: None,
         }
     }
 
@@ -134,6 +135,7 @@ mod tests {
             tags: Vec::new(),
             supports_tools: None,
             auth_mode: None,
+            reasoning_effort: None,
         }
     }
 

@@ -75,25 +75,27 @@ Each session carries:
 The system prompt is rebuilt each turn from layers. Which layers are included depends on the session's current state:
 
 ```
-[1] Agent personality       — always (sets response style)
-[2] Agent body              — always (sets identity and behavior)
-[3] Skill body              — when session has a bound skill
-[4] Environment             — always (platform, workspace, date)
-[5] Project instructions    — when CLAUDE.md exists
-[6] Tool schemas            — when effective_tools is non-empty
-[7] Tool usage guidelines   — when effective_tools is non-empty
-[8] Delegation targets      — when Task tool is in effective_tools
-[9] Plan mode instructions  — when effective_tools is non-empty
+[1]  Agent personality       — always (sets response style)
+[2]  Agent body              — always (sets identity and behavior)
+[3]  Available skills        — skill names + descriptions for discovery
+[4]  Active skill body       — when session has a bound skill
+[5]  Environment             — always (platform, workspace, date)
+[6]  Project instructions    — when CLAUDE.md exists
+[7]  Memory                  — when MEMORY.md exists and Write tool available
+[8]  Tool schemas            — when effective_tools is non-empty
+[9]  Plan mode instructions  — when plan_mode is active
+[10] Delegation targets      — when Task tool is in effective_tools
+[11] Plan execution context  — when plan is approved/executing
 ```
 
-A zero-tool session (e.g., game-table skill with `allowed-tools: []`) gets layers 1-5 only — a minimal, focused prompt for pure conversation.
+A zero-tool session (e.g., game-table skill with `allowed-tools: []`) gets layers 1-7 only — a minimal, focused prompt for pure conversation.
 
 ## Effective tools
 
-The tools available in a session are determined by intersection:
+The tools available in a session are determined by the skill when bound:
 
 ```
-effective_tools = agent.tools ∩ skill.allowed_tools (if skill is bound)
+effective_tools = skill.allowed_tools              (if skill is bound)
                   agent.tools                       (if no skill)
 ```
 

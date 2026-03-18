@@ -375,6 +375,12 @@ impl AgentEngine {
     /// Filters out models marked unavailable by the health tracker (keeps at least one).
     pub(crate) fn build_model_chain(&self) -> Vec<String> {
         let primary = self.model_id.clone();
+
+        // When auto_fallback is disabled, only try the primary model.
+        if !self.auto_fallback {
+            return vec![primary];
+        }
+
         let all_ids = self.model_manager.model_ids();
 
         // Start with the primary, then default_models from config, then remaining.
@@ -393,7 +399,8 @@ impl AgentEngine {
     }
 
     /// Call the LLM with automatic fallback to other configured models
-    /// when the primary model hits a rate limit (429) or context limit (400).
+    /// on transient errors (rate limit, context limit, timeout, 502/503, connection failures).
+    /// Controlled by `routing.auto_fallback` config (default: true).
     /// Uses the health tracker to skip models known to be down/quota-exhausted.
     ///
     /// When `tools` is `Some`, uses native function calling via `stream_with_tool_calling()`.

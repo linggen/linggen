@@ -325,6 +325,13 @@ async fn dispatch_mission_prompt(
         }
     }
 
+    // Register agent → session mapping so SSE events get tagged with session_id.
+    // Must happen before any events are emitted for this run.
+    if let Some(ref sid) = session_id {
+        state.agent_sessions.write().unwrap()
+            .insert(agent_id.to_string(), sid.clone());
+    }
+
     state
         .send_agent_status(
             agent_id.to_string(),
@@ -428,14 +435,27 @@ async fn dispatch_mission_prompt(
     // Record mission run
     record_mission_run(&state, mission, &run_id, session_id.as_deref(), status, false);
 
+    // Deregister agent → session mapping after a short delay so the
+    // idle AgentStatus event still gets enriched with session_id.
+    {
+        let sessions_ref = state.agent_sessions.clone();
+        let agent_key = agent_id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sessions_ref.write().unwrap().remove(&agent_key);
+        });
+    }
+
     // Notify UI that the mission finished.
-    let _ = state.events_tx.send(ServerEvent::MissionCompleted {
-        mission_id: mission.id.clone(),
-        mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-        status: status.to_string(),
-        run_id: run_id.clone(),
-        session_id: session_id.clone(),
-    });
+    let _ = state.events_tx.send(ServerEvent::Notification(
+        crate::server::NotificationPayload::MissionCompleted {
+            mission_id: mission.id.clone(),
+            mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
+            status: status.to_string(),
+            run_id: run_id.clone(),
+            session_id: session_id.clone(),
+        },
+    ));
 }
 
 /// Configure engine restrictions based on the mission's permission tier.

@@ -38,6 +38,7 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 - Sidecar `.meta.json` files — removed.
 - Stale `Planned` → `Executing` auto-promotion — no silent approval bypass.
 - Bash in plan mode — blocked entirely for safety.
+- Task blocked in plan mode — now allowed so the model can delegate research to subagents for complex tasks (keeps main context clean).
 
 ### Kept
 
@@ -64,11 +65,11 @@ Redesign of the plan feature, aligned with Claude Code. Separates planning (read
 
 ### Research phase
 
-Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `UpdatePlan`.
+Tools available: `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `AskUser`, `ExitPlanMode`, `UpdatePlan`, `Task`.
 
-Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `Task`, `lock_paths`, `unlock_paths`, `Skill`.
+Tools blocked (removed from API call): `Write`, `Edit`, `Bash`, `lock_paths`, `unlock_paths`, `Skill`.
 
-Model researches the codebase, then writes a self-contained markdown plan and calls `ExitPlanMode`.
+Model researches the codebase (directly or by delegating to a subagent via Task for complex tasks), then writes a self-contained markdown plan and calls `ExitPlanMode`. Delegation keeps the main agent's context clean — research results stay in the subagent's context, and only the analysis is returned.
 
 ### Approval
 

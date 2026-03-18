@@ -174,6 +174,8 @@ pub struct AgentEngine {
     pub permission_store: permission::PermissionStore,
     /// Ordered list of default model IDs from routing config (for fallback chain).
     pub default_models: Vec<String>,
+    /// Whether to automatically try fallback models on transient errors.
+    pub auto_fallback: bool,
     /// Cached context window size (in tokens) for the active model.
     /// Queried once at loop start and used to adapt compaction thresholds.
     pub context_window_tokens: Option<usize>,
@@ -359,6 +361,7 @@ impl AgentEngine {
             pending_images: Vec::new(),
             permission_store: perm_store,
             default_models: Vec::new(),
+            auto_fallback: true,
             context_window_tokens: None,
             last_token_usage: None,
             cached_system_prompt: None,

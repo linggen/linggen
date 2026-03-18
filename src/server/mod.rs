@@ -45,11 +45,11 @@ use projects_api::{
     get_agent_context_api, get_agent_file_api, get_skill_file_api, list_agent_children_api,
     get_status_api,
     list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api, list_projects,
-    list_sessions, list_skill_files_api, list_skill_sessions, list_skills, reload_skills,
+    list_sessions, list_skill_files_api, list_skill_sessions, list_skills, reload_agents, reload_skills,
     remove_project, remove_session_api, remove_skill_session_api,
     rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
 };
-use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, community_search, marketplace_install, marketplace_move_to_global, marketplace_uninstall};
+use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, clawhub_scan, community_search, marketplace_install, marketplace_move_to_global, marketplace_uninstall};
 use missions_api::{
     create_mission, delete_mission, delete_mission_session, get_mission,
     get_mission_session_state, list_mission_runs, list_mission_sessions, list_missions,
@@ -142,6 +142,20 @@ pub struct QueuedChatItem {
     pub timestamp: u64,
 }
 
+/// Discriminated payload for the Notification SSE event.
+/// Add new variants here to introduce new notification types.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationPayload {
+    MissionCompleted {
+        mission_id: String,
+        mission_name: String,
+        status: String,
+        run_id: String,
+        session_id: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerEvent {
@@ -215,13 +229,7 @@ pub enum ServerEvent {
         agent_id: String,
         project_root: String,
     },
-    MissionCompleted {
-        mission_id: String,
-        mission_name: String,
-        status: String,
-        run_id: String,
-        session_id: Option<String>,
-    },
+    Notification(NotificationPayload),
     TextSegment {
         agent_id: String,
         text: String,
@@ -231,6 +239,7 @@ pub enum ServerEvent {
         agent_id: String,
         question_id: String,
         questions: Vec<crate::engine::tools::AskUserQuestion>,
+        session_id: Option<String>,
     },
     ModelFallback {
         agent_id: String,
@@ -505,7 +514,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             phase: Some(UI_PHASE_SYNC.to_string()),
             text: Some("State updated".to_string()),
             agent_id: None,
-            session_id: None,
+            session_id: Some("global".to_string()),
             project_root: None,
             data: None,
         }),
@@ -640,31 +649,32 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             project_root: Some(project_root),
             data: Some(json!({ "status": "mission_triggered", "mission_id": mission_id })),
         }),
-        ServerEvent::MissionCompleted {
-            mission_id,
-            mission_name,
-            status,
-            run_id,
-            session_id,
-        } => Some(UiSseMessage {
-            id: format!("mission-done-{mission_id}-{seq}"),
-            seq,
-            rev: seq,
-            ts_ms,
-            kind: "mission_completed".to_string(),
-            phase: None,
-            text: Some(format!("Mission '{}' {}", mission_name, status)),
-            agent_id: None,
-            session_id: session_id.clone(),
-            project_root: None,
-            data: Some(json!({
-                "mission_id": mission_id,
-                "mission_name": mission_name,
-                "status": status,
-                "run_id": run_id,
-                "session_id": session_id,
-            })),
-        }),
+        ServerEvent::Notification(ref payload) => {
+            let data = serde_json::to_value(payload).ok();
+            let text = match payload {
+                NotificationPayload::MissionCompleted { mission_name, status, .. } => {
+                    format!("Mission '{}' {}", mission_name, status)
+                }
+            };
+            let id_str = match payload {
+                NotificationPayload::MissionCompleted { mission_id, .. } => {
+                    format!("notif-mission-{mission_id}-{seq}")
+                }
+            };
+            Some(UiSseMessage {
+                id: id_str,
+                seq,
+                rev: seq,
+                ts_ms,
+                kind: "notification".to_string(),
+                phase: None,
+                text: Some(text),
+                agent_id: None,
+                session_id: Some("global".to_string()),
+                project_root: None,
+                data,
+            })
+        }
         ServerEvent::TextSegment {
             agent_id,
             text,
@@ -686,6 +696,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             agent_id,
             question_id,
             questions,
+            session_id,
         } => Some(UiSseMessage {
             id: format!("ask-user-{question_id}"),
             seq,
@@ -695,7 +706,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             phase: None,
             text: None,
             agent_id: Some(agent_id),
-            session_id: None,
+            session_id,
             project_root: None,
             data: Some(json!({
                 "question_id": question_id,
@@ -761,7 +772,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             phase: Some(UI_PHASE_RESYNC.to_string()),
             text: Some("Resync required".to_string()),
             agent_id: None,
-            session_id: None,
+            session_id: Some("global".to_string()),
             project_root: None,
             data: Some(json!({
                 "reason": reason,
@@ -784,7 +795,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             phase: None,
             text: Some(format!("Launched app: {}", title)),
             agent_id: None,
-            session_id: None,
+            session_id: Some("global".to_string()),
             project_root: None,
             data: Some(json!({
                 "skill": skill,
@@ -1055,12 +1066,17 @@ pub async fn prepare_server(
                                     .insert(subagent_id.clone(), sid);
                             }
                         }
-                        // Deregister subagent when it finishes.
+                        // Deregister subagent when it finishes (delayed so final
+                        // events like idle AgentStatus still get enriched).
                         if let crate::agent_manager::AgentEvent::SubagentResult {
                             subagent_id, ..
                         } = &other {
-                            state_clone.agent_sessions.write().unwrap()
-                                .remove(subagent_id);
+                            let sessions_ref = state_clone.agent_sessions.clone();
+                            let key = subagent_id.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                sessions_ref.write().unwrap().remove(&key);
+                            });
                         }
                         if let Some(se) = ServerEvent::from_agent_event(other) {
                             let _ = state_clone.events_tx.send(se);
@@ -1092,6 +1108,7 @@ pub async fn prepare_server(
         .route("/api/auth/codex/logout", post(codex_auth_logout))
         .route("/api/skills", get(list_skills))
         .route("/api/skills/reload", post(reload_skills))
+        .route("/api/agents/reload", post(reload_agents))
         .route("/api/community-skills/search", get(community_search))
         .route("/api/marketplace/install", post(marketplace_install))
         .route("/api/marketplace/uninstall", delete(marketplace_uninstall))
@@ -1099,6 +1116,7 @@ pub async fn prepare_server(
         .route("/api/builtin-skills", get(builtin_skills_list))
         .route("/api/builtin-skills/install", post(builtin_skills_install))
         .route("/api/builtin-skills/install-all", post(builtin_skills_install_all))
+        .route("/api/clawhub/scan", get(clawhub_scan))
         .route("/api/skill-files", get(list_skill_files_api))
         .route("/api/skill-file", get(get_skill_file_api))
         .route("/api/skill-file", post(upsert_skill_file_api))
@@ -1370,28 +1388,38 @@ async fn events_handler(
                 }
             }
         }
-        // Server-side session filter: if the client requested a specific session,
-        // drop events that belong to a *different* session.
-        // Only truly global event kinds (state sync, resync) pass without session_id.
-        if let Some(ref wanted) = filter_session {
-            match &ui_msg.session_id {
-                Some(event_sid) if event_sid != wanted => {
-                    // Allow mission_completed through regardless of session —
-                    // missions run in their own session but notifications
-                    // should reach the active UI session.
-                    if ui_msg.kind != "mission_completed" {
+        // Server-side session filter.
+        // Events with session_id "global" always pass through to all clients.
+        let is_global_event = ui_msg.session_id.as_deref() == Some("global");
+
+        if !is_global_event {
+            if let Some(ref wanted) = filter_session {
+                // Client requested a specific session — drop events from other sessions.
+                match &ui_msg.session_id {
+                    Some(event_sid) if event_sid != wanted => {
                         return None;
                     }
+                    None => {
+                        // Events without session_id: agent_sessions enrichment above
+                        // should have set it. If still None, it's a timing gap —
+                        // let through since registration now happens before spawn.
+                    }
+                    _ => {} // session matches — pass through
                 }
-                None => {
-                    // Events without session_id are either global (sync/resync) or
-                    // events where the agent_sessions enrichment didn't match.
-                    // Let them through — the client-side filter provides a second
-                    // layer of session filtering. Being too strict here causes
-                    // content_block, ask_user, and other events to be silently
-                    // dropped when agent_sessions has a timing gap.
+            } else {
+                // No session filter (main page with no active session).
+                // Drop content events tagged with a real session_id —
+                // they belong to app skills or scoped sessions, not the main view.
+                if let Some(ref sid) = ui_msg.session_id {
+                    if sid != "global" {
+                        let is_passthrough = matches!(ui_msg.kind.as_str(),
+                            "agent_status" | "activity" | "run"
+                        );
+                        if !is_passthrough {
+                            return None;
+                        }
+                    }
                 }
-                _ => {} // session matches — pass through
             }
         }
         let data = serde_json::to_string(&ui_msg).unwrap_or_default();
@@ -1554,6 +1582,7 @@ mod tests {
                 agent_id: "ling".into(),
                 question_id: "q1".into(),
                 questions: vec![],
+                session_id: None,
             },
             ServerEvent::ModelFallback {
                 agent_id: "ling".into(),

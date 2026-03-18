@@ -65,6 +65,7 @@ impl AgentEngine {
             agent_id: agent_id.clone(),
             question_id: question_id.clone(),
             questions: questions.clone(),
+            session_id: bridge.session_id.clone(),
         });
 
         // Create a oneshot channel and register it for the response endpoint.
@@ -75,6 +76,7 @@ impl AgentEngine {
                 agent_id,
                 questions,
                 sender: tx,
+                session_id: bridge.session_id.clone(),
             },
         );
 
@@ -128,12 +130,16 @@ impl AgentEngine {
         let question_id = uuid::Uuid::new_v4().to_string();
         let agent_id = self.agent_id.clone().unwrap_or_default();
 
-        info!("Permission: awaiting user approval for Bash '{}'", command);
+        info!(
+            "Permission: awaiting user approval for Bash '{}' (session_id={:?})",
+            command, bridge.session_id
+        );
         let questions = vec![question];
         let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
             agent_id: agent_id.clone(),
             question_id: question_id.clone(),
             questions: questions.clone(),
+            session_id: bridge.session_id.clone(),
         });
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -143,6 +149,7 @@ impl AgentEngine {
                 agent_id,
                 questions,
                 sender: tx,
+                session_id: bridge.session_id.clone(),
             },
         );
 
@@ -201,6 +208,7 @@ impl AgentEngine {
             agent_id: agent_id.clone(),
             question_id: question_id.clone(),
             questions: questions.clone(),
+            session_id: bridge.session_id.clone(),
         });
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -210,6 +218,7 @@ impl AgentEngine {
                 agent_id,
                 questions,
                 sender: tx,
+                session_id: bridge.session_id.clone(),
             },
         );
 

@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand';
 import type { ChatMessage, ContentBlock, SubagentTreeEntry, WorkspaceState } from '../types';
+import { isToolStatusText } from '../components/chat/MessagePhase';
 import {
   stripEmbeddedStructuredJson,
   isStatusLineText,
@@ -328,7 +329,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .split('\n')
           .filter((line: string) => {
             const t = line.trimStart();
-            return !t.startsWith('Used tool:') && !t.startsWith('Delegated task:');
+            return !t.startsWith('Used tool:') && !t.startsWith('Delegated task:') && !isToolStatusText(t);
           })
           .join('\n')
           .replace(/\n{3,}/g, '\n\n')
@@ -554,7 +555,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const toolBlocks = (msg.content || []).filter((b) => b.type === 'tool_use');
     const totalTools = toolBlocks.length || nonTransient.length || msg.toolCount || 0;
     const textIsPlaceholder = isStatusLineText(msg.text || '');
-    const finalText = msg.liveText || (textIsPlaceholder ? '' : msg.text) || '';
+    // Recover final text from multiple sources:
+    // 1. liveText (token-accumulated streaming text)
+    // 2. msg.text (if not a placeholder like "Thinking...")
+    // 3. msg.segments text entries (set by addTextSegment from text_segment SSE events)
+    const segmentsText = (msg.segments || [])
+      .filter((s: { type: string; text?: string }) => s.type === 'text' && s.text)
+      .map((s: { text?: string }) => s.text)
+      .join('\n\n');
+    const finalText = msg.liveText || (textIsPlaceholder ? '' : msg.text) || segmentsText || '';
 
     next[idx] = {
       ...msg,

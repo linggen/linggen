@@ -21,6 +21,7 @@ interface AgentState {
   sessionTokens: { prompt: number; completion: number };
   cancellingRunIds: Record<string, boolean>;
   reloadingSkills: boolean;
+  reloadingAgents: boolean;
 
   // Agent activity (live status)
   agentStatus: Record<string, AgentStatusValue>;
@@ -52,9 +53,11 @@ interface AgentState {
   fetchModels: () => Promise<void>;
   fetchDefaultModels: () => Promise<void>;
   toggleDefaultModel: (modelId: string) => Promise<void>;
+  setReasoningEffort: (modelId: string, effort: string | null) => Promise<void>;
   fetchOllamaStatus: () => Promise<void>;
   fetchSkills: () => Promise<void>;
   reloadSkills: () => Promise<void>;
+  reloadAgents: () => Promise<void>;
   fetchAgentRuns: () => Promise<void>;
   cancelAgentRun: (runId: string) => Promise<void>;
   fetchSessionTokens: () => Promise<void>;
@@ -75,6 +78,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   sessionTokens: { prompt: 0, completion: 0 },
   cancellingRunIds: {},
   reloadingSkills: false,
+  reloadingAgents: false,
 
   agentStatus: {},
   agentStatusText: {},
@@ -172,6 +176,32 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     } catch { /* ignore */ }
   },
 
+  setReasoningEffort: async (modelId, effort) => {
+    try {
+      const resp = await fetch('/api/config');
+      if (!resp.ok) return;
+      const config = await resp.json();
+      const models = config.models ?? [];
+      const idx = models.findIndex((m: { id: string }) => m.id === modelId);
+      if (idx === -1) return;
+      models[idx] = { ...models[idx], reasoning_effort: effort || null };
+      const updated = { ...config, models };
+      const saveResp = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      if (saveResp.ok) {
+        // Update local models state
+        set((state) => ({
+          models: state.models.map((m) =>
+            m.id === modelId ? { ...m, reasoning_effort: effort || null } : m
+          ),
+        }));
+      }
+    } catch { /* ignore */ }
+  },
+
   fetchOllamaStatus: async () => {
     try {
       const resp = await fetch('/api/utils/ollama-status');
@@ -204,6 +234,23 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       console.error('Failed to reload skills:', e);
     } finally {
       set({ reloadingSkills: false });
+    }
+  },
+
+  reloadAgents: async () => {
+    set({ reloadingAgents: true });
+    try {
+      const { selectedProjectRoot } = useProjectStore.getState();
+      await fetch('/api/agents/reload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_root: selectedProjectRoot || undefined }),
+      });
+      await get().fetchAgents(selectedProjectRoot || undefined);
+    } catch (e) {
+      console.error('Failed to reload agents:', e);
+    } finally {
+      set({ reloadingAgents: false });
     }
   },
 

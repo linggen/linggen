@@ -61,7 +61,9 @@ const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: '
 export const ModelsTab: React.FC<{
   config: AppConfig;
   onChange: (config: AppConfig) => void;
-}> = ({ config, onChange }) => {
+  onCredsDirtyChange?: (dirty: boolean) => void;
+  saveCredsRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+}> = ({ config, onChange, onCredsDirtyChange, saveCredsRef }) => {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaPsResponse | null>(null);
   const [healthMap, setHealthMap] = useState<Record<string, ModelHealthInfo>>({});
   const [credentials, setCredentials] = useState<CredentialsMap>({});
@@ -194,9 +196,10 @@ export const ModelsTab: React.FC<{
   const updateLocalKey = (modelId: string, value: string) => {
     setLocalKeys((prev) => ({ ...prev, [modelId]: value }));
     setCredsDirty(true);
+    onCredsDirtyChange?.(true);
   };
 
-  const saveCredentials = async () => {
+  const saveCredentials = useCallback(async () => {
     const body: CredentialsMap = {};
     for (const model of config.models) {
       if (!model.id) continue;
@@ -212,9 +215,16 @@ export const ModelsTab: React.FC<{
         body: JSON.stringify(body),
       });
       setCredsDirty(false);
+      onCredsDirtyChange?.(false);
       fetchCredentials();
     } catch { /* ignore */ }
-  };
+  }, [config.models, localKeys, fetchCredentials, onCredsDirtyChange]);
+
+  // Expose saveCredentials to parent via ref
+  useEffect(() => {
+    if (saveCredsRef) saveCredsRef.current = saveCredentials;
+    return () => { if (saveCredsRef) saveCredsRef.current = null; };
+  }, [saveCredsRef, saveCredentials]);
 
   const getOllamaStatus = (model: ModelConfigUI): 'connected' | 'disconnected' | 'na' => {
     if (model.provider !== 'ollama') return 'na';
@@ -278,6 +288,22 @@ export const ModelsTab: React.FC<{
           })()}
         </section>
       )}
+
+      {/* Auto-fallback toggle */}
+      <section className={sectionCls}>
+        <label className="flex items-center justify-between cursor-pointer">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Auto Fallback</span>
+            <p className="text-[10px] text-slate-500 mt-0.5">Automatically try the next model on timeout, rate limit, or connection errors</p>
+          </div>
+          <input
+            type="checkbox"
+            checked={config.routing?.auto_fallback !== false}
+            onChange={(e) => onChange({ ...config, routing: { ...config.routing, auto_fallback: e.target.checked } })}
+            className="w-4 h-4 accent-blue-600"
+          />
+        </label>
+      </section>
 
       {/* Model cards */}
       <section className={sectionCls}>
@@ -430,6 +456,22 @@ export const ModelsTab: React.FC<{
                       onChange={(e) => updateTags(i, e.target.value)}
                       placeholder="e.g. vision, fast"
                     />
+                  </div>
+                  <div>
+                    <label className={labelCls}>
+                      Reasoning Effort
+                      <span className="font-normal text-slate-400 ml-1">(GPT-5, o3, Gemini 2.5)</span>
+                    </label>
+                    <select
+                      className={inputCls}
+                      value={model.reasoning_effort || ''}
+                      onChange={(e) => updateModel(i, 'reasoning_effort', e.target.value || null)}
+                    >
+                      <option value="">Default</option>
+                      <option value="low">Low — faster, cheaper</option>
+                      <option value="medium">Medium — balanced</option>
+                      <option value="high">High — thorough reasoning</option>
+                    </select>
                   </div>
                 </div>
               </div>

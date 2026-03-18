@@ -41,6 +41,13 @@ pub struct ModelConfig {
     /// When "chatgpt_oauth", uses ChatGPT subscription OAuth tokens instead of API key.
     #[serde(default)]
     pub auth_mode: Option<String>,
+    /// Reasoning effort level: "low", "medium", "high".
+    /// Translates to provider-specific parameters:
+    /// - OpenAI/o-series/GPT-5: `reasoning_effort`
+    /// - Gemini 2.5: `thinkingConfig.thinkingBudget`
+    /// - Others: ignored (no-op)
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -153,6 +160,14 @@ pub struct RoutingConfig {
     /// The first model in the list is the primary default; others are fallbacks.
     #[serde(default)]
     pub default_models: Vec<String>,
+    /// When true, automatically try the next model on transient errors
+    /// (timeout, rate limit, 502/503, connection failures). Default: true.
+    #[serde(default = "default_true")]
+    pub auto_fallback: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -296,6 +311,7 @@ impl Default for Config {
                 tags: Vec::new(),
                 supports_tools: None,
                 auth_mode: None,
+                reasoning_effort: None,
             }],
             server: ServerConfig { port: 9898 },
             agent: AgentConfig {

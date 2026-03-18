@@ -45,6 +45,9 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
+| `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
+| `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
+| `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |
 
 **Aliases**: `Read`/`Write`/`Edit` accept `file`/`filepath` for `path`. `Edit` accepts `old`/`search`/`from` for `old_string`, `new`/`replace`/`to` for `new_string`.
 
@@ -97,14 +100,18 @@ Dispatch order in `ToolRegistry.execute()`:
 - Per-agent via `spec.tools` in frontmatter. Wildcard `tools: ["*"]` = unrestricted.
 - Capabilities determined by effective tool set (see `session-spec.md`): Write/Edit = can patch, Task = can delegate.
 - Write-safety mode: checks that file was Read before Write/Edit.
-- Tool permission mode: user approval for destructive tools (`Write`, `Edit`, `Bash`, `Patch`).
+- Tool permission mode: user approval for destructive tools (`Write`, `Edit`, `Bash`).
 - Redundancy detection: cache + loop-breaker for repeated calls.
 
 ## Tool permission mode
 
-When `tool_permission_mode = "ask"` in `[agent]` config, destructive tool calls require user approval before execution. Default: `"auto"` (no prompting, backward compatible).
+Three modes:
 
-**Destructive tools**: `Write`, `Edit`, `Bash`, `Patch`.
+- **`ask`** (default) — destructive tool calls require user approval before execution.
+- **`accept_edits`** — auto-approve `Write`/`Edit` but still prompt for `Bash`.
+- **`auto`** — no prompting, all tools auto-approved.
+
+**Destructive tools**: `Write`, `Edit`, `Bash`.
 
 **Approval options**:
 - **Allow once** — proceed this one time only.

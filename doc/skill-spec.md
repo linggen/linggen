@@ -27,7 +27,7 @@ Linggen skills follow the [Agent Skills](https://agentskills.io) open standard (
 
 ## Format
 
-Each skill is a directory with `SKILL.md` as entrypoint. The directory name **must match** the `name` field in frontmatter.
+Each skill is a directory with `SKILL.md` as entrypoint. The directory name should match the `name` field in frontmatter by convention.
 
 ```
 my-skill/
@@ -59,9 +59,6 @@ These fields are defined by the [Agent Skills spec](https://agentskills.io/speci
 |:------|:---------|:--------|
 | `name` | yes | Lowercase, hyphens only, max 64 chars. Must match directory name. Becomes `/slash-command`. |
 | `description` | yes | Max 1024 chars. What the skill does and when to use it. Model reads this to decide. |
-| `license` | no | License name or reference to bundled file. |
-| `compatibility` | no | Environment requirements (products, packages, network). |
-| `metadata` | no | Arbitrary key-value pairs for extra info (author, version). |
 | `allowed-tools` | no | Tools permitted when skill is active. |
 
 #### Claude Code extension fields
@@ -146,15 +143,15 @@ Session-bound skills combine with the agent's system prompt: `effective_tools = 
 
 Skills are discovered at startup and on file change (live reload).
 
-**Discovery paths** (higher priority wins):
+**Discovery paths** (later overrides earlier):
 
-| Level | Path | Scope |
-|:------|:-----|:------|
-| Personal | `~/.linggen/skills/<name>/SKILL.md` | All projects |
-| Project | `.linggen/skills/<name>/SKILL.md` | This project only |
-| Compat | `~/.claude/skills/`, `~/.codex/skills/` | Cross-tool compatibility |
+| Priority | Path | Scope |
+|:---------|:-----|:------|
+| 1 | `~/.linggen/skills/<name>/SKILL.md` | Global personal |
+| 2 | `~/.claude/skills/`, `~/.codex/skills/` | Cross-tool compat |
+| 3 | `.linggen/skills/<name>/SKILL.md` | Project (highest priority) |
 
-Descriptions are loaded into agent context so the model knows what's available. Full content loads only when invoked.
+All skill metadata (name + description + full body) is loaded at startup. Descriptions are included in agent context so the model knows what's available.
 
 ## Invocation
 
@@ -173,14 +170,14 @@ Control who can invoke:
 Parsed from user input only (model output is not parsed):
 
 - `/` — built-in commands + skill invocation.
-- `@` — mentions, routed to skills for the named target.
+- `@` — file mentions (aligned with Claude Code).
 - Custom triggers declared in frontmatter.
 
 **Matching order**: system triggers → user-defined triggers → pass-through to model.
 
 ## Skill tools
 
-Skills can define tool functions via `tool_defs` in their metadata. These register dynamically in the tool registry alongside built-in tools.
+Skills can define tool functions via `tools` in their frontmatter. These register dynamically in the tool registry alongside built-in tools.
 
 - Skill tools execute as subprocesses (`sh -c`) with template substitution (`{{param}}`).
 - Schemas are generated dynamically from skill definitions.
@@ -191,7 +188,5 @@ Skills can define tool functions via `tool_defs` in their metadata. These regist
 ## Cross-tool compatibility
 
 Linggen follows the [Agent Skills](https://agentskills.io) open standard. Skills written for Linggen work in Claude Code and Codex — same directory structure, same frontmatter. Claude Code extension fields (`argument-hint`, `disable-model-invocation`, `context`, etc.) are also supported. Linggen-specific fields (`trigger`, `app`) are ignored by other tools.
-
-Claude Code now treats `.claude/commands/` and `.claude/skills/` as equivalent — a command at `.claude/commands/deploy.md` and a skill at `.claude/skills/deploy/SKILL.md` both create `/deploy`. Linggen supports both via compat discovery paths.
 
 Skills installed in `~/.claude/skills/` or `.claude/skills/` are discovered by Linggen, Claude Code, and Codex automatically.

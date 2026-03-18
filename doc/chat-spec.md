@@ -205,19 +205,15 @@ When a user sends a message to a busy agent, it queues. The agent picks it up at
 
 ## API surface
 
-- `POST /api/chat` — send message (queues if busy).
-- `POST /api/chat/clear` — clear chat history.
-- `POST /api/chat/compact` — force context compaction (optional `focus` parameter).
-- `GET /api/events` — SSE event stream. Every event carries an optional `session_id`. The UI **filters events by `session_id`**: if an event has a `session_id` that differs from the active session, it is dropped. Events without a `session_id` are global and always delivered. This ensures mission sessions and project sessions don't bleed into each other.
-- `GET /api/agent-runs` — list runs for a project/session.
-- `GET /api/agent-children` — list child runs (delegation).
-- `GET /api/agent-context` — run context and messages.
-- `POST /api/agent-cancel` — cancel a run tree.
-- `POST /api/ask-user-response` — respond to an AskUser question.
-- `POST /api/plan/approve` — approve a pending plan.
-- `POST /api/plan/reject` — reject a pending plan.
-- `POST /api/plan/edit` — edit a pending plan.
-- `GET /api/system-prompt` — returns the composed system prompt for a session, broken into layers (agent, skill, environment, tools, etc.) with token counts. Used by the System Prompt Inspector UI.
+The server exposes REST + SSE endpoints for chat, sessions, agents, models, skills, missions, and workspace operations. Key patterns:
+
+- **Chat**: send messages, clear history, force compaction.
+- **SSE**: `GET /api/events` streams real-time events. Each event carries an optional `session_id`; the UI filters by active session to prevent cross-session bleed.
+- **Agent runs**: list, inspect context, cancel run trees.
+- **Interactive**: respond to AskUser questions, approve/reject/edit plans.
+- **CRUD**: sessions, projects, missions, skills, models, credentials.
+
+Endpoints evolve frequently — see `server/mod.rs` for the authoritative route list.
 
 ## Slash commands
 
@@ -236,5 +232,5 @@ Available in both TUI and Web UI. Handled client-side (not sent to the agent).
 | `/plan reject` | Reject the pending plan |
 | `/image <path>` | Attach an image file |
 | `/paste` | Paste image from clipboard (TUI) |
-| `@path` | Mention a file |
-| `@@agent message` | Send to a specific agent |
+| `@path` | Mention a file (autocomplete on `@`) |
+| `@agent message` | Send to a specific agent |

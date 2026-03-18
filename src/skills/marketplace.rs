@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 use zip::ZipArchive;
 
 const SKILLS_SH_API: &str = "https://skills.sh/api/search";
+const CLAWHUB_API: &str = "https://clawhub.ai/api/v1";
 const DEFAULT_SKILLS_REPO: &str = "https://github.com/linggen/skills";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +34,8 @@ pub struct MarketplaceSkill {
     pub content: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub source_registry: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +49,101 @@ impl Default for SkillScope {
     fn default() -> Self {
         Self::Global
     }
+}
+
+// ---------------------------------------------------------------------------
+// ClawHub types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubSearchResponse {
+    pub results: Vec<ClawHubSearchResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubSearchResult {
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default, alias = "displayName")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default, alias = "updatedAt")]
+    pub updated_at: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubScanResult {
+    #[serde(default)]
+    pub skill: Option<ClawHubScanSkill>,
+    #[serde(default)]
+    pub moderation: Option<ClawHubModeration>,
+    #[serde(default)]
+    pub security: Option<ClawHubSecurity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubScanSkill {
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default, alias = "displayName")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubModeration {
+    #[serde(default, alias = "isPendingScan")]
+    pub is_pending_scan: bool,
+    #[serde(default, alias = "isMalwareBlocked")]
+    pub is_malware_blocked: bool,
+    #[serde(default, alias = "isSuspicious")]
+    pub is_suspicious: bool,
+    #[serde(default, alias = "isHiddenByMod")]
+    pub is_hidden_by_mod: bool,
+    #[serde(default, alias = "isRemoved")]
+    pub is_removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubSecurity {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, alias = "hasWarnings")]
+    pub has_warnings: bool,
+    #[serde(default, alias = "hasScanResult")]
+    pub has_scan_result: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Skill audit report (source-agnostic)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillAuditReport {
+    /// Total number of files in the skill
+    pub file_count: usize,
+    /// List of all file paths in the ZIP
+    pub files: Vec<String>,
+    /// Files flagged as potentially risky
+    pub flagged_files: Vec<AuditFlag>,
+    /// Risky patterns found in text files
+    pub risky_patterns: Vec<AuditFlag>,
+    /// ClawHub scan result (only if source is clawhub)
+    #[serde(default)]
+    pub clawhub_scan: Option<ClawHubScanResult>,
+    /// Overall risk level: "clean", "warning", "danger"
+    pub risk_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditFlag {
+    pub file: String,
+    pub reason: String,
+    pub severity: String, // "info", "warning", "danger"
 }
 
 // ---------------------------------------------------------------------------
@@ -62,8 +162,29 @@ pub fn http_client() -> Result<reqwest::Client> {
         .context("Failed to build HTTP client")
 }
 
-/// Search community skills via skills.sh.
+/// Search community skills across all registries (skills.sh + ClawHub).
 pub async fn search_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
+    let (sh_result, ch_result) = tokio::join!(
+        search_skills_sh_community(query),
+        search_clawhub(query),
+    );
+
+    let mut results = sh_result.unwrap_or_default();
+    let mut seen: HashSet<String> = results.iter().map(|s| s.skill_id.to_lowercase()).collect();
+
+    // Append ClawHub results, deduplicating by skill_id
+    for skill in ch_result.unwrap_or_default() {
+        let key = skill.skill_id.to_lowercase();
+        if seen.insert(key) {
+            results.push(skill);
+        }
+    }
+
+    Ok(results)
+}
+
+/// Search skills.sh only.
+async fn search_skills_sh_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
     let client = http_client()?;
     let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
     let url = format!("{}?q={}&limit=50", SKILLS_SH_API, encoded);
@@ -89,11 +210,74 @@ pub async fn search_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
                 git_ref: Some("main".to_string()),
                 content: None,
                 updated_at: None,
+                source_registry: Some("skills.sh".into()),
             }
         })
         .collect();
 
     Ok(results)
+}
+
+/// Search skills on ClawHub.
+pub async fn search_clawhub(query: &str) -> Result<Vec<MarketplaceSkill>> {
+    let client = http_client()?;
+    let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+    let url = format!("{}/search?q={}&limit=30&nonSuspiciousOnly=true", CLAWHUB_API, encoded);
+
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        return Ok(vec![]);
+    }
+
+    let payload: ClawHubSearchResponse = resp.json().await?;
+    let results = payload
+        .results
+        .into_iter()
+        .filter_map(|r| {
+            let slug = r.slug?;
+            Some(MarketplaceSkill {
+                skill_id: slug.clone(),
+                name: r.display_name.unwrap_or_else(|| slug.clone()),
+                url: format!("https://clawhub.ai/skills/{}", slug),
+                description: r.summary,
+                install_count: 0,
+                git_ref: None,
+                content: None,
+                updated_at: r.updated_at.and_then(|ts| {
+                    chrono::DateTime::from_timestamp_millis(ts.round() as i64)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+                source_registry: Some("clawhub".into()),
+            })
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Validate that a slug contains only safe characters (alphanumeric, hyphens, underscores).
+fn validate_slug(slug: &str) -> Result<()> {
+    if slug.is_empty() {
+        anyhow::bail!("Slug cannot be empty");
+    }
+    if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("Invalid slug '{}': only alphanumeric, hyphens, and underscores allowed", slug);
+    }
+    Ok(())
+}
+
+/// Fetch security scan info from ClawHub for a skill.
+pub async fn fetch_clawhub_scan(slug: &str) -> Result<ClawHubScanResult> {
+    validate_slug(slug)?;
+    let client = http_client()?;
+    let encoded_slug = url::form_urlencoded::byte_serialize(slug.as_bytes()).collect::<String>();
+    let url = format!("{}/skills/{}/scan", CLAWHUB_API, encoded_slug);
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("ClawHub scan request failed: HTTP {}", resp.status());
+    }
+    let scan: ClawHubScanResult = resp.json().await?;
+    Ok(scan)
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +290,14 @@ pub async fn install_skill(
     git_ref: Option<&str>,
     target_dir: &Path,
     force: bool,
+    source_registry: Option<&str>,
 ) -> Result<String> {
+    // Route to ClawHub if source is clawhub
+    if source_registry == Some("clawhub") {
+        return install_from_clawhub(name, None, target_dir, force).await;
+    }
+
+    // Existing GitHub/skills.sh logic below (unchanged)
     let repo_url = repo_url.unwrap_or(DEFAULT_SKILLS_REPO);
     let git_ref = git_ref.unwrap_or("main");
 
@@ -189,6 +380,64 @@ async fn install_skill_inner(
     Ok(format!(
         "Skill '{}' installed to {}",
         name,
+        target_dir.display()
+    ))
+}
+
+/// Install a skill directly from ClawHub.
+pub async fn install_from_clawhub(
+    slug: &str,
+    version: Option<&str>,
+    target_dir: &Path,
+    force: bool,
+) -> Result<String> {
+    // Check existing
+    if target_dir.exists() {
+        if force {
+            fs::remove_dir_all(target_dir)?;
+        } else {
+            anyhow::bail!(
+                "Skill '{}' already installed at {}. Use force to overwrite.",
+                slug,
+                target_dir.display()
+            );
+        }
+    }
+
+    // Build download URL (encode params to prevent injection)
+    validate_slug(slug)?;
+    let encoded_slug = url::form_urlencoded::byte_serialize(slug.as_bytes()).collect::<String>();
+    let mut download_url = format!("{}/download?slug={}", CLAWHUB_API, encoded_slug);
+    if let Some(v) = version {
+        let encoded_v = url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+        download_url.push_str(&format!("&version={}", encoded_v));
+    }
+
+    let client = http_client()?;
+    let temp_zip = download_to_temp(&client, &download_url).await?;
+
+    // Extract to a temp directory first, then move only the target skill to target_dir.
+    // This prevents stray dirs from multi-skill ZIPs polluting the parent.
+    let temp_dir = tempfile::tempdir().context("Failed to create temp dir for extraction")?;
+    let result = extract_all_skills_from_zip(&temp_zip, temp_dir.path());
+    let _ = fs::remove_file(&temp_zip);
+
+    let installed = result?;
+    if installed.is_empty() {
+        anyhow::bail!("No skill found in ClawHub ZIP for '{}'", slug);
+    }
+
+    // Pick the first extracted skill (ClawHub ZIPs typically contain exactly one)
+    let extracted_name = &installed[0];
+    let extracted_dir = temp_dir.path().join(extracted_name);
+
+    fs::create_dir_all(target_dir)?;
+    // Move contents from extracted dir to target_dir
+    copy_dir_all(&extracted_dir, target_dir)?;
+
+    Ok(format!(
+        "Skill '{}' installed from ClawHub to {}",
+        slug,
         target_dir.display()
     ))
 }
@@ -518,7 +767,7 @@ fn extract_skill_from_zip(
 
         if name.starts_with(skill_root_str) && !file.is_dir() {
             let rel_path = name[skill_root_str.len()..].trim_start_matches('/');
-            if rel_path.is_empty() || rel_path.contains("..") || rel_path.starts_with('/') {
+            if !is_safe_zip_path(rel_path, target_dir) {
                 continue;
             }
 
@@ -533,6 +782,18 @@ fn extract_skill_from_zip(
     }
 
     Ok(())
+}
+
+/// Validate a relative path from a ZIP entry is safe to extract under `base_dir`.
+fn is_safe_zip_path(rel_path: &str, base_dir: &Path) -> bool {
+    if rel_path.is_empty() || rel_path.starts_with('/') {
+        return false;
+    }
+    // Reject any component that is ".."
+    let dest = base_dir.join(rel_path);
+    let canonical: PathBuf = dest.components().collect();
+    let base_canonical: PathBuf = base_dir.components().collect();
+    canonical.starts_with(&base_canonical)
 }
 
 /// Extract all skills from a ZIP archive into `target_base_dir/<name>/`.
@@ -585,7 +846,7 @@ pub(crate) fn extract_all_skills_from_zip(
                 continue;
             }
             let rel_path = entry_name[skill_root_str.len()..].trim_start_matches('/');
-            if rel_path.is_empty() || rel_path.contains("..") || rel_path.starts_with('/') {
+            if !is_safe_zip_path(rel_path, &target_dir) {
                 continue;
             }
             let dest = target_dir.join(rel_path);
@@ -600,6 +861,139 @@ pub(crate) fn extract_all_skills_from_zip(
     }
 
     Ok(installed)
+}
+
+// ---------------------------------------------------------------------------
+// Skill audit (source-agnostic)
+// ---------------------------------------------------------------------------
+
+/// Risky patterns to scan for in skill files (pre-compiled).
+struct RiskyPattern {
+    re: Regex,
+    reason: &'static str,
+    severity: &'static str,
+}
+
+static RISKY_PATTERNS: LazyLock<Vec<RiskyPattern>> = LazyLock::new(|| {
+    let defs: &[(&str, &str, &str)] = &[
+        ("curl.*\\|.*sh", "Pipe to shell execution", "danger"),
+        ("curl.*\\|.*bash", "Pipe to shell execution", "danger"),
+        ("wget.*\\|.*sh", "Pipe to shell execution", "danger"),
+        ("eval\\s*\\(", "Dynamic code evaluation", "danger"),
+        ("eval\\s+\"", "Dynamic code evaluation", "danger"),
+        ("exec\\s*\\(", "Process execution", "warning"),
+        ("base64.*decode", "Base64 decode (possible obfuscation)", "warning"),
+        ("\\$\\{?GITHUB_TOKEN", "GitHub token access", "warning"),
+        ("\\$\\{?ANTHROPIC_API_KEY", "API key access", "warning"),
+        ("\\$\\{?OPENAI_API_KEY", "API key access", "warning"),
+        ("\\$\\{?AWS_SECRET", "AWS credential access", "danger"),
+        ("\\$\\{?SSH_", "SSH credential access", "warning"),
+        ("/etc/passwd", "System file access", "danger"),
+        ("rm\\s+-rf\\s+/", "Root filesystem deletion", "danger"),
+        ("chmod\\s+777", "Overly permissive file permissions", "warning"),
+        ("nc\\s+-", "Netcat (possible reverse shell)", "danger"),
+        ("\\bsudo\\b", "Sudo usage", "warning"),
+    ];
+    defs.iter()
+        .filter_map(|(pat, reason, severity)| {
+            Regex::new(pat).ok().map(|re| RiskyPattern { re, reason, severity })
+        })
+        .collect()
+});
+
+/// Suspicious file extensions that shouldn't normally be in a skill.
+const SUSPICIOUS_EXTENSIONS: &[&str] = &[
+    ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
+    ".pyc", ".class", ".jar", ".war",
+];
+
+/// Audit a downloaded skill ZIP before extraction.
+pub fn audit_skill_zip(zip_path: &Path) -> Result<SkillAuditReport> {
+    let file = fs::File::open(zip_path)?;
+    let mut archive = ZipArchive::new(file)?;
+
+    let mut files = Vec::new();
+    let mut flagged_files = Vec::new();
+    let mut risky_patterns = Vec::new();
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let name = entry.name().to_string();
+
+        if entry.is_dir() {
+            continue;
+        }
+
+        files.push(name.clone());
+
+        // Check for suspicious file extensions
+        let lower = name.to_lowercase();
+        for ext in SUSPICIOUS_EXTENSIONS {
+            if lower.ends_with(ext) {
+                flagged_files.push(AuditFlag {
+                    file: name.clone(),
+                    reason: format!("Suspicious file type: {}", ext),
+                    severity: "warning".into(),
+                });
+            }
+        }
+
+        // Check file size (flag files > 1MB)
+        if entry.size() > 1_048_576 {
+            flagged_files.push(AuditFlag {
+                file: name.clone(),
+                reason: format!("Large file: {} bytes", entry.size()),
+                severity: "info".into(),
+            });
+        }
+
+        // Scan text files for risky patterns
+        let is_text = lower.ends_with(".sh")
+            || lower.ends_with(".bash")
+            || lower.ends_with(".py")
+            || lower.ends_with(".js")
+            || lower.ends_with(".ts")
+            || lower.ends_with(".md")
+            || lower.ends_with(".yaml")
+            || lower.ends_with(".yml")
+            || lower.ends_with(".toml")
+            || lower.ends_with(".json");
+
+        if is_text && entry.size() < 524_288 {
+            let mut content = String::new();
+            if std::io::Read::read_to_string(&mut entry, &mut content).is_ok() {
+                for rp in RISKY_PATTERNS.iter() {
+                    if rp.re.is_match(&content) {
+                        risky_patterns.push(AuditFlag {
+                            file: name.clone(),
+                            reason: rp.reason.to_string(),
+                            severity: rp.severity.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let has_danger = flagged_files.iter().chain(risky_patterns.iter()).any(|f| f.severity == "danger");
+    let has_warning = flagged_files.iter().chain(risky_patterns.iter()).any(|f| f.severity == "warning");
+    let risk_level = if has_danger {
+        "danger"
+    } else if has_warning {
+        "warning"
+    } else {
+        "clean"
+    }
+    .to_string();
+
+    Ok(SkillAuditReport {
+        file_count: files.len(),
+        files,
+        flagged_files,
+        risky_patterns,
+        clawhub_scan: None,
+        risk_level,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +1199,7 @@ mod tests {
             git_ref: Some("main".into()),
             content: None,
             updated_at: None,
+            source_registry: Some("skills.sh".into()),
         };
         let json = serde_json::to_string(&skill).unwrap();
         let parsed: MarketplaceSkill = serde_json::from_str(&json).unwrap();
