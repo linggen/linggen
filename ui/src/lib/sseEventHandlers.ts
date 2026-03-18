@@ -358,6 +358,21 @@ function handleActivity(item: UiSseMessage): void {
   }
 }
 
+// Token batching: accumulate tokens and flush to React state on rAF
+// to avoid "Maximum update depth exceeded" when tokens arrive very fast.
+const _tokenBuffer: Map<string, { text: string; isThinking: boolean }> = new Map();
+let _tokenFlushScheduled = false;
+
+function flushTokenBuffer() {
+  _tokenFlushScheduled = false;
+  if (_tokenBuffer.size === 0) return;
+  const chatStore = useChatStore.getState();
+  for (const [agentId, { text, isThinking }] of _tokenBuffer) {
+    if (text) chatStore.appendToken(agentId, text, isThinking);
+  }
+  _tokenBuffer.clear();
+}
+
 function handleToken(item: UiSseMessage): void {
   const agentId = String(item.agent_id || '');
   const isThinking = item.data?.thinking === true;
@@ -367,6 +382,8 @@ function handleToken(item: UiSseMessage): void {
   if (agentStore._subagentParentMap[agentId.toLowerCase()]) return;
 
   if (item.phase === 'done') {
+    // Flush any pending tokens before marking thinking done
+    if (_tokenBuffer.size > 0) flushTokenBuffer();
     if (isThinking) {
       useChatStore.getState().setThinkingFlag(agentId);
     }
@@ -374,7 +391,19 @@ function handleToken(item: UiSseMessage): void {
   }
 
   const tokenText = String(item.text || '');
-  useChatStore.getState().appendToken(agentId, tokenText, isThinking);
+  const existing = _tokenBuffer.get(agentId);
+  if (existing && existing.isThinking === isThinking) {
+    existing.text += tokenText;
+  } else {
+    // Flush if thinking state changed for this agent
+    if (existing) flushTokenBuffer();
+    _tokenBuffer.set(agentId, { text: tokenText, isThinking });
+  }
+
+  if (!_tokenFlushScheduled) {
+    _tokenFlushScheduled = true;
+    requestAnimationFrame(flushTokenBuffer);
+  }
 }
 
 function handleMessage(item: UiSseMessage): void {
