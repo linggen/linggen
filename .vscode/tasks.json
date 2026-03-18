@@ -15,16 +15,6 @@
       "problemMatcher": ["$rustc"]
     },
     {
-      "label": "build ui-sdk",
-      "type": "shell",
-      "command": "npm run build",
-      "options": {
-        "cwd": "${workspaceFolder}/ui-sdk"
-      },
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
       "label": "build agent ui",
       "type": "shell",
       "command": "npm run build",
@@ -36,7 +26,7 @@
     },
     {
       "label": "build agent all",
-      "dependsOn": ["build agent ui", "build ui-sdk", "cargo build agent"],
+      "dependsOn": ["build agent ui", "cargo build agent"],
       "dependsOrder": "sequence",
       "group": "build",
       "problemMatcher": []

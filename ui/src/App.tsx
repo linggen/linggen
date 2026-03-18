@@ -379,41 +379,10 @@ const App: React.FC = () => {
         if (text) { e.preventDefault(); navigator.clipboard.writeText(text).catch(() => {}); }
       }
     };
-    // SDK command bridge: parent iframe sends commands via postMessage
-    const handleSdkCommand = (e: MessageEvent) => {
-      if (e.data?.type !== 'linggen-sdk') return;
-      // Capture parent origin for secure postMessage replies
-      if (e.origin) useUiStore.getState().setSdkParentOrigin(e.origin);
-      const { action, payload } = e.data;
-      switch (action) {
-        case 'send': {
-          // Trigger chat send — simulate user input
-          const input = document.querySelector<HTMLTextAreaElement>('.lc-chat-input textarea, [data-chat-input] textarea');
-          if (input) {
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-            nativeInputValueSetter?.call(input, payload?.text || '');
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            // Trigger form submit
-            const form = input.closest('form');
-            if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-          }
-          break;
-        }
-        case 'add_message':
-          useChatStore.getState().addMessage(payload?.role === 'user' ? 'user' : 'assistant', payload?.text || '');
-          break;
-        case 'clear':
-          clearChat();
-          break;
-      }
-    };
-    window.addEventListener('message', handleSdkCommand);
-
     window.addEventListener('message', handleMessage);
     document.addEventListener('keydown', handleCopy);
     return () => {
       window.removeEventListener('message', handleMessage);
-      window.removeEventListener('message', handleSdkCommand);
       document.removeEventListener('keydown', handleCopy);
     };
   }, []);
@@ -916,6 +885,7 @@ const App: React.FC = () => {
               queuedMessages={queuedMessages}
               chatEndRef={chatEndRef}
               projectRoot={selectedProjectRoot}
+              sessionId={activeSessionId}
               selectedAgent={selectedAgent}
               setSelectedAgent={agentStore.setSelectedAgent}
               skills={skills}

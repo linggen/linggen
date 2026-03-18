@@ -7,10 +7,6 @@ Cargo.lock
 /ui/dist
 /ui/.env
 
-# UI SDK
-/ui-sdk/node_modules
-/ui-sdk/dist
-
 # Linggen Agent State
 /.linggen-agent
 /.linggen/sessions

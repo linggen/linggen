@@ -58,10 +58,6 @@ interface UiState {
   verboseMode: boolean;
   copyChatStatus: 'idle' | 'copied' | 'error';
 
-  // SDK iframe bridge
-  sdkParentOrigin: string | null;
-  setSdkParentOrigin: (origin: string | null) => void;
-
   // SSE connection status
   sseStatus: 'connected' | 'reconnecting';
   setSseStatus: (status: 'connected' | 'reconnecting') => void;
@@ -115,8 +111,6 @@ export const useUiStore = create<UiState>((set) => ({
   openApp: null,
   selectedFileContent: null,
   selectedFilePath: null,
-  sdkParentOrigin: null,
-  setSdkParentOrigin: (origin) => set({ sdkParentOrigin: origin }),
   queuedMessages: [],
   pendingPlan: null,
   pendingPlanAgentId: null,

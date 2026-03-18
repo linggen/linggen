@@ -62,10 +62,6 @@ use workspace_api::{get_agent_tree, get_workspace_state, list_files, read_file_a
 #[folder = "ui/dist/"]
 struct Assets;
 
-#[derive(RustEmbed)]
-#[folder = "ui-sdk/dist/"]
-struct SdkAssets;
-
 pub struct ServerState {
     pub manager: Arc<AgentManager>,
     pub dev_mode: bool,
@@ -1163,7 +1159,6 @@ pub async fn prepare_server(
         .route("/api/storage/tree", get(storage_tree))
         .route("/api/storage/file", get(storage_read_file).put(storage_write_file).delete(storage_delete_file))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
-        .route("/sdk/{*file_path}", get(serve_sdk_file))
         .fallback(static_handler)
         .with_state(state.clone());
 
@@ -1264,31 +1259,6 @@ async fn serve_app_file(
                 .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
         }
         Err(_) => build_err(404, &format!("File not found: {}", file_path_clean)),
-    }
-}
-
-/// Serve UI SDK files from the embedded SdkAssets.
-/// Route: GET /sdk/{*file_path}
-async fn serve_sdk_file(
-    axum::extract::Path(file_path): axum::extract::Path<String>,
-) -> Response {
-    let path = file_path.trim_start_matches('/');
-
-    match SdkAssets::get(path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            Response::builder()
-                .header("Content-Type", mime.as_ref())
-                .header("Access-Control-Allow-Origin", "*")
-                .header("Cache-Control", "public, max-age=3600")
-                .body(axum::body::Body::from(content.data.to_vec()))
-                .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
-        }
-        None => Response::builder()
-            .status(404)
-            .header("Content-Type", "text/plain")
-            .body(axum::body::Body::from(format!("SDK file not found: {}", path)))
-            .unwrap_or_else(|_| Response::new(axum::body::Body::from("not found"))),
     }
 }
 

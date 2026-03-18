@@ -166,6 +166,7 @@ export const ChatPanel: React.FC<{
   queuedMessages: QueuedChatItem[];
   chatEndRef: React.RefObject<HTMLDivElement | null>;
   projectRoot?: string | null;
+  sessionId?: string | null;
   selectedAgent: string;
   setSelectedAgent: (value: string) => void;
   skills: SkillInfo[];
@@ -206,6 +207,7 @@ export const ChatPanel: React.FC<{
   queuedMessages,
   chatEndRef,
   projectRoot,
+  sessionId,
   selectedAgent,
   setSelectedAgent,
   skills,
@@ -719,11 +721,15 @@ export const ChatPanel: React.FC<{
   return (
     <section className="h-full flex flex-col bg-white dark:bg-[#0f0f0f] rounded-xl border border-slate-200 dark:border-white/5 overflow-hidden min-h-0 relative">
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] space-y-1">
-        {selectedMainRunId && (
+        {(sessionId || selectedMainRunId) && (
           <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[10px] text-slate-600 dark:text-slate-300">
             <summary className="cursor-pointer flex flex-wrap items-center gap-2">
-              <span className="font-semibold uppercase tracking-wider text-slate-500">Run</span>
-              <span className="font-mono truncate">{selectedMainRunId}</span>
+              {sessionId && (
+                <>
+                  <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
+                  <span className="font-mono truncate">{sessionId}</span>
+                </>
+              )}
               {selectedMainContext?.run?.status && (
                 <span className={cn('px-1.5 py-0.5 rounded-full uppercase tracking-wide', statusBadgeClass(selectedMainContext.run.status))}>
                   {selectedMainContext.run.status}
