@@ -21,6 +21,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/mission-spec.md` — cron mission system
 - `doc/plan-spec.md` — plan mode feature
 - `doc/log-spec.md` — logging levels, throttling, output targets
+- `doc/insight.md` — vision, roadmap, competitive positioning
 
 ## Build, Test, Run
 
@@ -28,7 +29,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 
 ```bash
 cargo build                        # Build
-cargo test                         # Run all 161 tests
+cargo test                         # Run all tests
 cargo test check::tests            # Run tests in a specific module
 cargo test test_name               # Run a single test by name
 cargo run                          # Start TUI + embedded server (default)
@@ -65,7 +66,7 @@ Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. De
 - **`main.rs`** — CLI entry point (clap). Subcommands: `stop`, `status`, `doctor`, `eval`, `init`, `install`, `update`, `skills`. No subcommand → TUI + server.
 - **`config.rs`** — Config loading from `linggen.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpec` (parsed from markdown frontmatter).
 - **`engine/`** — Core agent execution engine. `mod.rs` is the main loop. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
-- **`server/`** — Axum HTTP server. `chat_api.rs` handles chat/run endpoints + SSE streaming. `projects_api.rs` for project/session CRUD. `workspace_api.rs` serves file tree. `config_api.rs` for runtime config. `idle_scheduler.rs` for mission idle prompts.
+- **`server/`** — Axum HTTP server. `chat_api.rs` handles chat/run endpoints + SSE streaming. `projects_api.rs` for project/session CRUD. `workspace_api.rs` serves file tree. `config_api.rs` for runtime config. `mission_scheduler.rs` for cron mission scheduling.
 - **`agent_manager/`** — Agent lifecycle, run records, cancellation. `models.rs` handles multi-provider dispatch (Ollama, OpenAI-compatible). `routing.rs` implements model selection policies with fallback chains.
 - **`tui/`** — Ratatui terminal UI. `app.rs` is the main TUI state machine. `render.rs` draws the interface. `markdown.rs` renders markdown to terminal spans.
 - **`ollama.rs`** / **`openai.rs`** — Provider API clients (streaming and non-streaming).
@@ -119,4 +120,4 @@ Follow `doc/code-style.md`:
 - **Model routing**: default model chain with health tracking and auto-fallback on errors/rate limits.
 - **Tool permissions**: three modes — `auto` (always allow), `warn` (log destructive ops), `ask` (prompt user via AskUser bridge).
 
-Please read `.claude/skills/linggen/SKILL.md` on load to understand the Linggen project structure and context management system.
+When working on a task, read the relevant `doc/*.md` spec files for context — don't read all of them upfront.
