@@ -9,6 +9,7 @@
 //! in a tokio task per peer connection.
 
 mod peer;
+pub mod relay;
 
 use axum::{
     body::Bytes,

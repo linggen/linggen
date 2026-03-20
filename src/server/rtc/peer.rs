@@ -25,27 +25,49 @@ use crate::server::ServerState;
 /// Returns the SDP answer string to send back to the client.
 /// Spawns a background task to run the peer connection event loop.
 pub async fn create_peer(offer_sdp: String, state: Arc<ServerState>) -> Result<String> {
+    create_peer_inner(offer_sdp, state, false).await
+}
+
+/// Create a peer for a remote offer (via signaling relay).
+/// Binds to 0.0.0.0 so STUN can discover the public address.
+pub async fn create_remote_peer(offer_sdp: String, state: Arc<ServerState>) -> Result<String> {
+    create_peer_inner(offer_sdp, state, true).await
+}
+
+async fn create_peer_inner(offer_sdp: String, state: Arc<ServerState>, remote: bool) -> Result<String> {
     // Parse the SDP offer (raw SDP text from WHIP POST body)
     let offer = SdpOffer::from_sdp_string(&offer_sdp)
         .context("Failed to parse SDP offer")?;
 
     // Bind a UDP socket for this peer connection.
-    // Use 127.0.0.1 for local connections. For remote, this would need
-    // the host's public/LAN IP address.
-    let bind_addr = "127.0.0.1:0";
+    // Local: 127.0.0.1 (fast, no STUN needed)
+    // Remote: 0.0.0.0 (allows STUN to discover public IP)
+    let bind_addr = if remote { "0.0.0.0:0" } else { "127.0.0.1:0" };
     let socket = UdpSocket::bind(bind_addr)
         .await
         .context("Failed to bind UDP socket")?;
     let local_addr = socket.local_addr()?;
-    tracing::info!("WebRTC peer UDP socket bound to {local_addr}");
+    tracing::info!("WebRTC peer UDP socket bound to {local_addr} (remote={remote})");
 
-    // Create str0m Rtc instance
-    let mut rtc = RtcConfig::new()
-        .set_ice_lite(true) // Server acts as ICE-lite (simpler, faster)
-        .build(Instant::now());
+    // Create str0m Rtc instance.
+    // ICE-lite for local (simple, fast). Full ICE for remote (needs STUN).
+    let mut rtc = if remote {
+        RtcConfig::new().build(Instant::now())
+    } else {
+        RtcConfig::new()
+            .set_ice_lite(true)
+            .build(Instant::now())
+    };
 
-    // Add local candidate (the UDP socket address)
-    let candidate = Candidate::host(local_addr, "udp").context("Failed to create host candidate")?;
+    // Add local candidate (the UDP socket address).
+    // For remote peers bound to 0.0.0.0, resolve the actual local IP.
+    let candidate_addr = if remote {
+        let local_ip = get_local_ip().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        std::net::SocketAddr::new(local_ip, local_addr.port())
+    } else {
+        local_addr
+    };
+    let candidate = Candidate::host(candidate_addr, "udp").context("Failed to create host candidate")?;
     rtc.add_local_candidate(candidate)
         .context("Failed to add local candidate")?;
 
@@ -444,6 +466,15 @@ async fn handle_session_message(
             tracing::warn!("RTC proxy to {endpoint} error: {e}");
         }
     }
+}
+
+/// Get the local (non-loopback) IP address for WebRTC host candidates.
+/// Connects a UDP socket to a public address to determine the local IP
+/// (no actual packets are sent).
+fn get_local_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
 }
 
 /// Forward a server event to the appropriate data channel.
