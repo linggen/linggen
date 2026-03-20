@@ -46,8 +46,8 @@ export const ModelsCard: React.FC<{
   return (
     <div className="px-3 py-2 space-y-2 max-h-48 overflow-y-auto">
       {models.map((m) => {
-        const isActive = ollamaStatus?.models.some((om) => om.name.includes(m.model) || m.model.includes(om.name));
-        const activeInfo = ollamaStatus?.models.find((om) => om.name.includes(m.model) || m.model.includes(om.name));
+        const isActive = ollamaStatus?.models?.some((om) => om.name.includes(m.model) || m.model.includes(om.name));
+        const activeInfo = ollamaStatus?.models?.find((om) => om.name.includes(m.model) || m.model.includes(om.name));
         const assignedAgents = agents.filter((a) => {
           const agentModel = a.model?.toLowerCase();
           const modelId = m.id.toLowerCase();

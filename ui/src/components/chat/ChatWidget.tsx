@@ -4,8 +4,7 @@
  */
 import React, { useCallback, useMemo } from 'react';
 import { ChatPanel } from './ChatPanel';
-import { useSseConnection } from '../../hooks/useSseConnection';
-import { useSseDispatch } from '../../hooks/useSseDispatch';
+import { useTransport } from '../../hooks/useTransport';
 import { useChatActions } from '../../hooks/useChatActions';
 import { useRunInfo } from '../../hooks/useRunInfo';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -77,16 +76,14 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     editPlan,
   } = useChatActions(scrollToBottom, runningMainRunIds, effectiveRoot);
 
-  // --- SSE ---
+  // --- Transport (SSE or WebRTC) ---
   const effectiveSessionId = sessionId || null;
-  const handleSseEvent = useSseDispatch(effectiveSessionId);
-  useSseConnection({
-    onEvent: handleSseEvent,
+  useTransport({
+    sessionId: effectiveSessionId,
     onParseError: () => {
       useChatStore.getState().fetchWorkspaceState();
       useAgentStore.getState().fetchAgentRuns();
     },
-    sessionId: effectiveSessionId,
   });
 
   const mainAgentIds = useMemo(() => agents.map((a) => a.name.toLowerCase()), [agents]);

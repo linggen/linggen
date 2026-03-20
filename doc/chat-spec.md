@@ -20,13 +20,26 @@ Real-time messaging between users and agents, with streaming output, live activi
 
 ## Architecture overview
 
-The backend engine emits events as agents think and act. Events stream to clients via SSE. The UI consumes events, builds message state, and renders an organized conversation.
+The backend engine emits events as agents think and act. Events stream to clients via a transport layer. The UI consumes events, builds message state, and renders an organized conversation.
 
 ```
-Backend engine → SSE event stream → UI event dispatcher → chat state → renderer
+Backend engine → events_tx (broadcast) → transport → UI event dispatcher → chat state → renderer
 ```
 
-Both the Web UI and TUI consume the same event stream.
+### Transport layer
+
+Two transports carry events between the server and clients:
+
+| Transport | Used by | Direction | Protocol |
+|:----------|:--------|:----------|:---------|
+| **WebRTC** (primary) | Web UI | Bidirectional (data channels) | WHIP signaling + WebRTC data channels |
+| **SSE** (legacy) | TUI | Server → client (SSE) + client → server (HTTP POST) | HTTP |
+
+The Web UI uses WebRTC by default (`?transport=webrtc`). Each session gets its own data channel for natural isolation — no broadcast + filter pattern. All API calls are proxied through the WebRTC control channel via a fetch proxy, so the entire Web UI works without direct HTTP access to the server (required for remote mode).
+
+The TUI still uses SSE (`GET /api/events`) and HTTP POST for sending messages. The SSE endpoint and broadcast channel remain active to support TUI clients.
+
+See `webrtc-spec.md` for the full WebRTC design.
 
 ## Event categories
 
@@ -205,10 +218,27 @@ When a user sends a message to a busy agent, it queues. The agent picks it up at
 
 ## API surface
 
-The server exposes REST + SSE endpoints for chat, sessions, agents, models, skills, missions, and workspace operations. Key patterns:
+The server exposes REST + WebRTC + SSE endpoints for chat, sessions, agents, models, skills, missions, and workspace operations.
+
+### Web UI (WebRTC transport)
+
+All Web UI communication goes through WebRTC data channels:
+
+- **Chat messages, plan actions, AskUser responses**: sent via the control channel RPC (request/response pattern).
+- **Events (tokens, activity, content blocks)**: received on per-session data channels (`sess-{id}`).
+- **Other API calls** (config, status, files, sessions, etc.): transparently proxied through the control channel's `http_request` message type via a global fetch proxy.
+- **WHIP signaling**: `POST /api/rtc/whip` — the only direct HTTP call, used to establish the WebRTC connection.
+
+### TUI (SSE transport, legacy)
+
+- **SSE**: `GET /api/events?session_id=...` streams real-time events. Each event carries an optional `session_id`; the TUI filters by active session.
+- **HTTP POST**: `POST /api/chat` and other REST endpoints for sending messages and commands.
+
+### REST endpoints
+
+Both transports ultimately hit the same REST API handlers on the server. Key patterns:
 
 - **Chat**: send messages, clear history, force compaction.
-- **SSE**: `GET /api/events` streams real-time events. Each event carries an optional `session_id`; the UI filters by active session to prevent cross-session bleed.
 - **Agent runs**: list, inspect context, cancel run trees.
 - **Interactive**: respond to AskUser questions, approve/reject/edit plans.
 - **CRUD**: sessions, projects, missions, skills, models, credentials.

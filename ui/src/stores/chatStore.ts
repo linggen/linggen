@@ -31,11 +31,20 @@ interface ChatState {
   messages: ChatMessage[];
   workspaceState: WorkspaceState | null;
 
+  // Per-session message storage — avoids clear/refetch race on session switch
+  _messagesBySession: Record<string, ChatMessage[]>;
+  _activeSessionId: string | null;
+
   // Clear cooldown
   _chatClearTs: number;
 
   // Derived (recomputed on every mutation)
   displayMessages: ChatMessage[];
+
+  // Session switching — swaps the active bucket without clear/refetch
+  setActiveSession: (sessionId: string | null) => void;
+  /** Check whether messages are already cached for a session. */
+  hasSessionMessages: (sessionId: string | null) => boolean;
 
   // Actions — one per reducer action type
   clear: (withCooldown?: boolean) => void;
@@ -92,11 +101,18 @@ function computeDisplay(messages: ChatMessage[]): ChatMessage[] {
   return [...nonPlans, ...plans];
 }
 
-/** Apply a mutation to messages and recompute displayMessages. */
+/** Apply a mutation to the active session's messages and recompute displayMessages. */
 function mutate(fn: (msgs: ChatMessage[]) => ChatMessage[]): (s: ChatState) => Partial<ChatState> {
   return (s) => {
-    const messages = fn(s.messages);
-    return { messages, displayMessages: computeDisplay(messages) };
+    const sid = s._activeSessionId || '__none__';
+    const currentMsgs = s._messagesBySession[sid] || [];
+    const messages = fn(currentMsgs);
+    const displayMessages = computeDisplay(messages);
+    return {
+      messages,
+      displayMessages,
+      _messagesBySession: { ...s._messagesBySession, [sid]: messages },
+    };
   };
 }
 
@@ -126,12 +142,33 @@ function restoreImages(msg: ChatMessage): ChatMessage {
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   workspaceState: null,
+  _messagesBySession: {},
+  _activeSessionId: null,
   _chatClearTs: 0,
   displayMessages: [],
 
+  setActiveSession: (sessionId) => {
+    const sid = sessionId || '__none__';
+    const msgs = get()._messagesBySession[sid] || [];
+    set({
+      _activeSessionId: sessionId,
+      messages: msgs,
+      displayMessages: computeDisplay(msgs),
+    });
+  },
+
+  hasSessionMessages: (sessionId) => {
+    const sid = sessionId || '__none__';
+    const msgs = get()._messagesBySession[sid];
+    return !!msgs && msgs.length > 0;
+  },
+
   clear: (withCooldown = true) => {
+    const sid = get()._activeSessionId || '__none__';
     _imageCache.clear();
-    set({ messages: [], displayMessages: [], ...(withCooldown ? { _chatClearTs: Date.now() } : {}) });
+    const bySession = { ...get()._messagesBySession };
+    delete bySession[sid];
+    set({ messages: [], displayMessages: [], _messagesBySession: bySession, ...(withCooldown ? { _chatClearTs: Date.now() } : {}) });
   },
 
   syncPersisted: (persisted) => set(mutate((msgs) => {

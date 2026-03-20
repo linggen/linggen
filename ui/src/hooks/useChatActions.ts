@@ -7,6 +7,7 @@ import { useProjectStore } from '../stores/projectStore';
 import { useAgentStore } from '../stores/agentStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
+import { getTransport } from '../lib/transport';
 
 /** Resolve the effective project root: explicit override > store value. */
 function getProjectRoot(override?: string | null): string {
@@ -41,11 +42,7 @@ export function useChatActions(
     ui.setPendingPlanAgentId(null);
     ui.setPendingAskUser(null);
     try {
-      const resp = await fetch('/api/chat/clear', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: root, session_id: sid }),
-      });
-      if (!resp.ok) console.error('Clear chat API error:', resp.status);
+      await getTransport().sendClear(root, sid);
       useChatStore.getState().clear();
     } catch (e) { console.error('Error clearing chat:', e); }
   }, [runningMainRunIds]);
@@ -172,11 +169,7 @@ export function useChatActions(
       setAgentStatus((s) => ({ ...s, [agentToUse]: 'thinking' as const }));
       setAgentStatusText((s) => ({ ...s, [agentToUse]: 'Compacting conversation' }));
       try {
-        const resp = await fetch('/api/chat/compact', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_root: root, session_id: sid, agent_id: agentToUse, focus }),
-        });
-        const data = await resp.json();
+        const data = await getTransport().sendCompact(root, sid, agentToUse, focus) as any;
         const clearStatus = () => {
           setAgentStatus((s) => ({ ...s, [agentToUse]: 'idle' as const }));
           setAgentStatusText((s) => { const n = { ...s }; delete n[agentToUse]; return n; });
@@ -221,17 +214,15 @@ export function useChatActions(
 
     try {
       const { isMissionSession, activeMissionId } = useProjectStore.getState();
-      const resp = await fetch('/api/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_root: root, agent_id: agentToUse, message: userMessage,
-          session_id: sid,
-          ...(isMissionSession && activeMissionId ? { mission_id: activeMissionId } : {}),
-          ...(useUiStore.getState().sessionModel ? { model_id: useUiStore.getState().sessionModel } : {}),
-          ...(images && images.length > 0 ? { images } : {}),
-        }),
-      });
-      const data = await resp.json();
+      const data = await getTransport().sendChat({
+        project_root: root,
+        agent_id: agentToUse,
+        message: userMessage,
+        session_id: sid,
+        ...(isMissionSession && activeMissionId ? { mission_id: activeMissionId } : {}),
+        ...(useUiStore.getState().sessionModel ? { model_id: useUiStore.getState().sessionModel } : {}),
+        ...(images && images.length > 0 ? { images } : {}),
+      }) as any;
       if (data?.session_id && !sid) {
         useProjectStore.getState().setActiveSessionId(data.session_id);
         useProjectStore.getState().fetchSessions();
@@ -253,9 +244,10 @@ export function useChatActions(
 
   const respondToAskUser = useCallback(async (questionId: string, answers: any[]) => {
     try {
-      await fetch('/api/ask-user-response', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question_id: questionId, answers }),
+      await getTransport().sendAskUserResponse({
+        question_id: questionId,
+        answers,
+        session_id: useProjectStore.getState().activeSessionId,
       });
       useUiStore.getState().setPendingAskUser(null);
     } catch (e) { console.error('Error responding to AskUser:', e); }
@@ -267,13 +259,21 @@ export function useChatActions(
     const { activeSessionId: sid } = useProjectStore.getState();
     if (!planAgent || !root) return;
     try {
-      await fetch('/api/plan/approve', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: root, agent_id: planAgent, session_id: sid, clear_context: clearContext }),
+      await getTransport().sendPlanAction({
+        type: 'approve',
+        project_root: root,
+        agent_id: planAgent,
+        session_id: sid,
+        clear_context: clearContext,
       });
       const ui = useUiStore.getState();
       ui.setPendingPlan(null);
       ui.setPendingPlanAgentId(null);
+      if (clearContext) {
+        // Server cleared context — sync the UI to match
+        useChatStore.getState().clear(false);
+        useChatStore.getState().fetchWorkspaceState();
+      }
     } catch (e) { console.error('Error approving plan:', e); }
   }, []);
 
@@ -283,9 +283,11 @@ export function useChatActions(
     const { activeSessionId: sid } = useProjectStore.getState();
     if (!planAgent || !root) return;
     try {
-      await fetch('/api/plan/reject', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: root, agent_id: planAgent, session_id: sid }),
+      await getTransport().sendPlanAction({
+        type: 'reject',
+        project_root: root,
+        agent_id: planAgent,
+        session_id: sid,
       });
       const ui = useUiStore.getState();
       ui.setPendingPlan(null);
@@ -298,11 +300,13 @@ export function useChatActions(
     const root = getProjectRoot(projectRootRef.current);
     if (!planAgent || !root) return;
     try {
-      const res = await fetch('/api/plan/edit', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: root, agent_id: planAgent, text }),
+      await getTransport().sendPlanAction({
+        type: 'edit',
+        project_root: root,
+        agent_id: planAgent,
+        edited_plan: text,
       });
-      if (res.ok) useUiStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
+      useUiStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
     } catch (e) { console.error('Error editing plan:', e); }
   }, []);
 

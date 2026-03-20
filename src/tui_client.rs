@@ -1,4 +1,4 @@
-use crate::server::UiSseMessage;
+use crate::server::UiEvent;
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::json;
@@ -268,10 +268,10 @@ impl TuiClient {
         Ok(resp.json().await?)
     }
 
-    /// Subscribe to SSE events. Returns an unbounded receiver that yields parsed UiSseMessage.
+    /// Subscribe to SSE events. Returns an unbounded receiver that yields parsed UiEvent.
     /// The SSE connection runs in a background task with automatic reconnection
     /// using exponential backoff (1s → 2s → 4s → ... capped at 30s).
-    pub fn subscribe_sse(&self, session_id: Option<&str>) -> (mpsc::UnboundedReceiver<UiSseMessage>, AbortHandle) {
+    pub fn subscribe_sse(&self, session_id: Option<&str>) -> (mpsc::UnboundedReceiver<UiEvent>, AbortHandle) {
         let (tx, rx) = mpsc::unbounded_channel();
         let url = match session_id {
             Some(sid) => format!("{}/api/events?session_id={}", self.base_url, sid),
@@ -288,7 +288,7 @@ impl TuiClient {
                     Ok(r) => {
                         // Connected — reset backoff and notify
                         backoff_secs = 1;
-                        let connected_msg = UiSseMessage {
+                        let connected_msg = UiEvent {
                             id: String::new(),
                             seq: 0,
                             rev: 0,
@@ -343,7 +343,7 @@ impl TuiClient {
                             if data.is_empty() {
                                 continue;
                             }
-                            match serde_json::from_str::<UiSseMessage>(data) {
+                            match serde_json::from_str::<UiEvent>(data) {
                                 Ok(msg) => {
                                     if tx.send(msg).is_err() {
                                         return; // receiver dropped
@@ -526,8 +526,8 @@ impl TuiClient {
         Ok(())
     }
 
-    fn send_disconnected(tx: &mpsc::UnboundedSender<UiSseMessage>, reason: &str) {
-        let msg = UiSseMessage {
+    fn send_disconnected(tx: &mpsc::UnboundedSender<UiEvent>, reason: &str) {
+        let msg = UiEvent {
             id: String::new(),
             seq: 0,
             rev: 0,

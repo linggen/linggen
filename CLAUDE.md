@@ -22,6 +22,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/plan-spec.md` — plan mode feature
 - `doc/log-spec.md` — logging levels, throttling, output targets
 - `doc/insight.md` — vision, roadmap, competitive positioning
+- `doc/webrtc-spec.md` — WebRTC transport: P2P remote access, signaling, data channels
 
 ## Build, Test, Run
 

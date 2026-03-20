@@ -6,6 +6,7 @@ pub(crate) mod mission_scheduler;
 mod missions_api;
 mod marketplace_api;
 mod projects_api;
+pub(crate) mod rtc;
 mod storage_api;
 mod workspace_api;
 
@@ -348,7 +349,7 @@ impl ServerEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiSseMessage {
+pub struct UiEvent {
     pub id: String,
     pub seq: u64,
     pub rev: u64,
@@ -369,7 +370,7 @@ pub struct UiSseMessage {
 }
 
 // ---------------------------------------------------------------------------
-// UI SSE kind/phase constants
+// UI event kind/phase constants
 // ---------------------------------------------------------------------------
 
 const UI_KIND_MESSAGE: &str = "message";
@@ -401,12 +402,12 @@ fn default_status_text(status: AgentStatusKind) -> String {
     }
 }
 
-fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseMessage> {
+pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
     let ts_ms = crate::util::now_ts_ms();
     match event {
         ServerEvent::Message { from, to, content, session_id } => {
             let cleaned = crate::server::chat_helpers::sanitize_message_for_ui(&from, &content)?;
-            Some(UiSseMessage {
+            Some(UiEvent {
                 id: format!("msg-{seq}"),
                 seq,
                 rev: seq,
@@ -434,7 +435,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
         } => {
             if status.eq_ignore_ascii_case("idle") && lifecycle.is_none() {
                 // Still emit the idle event so the UI can transition agent status.
-                return Some(UiSseMessage {
+                return Some(UiEvent {
                     id: format!("act-{seq}"),
                     seq,
                     rev: seq,
@@ -465,7 +466,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
                     }
                 })
                 .unwrap_or_else(|| default_status_text(AgentStatusKind::from_str_loose(&status)));
-            Some(UiSseMessage {
+            Some(UiEvent {
                 id: status_id.unwrap_or_else(|| format!("activity-{agent_id}-{status}-{seq}")),
                 seq,
                 rev: seq,
@@ -484,7 +485,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             session_id,
             agent_id,
             items,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("queue-{project_root}|{session_id}|{agent_id}"),
             seq,
             rev: seq,
@@ -501,7 +502,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             project_root: Some(project_root),
             data: Some(json!({ "items": items })),
         }),
-        ServerEvent::StateUpdated => Some(UiSseMessage {
+        ServerEvent::StateUpdated => Some(UiEvent {
             id: format!("run-sync-{seq}"),
             seq,
             rev: seq,
@@ -514,7 +515,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             project_root: None,
             data: None,
         }),
-        ServerEvent::Outcome { agent_id, outcome } => Some(UiSseMessage {
+        ServerEvent::Outcome { agent_id, outcome } => Some(UiEvent {
             id: format!("run-outcome-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -538,7 +539,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             actual_completion_tokens,
             compressed,
             summary_count,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("run-context-{agent_id}"),
             seq,
             rev: seq,
@@ -566,7 +567,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             parent_id,
             subagent_id,
             task,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("run-subagent-spawned-{subagent_id}-{seq}"),
             seq,
             rev: seq,
@@ -583,7 +584,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             parent_id,
             subagent_id,
             outcome,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("run-subagent-result-{subagent_id}-{seq}"),
             seq,
             rev: seq,
@@ -602,7 +603,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             done,
             thinking,
             session_id,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("token-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -615,7 +616,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             project_root: None,
             data: if thinking { Some(json!({ "thinking": true })) } else { None },
         }),
-        ServerEvent::PlanUpdate { agent_id, plan } => Some(UiSseMessage {
+        ServerEvent::PlanUpdate { agent_id, plan } => Some(UiEvent {
             id: format!("run-plan-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -632,7 +633,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             mission_id,
             agent_id,
             project_root,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("mission-trigger-{mission_id}-{seq}"),
             seq,
             rev: seq,
@@ -657,7 +658,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
                     format!("notif-mission-{mission_id}-{seq}")
                 }
             };
-            Some(UiSseMessage {
+            Some(UiEvent {
                 id: id_str,
                 seq,
                 rev: seq,
@@ -675,7 +676,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             agent_id,
             text,
             parent_id,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("text-seg-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -693,7 +694,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             question_id,
             questions,
             session_id,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("ask-user-{question_id}"),
             seq,
             rev: seq,
@@ -714,7 +715,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             preferred_model,
             actual_model,
             reason,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("model-fallback-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -739,7 +740,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             tool,
             line,
             stream,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("tool-progress-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -759,7 +760,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
         ServerEvent::Resync {
             reason,
             lagged_count,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("run-resync-{seq}"),
             seq,
             rev: seq,
@@ -782,7 +783,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             title,
             width,
             height,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("app-launched-{skill}-{seq}"),
             seq,
             rev: seq,
@@ -811,7 +812,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             parent_id,
         } => {
             let phase = if block_type == "tool_use" { "start" } else { "start" };
-            Some(UiSseMessage {
+            Some(UiEvent {
                 id: format!("cb-start-{block_id}"),
                 seq,
                 rev: seq,
@@ -855,7 +856,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
                     }
                 }
             }
-            Some(UiSseMessage {
+            Some(UiEvent {
                 id: format!("cb-update-{block_id}-{seq}"),
                 seq,
                 rev: seq,
@@ -874,7 +875,7 @@ fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiSseM
             duration_ms,
             context_tokens,
             parent_id,
-        } => Some(UiSseMessage {
+        } => Some(UiEvent {
             id: format!("turn-complete-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -1151,6 +1152,7 @@ pub async fn prepare_server(
         .route("/api/workspace/state", get(get_workspace_state))
         .route("/api/bash", post(run_bash_api))
         .route("/api/events", get(events_handler))
+        .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/status", get(get_status_api))
         .route("/api/health", get(health_handler))
         .route("/api/utils/pick-folder", get(pick_folder))

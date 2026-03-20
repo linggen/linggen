@@ -5,7 +5,7 @@ mod rendering;
 mod sse_handler;
 mod utils;
 
-use crate::server::UiSseMessage;
+use crate::server::UiEvent;
 use crate::tui_client::TuiClient;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -35,7 +35,7 @@ pub struct ActiveToolGroup {
 
 pub struct App {
     pub client: Arc<TuiClient>,
-    pub sse_rx: mpsc::UnboundedReceiver<UiSseMessage>,
+    pub sse_rx: mpsc::UnboundedReceiver<UiEvent>,
     pub input: String,
     pub banner: Vec<Line<'static>>,
     pub blocks: Vec<DisplayBlock>,
@@ -139,7 +139,7 @@ pub struct InteractivePrompt {
 impl App {
     pub fn new(
         client: Arc<TuiClient>,
-        sse_rx: mpsc::UnboundedReceiver<UiSseMessage>,
+        sse_rx: mpsc::UnboundedReceiver<UiEvent>,
         project_root: String,
         port: u16,
     ) -> Self {

@@ -1555,7 +1555,9 @@ async fn recover_plan_from_session(
     let sid = session_id.unwrap_or("default");
     let ctx = state.manager.get_or_create_project(root.to_path_buf()).await.ok()?;
     let messages = ctx.sessions.get_chat_history(sid).ok()?;
-    // Scan backwards for the last plan message.
+    // Scan backwards for the last plan message. Stop at the first plan found
+    // regardless of status — if the most recent plan is "approved" or "completed",
+    // there is no pending plan (don't keep scanning for older "planned" ones).
     for msg in messages.iter().rev() {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg.content) {
             if parsed.get("type").and_then(|v| v.as_str()) == Some("plan") {
@@ -1565,6 +1567,8 @@ async fn recover_plan_from_session(
                             tracing::info!("Recovered pending plan from session history for {agent_id}");
                             return Some(plan);
                         }
+                        // Most recent plan is not "planned" — no pending plan
+                        return None;
                     }
                 }
             }
@@ -1644,13 +1648,25 @@ pub(crate) async fn approve_plan_handler(
 
         let mut engine = agent.lock().await;
 
-        // Set the approved plan on the engine and emit to UI.
+        // Set the approved plan on the engine.
         engine.plan = Some(plan);
         engine.plan_mode = false;
-        let plan_snapshot = engine.plan.clone().unwrap();
-        engine.persist_and_emit_plan(plan_snapshot).await;
 
         if clear_context {
+            // Clear old messages on disk but keep plan messages,
+            // so the session file starts fresh with just the plan.
+            let sid = session_id.as_deref().unwrap_or("default");
+            if let Ok(ctx) = manager.get_or_create_project(root_clone.clone()).await {
+                if let Ok(msgs) = ctx.sessions.get_chat_history(sid) {
+                    let plan_msgs: Vec<_> = msgs.into_iter().filter(|m| {
+                        serde_json::from_str::<serde_json::Value>(&m.content)
+                            .ok()
+                            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|t| t == "plan"))
+                            .unwrap_or(false)
+                    }).collect();
+                    let _ = ctx.sessions.rewrite_chat_history(sid, &plan_msgs);
+                }
+            }
             engine.observations.clear();
             engine.context_records.clear();
             engine.next_context_id = 1;
@@ -1669,6 +1685,10 @@ pub(crate) async fn approve_plan_handler(
             }
         }
 
+        // Persist and emit the approved plan (after clear, so it's the first message).
+        let plan_snapshot = engine.plan.clone().unwrap();
+        engine.persist_and_emit_plan(plan_snapshot).await;
+
         // Build a ChatRunCtx so we can reuse run_plan_execution.
         let session_id_for_cleanup = session_id.clone();
         let ctx = ChatRunCtx {
@@ -1683,6 +1703,17 @@ pub(crate) async fn approve_plan_handler(
         };
 
         run_plan_execution(&ctx, &mut engine).await;
+
+        // Mark plan as completed and persist so reload shows correct status.
+        if let Some(ref mut plan) = engine.plan {
+            if plan.status == crate::engine::PlanStatus::Executing
+                || plan.status == crate::engine::PlanStatus::Approved
+            {
+                plan.status = crate::engine::PlanStatus::Completed;
+                let plan_snapshot = plan.clone();
+                engine.persist_and_emit_plan(plan_snapshot).await;
+            }
+        }
 
         // Emit TurnComplete so the Web UI has a single finalizer.
         let _ = events_tx.send(ServerEvent::TurnComplete {
@@ -1745,9 +1776,12 @@ pub(crate) async fn reject_plan_handler(
     rejected_plan.status = crate::engine::PlanStatus::Rejected;
     let _ = state.events_tx.send(ServerEvent::PlanUpdate {
         agent_id: req.agent_id.clone(),
-        plan: rejected_plan,
+        plan: rejected_plan.clone(),
     });
 
+    // Persist the rejected plan so recover_plan_from_session sees the updated
+    // status on reload and doesn't resurface the old "planned" buttons.
+    let plan_json = serde_json::json!({ "type": "plan", "plan": rejected_plan });
     persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -1755,7 +1789,7 @@ pub(crate) async fn reject_plan_handler(
         &req.agent_id,
         &req.agent_id,
         "user",
-        "Plan rejected.",
+        &plan_json.to_string(),
         req.session_id.as_deref(),
         false,
     )

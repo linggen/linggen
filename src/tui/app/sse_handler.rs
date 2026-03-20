@@ -1,11 +1,11 @@
 use super::super::display::*;
 use super::utils::{parse_activity_text, parse_content_block_args};
 use super::{ActiveToolGroup, App, ConnectionStatus, InteractivePrompt};
-use crate::server::UiSseMessage;
+use crate::server::UiEvent;
 use std::time::Instant;
 
 impl App {
-    pub fn handle_sse(&mut self, msg: UiSseMessage) {
+    pub fn handle_sse(&mut self, msg: UiEvent) {
         // Seq-based dedup: skip events we've already processed.
         // Connection events (synthetic, seq=0) are always allowed through.
         if msg.kind != "connection" && msg.seq > 0 && msg.seq <= self.last_seq {
@@ -230,7 +230,7 @@ impl App {
         }
     }
 
-    fn handle_sse_activity(&mut self, msg: UiSseMessage) {
+    fn handle_sse_activity(&mut self, msg: UiEvent) {
         let status = msg
             .data
             .as_ref()
@@ -410,7 +410,7 @@ impl App {
         }
     }
 
-    fn handle_sse_run(&mut self, msg: UiSseMessage) {
+    fn handle_sse_run(&mut self, msg: UiEvent) {
         // Trigger a full state resync on sync, resync, or outcome phases
         match msg.phase.as_deref() {
             Some("sync") | Some("resync") | Some("outcome") => {
@@ -582,7 +582,7 @@ impl App {
         }
     }
 
-    fn handle_sse_content_block(&mut self, msg: UiSseMessage) {
+    fn handle_sse_content_block(&mut self, msg: UiEvent) {
         let phase = msg.phase.as_deref().unwrap_or("");
         let agent = msg.agent_id.clone().unwrap_or_else(|| self.status_agent.clone());
         let data = msg.data.as_ref();
@@ -747,7 +747,7 @@ impl App {
         }
     }
 
-    fn handle_sse_turn_complete(&mut self, msg: UiSseMessage) {
+    fn handle_sse_turn_complete(&mut self, msg: UiEvent) {
         let agent = msg.agent_id.unwrap_or_default();
 
         // Skip subagent turn completions

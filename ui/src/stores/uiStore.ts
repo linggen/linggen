@@ -58,9 +58,9 @@ interface UiState {
   verboseMode: boolean;
   copyChatStatus: 'idle' | 'copied' | 'error';
 
-  // SSE connection status
-  sseStatus: 'connected' | 'reconnecting';
-  setSseStatus: (status: 'connected' | 'reconnecting') => void;
+  // Transport connection status
+  connectionStatus: 'connected' | 'reconnecting';
+  setConnectionStatus: (status: 'connected' | 'reconnecting') => void;
 
   // Toasts
   toasts: Toast[];
@@ -118,8 +118,8 @@ export const useUiStore = create<UiState>((set) => ({
   activePlan: null,
   verboseMode: typeof window !== 'undefined' ? window.localStorage.getItem(VERBOSE_MODE_STORAGE_KEY) === 'true' : false,
   copyChatStatus: 'idle',
-  sseStatus: 'connected',
-  setSseStatus: (status) => set({ sseStatus: status }),
+  connectionStatus: 'connected',
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
   toasts: [],
   addToast: (toast) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

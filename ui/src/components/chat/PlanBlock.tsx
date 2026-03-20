@@ -108,20 +108,6 @@ export const PlanBlock: React.FC<{
             >
               Start building, keep context
             </button>
-            {onEditPlan && (
-              <button
-                onClick={startEditing}
-                className="px-3 py-1 text-[11px] font-semibold rounded-md border border-blue-300 dark:border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
-              >
-                Edit
-              </button>
-            )}
-            <button
-              onClick={() => { inputRef?.current?.focus(); inputRef?.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
-              className="px-3 py-1 text-[11px] font-semibold rounded-md border border-slate-300 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/5"
-            >
-              Give feedback
-            </button>
             <button
               onClick={onRejectPlan}
               className="px-3 py-1 text-[11px] font-semibold rounded-md border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"

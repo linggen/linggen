@@ -145,8 +145,12 @@ const App: React.FC = () => {
       const prev = prevSessionIdRef.current;
       prevSessionIdRef.current = activeSessionId;
       const isSessionAdoption = prev === null && activeSessionId !== null;
+
+      // Switch to the session's message bucket — instant if cached, no clear needed
+      const chatStore = useChatStore.getState();
+      chatStore.setActiveSession(activeSessionId);
+
       if (!isSessionAdoption) {
-        useChatStore.getState().clear(false);
         const ui = useUiStore.getState();
         ui.setQueuedMessages([]);
         ui.setActivePlan(null);
@@ -154,7 +158,8 @@ const App: React.FC = () => {
         ui.setPendingPlanAgentId(null);
         ui.setSessionModel(null);
       }
-      useChatStore.getState().fetchWorkspaceState();
+      // Always fetch to merge latest server state into the bucket
+      chatStore.fetchWorkspaceState();
       useAgentStore.getState().fetchAgentRuns();
       // Restore any pending AskUser/permission widget for this session.
       fetchPendingAskUser();

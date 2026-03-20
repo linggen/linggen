@@ -69,7 +69,7 @@ export interface ChatMessage {
   isError?: boolean;
 }
 
-export interface UiSseMessage {
+export interface UiEvent {
   id: string;
   seq: number;
   rev: number;

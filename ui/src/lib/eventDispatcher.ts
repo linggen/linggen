@@ -1,8 +1,9 @@
 /**
- * Per-kind SSE event handler functions.
+ * Per-kind event handler functions — dispatches UiEvent events to stores.
+ * Transport-agnostic: works with both SSE and WebRTC transports.
  * Reads/writes state directly via Zustand stores — no deps object needed.
  */
-import type { UiSseMessage, ContentBlock, SubagentTreeEntry, SubagentToolStep, Plan } from '../types';
+import type { UiEvent, ContentBlock, SubagentTreeEntry, SubagentToolStep, Plan } from '../types';
 import { useProjectStore } from '../stores/projectStore';
 import { useAgentStore } from '../stores/agentStore';
 import { useChatStore } from '../stores/chatStore';
@@ -82,7 +83,7 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
 // Main dispatcher
 // ---------------------------------------------------------------------------
 
-export function dispatchSseEvent(item: UiSseMessage, sessionIdOverride?: string): void {
+export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
   const effectiveSessionId = sessionIdOverride ?? useProjectStore.getState().activeSessionId;
   // Allow notifications and permission prompts through regardless — they are global events.
   if (item.kind !== 'notification' && item.kind !== 'ask_user' && item.session_id && item.session_id !== 'global') {
@@ -125,7 +126,7 @@ export function dispatchSseEvent(item: UiSseMessage, sessionIdOverride?: string)
 // Per-kind handlers
 // ---------------------------------------------------------------------------
 
-function handleRun(item: UiSseMessage): void {
+function handleRun(item: UiEvent): void {
   const projectStore = useProjectStore.getState();
   const agentStore = useAgentStore.getState();
   const chatStore = useChatStore.getState();
@@ -226,7 +227,7 @@ function handleRun(item: UiSseMessage): void {
   }
 }
 
-function handleQueue(item: UiSseMessage): void {
+function handleQueue(item: UiEvent): void {
   const { activeSessionId, selectedProjectRoot } = useProjectStore.getState();
   const session = activeSessionId || 'default';
   if (item.project_root === selectedProjectRoot && item.session_id === session) {
@@ -235,7 +236,7 @@ function handleQueue(item: UiSseMessage): void {
   }
 }
 
-function handleAskUser(item: UiSseMessage): void {
+function handleAskUser(item: UiEvent): void {
   const { question_id, questions } = item.data || {};
   if (question_id && questions) {
     useUiStore.getState().setPendingAskUser({
@@ -249,7 +250,7 @@ function handleAskUser(item: UiSseMessage): void {
 // Re-export for use by SDK and other consumers
 export { handleAskUser };
 
-function handleTextSegment(item: UiSseMessage): void {
+function handleTextSegment(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   if (useAgentStore.getState()._subagentParentMap[agentId.toLowerCase()]) return;
@@ -258,7 +259,7 @@ function handleTextSegment(item: UiSseMessage): void {
   useChatStore.getState().addTextSegment(agentId, segText);
 }
 
-function handleActivity(item: UiSseMessage): void {
+function handleActivity(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   const statusRaw = String(item.data?.status || '').trim();
@@ -384,7 +385,7 @@ function flushTokenBuffer() {
   _tokenBuffer.clear();
 }
 
-function handleToken(item: UiSseMessage): void {
+function handleToken(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   const isThinking = item.data?.thinking === true;
   if (!agentId) return;
@@ -417,7 +418,7 @@ function handleToken(item: UiSseMessage): void {
   }
 }
 
-function handleMessage(item: UiSseMessage): void {
+function handleMessage(item: UiEvent): void {
   const from = String(item.data?.from || item.agent_id || 'assistant');
   const to = String(item.data?.to || '');
   let content = String(item.text || '');
@@ -454,7 +455,7 @@ function handleMessage(item: UiSseMessage): void {
   chatStore.finalizeMessage(from, content, to, tsMs, msgElapsed, msgCtxTokens, isError || undefined);
 }
 
-function handleContentBlock(item: UiSseMessage): void {
+function handleContentBlock(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   const data = item.data || {};
@@ -547,7 +548,7 @@ function handleContentBlock(item: UiSseMessage): void {
   }
 }
 
-function handleTurnComplete(item: UiSseMessage): void {
+function handleTurnComplete(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
 
@@ -572,7 +573,7 @@ function handleTurnComplete(item: UiSseMessage): void {
   agentStore.setAgentStatusText((prev) => ({ ...prev, [agentId]: 'Idle' }));
 }
 
-function handleToolProgress(item: UiSseMessage): void {
+function handleToolProgress(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   if (!agentId) return;
   if (useAgentStore.getState()._subagentParentMap[agentId.toLowerCase()]) return;
@@ -582,7 +583,7 @@ function handleToolProgress(item: UiSseMessage): void {
   useChatStore.getState().toolProgress(agentId, line);
 }
 
-function handleAppLaunched(item: UiSseMessage): void {
+function handleAppLaunched(item: UiEvent): void {
   const data = item.data || {};
   useUiStore.getState().setOpenApp({
     skill: data.skill || '',
@@ -594,7 +595,7 @@ function handleAppLaunched(item: UiSseMessage): void {
   });
 }
 
-function handleModelFallback(item: UiSseMessage): void {
+function handleModelFallback(item: UiEvent): void {
   const agentId = String(item.agent_id || '');
   const text = String(item.text || 'Model switched');
   useChatStore.getState().addMessage({
@@ -614,7 +615,7 @@ function handleModelFallback(item: UiSseMessage): void {
   }
 }
 
-function handleNotification(item: UiSseMessage): void {
+function handleNotification(item: UiEvent): void {
   const data = item.data;
   if (!data) return;
 
