@@ -121,13 +121,16 @@ async fn run_peer(
         // Drain one pending write — but only if not paused (waiting for buffer to flush)
         if !dc_write_paused {
             if let Some((cid, msg)) = pending_dc_writes.pop_front() {
+                let msg_len = msg.len();
                 let written = rtc.channel(cid)
                     .map(|mut ch| ch.write(false, msg.as_bytes()))
                     .unwrap_or(Ok(false));
                 match written {
-                    Ok(true) => { /* accepted */ }
-                    _ => {
-                        // Buffer full — re-queue and pause until Transmit drains buffer
+                    Ok(true) => {
+                        tracing::debug!("DC write ok: {}bytes, {} remaining", msg_len, pending_dc_writes.len());
+                    }
+                    other => {
+                        tracing::debug!("DC write blocked: {}bytes, result={:?}, pausing", msg_len, other);
                         pending_dc_writes.push_front((cid, msg));
                         dc_write_paused = true;
                     }
@@ -499,7 +502,7 @@ async fn handle_session_message(
 /// Send a control channel response, chunking if it exceeds data channel message size limits.
 /// WebRTC data channels negotiate max-message-size (typically 256 KB). Large responses
 /// (e.g., file contents for tunnel loading) are split into chunks that the client reassembles.
-const MAX_DC_MESSAGE: usize = 64_000; // ~64 KB — conservative to account for JSON escaping overhead
+const MAX_DC_MESSAGE: usize = 16_000; // ~16 KB — small enough for SCTP congestion window
 
 fn enqueue_response(
     queue: &mut std::collections::VecDeque<(str0m::channel::ChannelId, String)>,
