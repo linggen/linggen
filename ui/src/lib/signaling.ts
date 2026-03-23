@@ -31,10 +31,17 @@ export class WhipSignaling implements SignalingStrategy {
 
 /** Remote signaling via relay — POST offer, poll for answer. */
 export class RelaySignaling implements SignalingStrategy {
-  constructor(
-    private instanceId: string,
-    private relayBaseUrl: string = '',
-  ) {}
+  private instanceId: string;
+  private relayBaseUrl: string;
+
+  constructor(instanceId: string, relayBaseUrl?: string) {
+    this.instanceId = instanceId;
+    // In blob iframe context, relative URLs don't work — need absolute origin.
+    // Read from injected meta tag, fall back to same origin, fall back to empty.
+    this.relayBaseUrl = relayBaseUrl
+      ?? document.querySelector('meta[name="linggen-relay-origin"]')?.getAttribute('content')
+      ?? (typeof window !== 'undefined' && window.location.protocol !== 'blob:' ? '' : '');
+  }
 
   async exchange(offerSdp: string, signal: AbortSignal): Promise<string> {
     // 1. POST offer to relay

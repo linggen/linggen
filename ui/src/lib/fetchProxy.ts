@@ -99,7 +99,13 @@ export function installFetchProxy(): void {
           });
         }
       } catch {
-        // Transport not ready — fall through to direct HTTP
+        // Transport not ready
+      }
+
+      // In blob iframe (tunnel mode), relative URLs can't be resolved.
+      // Return empty response for API calls while transport is connecting.
+      if (typeof url === 'string' && url.startsWith('/') && window.location.protocol === 'blob:') {
+        return Promise.resolve(new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } }));
       }
     }
 
