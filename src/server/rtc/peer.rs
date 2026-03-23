@@ -158,6 +158,7 @@ async fn run_peer(
 
                     Event::ChannelData(data) => {
                         let text = String::from_utf8_lossy(&data.data).to_string();
+                        tracing::debug!("Data channel message on {:?}: {}bytes", data.id, text.len());
                         if Some(data.id) == control_channel_id {
                             if let Some(req) = handle_control_message(
                                 &mut rtc,
@@ -360,6 +361,7 @@ async fn process_control_request_async(
                 return serde_json::json!({ "error": "Invalid URL path" });
             }
             let url = format!("http://127.0.0.1:{port}{url_path}");
+            tracing::info!("RTC http_request: {method} {url_path}");
             let resp = if method == "POST" {
                 client.post(&url).json(&req.body.get("body").unwrap_or(&serde_json::Value::Null)).send().await
             } else {
@@ -473,7 +475,7 @@ async fn handle_session_message(
 /// Send a control channel response, chunking if it exceeds data channel message size limits.
 /// WebRTC data channels negotiate max-message-size (typically 256 KB). Large responses
 /// (e.g., file contents for tunnel loading) are split into chunks that the client reassembles.
-const MAX_DC_MESSAGE: usize = 200_000; // ~200 KB, well under 256 KB limit
+const MAX_DC_MESSAGE: usize = 64_000; // ~64 KB — conservative to account for JSON escaping overhead
 
 fn send_chunked_response(
     rtc: &mut Rtc,
@@ -487,16 +489,14 @@ fn send_chunked_response(
         .and_then(|b| b.as_str());
 
     if let Some(body_str) = body {
+        tracing::debug!("Response for {request_id}: body_len={}", body_str.len());
         if body_str.len() > MAX_DC_MESSAGE {
             // Send body in chunks, then a final message with status
             let status = result.get("data")
                 .and_then(|d| d.get("status"))
                 .and_then(|s| s.as_u64())
                 .unwrap_or(200);
-            let chunks: Vec<&str> = body_str.as_bytes()
-                .chunks(MAX_DC_MESSAGE)
-                .map(|c| std::str::from_utf8(c).unwrap_or(""))
-                .collect();
+            let chunks = split_utf8_safe(body_str, MAX_DC_MESSAGE);
             let total = chunks.len();
 
             for (i, chunk) in chunks.iter().enumerate() {
@@ -526,6 +526,21 @@ fn send_chunked_response(
     if let Some(mut ch) = rtc.channel(cid) {
         let _ = ch.write(false, resp.to_string().as_bytes());
     }
+}
+
+/// Split a string into chunks of at most `max_bytes`, respecting UTF-8 character boundaries.
+fn split_utf8_safe(s: &str, max_bytes: usize) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < s.len() {
+        let mut end = std::cmp::min(start + max_bytes, s.len());
+        while end > start && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&s[start..end]);
+        start = end;
+    }
+    chunks
 }
 
 /// Get the local (non-loopback) IP address for WebRTC host candidates.
