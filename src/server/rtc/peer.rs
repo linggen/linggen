@@ -79,7 +79,7 @@ async fn create_peer_inner(offer_sdp: String, state: Arc<ServerState>, remote: b
     // Spawn the peer event loop
     let events_rx = state.events_tx.subscribe();
     tokio::spawn(async move {
-        if let Err(e) = run_peer(rtc, socket, state, events_rx).await {
+        if let Err(e) = run_peer(rtc, socket, candidate_addr, state, events_rx).await {
             tracing::warn!("WebRTC peer exited: {e:#}");
         }
     });
@@ -95,6 +95,7 @@ async fn create_peer_inner(offer_sdp: String, state: Arc<ServerState>, remote: b
 async fn run_peer(
     mut rtc: Rtc,
     socket: UdpSocket,
+    local_candidate_addr: std::net::SocketAddr,
     state: Arc<ServerState>,
     mut events_rx: tokio::sync::broadcast::Receiver<crate::server::ServerEvent>,
 ) -> Result<()> {
@@ -225,7 +226,7 @@ async fn run_peer(
                         let receive = Receive {
                             proto: Protocol::Udp,
                             source,
-                            destination: socket.local_addr()?,
+                            destination: local_candidate_addr,
                             contents: contents.try_into()?,
                         };
                         rtc.handle_input(Input::Receive(Instant::now(), receive))?;
