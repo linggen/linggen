@@ -87,6 +87,7 @@ export function installFetchProxy(): void {
       (url.startsWith('/api/') && !url.includes('/api/rtc/'))
       || url.startsWith('/assets/')
       || url.startsWith('/apps/')
+      || url === '/logo.svg'
     );
     if (isWebRtcTransport() && shouldProxy) {
       try {

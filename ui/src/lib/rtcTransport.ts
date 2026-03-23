@@ -159,10 +159,9 @@ export class RtcTransport implements Transport {
       this.pc.onconnectionstatechange = () => {
         const state = this.pc?.connectionState;
         if (state === 'connected') {
-          // Fire onReconnect before resetting the counter
-          if (this.reconnectAttempt > 0) {
-            this.callbacks.onReconnect?.();
-          }
+          // Always fire onReconnect — on first connect (remote/tunnel mode needs fresh data)
+          // and on reconnects (to fill gaps from downtime).
+          this.callbacks.onReconnect?.();
           this.reconnectAttempt = 0;
           this.setStatus('connected');
           this.startHeartbeat();
