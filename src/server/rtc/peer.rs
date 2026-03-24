@@ -118,21 +118,19 @@ async fn run_peer(
     let mut dc_write_paused = false;
 
     loop {
-        // Drain as many pending writes as the SCTP buffer will accept.
-        while !dc_write_paused {
+        // Drain ONE pending write per cycle — writing multiple crashes str0m's SCTP.
+        if !dc_write_paused {
             if let Some((cid, msg)) = pending_dc_writes.pop_front() {
                 let written = rtc.channel(cid)
                     .map(|mut ch| ch.write(false, msg.as_bytes()))
                     .unwrap_or(Ok(false));
                 match written {
-                    Ok(true) => { /* accepted — try writing more */ }
+                    Ok(true) => { /* accepted */ }
                     _ => {
                         pending_dc_writes.push_front((cid, msg));
                         dc_write_paused = true;
                     }
                 }
-            } else {
-                break;
             }
         }
 
