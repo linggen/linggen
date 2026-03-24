@@ -5,9 +5,28 @@
  *
  * Only applies to GET requests (the main source of re-fetch storms).
  * POST/PUT/DELETE are always sent immediately.
+ *
+ * Implementation: stores the response body as an ArrayBuffer so it can
+ * be shared across multiple callers (Response.clone() fails if the body
+ * was already consumed by the first caller).
  */
 
-const inflight = new Map<string, Promise<Response>>();
+interface CachedResponse {
+  status: number;
+  statusText: string;
+  headers: [string, string][];
+  body: ArrayBuffer;
+}
+
+const inflight = new Map<string, Promise<CachedResponse>>();
+
+function toResponse(cached: CachedResponse): Response {
+  return new Response(cached.body.slice(0), {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: cached.headers,
+  });
+}
 
 /**
  * Fetch with deduplication. Same-URL GET requests that are already
@@ -20,13 +39,23 @@ export function dedupFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
   const existing = inflight.get(url);
-  if (existing) return existing.then(r => r.clone());
+  if (existing) return existing.then(toResponse);
 
-  const promise = fetch(input, init).then(
-    (resp) => { inflight.delete(url); return resp; },
-    (err) => { inflight.delete(url); throw err; },
-  );
+  const promise = fetch(input, init).then(async (resp) => {
+    const body = await resp.arrayBuffer();
+    const cached: CachedResponse = {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: [...resp.headers.entries()],
+      body,
+    };
+    inflight.delete(url);
+    return cached;
+  }, (err) => {
+    inflight.delete(url);
+    throw err;
+  });
 
   inflight.set(url, promise);
-  return promise;
+  return promise.then(toResponse);
 }
