@@ -155,22 +155,12 @@ export class RtcTransport implements Transport {
         }
       };
 
-      // Connection state tracking
+      // Connection state tracking — wait for 'failed' only.
+      // 'connected' is handled in control channel onopen (below) to ensure
+      // the data channel is ready before we start routing API calls.
       this.pc.onconnectionstatechange = () => {
         const state = this.pc?.connectionState;
-        if (state === 'connected') {
-          // Always fire onReconnect — on first connect (remote/tunnel mode needs fresh data)
-          // and on reconnects (to fill gaps from downtime).
-          this.callbacks.onReconnect?.();
-          this.reconnectAttempt = 0;
-          this.setStatus('connected');
-          this.startHeartbeat();
-          // Replay any session subscriptions that arrived before connection
-          for (const sid of this.pendingSubscriptions) {
-            this.openSessionChannel(sid);
-          }
-          this.pendingSubscriptions.clear();
-        } else if (state === 'failed') {
+        if (state === 'failed') {
           // Only disconnect on 'failed', not 'disconnected' (which is transient)
           this.handleDisconnect();
         }
@@ -226,7 +216,17 @@ export class RtcTransport implements Transport {
 
   private setupControlChannel(dc: RTCDataChannel): void {
     dc.onopen = () => {
-      // Control channel is ready — connection is fully established
+      // Control channel is ready — NOW the connection is fully usable.
+      // Don't fire these on pc.onconnectionstatechange because the data
+      // channel may not be open yet at that point.
+      this.callbacks.onReconnect?.();
+      this.reconnectAttempt = 0;
+      this.setStatus('connected');
+      this.startHeartbeat();
+      for (const sid of this.pendingSubscriptions) {
+        this.openSessionChannel(sid);
+      }
+      this.pendingSubscriptions.clear();
     };
 
     dc.onmessage = (event) => {
