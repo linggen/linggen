@@ -114,21 +114,16 @@ async fn run_peer(
     let (ctrl_resp_tx, mut ctrl_resp_rx) = tokio::sync::mpsc::channel::<(Option<String>, str0m::channel::ChannelId, serde_json::Value)>(32);
     // Queue of pending data channel writes — drained as fast as SCTP buffer allows.
     // Messages are either text (JSON) or binary (gzip-compressed file data).
-    let mut pending_dc_writes: std::collections::VecDeque<(str0m::channel::ChannelId, DcMessage)> = std::collections::VecDeque::new();
+    let mut pending_dc_writes: std::collections::VecDeque<(str0m::channel::ChannelId, String)> = std::collections::VecDeque::new();
     let mut dc_write_paused = false;
 
     loop {
         // Drain as many pending writes as the SCTP buffer will accept.
         while !dc_write_paused {
             if let Some((cid, msg)) = pending_dc_writes.pop_front() {
-                let written = match &msg {
-                    DcMessage::Text(s) => rtc.channel(cid)
-                        .map(|mut ch| ch.write(false, s.as_bytes()))
-                        .unwrap_or(Ok(false)),
-                    DcMessage::Binary(b) => rtc.channel(cid)
-                        .map(|mut ch| ch.write(true, b))
-                        .unwrap_or(Ok(false)),
-                };
+                let written = rtc.channel(cid)
+                    .map(|mut ch| ch.write(false, msg.as_bytes()))
+                    .unwrap_or(Ok(false));
                 match written {
                     Ok(true) => { /* accepted — try writing more */ }
                     _ => {
@@ -502,35 +497,32 @@ async fn handle_session_message(
     }
 }
 
-/// Text or binary message for the data channel write queue.
-enum DcMessage {
-    Text(String),
-    Binary(Vec<u8>),
-}
+/// Max base64 chunk size per JSON message (~48 KB raw → ~64 KB base64, well under 256 KB SCTP limit).
+const MAX_CHUNK_RAW: usize = 48_000;
 
-/// Max binary chunk size — 64 KB raw binary (no JSON overhead).
-const MAX_BINARY_CHUNK: usize = 64_000;
-
-/// Enqueue a response, using gzip + binary for large bodies.
+/// Enqueue a response, using gzip + base64 for large bodies.
 ///
-/// Protocol for large responses:
-/// 1. JSON header: `{ request_id, binary_start: { total_bytes, status } }`
-/// 2. Binary chunks: raw gzip bytes (ch.write(true, ...))
-/// 3. JSON footer: `{ request_id, binary_end: true }`
+/// Protocol for large responses (all text, no binary DC):
+/// 1. JSON: `{ request_id, gzip_start: { total_bytes, chunks, status } }`
+/// 2. JSON: `{ request_id, gzip_chunk: "<base64 data>" }` × N
+/// 3. JSON: `{ request_id, gzip_end: true }`
 ///
-/// Client checks `typeof event.data` — string = JSON, ArrayBuffer = binary.
+/// Client collects base64 chunks, decodes to binary, decompresses gzip.
 fn enqueue_response(
-    queue: &mut std::collections::VecDeque<(str0m::channel::ChannelId, DcMessage)>,
+    queue: &mut std::collections::VecDeque<(str0m::channel::ChannelId, String)>,
     cid: str0m::channel::ChannelId,
     request_id: &str,
     result: serde_json::Value,
 ) {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+
     let body = result.get("data")
         .and_then(|d| d.get("body"))
         .and_then(|b| b.as_str());
 
     if let Some(body_str) = body {
-        if body_str.len() > MAX_BINARY_CHUNK {
+        if body_str.len() > MAX_CHUNK_RAW {
             let status = result.get("data")
                 .and_then(|d| d.get("status"))
                 .and_then(|s| s.as_u64())
@@ -544,31 +536,39 @@ fn enqueue_response(
             encoder.write_all(body_str.as_bytes()).ok();
             let compressed = encoder.finish().unwrap_or_default();
 
+            // Split compressed bytes into chunks, base64-encode each
+            let raw_chunks: Vec<&[u8]> = compressed.chunks(MAX_CHUNK_RAW).collect();
+            let num_chunks = raw_chunks.len();
+
             tracing::info!(
-                "Response for {request_id}: {}KB → gzip {}KB ({} chunks)",
+                "Response for {request_id}: {}KB → gzip {}KB → {num_chunks} base64 chunks",
                 body_str.len() / 1024,
                 compressed.len() / 1024,
-                (compressed.len() + MAX_BINARY_CHUNK - 1) / MAX_BINARY_CHUNK,
             );
 
-            // Header (JSON text)
+            // Header
             let header = serde_json::json!({
                 "request_id": request_id,
-                "binary_start": { "total_bytes": compressed.len(), "status": status }
+                "gzip_start": { "total_bytes": compressed.len(), "chunks": num_chunks, "status": status }
             });
-            queue.push_back((cid, DcMessage::Text(header.to_string())));
+            queue.push_back((cid, header.to_string()));
 
-            // Binary chunks
-            for chunk in compressed.chunks(MAX_BINARY_CHUNK) {
-                queue.push_back((cid, DcMessage::Binary(chunk.to_vec())));
+            // Base64-encoded chunks
+            for chunk in &raw_chunks {
+                let encoded = b64.encode(chunk);
+                let msg = serde_json::json!({
+                    "request_id": request_id,
+                    "gzip_chunk": encoded
+                });
+                queue.push_back((cid, msg.to_string()));
             }
 
-            // Footer (JSON text)
+            // Footer
             let footer = serde_json::json!({
                 "request_id": request_id,
-                "binary_end": true
+                "gzip_end": true
             });
-            queue.push_back((cid, DcMessage::Text(footer.to_string())));
+            queue.push_back((cid, footer.to_string()));
             return;
         }
     }
@@ -576,7 +576,7 @@ fn enqueue_response(
     // Small response — single JSON message
     let mut resp = result;
     resp["request_id"] = serde_json::Value::String(request_id.to_string());
-    queue.push_back((cid, DcMessage::Text(resp.to_string())));
+    queue.push_back((cid, resp.to_string()));
 }
 
 /// Split a string into chunks of at most `max_bytes`, respecting UTF-8 character boundaries.
