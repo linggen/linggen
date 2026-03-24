@@ -3,6 +3,7 @@
  */
 import { create } from 'zustand';
 import type { ProjectInfo, SessionInfo, AgentTreeItem } from '../types';
+import { dedupFetch } from '../lib/dedupFetch';
 
 const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
@@ -98,7 +99,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjects: async () => {
     try {
-      const resp = await fetch('/api/projects');
+      const resp = await dedupFetch('/api/projects');
       const data: ProjectInfo[] = await resp.json();
       set((s) => {
         const valid = new Set(data.map((p) => p.path));
@@ -173,7 +174,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { selectedProjectRoot, isMissionSession } = get();
     if (!selectedProjectRoot) return;
     try {
-      const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(selectedProjectRoot)}&limit=50`);
+      const resp = await dedupFetch(`/api/sessions?project_root=${encodeURIComponent(selectedProjectRoot)}&limit=50`);
       const raw = await resp.json();
       const data: SessionInfo[] = raw.sessions ?? raw ?? [];
       set((s) => {
@@ -201,7 +202,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchAllSessions: async () => {
     try {
-      const resp = await fetch('/api/sessions/all');
+      const resp = await dedupFetch('/api/sessions/all');
       const raw = await resp.json();
       const data: SessionInfo[] = raw.sessions ?? [];
       set({ allSessions: data });
@@ -278,7 +279,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await Promise.all(
       projects.map(async (project) => {
         try {
-          const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(project.path)}&limit=1`);
+          const resp = await dedupFetch(`/api/sessions?project_root=${encodeURIComponent(project.path)}&limit=1`);
           const data = await resp.json();
           // Use total from paginated response, or fall back to array length
           counts[project.path] = data.total ?? (Array.isArray(data) ? data.length : Array.isArray(data.sessions) ? data.sessions.length : 0);
@@ -295,7 +296,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const root = projectRoot || selectedProjectRoot;
     if (!root) return;
     try {
-      const resp = await fetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
+      const resp = await dedupFetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
       const data = await resp.json();
       set((s) => ({
         agentTreesByProject: { ...s.agentTreesByProject, [root]: data },
@@ -312,7 +313,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       projects.map(async (p) => {
         const root = p.path;
         try {
-          const resp = await fetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
+          const resp = await dedupFetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
           return [root, await resp.json()] as const;
         } catch (e) {
           console.error(`Error fetching agent tree (${root}):`, e);
@@ -332,7 +333,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { selectedProjectRoot } = get();
     if (!selectedProjectRoot) return;
     try {
-      await fetch(`/api/files?project_root=${encodeURIComponent(selectedProjectRoot)}&path=${encodeURIComponent(path)}`);
+      await dedupFetch(`/api/files?project_root=${encodeURIComponent(selectedProjectRoot)}&path=${encodeURIComponent(path)}`);
       set({ currentPath: path });
     } catch (e) {
       console.error('Error fetching files:', e);

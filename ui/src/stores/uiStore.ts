@@ -3,6 +3,7 @@
  */
 import { create } from 'zustand';
 import type { CronMission, ManagementTab, Plan, PendingAskUser, QueuedChatItem } from '../types';
+import { dedupFetch } from '../lib/dedupFetch';
 
 export type Page = 'main' | 'settings' | 'mission-editor';
 export type SidebarTab = 'projects' | 'missions';
@@ -163,7 +164,7 @@ export const useUiStore = create<UiState>((set) => ({
   })),
   fetchPendingAskUser: async () => {
     try {
-      const resp = await fetch('/api/pending-ask-user');
+      const resp = await dedupFetch('/api/pending-ask-user');
       if (!resp.ok) return;
       const items = await resp.json();
       if (Array.isArray(items) && items.length > 0) {

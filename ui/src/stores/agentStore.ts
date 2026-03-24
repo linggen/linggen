@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import type { AgentInfo, AgentRunInfo, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
 import { useProjectStore } from './projectStore';
 import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
+import { dedupFetch } from '../lib/dedupFetch';
 
 export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working';
 
@@ -132,7 +133,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const root = projectRootOverride || useProjectStore.getState().selectedProjectRoot;
     if (!root) { set({ agents: [] }); return; }
     try {
-      const resp = await fetch(`/api/agents?project_root=${encodeURIComponent(root)}`);
+      const resp = await dedupFetch(`/api/agents?project_root=${encodeURIComponent(root)}`);
       const data = await resp.json();
       set({ agents: data });
     } catch (e) {
@@ -142,7 +143,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   fetchModels: async () => {
     try {
-      const resp = await fetch('/api/models');
+      const resp = await dedupFetch('/api/models');
       set({ models: await resp.json() });
     } catch (e) {
       console.error('Failed to fetch models:', e);
@@ -151,7 +152,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   fetchDefaultModels: async () => {
     try {
-      const resp = await fetch('/api/config');
+      const resp = await dedupFetch('/api/config');
       if (resp.ok) {
         const data = await resp.json();
         set({ defaultModels: data.routing?.default_models ?? [] });
@@ -204,7 +205,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   fetchOllamaStatus: async () => {
     try {
-      const resp = await fetch('/api/utils/ollama-status');
+      const resp = await dedupFetch('/api/utils/ollama-status');
       if (resp.ok) set({ ollamaStatus: await resp.json() });
     } catch (e) {
       console.error('Failed to fetch Ollama status:', e);
@@ -213,7 +214,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   fetchSkills: async () => {
     try {
-      const resp = await fetch('/api/skills');
+      const resp = await dedupFetch('/api/skills');
       set({ skills: await resp.json() });
     } catch (e) {
       console.error('Failed to fetch skills:', e);
@@ -262,7 +263,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const url = new URL('/api/agent-runs', window.location.origin);
       url.searchParams.append('project_root', selectedProjectRoot);
       url.searchParams.append('session_id', activeSessionId);
-      const resp = await fetch(url.toString());
+      const resp = await dedupFetch(url.toString());
       if (!resp.ok) return;
       const data = await resp.json();
       set({ agentRuns: Array.isArray(data) ? data : [] });
@@ -299,7 +300,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   fetchSessionTokens: async () => {
     const { selectedProjectRoot } = useProjectStore.getState();
     try {
-      const resp = await fetch(`/api/status?project_root=${encodeURIComponent(selectedProjectRoot)}`);
+      const resp = await dedupFetch(`/api/status?project_root=${encodeURIComponent(selectedProjectRoot)}`);
       if (resp.ok) {
         const data = await resp.json();
         set({ sessionTokens: { prompt: data.session_prompt_tokens || 0, completion: data.session_completion_tokens || 0 } });

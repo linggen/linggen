@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import type { ChatMessage, ContentBlock, SubagentTreeEntry, WorkspaceState } from '../types';
 import { isToolStatusText } from '../components/chat/MessagePhase';
+import { dedupFetch } from '../lib/dedupFetch';
 import {
   stripEmbeddedStructuredJson,
   isStatusLineText,
@@ -636,7 +637,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         url.searchParams.append('session_id', activeSessionId);
       }
 
-      const resp = await fetch(url.toString());
+      const resp = await dedupFetch(url.toString());
       const data = await resp.json();
       set({ workspaceState: data });
 
