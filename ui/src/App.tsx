@@ -1,11 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Bot, FilePenLine, Plus, RefreshCw, Settings, Sparkles, Zap } from 'lucide-react';
+import { Plus, Settings, X } from 'lucide-react';
 import { cn } from './lib/cn';
-import { AgentsCard } from './components/AgentsCard';
 import { SessionList } from './components/SessionList';
-import { ModelsCard } from './components/ModelsCard';
-import { CollapsibleCard } from './components/CollapsibleCard';
-import { SkillsCard } from './components/SkillsCard';
 import { FilePreview } from './components/FilePreview';
 import { ChatWidget } from './components/chat';
 import { HeaderBar } from './components/HeaderBar';
@@ -14,6 +10,7 @@ import { MissionEditor } from './components/MissionPage';
 import { AgentSpecEditorModal } from './components/AgentSpecEditorModal';
 import { ToastContainer } from './components/ToastContainer';
 import { AppPanel } from './components/AppPanel';
+import { InfoPanel } from './components/InfoPanel';
 import {
   buildAgentWorkInfo,
 } from './lib/messageUtils';
@@ -64,22 +61,9 @@ const App: React.FC = () => {
   const chatStore = useChatStore();
   const uiStore = useUiStore();
 
-  // In remote mode, gate rendering until WebRTC transport is connected.
-  // This prevents stores from fetching with [] fallback before data channel is ready.
-  const { connectionStatus } = uiStore;
-  if (isRemoteMode && connectionStatus === 'disconnected') {
-    return (
-      <div className="h-screen flex items-center justify-center bg-white dark:bg-[#0b0e14]">
-        <div className="text-center space-y-4">
-          <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-slate-200 dark:border-slate-700 border-t-emerald-500" />
-          <p className="text-slate-500 dark:text-slate-400 text-sm">Connecting to linggen server…</p>
-        </div>
-      </div>
-    );
-  }
-
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
 
   // Shortcuts
   const { projects, selectedProjectRoot, sessions, activeSessionId, isMissionSession, agentTreesByProject } = projectStore;
@@ -348,6 +332,38 @@ const App: React.FC = () => {
     readFile(path, projectRoot);
   }, [readFile]);
 
+  // --- Info panel props (shared between desktop sidebar and mobile drawer) ---
+  const handleClickSkill = useCallback((skill: any) => {
+    if (skill.app) {
+      if (skill.app.launcher === 'web') window.open(`/apps/${skill.name}/${skill.app.entry}`, '_blank');
+      else if (skill.app.launcher === 'url') window.open(skill.app.entry, '_blank');
+      else sendChatMessage(`/${skill.name} --web`);
+    } else sendChatMessage(`/${skill.name}`);
+  }, [sendChatMessage]);
+
+  const infoPanelProps = {
+    models, skills, agents: mainAgents, chatMessages, tokensPerSec, activeModelId,
+    agentContext, defaultModels, ollamaStatus, sessionTokens, reloadingSkills,
+    projectRoot: selectedProjectRoot,
+    onToggleDefault: agentStore.toggleDefaultModel,
+    onChangeReasoningEffort: agentStore.setReasoningEffort,
+    onReloadSkills: () => agentStore.reloadSkills(),
+    onOpenSettings: (tab: string) => uiStore.openSettings(tab),
+    onClickSkill: handleClickSkill,
+  };
+
+  // --- Remote mode: gate rendering until transport is connected ---
+  if (isRemoteMode && uiStore.connectionStatus === 'disconnected') {
+    return (
+      <div className="h-screen flex items-center justify-center bg-white dark:bg-[#0b0e14]">
+        <div className="text-center space-y-4">
+          <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-slate-200 dark:border-slate-700 border-t-emerald-500" />
+          <p className="text-slate-500 dark:text-slate-400 text-sm">Connecting to linggen server…</p>
+        </div>
+      </div>
+    );
+  }
+
   // --- Render ---
   return (
     <>
@@ -387,6 +403,7 @@ const App: React.FC = () => {
           isRunning={isRunning}
           onOpenSettings={() => uiStore.setCurrentPage('settings')}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
+          onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : undefined}
         />
       )}
 
@@ -479,42 +496,29 @@ const App: React.FC = () => {
           </div>
         </main>
 
-        {/* Right sidebar (hidden on mobile) */}
+        {/* Right sidebar (desktop only) */}
         {!isCompact && !isMobile && (
         <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] p-3 gap-3 overflow-y-auto">
-          <CollapsibleCard title="MODELS" icon={<Sparkles size={12} />} iconColor="text-purple-500" badge={`${models.length}`} defaultOpen
-            headerAction={
-              <button onClick={() => uiStore.openSettings('models')}
-                className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500" title="Manage Models">
-                <Settings size={12} />
-              </button>
-            }>
-            <ModelsCard models={models} agents={mainAgents} ollamaStatus={ollamaStatus} chatMessages={chatMessages}
-              tokensPerSec={tokensPerSec} activeModelId={activeModelId} agentContext={agentContext}
-              defaultModels={defaultModels} onToggleDefault={agentStore.toggleDefaultModel} onChangeReasoningEffort={agentStore.setReasoningEffort} sessionTokens={sessionTokens} />
-          </CollapsibleCard>
-          <CollapsibleCard title="SKILLS" icon={<Zap size={12} />} iconColor="text-amber-500" badge={`${skills.length} loaded`} defaultOpen
-            headerAction={
-              <div className="flex items-center gap-0.5">
-                <button onClick={() => agentStore.reloadSkills()} disabled={reloadingSkills}
-                  className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500 disabled:opacity-50" title="Reload skills from disk">
-                  <RefreshCw size={12} className={reloadingSkills ? 'animate-spin' : ''} />
-                </button>
-                <button onClick={() => uiStore.openSettings('skills')}
-                  className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded transition-colors text-slate-400 hover:text-blue-500" title="Manage Skills">
-                  <Settings size={12} />
+          <InfoPanel {...infoPanelProps} />
+        </aside>
+        )}
+
+        {/* Mobile right drawer (models + skills) */}
+        {isMobile && mobileInfoOpen && (
+          <>
+            <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setMobileInfoOpen(false)} />
+            <div className="fixed inset-y-0 right-0 w-72 z-50 bg-white dark:bg-[#0f0f0f] shadow-xl flex flex-col animate-slide-in-right">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/10">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Info</span>
+                <button onClick={() => setMobileInfoOpen(false)} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400">
+                  <X size={16} />
                 </button>
               </div>
-            }>
-            <SkillsCard skills={skills} projectRoot={selectedProjectRoot} onClickSkill={(skill) => {
-              if (skill.app) {
-                if (skill.app.launcher === 'web') window.open(`/apps/${skill.name}/${skill.app.entry}`, '_blank');
-                else if (skill.app.launcher === 'url') window.open(skill.app.entry, '_blank');
-                else sendChatMessage(`/${skill.name} --web`);
-              } else sendChatMessage(`/${skill.name}`);
-            }} />
-          </CollapsibleCard>
-        </aside>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                <InfoPanel {...infoPanelProps} />
+              </div>
+            </div>
+          </>
         )}
       </div>
 
