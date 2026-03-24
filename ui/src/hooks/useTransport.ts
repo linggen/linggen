@@ -25,6 +25,7 @@ function resyncState() {
   useProjectStore.getState().fetchAllSessions();
   useProjectStore.getState().fetchAllAgentTrees();
   useAgentStore.getState().fetchModels();
+  useAgentStore.getState().fetchDefaultModels();
   useAgentStore.getState().fetchSkills();
   useAgentStore.getState().fetchAgentRuns();
   useChatStore.getState().fetchWorkspaceState();
