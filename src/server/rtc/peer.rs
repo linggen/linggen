@@ -385,10 +385,13 @@ async fn process_control_request_async(
             }
             let url = format!("http://127.0.0.1:{port}{url_path}");
             tracing::info!("RTC http_request: {method} {url_path}");
-            let resp = if method == "POST" {
-                client.post(&url).json(&req.body.get("body").unwrap_or(&serde_json::Value::Null)).send().await
-            } else {
-                client.get(&url).send().await
+            let body_val = req.body.get("body").unwrap_or(&serde_json::Value::Null).clone();
+            let resp = match method {
+                "POST" => client.post(&url).json(&body_val).send().await,
+                "PUT" => client.put(&url).json(&body_val).send().await,
+                "PATCH" => client.patch(&url).json(&body_val).send().await,
+                "DELETE" => client.delete(&url).json(&body_val).send().await,
+                _ => client.get(&url).send().await,
             };
             match resp {
                 Ok(r) => {

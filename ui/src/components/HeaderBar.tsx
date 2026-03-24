@@ -4,7 +4,7 @@ import { cn } from '../lib/cn';
 import { useUiStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useAgentStore } from '../stores/agentStore';
-import logoUrl from '/logo.svg?url';
+import logoUrl from '../assets/logo.svg';
 
 export const HeaderBar: React.FC<{
   copyChat: () => void;
