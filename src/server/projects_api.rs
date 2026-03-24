@@ -1163,6 +1163,15 @@ pub(crate) async fn list_all_sessions(
                 if mission_id == "sessions" {
                     continue; // skip legacy global sessions dir
                 }
+                // Load mission config to get its project path
+                let mission_store = crate::project_store::missions::MissionStore::new();
+                let mission_project = mission_store.get_mission(&mission_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| m.project);
+                let mission_project_name = mission_project.as_ref().and_then(|p| {
+                    std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string())
+                });
                 let store = crate::state_fs::SessionStore::with_sessions_dir(
                     crate::paths::mission_sessions_dir(&mission_id),
                 );
@@ -1173,8 +1182,8 @@ pub(crate) async fn list_all_sessions(
                             "title": s.title,
                             "created_at": s.created_at,
                             "creator": s.creator,
-                            "project": serde_json::Value::Null,
-                            "project_name": serde_json::Value::Null,
+                            "project": mission_project,
+                            "project_name": mission_project_name,
                             "skill": s.skill,
                             "mission_id": mission_id,
                         }));

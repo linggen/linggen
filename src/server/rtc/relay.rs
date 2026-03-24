@@ -1,7 +1,7 @@
 //! Remote relay client — heartbeat + offer polling for linggen.dev signaling.
 //!
 //! When `~/.linggen/remote.toml` exists, the server:
-//! 1. Sends heartbeats every 30s to keep the instance "online" on the dashboard.
+//! 1. Sends heartbeats every 5 minutes to keep the instance "online" on the dashboard.
 //! 2. Polls for incoming SDP offers from remote browser clients.
 //! 3. Feeds offers into `create_peer()` and posts answers back.
 
@@ -38,7 +38,7 @@ pub fn spawn_relay_tasks(state: Arc<ServerState>) {
     });
 }
 
-/// Send heartbeats every 30s to keep the instance online.
+/// Send heartbeats every 5 minutes to keep the instance online.
 async fn heartbeat_loop(config: &RemoteConfig) {
     let client = reqwest::Client::new();
     let url = format!(
@@ -94,7 +94,13 @@ async fn offer_poll_loop(config: &RemoteConfig, state: Arc<ServerState>) {
 
                         if !nonce.is_empty() && !sdp.is_empty() {
                             info!("Received remote offer (nonce: {nonce})");
-                            handle_remote_offer(config, &state, &client, &nonce, &sdp).await;
+                            // Spawn independently so poll loop stays responsive
+                            let cfg = config.clone();
+                            let st = state.clone();
+                            let cl = client.clone();
+                            tokio::spawn(async move {
+                                handle_remote_offer(&cfg, &st, &cl, &nonce, &sdp).await;
+                            });
                         }
                     }
                     Err(e) => {

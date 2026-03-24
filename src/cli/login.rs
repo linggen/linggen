@@ -101,8 +101,9 @@ async fn receive_token_via_callback() -> Result<Option<String>> {
             html.len(),
             html
         );
-        stream.write_all(response.as_bytes()).await?;
-        stream.flush().await?;
+        // Write response but don't fail if browser closed early — we already have the token
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.flush().await;
 
         Ok::<_, anyhow::Error>(token)
     })
@@ -229,7 +230,12 @@ pub async fn run_status() -> Result<()> {
             println!("  Remote access: Configured");
             println!("  Relay: {}", config.relay_url);
             println!("  Instance: {} ({})", config.instance_name, config.instance_id);
-            println!("  Token: {}...{}", &config.api_token[..8], &config.api_token[config.api_token.len()-4..]);
+            let tok = &config.api_token;
+            if tok.len() > 12 {
+                println!("  Token: {}...{}", &tok[..8], &tok[tok.len()-4..]);
+            } else {
+                println!("  Token: (too short — may be invalid)");
+            }
         }
         None => {
             println!("  Remote access: Not configured");

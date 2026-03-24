@@ -371,10 +371,9 @@ async fn process_control_request_async(
     match req.msg_type.as_str() {
         "http_request" => {
             let method = req.body.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
-            let url_path = req.body.get("url").and_then(|v| v.as_str()).unwrap_or("/");
-            // SECURITY: validate the path to prevent SSRF attacks.
-            // Allow /api/*, /assets/*, /apps/* (skills), /index.html, /logo.svg
-            // for tunnel-loaded remote UI and lazy-loaded chunks.
+            let url_path_raw = req.body.get("url").and_then(|v| v.as_str()).unwrap_or("/");
+            // SECURITY: percent-decode then validate to prevent SSRF bypass via %2e%2e etc.
+            let url_path = urlencoding::decode(url_path_raw).unwrap_or(std::borrow::Cow::Borrowed(url_path_raw));
             let path_ok = url_path.starts_with("/api/")
                 || url_path.starts_with("/assets/")
                 || url_path.starts_with("/apps/")
@@ -578,21 +577,6 @@ fn enqueue_response(
     let mut resp = result;
     resp["request_id"] = serde_json::Value::String(request_id.to_string());
     queue.push_back((cid, resp.to_string()));
-}
-
-/// Split a string into chunks of at most `max_bytes`, respecting UTF-8 character boundaries.
-fn split_utf8_safe(s: &str, max_bytes: usize) -> Vec<&str> {
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    while start < s.len() {
-        let mut end = std::cmp::min(start + max_bytes, s.len());
-        while end > start && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        chunks.push(&s[start..end]);
-        start = end;
-    }
-    chunks
 }
 
 /// Get the local (non-loopback) IP address for WebRTC host candidates.

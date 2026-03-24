@@ -50,6 +50,7 @@ export class RelaySignaling implements SignalingStrategy {
       {
         method: 'POST',
         credentials: 'include',
+        headers: { 'Content-Type': 'application/sdp' },
         body: offerSdp,
         signal,
       },
@@ -66,7 +67,7 @@ export class RelaySignaling implements SignalingStrategy {
       await new Promise(r => setTimeout(r, 500));
 
       const answerResp = await _originalFetch(
-        `${this.relayBaseUrl}/api/signaling/${this.instanceId}/answer?nonce=${nonce}`,
+        `${this.relayBaseUrl}/api/signaling/${this.instanceId}/answer?nonce=${encodeURIComponent(nonce)}`,
         { credentials: 'include', signal },
       );
       if (answerResp.status === 204) continue;

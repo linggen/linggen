@@ -140,13 +140,15 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
     };
   }, []);
 
-  // Subscribe to session changes
+  // Subscribe to session changes (and unsubscribe old session)
   useEffect(() => {
+    if (!sessionId) return;
     try {
       const transport = getTransport();
-      if (sessionId) {
-        transport.subscribeSession(sessionId);
-      }
+      transport.subscribeSession(sessionId);
+      return () => {
+        transport.unsubscribeSession(sessionId);
+      };
     } catch {
       // Transport not initialized yet — will subscribe on next render
     }

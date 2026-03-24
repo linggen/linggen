@@ -138,6 +138,7 @@ export class RtcTransport implements Transport {
   // --- Internal: connection ---
 
   private async doConnect(): Promise<void> {
+    if (this._status === 'connecting') return; // already in progress
     this.setStatus('connecting');
 
     try {
@@ -376,6 +377,7 @@ export class RtcTransport implements Transport {
 
   private handleDisconnect(): void {
     if (this.intentionalDisconnect) return;
+    if (this._status === 'reconnecting') return; // already handling
 
     this.cleanup();
     this.setStatus('reconnecting');
