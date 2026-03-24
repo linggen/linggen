@@ -77,6 +77,7 @@ async function rtcFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
  * through WebRTC when using RtcTransport.
  */
 export function installFetchProxy(): void {
+  console.log('[fetchProxy] installed');
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
@@ -89,6 +90,14 @@ export function installFetchProxy(): void {
       || url.startsWith('/apps/')
       || url === '/logo.svg'
     );
+
+    if (shouldProxy && url.includes('/api/')) {
+      const isRtc = isWebRtcTransport();
+      const connected = isRtc ? (() => { try { return getTransport().status() === 'connected'; } catch { return false; } })() : false;
+      const isRemote = !!document.querySelector('meta[name="linggen-instance"]');
+      console.log(`[fetchProxy] ${url} shouldProxy=${shouldProxy} isRtc=${isRtc} connected=${connected} isRemote=${isRemote}`);
+    }
+
     if (isWebRtcTransport() && shouldProxy) {
       try {
         const transport = getTransport();
