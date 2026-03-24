@@ -105,9 +105,17 @@ export function installFetchProxy(): void {
     }
 
     // In blob iframe (tunnel mode), relative URLs can't be resolved by the browser.
-    // Intercept regardless of transport state — prevents URL parse errors.
+    // Return safe empty responses that won't crash stores' .map() / .sessions etc.
     if (shouldProxy && typeof url === 'string' && url.startsWith('/') && window.location.protocol === 'blob:') {
-      return Promise.resolve(new Response('null', { status: 503, headers: { 'Content-Type': 'application/json' } }));
+      // Return structure that matches what each endpoint normally returns
+      const emptyBody = typeof url === 'string' && (
+        url.includes('/sessions') ? '{"sessions":[]}' :
+        url.includes('/projects') ? '[]' :
+        url.includes('/skills') ? '[]' :
+        url.includes('/models') ? '[]' :
+        url.includes('/agents') ? '[]' :
+        '{}');
+      return Promise.resolve(new Response(emptyBody, { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
 
     return _originalFetch(input, init);
