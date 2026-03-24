@@ -10,6 +10,7 @@ import { MissionEditor } from './components/MissionPage';
 import { AgentSpecEditorModal } from './components/AgentSpecEditorModal';
 import { ToastContainer } from './components/ToastContainer';
 import { AppPanel } from './components/AppPanel';
+import { openAppInNewTab } from './lib/appLauncher';
 import { InfoPanel } from './components/InfoPanel';
 import {
   buildAgentWorkInfo,
@@ -341,16 +342,7 @@ const App: React.FC = () => {
   const handleClickSkill = useCallback((skill: any) => {
     if (skill.app) {
       if (skill.app.launcher === 'web') {
-        // Open in AppPanel (in-page iframe) — works on both local and remote
-        // because the iframe's fetch calls go through the fetch proxy.
-        uiStore.setOpenApp({
-          skill: skill.name,
-          launcher: 'web',
-          url: `/apps/${skill.name}/${skill.app.entry}`,
-          title: skill.name,
-          width: skill.app.width,
-          height: skill.app.height,
-        });
+        openAppInNewTab(`/apps/${skill.name}/${skill.app.entry}`);
       } else if (skill.app.launcher === 'url') {
         window.open(skill.app.entry, '_blank');
       } else {

@@ -8,6 +8,7 @@ import { useProjectStore } from '../stores/projectStore';
 import { useAgentStore } from '../stores/agentStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
+import { openAppInNewTab } from './appLauncher';
 import type { AgentStatusValue } from '../stores/agentStore';
 import {
   stripEmbeddedStructuredJson,
@@ -585,14 +586,10 @@ function handleToolProgress(item: UiEvent): void {
 
 function handleAppLaunched(item: UiEvent): void {
   const data = item.data || {};
-  useUiStore.getState().setOpenApp({
-    skill: data.skill || '',
-    launcher: data.launcher || 'web',
-    url: data.url || '',
-    title: data.title || data.skill || 'App',
-    width: data.width,
-    height: data.height,
-  });
+  const url = data.url || '';
+  if (url) {
+    openAppInNewTab(url);
+  }
 }
 
 function handleModelFallback(item: UiEvent): void {
