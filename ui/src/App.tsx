@@ -456,8 +456,11 @@ const App: React.FC = () => {
                 activeSessionId={activeSessionId}
                 onSelectSession={(session) => {
                   const isMission = session.creator === 'mission';
+                  const isSkill = session.creator === 'skill' || (!session.project && session.skill);
                   projectStore.setActiveSessionId(session.id);
                   projectStore.setIsMissionSession(isMission);
+                  projectStore.setIsSkillSession(!!isSkill);
+                  projectStore.setActiveSkillName(isSkill && session.skill ? session.skill : null);
                   projectStore.setActiveMissionId(isMission && session.mission_id ? session.mission_id : null);
                   if (session.project && session.project !== selectedProjectRoot) {
                     projectStore.setSelectedProjectRoot(session.project);
@@ -480,13 +483,12 @@ const App: React.FC = () => {
             activeSessionId={activeSessionId}
             onSelectSession={(session) => {
               const isMission = session.creator === 'mission';
+              const isSkill = session.creator === 'skill' || (!session.project && session.skill);
               projectStore.setActiveSessionId(session.id);
               projectStore.setIsMissionSession(isMission);
-              if (isMission && session.mission_id) {
-                projectStore.setActiveMissionId(session.mission_id);
-              } else {
-                projectStore.setActiveMissionId(null);
-              }
+              projectStore.setIsSkillSession(!!isSkill);
+              projectStore.setActiveSkillName(isSkill && session.skill ? session.skill : null);
+              projectStore.setActiveMissionId(isMission && session.mission_id ? session.mission_id : null);
               // Switch project context if session belongs to a different project
               if (session.project && session.project !== selectedProjectRoot) {
                 projectStore.setSelectedProjectRoot(session.project);

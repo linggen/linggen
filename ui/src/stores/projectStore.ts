@@ -18,6 +18,8 @@ interface ProjectState {
   isMissionSession: boolean;
   activeMissionId: string | null;
   activeMissionProject: string | null;
+  isSkillSession: boolean;
+  activeSkillName: string | null;
   agentTreesByProject: Record<string, Record<string, AgentTreeItem>>;
   sessionCountsByProject: Record<string, number>;
   currentPath: string;
@@ -32,6 +34,8 @@ interface ProjectState {
   setIsMissionSession: (val: boolean) => void;
   setActiveMissionId: (id: string | null) => void;
   setActiveMissionProject: (project: string | null) => void;
+  setIsSkillSession: (val: boolean) => void;
+  setActiveSkillName: (name: string | null) => void;
   setNewProjectPath: (path: string) => void;
   setShowAddProject: (show: boolean) => void;
   setCurrentPath: (path: string) => void;
@@ -74,6 +78,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   isMissionSession: false,
   activeMissionId: null,
   activeMissionProject: null,
+  isSkillSession: false,
+  activeSkillName: null,
   agentTreesByProject: {},
   sessionCountsByProject: {},
   currentPath: '',
@@ -93,6 +99,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   setIsMissionSession: (val) => set({ isMissionSession: val }),
   setActiveMissionId: (id) => set({ activeMissionId: id }),
   setActiveMissionProject: (project) => set({ activeMissionProject: project }),
+  setIsSkillSession: (val) => set({ isSkillSession: val }),
+  setActiveSkillName: (name) => set({ activeSkillName: name }),
   setNewProjectPath: (path) => set({ newProjectPath: path }),
   setShowAddProject: (show) => set({ showAddProject: show }),
   setCurrentPath: (path) => set({ currentPath: path }),

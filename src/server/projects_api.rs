@@ -857,6 +857,60 @@ pub(crate) async fn list_skill_sessions(
     }
 }
 
+/// GET /api/skill-sessions/state — return messages for a skill session.
+pub(crate) async fn get_skill_session_state(
+    Query(query): Query<SkillSessionStateQuery>,
+) -> impl IntoResponse {
+    let Some(skill) = query.skill.filter(|s| !s.is_empty()) else {
+        return Json(serde_json::json!({ "messages": [] })).into_response();
+    };
+    let Some(session_id) = query.session_id.filter(|s| !s.is_empty()) else {
+        return Json(serde_json::json!({ "messages": [] })).into_response();
+    };
+
+    let store = crate::state_fs::SessionStore::with_sessions_dir(
+        crate::paths::skill_sessions_dir(&skill),
+    );
+    let messages = store
+        .get_chat_history(&session_id)
+        .unwrap_or_default();
+
+    let mapped: Vec<serde_json::Value> = messages
+        .into_iter()
+        .filter(|m| !m.is_observation)
+        .filter_map(|m| {
+            let cleaned =
+                crate::server::chat_helpers::sanitize_message_for_ui(&m.from_id, &m.content)?;
+            Some(serde_json::json!([
+                {
+                    "id": format!("msg-{}", m.timestamp),
+                    "from": m.from_id,
+                    "to": m.to_id,
+                    "ts": m.timestamp,
+                    "task_id": null
+                },
+                cleaned
+            ]))
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "active_task": null,
+        "user_stories": null,
+        "tasks": [],
+        "messages": mapped
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SkillSessionStateQuery {
+    #[serde(default)]
+    skill: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct RemoveSkillSessionRequest {
     skill: String,

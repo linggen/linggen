@@ -623,15 +623,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const projectState = useProjectStore.getState();
     const selectedProjectRoot = opts?.projectRoot ?? projectState.selectedProjectRoot;
     const activeSessionId = opts?.sessionId ?? projectState.activeSessionId;
-    const { isMissionSession, activeMissionId } = projectState;
+    const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = projectState;
     if (!activeSessionId) return;
     if (isMissionSession && !activeMissionId) return;
-    if (!isMissionSession && !selectedProjectRoot) return;
+    if (isSkillSession && !activeSkillName) return;
+    if (!isMissionSession && !isSkillSession && !selectedProjectRoot) return;
     try {
       let url: URL;
       if (isMissionSession && activeMissionId) {
         url = new URL('/api/missions/sessions/state', window.location.origin);
         url.searchParams.append('mission_id', activeMissionId);
+        url.searchParams.append('session_id', activeSessionId);
+      } else if (isSkillSession && activeSkillName) {
+        url = new URL('/api/skill-sessions/state', window.location.origin);
+        url.searchParams.append('skill', activeSkillName);
         url.searchParams.append('session_id', activeSessionId);
       } else {
         url = new URL('/api/workspace/state', window.location.origin);
