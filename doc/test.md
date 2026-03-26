@@ -77,19 +77,19 @@ Use `UpdatePlan` ONLY after the user has approved a plan (or for simple multi-st
 ## Available Skills
 
 Use the `Skill` tool to invoke a skill by name. Available skills:
-- **sys-doctor**: System health analyst. Scans disk, apps, caches, and system info. Use --web for interactive dashboard, or run directly in chat for text reports.
-- **frontend-design**: Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.
-- **disk-analyzer**: Analyze disk usage to find the largest files in a directory.
+- **skill-creator**: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
+- **arcade-game**: Retro arcade games — Snake, Pong, and Tetris in your browser
 - **discord**: Social messaging with Discord friends. Send and receive messages in chat.
+- **game-table**: Play board games against AI — Chinese Chess, Gomoku, and more
+- **docx**: Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a 'report', 'memo', 'letter', 'template', or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation.
+- **frontend-design**: Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.
+- **skiller**: Search, install, and manage skills from the marketplace. Browse library packs.
+- **sys-doctor**: System health analyst. Scans disk, apps, caches, and system info. Use --web for interactive dashboard, or run directly in chat for text reports.
+- **linggen-guide**: Linggen documentation and usage guide. Answers questions about architecture, features, CLI, skills, tools, agents, and configuration.
+- **disk-analyzer**: Analyze disk usage to find the largest files in a directory.
+- **mission**: Autonomous mission mode. Runs scheduled tasks without human interaction.
 - **coding-guidelines**: Use when asking about Rust code style or best practices. Keywords: naming, formatting, comment, clippy, rustfmt, lint, code style, best practice, P.NAM, G.FMT, code review, naming convention, variable naming, function naming, type naming, 命名规范, 代码风格, 格式化, 最佳实践, 代码审查, 怎么命名
 - **weather**: Get current weather and forecasts from wttr.in without an API key.
-- **mission**: Autonomous mission mode. Runs scheduled tasks without human interaction.
-- **game-table**: Play board games against AI — Chinese Chess, Gomoku, and more
-- **skiller**: Search, install, and manage skills from the marketplace. Browse library packs.
-- **docx**: Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a 'report', 'memo', 'letter', 'template', or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation.
-- **arcade-game**: Retro arcade games — Snake, Pong, and Tetris in your browser
-- **linggen-guide**: Linggen documentation and usage guide. Answers questions about architecture, features, CLI, skills, tools, agents, and configuration.
-- **skill-creator**: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
 # Environment
 - Platform: macos
 - OS: Darwin 25.3.0

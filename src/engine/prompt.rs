@@ -4,6 +4,8 @@ use crate::ollama::ChatMessage;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+
+
 fn get_os_version() -> String {
     static OS_VERSION: OnceLock<String> = OnceLock::new();
     OS_VERSION

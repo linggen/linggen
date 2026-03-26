@@ -1279,6 +1279,18 @@ pub(crate) async fn list_all_sessions(
         }
     }
 
+    // Deduplicate by session ID (keep the first occurrence, which has richer metadata)
+    {
+        let mut seen = std::collections::HashSet::new();
+        all.retain(|s| {
+            if let Some(id) = s["id"].as_str() {
+                seen.insert(id.to_string())
+            } else {
+                true
+            }
+        });
+    }
+
     // Sort by created_at descending (newest first)
     all.sort_by(|a, b| {
         let ta = a["created_at"].as_u64().unwrap_or(0);

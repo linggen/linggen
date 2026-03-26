@@ -20,30 +20,61 @@ fn build_relay_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// Start relay background tasks if remote config exists.
+/// Start relay background tasks. Watches for remote config and auto-reloads on changes.
 /// Call this after the server is ready to accept peer connections.
 pub fn spawn_relay_tasks(state: Arc<ServerState>) {
-    let Some(config) = load_remote_config() else {
-        debug!("No remote.toml found — relay tasks not started");
-        return;
-    };
-
-    info!(
-        "Remote access enabled: {} ({})",
-        config.instance_name, config.instance_id
-    );
-
-    // Spawn heartbeat loop
-    let hb_config = config.clone();
     tokio::spawn(async move {
-        heartbeat_loop(&hb_config).await;
+        relay_supervisor(state).await;
     });
+}
 
-    // Spawn offer polling loop
-    let poll_config = config.clone();
-    tokio::spawn(async move {
-        offer_poll_loop(&poll_config, state).await;
-    });
+/// Supervisor that starts/restarts relay tasks when remote.toml appears or changes.
+async fn relay_supervisor(state: Arc<ServerState>) {
+    let mut last_token: Option<String> = None;
+
+    loop {
+        let config = load_remote_config();
+
+        match (&config, &last_token) {
+            (Some(cfg), None) => {
+                info!("Remote access enabled: {} ({})", cfg.instance_name, cfg.instance_id);
+            }
+            (Some(cfg), Some(old)) if cfg.api_token != *old => {
+                info!("Remote credentials updated — restarting relay tasks");
+            }
+            (Some(_), Some(_)) => {
+                // No change — sleep and check again
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                continue;
+            }
+            (None, _) => {
+                last_token = None;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                continue;
+            }
+        }
+
+        let config = config.unwrap();
+        last_token = Some(config.api_token.clone());
+
+        // Run heartbeat and offer polling until auth fails or config changes
+        let cfg1 = config.clone();
+        let cfg2 = config.clone();
+        let st = state.clone();
+
+        let hb = tokio::spawn(async move { heartbeat_loop(&cfg1).await });
+        let poll = tokio::spawn(async move { offer_poll_loop(&cfg2, st).await });
+
+        // Wait for either task to exit (auth failure causes return)
+        tokio::select! {
+            _ = hb => {}
+            _ = poll => {}
+        }
+
+        // One of the tasks exited (likely 401). Wait a bit, then re-check config.
+        info!("Relay tasks stopped — will re-check credentials in 30s");
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
 }
 
 /// Send heartbeats every 5 minutes to keep the instance online.
@@ -63,6 +94,10 @@ async fn heartbeat_loop(config: &RemoteConfig) {
         {
             Ok(resp) if resp.status().is_success() => {
                 debug!("Heartbeat sent");
+            }
+            Ok(resp) if resp.status() == 401 || resp.status() == 403 => {
+                warn!("Heartbeat auth rejected ({}). Will retry after credential reload.", resp.status());
+                return;
             }
             Ok(resp) => {
                 warn!("Heartbeat failed: {}", resp.status());

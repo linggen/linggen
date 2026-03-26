@@ -371,7 +371,8 @@ export const SessionList: React.FC<{
             </div>
           )}
           {projects.map((p) => {
-            const name = p.path.split('/').pop() || p.path;
+            const isHome = /^\/Users\/[^/]+$/.test(p.path) || /^\/home\/[^/]+$/.test(p.path) || /^[A-Z]:\\Users\\[^\\]+$/.test(p.path) || p.path === '~';
+            const name = isHome ? 'HOME' : (p.path.split('/').pop() || p.path);
             const isSelected = p.path === selectedProjectRoot;
             return (
               <div key={p.path} className={cn(
