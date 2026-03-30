@@ -78,7 +78,7 @@ export const ModelsCard: React.FC<{
             <div className="flex items-center justify-between gap-1">
               <div className="flex items-center gap-1.5 min-w-0">
                 <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', (isActive || isGeneratingModel) ? 'bg-green-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600')} />
-                <span className="font-mono font-bold text-[11px] truncate">{m.model || m.id}</span>
+                <span className="font-mono font-bold text-[12px] truncate">{m.model || m.id}</span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span className="text-[8px] text-slate-400 uppercase tracking-wide">{m.provider}</span>
@@ -103,7 +103,7 @@ export const ModelsCard: React.FC<{
               const effective = m.reasoning_effort || 'medium';
               const isDefault = !m.reasoning_effort;
               return (
-                <div className="flex items-center gap-1.5 text-[9px]">
+                <div className="flex items-center gap-1.5 text-[10px]">
                   <Brain size={9} className="text-purple-400 shrink-0" />
                   <span className="text-slate-400">Reasoning:</span>
                   {(['low', 'medium', 'high'] as const).map((level) => {
@@ -133,7 +133,7 @@ export const ModelsCard: React.FC<{
 
             {/* Model stats when active */}
             {(activeInfo || showTps) && (
-              <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
+              <div className="flex items-center gap-3 text-[10px] text-slate-400 font-mono">
                 {activeInfo && <span>{activeInfo.details.parameter_size}</span>}
                 {activeInfo && <span>{activeInfo.details.quantization_level}</span>}
                 {activeInfo && <span>{(activeInfo.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB</span>}
@@ -151,9 +151,9 @@ export const ModelsCard: React.FC<{
                   const pct = limit ? Math.round((tokens / limit) * 100) : null;
 
                   return (
-                    <div key={agent.name} className="flex items-center gap-1.5 text-[10px]">
+                    <div key={agent.name} className="flex items-center gap-1.5 text-[11px]">
                       <Bot size={9} className="text-purple-400 shrink-0" />
-                      <span className="font-semibold uppercase text-[9px] text-slate-500 dark:text-slate-400 w-16 truncate">{agent.name}</span>
+                      <span className="font-semibold uppercase text-[10px] text-slate-500 dark:text-slate-400 w-16 truncate">{agent.name}</span>
                       {ctx ? (
                         <>
                           <div className="flex-1 h-1 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
@@ -182,7 +182,7 @@ export const ModelsCard: React.FC<{
       })}
       {sessionTokens && (sessionTokens.prompt > 0 || sessionTokens.completion > 0) && (
         <div className="pt-1.5 border-t border-slate-100 dark:border-white/5">
-          <div className="flex items-center justify-between text-[9px] font-mono text-slate-400">
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>Session tokens</span>
             <span className="tabular-nums">
               <span title="Prompt tokens">↑{formatCompactInt(sessionTokens.prompt)}</span>

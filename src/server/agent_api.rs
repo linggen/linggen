@@ -1,3 +1,4 @@
+use crate::server::chat_helpers::{emit_queue_updated, queue_key};
 use crate::server::{AgentStatusKind, ServerEvent, ServerState};
 use crate::state_fs::StateFile;
 use axum::{
@@ -202,6 +203,17 @@ pub(crate) async fn cancel_agent_run(
                         Some("Cancelled".to_string()),
                         None,
                     )
+                    .await;
+
+                // Drain queued messages for this agent so they don't get stuck.
+                // Without this, queued messages survive cancellation and block
+                // new messages (the UI shows "agent is busy" permanently).
+                let key = queue_key(&run.repo_path, &run.session_id, &run.agent_id);
+                {
+                    let mut guard = state.queued_chats.lock().await;
+                    guard.remove(&key);
+                }
+                emit_queue_updated(&state, &run.repo_path, &run.session_id, &run.agent_id)
                     .await;
             }
             let _ = state.events_tx.send(ServerEvent::StateUpdated);

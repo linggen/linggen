@@ -100,7 +100,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
     <section className="bg-white dark:bg-[#141414] rounded-xl border border-blue-200 dark:border-blue-500/20 shadow-sm flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-blue-100 dark:border-blue-500/10 bg-blue-50/50 dark:bg-blue-500/5">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+        <span className="text-[12px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
           Agent needs your input
         </span>
       </div>
@@ -111,10 +111,10 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
           <div key={qIdx} className="space-y-2">
             {/* Header chip + question text */}
             <div className="flex items-start gap-2">
-              <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400">
+              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400">
                 {q.header}
               </span>
-              <p className="text-[12px] text-slate-700 dark:text-slate-300 leading-snug">
+              <p className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">
                 {q.question}
               </p>
             </div>
@@ -128,7 +128,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
                     key={opt.label}
                     onClick={() => toggleOption(qIdx, opt.label)}
                     title={opt.description ?? undefined}
-                    className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                    className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
                       isSelected
                         ? 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500'
                         : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600 dark:bg-white/5 dark:text-slate-300 dark:border-white/10 dark:hover:border-blue-500/40'
@@ -142,7 +142,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
               {/* Other button */}
               <button
                 onClick={() => toggleOther(qIdx)}
-                className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
                   otherActive[qIdx]
                     ? 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500'
                     : 'bg-white text-slate-400 border-dashed border-slate-200 hover:border-blue-300 hover:text-blue-500 dark:bg-transparent dark:text-slate-500 dark:border-white/10 dark:hover:border-blue-500/40'
@@ -156,7 +156,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
             {q.options.some(o => o.description) && (
               <div className="ml-0.5 space-y-0.5">
                 {q.options.filter(o => selections[qIdx].has(o.label) && o.description).map(o => (
-                  <p key={o.label} className="text-[10px] text-slate-400 dark:text-slate-500 italic">
+                  <p key={o.label} className="text-[11px] text-slate-400 dark:text-slate-500 italic">
                     {o.label}: {o.description}
                   </p>
                 ))}
@@ -171,7 +171,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
                 placeholder="Type your answer…"
                 value={customTexts[qIdx]}
                 onChange={e => setCustomTexts(prev => ({ ...prev, [qIdx]: e.target.value }))}
-                className="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:border-blue-400 dark:focus:border-blue-500/40"
+                className="w-full text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:border-blue-400 dark:focus:border-blue-500/40"
               />
             )}
           </div>
@@ -182,14 +182,14 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
       <div className="flex items-center justify-end gap-2 px-3 py-2 border-t border-slate-100 dark:border-white/5">
         <button
           onClick={handleSkip}
-          className="text-[11px] px-3 py-1 rounded-lg text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer transition-colors"
+          className="text-[12px] px-3 py-1 rounded-lg text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer transition-colors"
         >
           Skip
         </button>
         <button
           onClick={handleSubmit}
           disabled={!hasAnyAnswer}
-          className={`text-[11px] px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+          className={`text-[12px] px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
             hasAnyAnswer
               ? 'bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600'
               : 'bg-slate-100 text-slate-300 dark:bg-white/5 dark:text-slate-600 cursor-not-allowed'

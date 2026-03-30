@@ -84,6 +84,7 @@ pub(crate) async fn marketplace_install(
     {
         Ok(msg) => {
             let _ = state.skill_manager.load_all(project_root_path).await;
+            state.manager.session_engines.lock().await.clear();
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }

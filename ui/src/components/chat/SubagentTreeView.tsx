@@ -17,7 +17,7 @@ export const SubagentTreeView: React.FC<{
 
   return (
     <div
-      className={cn('mb-1.5 font-mono text-[11px]', !isGenerating && allDone && 'cursor-pointer select-none')}
+      className={cn('mb-1.5 font-mono text-[12px]', !isGenerating && allDone && 'cursor-pointer select-none')}
       onClick={!isGenerating && allDone ? onToggle : undefined}
     >
       {entries.map((entry) => {
@@ -33,7 +33,7 @@ export const SubagentTreeView: React.FC<{
           <div key={entry.subagentId} className="mb-0.5">
             <div className="flex items-start gap-0">
               <span className="shrink-0">&nbsp;&nbsp;</span>
-              <span className={cn('text-[10px] mr-0.5', bulletColor, isRunning && 'animate-pulse')}>⏺</span>
+              <span className={cn('text-[11px] mr-0.5', bulletColor, isRunning && 'animate-pulse')}>⏺</span>
               <span className="text-cyan-600 dark:text-cyan-400 font-semibold">{entry.agentName || 'Task'}</span>
               <span className="text-slate-700 dark:text-slate-200">({taskPreview})</span>
             </div>
@@ -45,7 +45,7 @@ export const SubagentTreeView: React.FC<{
                   const connector = isLastStep ? '⎿' : '│';
                   const stepColor = step.status === 'done' ? 'text-emerald-500' : step.status === 'failed' ? 'text-red-500' : 'text-amber-500';
                   return (
-                    <div key={si} className="flex items-start gap-0 text-[10px] pl-4">
+                    <div key={si} className="flex items-start gap-0 text-[11px] pl-4">
                       <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">{connector}&nbsp;&nbsp;</span>
                       <span className={cn('mr-0.5', stepColor)}>⏺</span>
                       <span className={cn('font-medium', step.status === 'failed' ? 'text-red-600 dark:text-red-400' : 'text-cyan-600 dark:text-cyan-400')}>{step.toolName}</span>
@@ -56,10 +56,10 @@ export const SubagentTreeView: React.FC<{
                   );
                 })}
                 {entry.toolSteps.length > 3 && (
-                  <div className="text-[10px] pl-4 text-slate-400 dark:text-slate-500 italic">+{entry.toolSteps.length - 3} more</div>
+                  <div className="text-[11px] pl-4 text-slate-400 dark:text-slate-500 italic">+{entry.toolSteps.length - 3} more</div>
                 )}
               </>) : entry.currentActivity ? (
-                <div className="flex items-start gap-0 text-[10px] pl-4 text-slate-400 dark:text-slate-500">
+                <div className="flex items-start gap-0 text-[11px] pl-4 text-slate-400 dark:text-slate-500">
                   <span className="select-none shrink-0">⎿&nbsp;&nbsp;</span>
                   <span>{entry.currentActivity}</span>
                 </div>
@@ -70,7 +70,7 @@ export const SubagentTreeView: React.FC<{
                 const connector = isLastStep ? '⎿' : '│';
                 const stepBulletColor = step.status === 'done' ? 'text-emerald-500' : step.status === 'failed' ? 'text-red-500' : 'text-amber-500';
                 return (
-                  <div key={si} className="flex items-start gap-0 text-[10px] pl-4">
+                  <div key={si} className="flex items-start gap-0 text-[11px] pl-4">
                     <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">{connector}&nbsp;&nbsp;</span>
                     <span className={cn('mr-0.5', stepBulletColor)}>⏺</span>
                     <span className={cn('font-medium', step.status === 'failed' ? 'text-red-600 dark:text-red-400' : 'text-cyan-600 dark:text-cyan-400')}>{step.toolName}</span>
@@ -81,7 +81,7 @@ export const SubagentTreeView: React.FC<{
                 );
               })
             ) : !isRunning ? (
-              <div className="flex items-start gap-0 text-[10px] pl-4">
+              <div className="flex items-start gap-0 text-[11px] pl-4">
                 <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">⎿&nbsp;&nbsp;</span>
                 <span className="text-slate-400 dark:text-slate-500 italic">
                   Done ({[
@@ -96,7 +96,7 @@ export const SubagentTreeView: React.FC<{
       })}
 
       {allDone && !showExpanded && !isGenerating && (
-        <div className="text-[10px] text-slate-400 dark:text-slate-500 pl-4 italic">(click to expand)</div>
+        <div className="text-[11px] text-slate-400 dark:text-slate-500 pl-4 italic">(click to expand)</div>
       )}
     </div>
   );

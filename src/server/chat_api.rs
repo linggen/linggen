@@ -166,6 +166,8 @@ pub(crate) async fn clear_chat_history_api(
 pub(crate) struct SystemPromptQuery {
     project_root: String,
     agent_id: String,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 pub(crate) async fn get_system_prompt_api(
@@ -176,22 +178,18 @@ pub(crate) async fn get_system_prompt_api(
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-    let ctx = match state.manager.get_or_create_project(root).await {
-        Ok(ctx) => ctx,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    // Look up the session engine; fall back to creating a temporary one
+    let sid = query.session_id.as_deref().unwrap_or("default");
+    let agent = match state.manager.get_or_create_session_agent(sid, &root, &query.agent_id).await {
+        Ok(a) => a,
+        Err(_) => return (StatusCode::NOT_FOUND, format!("Agent '{}' not found", query.agent_id)).into_response(),
     };
-    let agents = ctx.agents.lock().await;
-    if let Some(agent_mutex) = agents.get(&query.agent_id) {
-        let mut engine = agent_mutex.lock().await;
-        // Build the full system prompt including tool schemas, plan mode, delegation, etc.
-        let (messages, _, _) = engine.prepare_loop_messages("(export)", true);
-        let system_prompt = messages.first()
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-        Json(serde_json::json!({ "system_prompt": system_prompt })).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, format!("Agent '{}' not found", query.agent_id)).into_response()
-    }
+    let mut engine = agent.lock().await;
+    let (messages, _, _) = engine.prepare_loop_messages("(export)", true);
+    let system_prompt = messages.first()
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "system_prompt": system_prompt })).into_response()
 }
 
 pub(crate) async fn compact_chat_api(
@@ -209,21 +207,8 @@ pub(crate) async fn compact_chat_api(
     };
     let focus = req.focus.as_deref();
 
-    match state.manager.get_or_create_project(root).await {
-        Ok(ctx) => {
-            let agents = ctx.agents.lock().await;
-            let agent_mutex = match agents.get(&agent_id) {
-                Some(a) => a.clone(),
-                None => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        format!("Agent '{}' not found", agent_id),
-                    )
-                        .into_response()
-                }
-            };
-            drop(agents);
-
+    match state.manager.get_or_create_session_agent(&session_id, &root, &agent_id).await {
+        Ok(agent_mutex) => {
             let mut engine = agent_mutex.lock().await;
             let mut messages = std::mem::take(&mut engine.chat_history);
             let result = engine.force_compact(&mut messages, focus).await;
@@ -487,7 +472,7 @@ async fn run_skill_dispatch(
     } else {
         tracing::info!("Skill completed: {}", cmd);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
+            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
@@ -581,7 +566,7 @@ async fn run_trigger_dispatch(
     } else {
         tracing::info!("Trigger skill completed: {}", skill_name);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
+            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
@@ -705,7 +690,7 @@ async fn run_plan_dispatch(
                     ctx.session_id.as_deref(), false,
                 ).await;
             }
-            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id);
+            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 // Store pending plan — user approves via PlanBlock buttons in UI.
                 ctx.manager
@@ -790,7 +775,7 @@ async fn run_plan_execution(
 
     match exec_outcome {
         Ok(ref out) => {
-            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id);
+            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
             // For Done (AgentOutcome::None): emit the last_assistant_text as a
             // Message so the UI shows the completion summary.
             if matches!(out, crate::engine::AgentOutcome::None) {
@@ -1005,7 +990,7 @@ async fn run_structured_loop(
             &ctx.agent_id, "user", &plan_json,
             ctx.session_id.as_deref(), false,
         ).await;
-        emit_outcome_event(ok_outcome, &ctx.events_tx, &ctx.agent_id);
+        emit_outcome_event(ok_outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
         ctx.manager
             .set_pending_plan(
                 &ctx.root.to_string_lossy(),
@@ -1020,7 +1005,7 @@ async fn run_structured_loop(
     // Agent plan was approved inline — start execution immediately.
     if let Ok(crate::engine::AgentOutcome::PlanApproved(ref plan)) = outcome {
         persist_and_emit_last_assistant_text(ctx, engine).await;
-        emit_outcome_event(outcome.as_ref().unwrap(), &ctx.events_tx, &ctx.agent_id);
+        emit_outcome_event(outcome.as_ref().unwrap(), &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
         engine.plan = Some(plan.clone());
         engine.plan_mode = false;
         engine.observations.clear();
@@ -1033,7 +1018,7 @@ async fn run_structured_loop(
     }
 
     if let Ok(outcome) = &outcome {
-        emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id);
+        emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
         // For text-only responses (AgentOutcome::None with streamed content),
         // the engine already persists the message to session files but doesn't
         // emit a ServerEvent::Message.  Emit one now so the UI can finalize

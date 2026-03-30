@@ -198,7 +198,7 @@ export const AgentSpecEditorModal: React.FC<{
                   }`}
                 >
                   <div className="text-xs font-semibold truncate">{file.agent_id}</div>
-                  <div className="text-[11px] text-slate-500 truncate">{file.path}</div>
+                  <div className="text-[12px] text-slate-500 truncate">{file.path}</div>
                 </button>
               ))
             )}
@@ -212,7 +212,7 @@ export const AgentSpecEditorModal: React.FC<{
               <span className="text-xs font-mono truncate">{selectedPath || 'No file selected'}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              {dirty && <span className="text-[11px] text-amber-600">Unsaved</span>}
+              {dirty && <span className="text-[12px] text-amber-600">Unsaved</span>}
               <button
                 onClick={saveFile}
                 disabled={!selectedPath || saving || loadingFile}

@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.9.0 (2026-03-30)
+
+Working folder model, per-session engines, WebRTC-first transport, and UX improvements.
+
+### Added
+
+- **Working folder model** — sessions start in HOME mode and auto-detect projects when the agent `cd`s into a git repo. CLAUDE.md, permissions, and git context load dynamically on project entry. Configurable `home_path` in settings.
+- **Per-session agent engines** — each session gets its own engine instance. No more lock contention between sessions — game-table and regular chat run truly in parallel.
+- **WebRTC-first transport** — Web UI always uses WebRTC (local and remote). Per-session data channels provide natural isolation. SSE retained for TUI only.
+- **WebRTC session_id enrichment** — events are tagged with session_id before routing to data channels, preventing cross-session event leaks.
+- **ChatGPT token expiry UX** — inline re-login button when ChatGPT OAuth expires. After re-login, session engines are cleared so the fresh token is used immediately.
+- **Working folder changed event** — `WorkingFolderChanged` server event emitted when the agent `cd`s. UI header updates reactively.
+- **`home_path` config** — configurable default working folder for new sessions (defaults to `~`).
+- **Git root detection** — `find_git_root()` walks up from cwd looking for `.git/`. Skips home directory dotfiles repos.
+
+### Changed
+
+- **Flat session storage** — all sessions stored in `~/.linggen/sessions/` (flat directory). No more per-project/mission/skill session directories. Session metadata tracks `cwd`, `project`, `project_name`, `mission_id`.
+- **Simplified chat creation** — clicking `+` immediately creates a session. Removed project picker dialog.
+- **Removed project management UI** — no more workspace section, project cards, or manual project add/remove in sidebar. Projects are auto-discovered from git repos.
+- **Skill search ordering** — community skills from skills.sh and ClawHub are interleaved by relevance instead of sorted by install count.
+- **ClawHub ZIP install** — handles root-level SKILL.md (no subdirectory) in ClawHub ZIP archives.
+- **Ollama status polling** — only polls when Ollama models are configured, eliminating 404 spam.
+- **Auto-scroll** — any upward scroll stops auto-scroll (was 10% threshold). Resumes within 20px of bottom.
+- **IME composition** — Enter key during Chinese/Japanese input composition no longer triggers send.
+- **Models card scroll** — auto-scrolls to default (starred) model when the model list loads.
+- **Session list** — session rows use `<div>` instead of nested `<button>` (fixes React DOM nesting warning).
+- **Skill reload** — installing/uninstalling skills clears session engines so new skills are available on next message.
+- **install.sh** — post-install output now shows `ling init` as the first step.
+
+### Fixed
+
+- **Session isolation** — WebRTC events no longer leak between sessions. Added session_id enrichment in WebRTC peer handler (was missing, only SSE had it).
+- **`emit_outcome_event`** — plan/outcome events now carry session_id (was hardcoded `None`).
+- **Compact mode race** — skill app iframe now explicitly fetches workspace state after setting `isSkillSession`, preventing stale API calls.
+- **Session engine memory leak** — `remove_session_engine` called on all session deletion paths.
+- **TUI session creation** — `get_session_meta` check uses `Ok(Some(_))` instead of `is_ok()` (was always true).
+- **`UiEvent.kind` type** — added `'working_folder'` to TypeScript union type.
+
+### Removed
+
+- **`~/.linggen/projects/` session directories** — sessions no longer stored per-project.
+- **`session_root` on `EngineConfig`** — removed; all persistence goes through global sessions.
+- **`ProjectContext.sessions`** — removed; all session access through `AgentManager.global_sessions`.
+- **`ProjectStore::session_store()`** — removed dead code.
+- **`missions_sessions_dir()` / `skill_sessions_dir()`** — removed from `paths.rs`.
+- **`NewChatDialog` component** — removed project picker dialog from UI.
+
 ## v0.8.0 (2026-03-25)
 
 Remote access, mobile UI, Google login, and infrastructure improvements.

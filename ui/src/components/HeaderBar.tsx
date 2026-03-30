@@ -34,8 +34,10 @@ export const HeaderBar: React.FC<{
             <Menu size={18} />
           </button>
         )}
-        <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
-        <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white"><span className="hidden md:inline">Linggen Agent</span><span className="md:hidden">Linggen</span></h1>
+        <a href="https://linggen.dev" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity">
+          <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
+          <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white">Linggen</h1>
+        </a>
       </div>
 
       {/* Center: Chat actions */}
@@ -114,7 +116,7 @@ export const HeaderBar: React.FC<{
         {connectionStatus === 'reconnecting' ? (
           <div className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-amber-500">Reconnecting</span>
+            <span className="text-[11px] font-bold uppercase tracking-widest text-amber-500">Reconnecting</span>
           </div>
         ) : (
           <div className={cn('w-2 h-2 rounded-full', isRunning ? 'bg-green-500 animate-pulse' : 'bg-slate-400')} title={isRunning ? 'Running' : 'Idle'} />

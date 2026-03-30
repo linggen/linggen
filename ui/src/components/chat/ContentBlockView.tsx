@@ -25,7 +25,7 @@ export const TurnSummaryFooter: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
   if (parts.length === 0) return null;
 
   return (
-    <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-400 dark:text-slate-500 select-none">
+    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono text-slate-400 dark:text-slate-500 select-none">
       <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600" />
       {parts.join(' · ')}
     </div>
@@ -105,7 +105,7 @@ export const ContentBlockView: React.FC<{
     const expandBtn = (
       <button
         onClick={(e) => { e.stopPropagation(); setBashExpanded(!bashExpanded); }}
-        className="absolute top-0 right-1 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 select-none z-10"
+        className="absolute top-0 right-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 select-none z-10"
         title={bashExpanded ? 'Collapse' : 'Expand'}
       >
         {bashExpanded ? '⤡' : '⤢'}
@@ -120,7 +120,7 @@ export const ContentBlockView: React.FC<{
             onScroll={handleScroll}
             className={cn('pl-4 mt-1 overflow-y-auto custom-scrollbar', bashExpanded ? 'max-h-[70vh]' : 'max-h-80')}
           >
-            <div className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300">
+            <div className="font-mono text-[11px] leading-4 text-slate-600 dark:text-slate-300">
               {lines.map(prefixedLine)}
               <div ref={outputEndRef} />
             </div>
@@ -135,7 +135,7 @@ export const ContentBlockView: React.FC<{
       const preview = lines.slice(0, previewCount);
       const remaining = lines.length - previewCount;
       return (
-        <div className="pl-4 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 font-mono cursor-pointer" onClick={handleClick}>
+        <div className="pl-4 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 font-mono cursor-pointer" onClick={handleClick}>
           {preview.map(prefixedLine)}
           {remaining > 0 && (
             <div className="text-slate-400 dark:text-slate-500">
@@ -154,7 +154,7 @@ export const ContentBlockView: React.FC<{
     return (
       <div className="relative">
         <div className={cn('pl-4 mt-1 overflow-y-auto custom-scrollbar', bashExpanded ? 'max-h-[70vh]' : 'max-h-80')}>
-          <div className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300">
+          <div className="font-mono text-[11px] leading-4 text-slate-600 dark:text-slate-300">
             {lines.map(prefixedLine)}
             {hasTimeout && (
               <div className="text-slate-400 dark:text-slate-500">
@@ -176,7 +176,7 @@ export const ContentBlockView: React.FC<{
       const lineLabel = `Wrote ${d.lines_written} line${d.lines_written === 1 ? '' : 's'}`;
       if (!showExpanded) {
         return (
-          <div className="pl-4 mt-0.5 text-[10px] text-slate-400 dark:text-slate-500 font-mono cursor-pointer" onClick={handleClick}>
+          <div className="pl-4 mt-0.5 text-[11px] text-slate-400 dark:text-slate-500 font-mono cursor-pointer" onClick={handleClick}>
             <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>
             {lineLabel}
             {d.new_content && <span className="text-slate-400 dark:text-slate-500 ml-1">(click to expand)</span>}
@@ -185,12 +185,12 @@ export const ContentBlockView: React.FC<{
       }
       return (
         <div className="pl-4 mt-0.5">
-          <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mb-0.5">
+          <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mb-0.5">
             <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>{lineLabel}
           </div>
           {d.new_content && (
             <div className="max-h-80 overflow-y-auto custom-scrollbar rounded border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.02]">
-              <pre className="text-[10px] leading-4 p-2 text-green-700 dark:text-green-400 whitespace-pre-wrap break-words">
+              <pre className="text-[11px] leading-4 p-2 text-green-700 dark:text-green-400 whitespace-pre-wrap break-words">
                 {d.new_content.split('\n').map((line, i) => (
                   <div key={i}>
                     <span className="text-slate-300 dark:text-slate-600 select-none inline-block w-8 text-right mr-2">{i + 1}</span>
@@ -216,7 +216,7 @@ export const ContentBlockView: React.FC<{
     return (
       <div className="pl-4 mt-0.5">
         {summary && (
-          <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mb-0.5">
+          <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mb-0.5">
             <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>{summary}
           </div>
         )}
@@ -231,10 +231,10 @@ export const ContentBlockView: React.FC<{
         className={cn('flex items-start gap-1.5 cursor-pointer select-none')}
         onClick={handleClick}
       >
-        <span className={cn('mt-px text-[10px] leading-none', iconColor, isRunning && 'animate-pulse')}>
+        <span className={cn('mt-px text-[11px] leading-none', iconColor, isRunning && 'animate-pulse')}>
           {icon}
         </span>
-        <span className="text-[11px] min-w-0">
+        <span className="text-[12px] min-w-0">
           <span className={cn('font-semibold', isFailed ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200')}>
             {block.tool || 'Tool'}
           </span>
@@ -247,7 +247,7 @@ export const ContentBlockView: React.FC<{
       </div>
       {showExpanded && !hasWidget && block.summary && (
         <div className={cn(
-          'pl-4 mt-0.5 text-[10px] whitespace-pre-wrap break-words max-h-32 overflow-y-auto',
+          'pl-4 mt-0.5 text-[11px] whitespace-pre-wrap break-words max-h-32 overflow-y-auto',
           isFailed
             ? 'text-red-500 dark:text-red-400'
             : 'text-slate-500 dark:text-slate-400'

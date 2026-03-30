@@ -75,7 +75,7 @@ const SectionHeader: React.FC<{
     onClick={onToggle}>
     <div className="flex items-center gap-1">
       {open ? <ChevronDown size={10} className="text-slate-400" /> : <ChevronRight size={10} className="text-slate-400" />}
-      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{title}</span>
+      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{title}</span>
     </div>
     {action && <div onClick={(e) => e.stopPropagation()}>{action}</div>}
   </div>
@@ -186,7 +186,7 @@ export const SessionList: React.FC<{
     <div className="flex flex-col h-full relative">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/5">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Sessions</span>
+        <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Sessions</span>
         <div className="flex items-center gap-1">
           <button onClick={() => setShowSearch(!showSearch)}
             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
@@ -214,7 +214,7 @@ export const SessionList: React.FC<{
       <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 dark:border-white/[0.03]">
         {(['all', 'user', 'mission', 'skill'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)}
-            className={cn('px-2 py-0.5 text-[10px] font-semibold rounded-full transition-colors capitalize',
+            className={cn('px-2 py-0.5 text-[11px] font-semibold rounded-full transition-colors capitalize',
               filter === f
                 ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400'
                 : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5')}>
@@ -237,7 +237,7 @@ export const SessionList: React.FC<{
 
         {groups.map(([group, sessions]) => (
           <div key={group}>
-            <div className="px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-white/[0.02] sticky top-0 z-10">
+            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-white/[0.02] sticky top-0 z-10">
               {group}
             </div>
             {sessions.map((session) => {
@@ -261,19 +261,19 @@ export const SessionList: React.FC<{
                     </span>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       {session.project_name && (
-                        <span className="text-[9px] px-1 py-px rounded bg-slate-200/60 dark:bg-white/5 text-slate-500 truncate max-w-[80px]">
+                        <span className="text-[10px] px-1 py-px rounded bg-slate-200/60 dark:bg-white/5 text-slate-500 truncate max-w-[80px]">
                           {session.project_name}
                         </span>
                       )}
                       {session.creator && session.creator !== 'user' && (
-                        <span className={cn('text-[9px] px-1 py-px rounded font-medium', creatorBadge(session.creator))}>
+                        <span className={cn('text-[10px] px-1 py-px rounded font-medium', creatorBadge(session.creator))}>
                           {session.creator}
                         </span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <span className="text-[10px] text-slate-400 tabular-nums">{relativeTime(session.created_at)}</span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{relativeTime(session.created_at)}</span>
                     {onDeleteSession && (
                       <button onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id); }}
                         className="p-0.5 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500 transition-all"
@@ -315,8 +315,8 @@ export const SessionList: React.FC<{
                 {m.enabled ? <Bot size={12} /> : <Pause size={12} />}
               </button>
               <div className="flex-1 min-w-0">
-                <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate block">{m.id}</span>
-                <span className="text-[9px] text-slate-400">{m.schedule}</span>
+                <span className="text-[12px] font-medium text-slate-700 dark:text-slate-300 truncate block">{m.id}</span>
+                <span className="text-[10px] text-slate-400">{m.schedule}</span>
               </div>
               <button onClick={() => handleTriggerMission(m.id)} disabled={triggeringMission === m.id}
                 className="p-0.5 rounded hover:bg-green-100 dark:hover:bg-green-500/10 text-slate-400 hover:text-green-600 transition-colors disabled:opacity-40"

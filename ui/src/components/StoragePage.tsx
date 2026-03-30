@@ -303,7 +303,7 @@ export const StoragePage: React.FC<{
           <div className="flex-1 flex flex-col overflow-hidden">
             {selectedFile ? (
               <>
-                <div className="px-4 py-1.5 text-[11px] text-slate-400 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] truncate shrink-0">
+                <div className="px-4 py-1.5 text-[12px] text-slate-400 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] truncate shrink-0">
                   {selectedFile}
                   {isDirty && <span className="ml-2 text-amber-500 font-medium">modified</span>}
                 </div>
@@ -382,7 +382,7 @@ export const StoragePage: React.FC<{
           {selectedFile ? (
             <>
               {/* Breadcrumb */}
-              <div className="px-4 py-1.5 text-[11px] text-slate-400 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] truncate shrink-0">
+              <div className="px-4 py-1.5 text-[12px] text-slate-400 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] truncate shrink-0">
                 {selectedFile}
                 {isDirty && <span className="ml-2 text-amber-500 font-medium">modified</span>}
               </div>

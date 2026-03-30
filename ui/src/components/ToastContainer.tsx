@@ -34,7 +34,7 @@ export const ToastContainer: React.FC = () => {
               t.onClick?.();
               removeToast(t.id);
             }}
-            className={`pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg text-white text-[12px] font-medium max-w-xs animate-slide-in ${style.bg} ${t.onClick ? 'cursor-pointer hover:brightness-110' : ''}`}
+            className={`pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg text-white text-[13px] font-medium max-w-xs animate-slide-in ${style.bg} ${t.onClick ? 'cursor-pointer hover:brightness-110' : ''}`}
           >
             {style.icon}
             <span className="flex-1">{t.message}</span>

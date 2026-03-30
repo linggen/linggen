@@ -268,7 +268,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     <>
       {(overlay || modelPickerOpen) && (
         <div className="absolute bottom-[4.5rem] left-2 right-2 z-20 bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-[60%] overflow-y-auto">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 dark:border-white/5 text-[10px] text-slate-400 dark:text-slate-500">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 dark:border-white/5 text-[11px] text-slate-400 dark:text-slate-500">
             <span>{modelPickerOpen ? 'Select a model' : 'Press Esc to dismiss'}</span>
             <button onClick={onDismissOverlay} className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
               <X size={12} />
@@ -294,7 +294,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     >
                       <span className="font-mono">{m.id}</span>
                       <span className="text-slate-400 dark:text-slate-500">({m.provider}: {m.model})</span>
-                      {isDefault && <span className="ml-auto text-[10px] font-medium uppercase tracking-wider text-blue-500">active</span>}
+                      {isDefault && <span className="ml-auto text-[11px] font-medium uppercase tracking-wider text-blue-500">active</span>}
                     </button>
                   );
                 })
@@ -309,7 +309,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       )}
       <div className="sticky bottom-0 z-10 p-2 border-t border-slate-200 dark:border-white/5 space-y-2 bg-slate-50 dark:bg-white/[0.02]">
         {visibleQueued.length > 0 && (
-          <div className="px-2 py-1.5 text-[11px] rounded-md border border-amber-300/40 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20">
+          <div className="px-2 py-1.5 text-[12px] rounded-md border border-amber-300/40 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20">
             <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium select-none">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
               {visibleQueued.length} message{visibleQueued.length > 1 ? 's' : ''} queued — agent is busy
@@ -349,7 +349,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         <div className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
           {showSkillDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-52 overflow-y-auto z-[70]">
-              <div className="px-3 py-2 text-[10px] text-slate-500 border-b border-slate-200 dark:border-white/10">
+              <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-200 dark:border-white/10">
                 Commands &amp; Skills • Type to filter
               </div>
               {(() => {
@@ -366,12 +366,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     )}
                   >
                     <div className={cn('font-bold', item.key.startsWith('cmd-') ? 'text-amber-500' : 'text-blue-500')}>{item.label}</div>
-                    {item.description && <div className="text-slate-500 text-[10px]">{item.description}</div>}
+                    {item.description && <div className="text-slate-500 text-[11px]">{item.description}</div>}
                   </button>
                 ));
               })()}
               {buildSkillSuggestions().length === 0 && (
-                <div className="p-3 text-[10px] text-slate-500 italic">No matching commands or skills</div>
+                <div className="p-3 text-[11px] text-slate-500 italic">No matching commands or skills</div>
               )}
             </div>
           )}
@@ -394,7 +394,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-white/5 text-xs border-b border-slate-200 dark:border-white/5 last:border-none"
                   >
                     <div className="font-bold text-purple-500">@@{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
-                    <div className="text-slate-500 text-[10px]">{agent.description}</div>
+                    <div className="text-slate-500 text-[11px]">{agent.description}</div>
                   </button>
                 ))}
             </div>
@@ -402,14 +402,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           {showFileDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-56 overflow-y-auto z-[70]">
               {!fileSearchMode && fileBrowsePath && (
-                <div className="px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-white/5 font-mono truncate">
+                <div className="px-3 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-white/5 font-mono truncate">
                   {fileBrowsePath}
                 </div>
               )}
               {fileEntriesLoading ? (
-                <div className="p-3 text-[10px] text-slate-500 italic">Loading...</div>
+                <div className="p-3 text-[11px] text-slate-500 italic">Loading...</div>
               ) : filteredFileEntries.length === 0 ? (
-                <div className="p-3 text-[10px] text-slate-500 italic">No matching files</div>
+                <div className="p-3 text-[11px] text-slate-500 italic">No matching files</div>
               ) : (
                 filteredFileEntries.map((entry) => (
                   <button
@@ -642,7 +642,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5",
-              mobile ? "px-2 py-2.5 text-[15px] min-h-[42px] max-h-[160px]" : "px-1.5 py-1.5 text-[13px] min-h-[34px] max-h-[200px]",
+              mobile ? "px-2 py-2.5 text-[16px] min-h-[42px] max-h-[160px]" : "px-1.5 py-1.5 text-[14px] min-h-[34px] max-h-[200px]",
             )}
           />
           {isRunning && selectedMainRunningRunId && onCancelAgentRun && (

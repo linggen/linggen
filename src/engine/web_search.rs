@@ -24,7 +24,7 @@ pub struct WebSearchResult {
 /// under the key `"tavily"`, or via env var `TAVILY_API_KEY`.
 pub async fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>> {
     let api_key = resolve_tavily_key()
-        .context("Tavily API key not found. Set it in ~/.linggen/credentials.json under \"tavily\" or env var TAVILY_API_KEY")?;
+        .context("Tavily API key not found. Get a free key at https://tavily.com then set it in ~/.linggen/credentials.json under \"tavily\" or env var TAVILY_API_KEY")?;
 
     tavily_search(&api_key, query, max_results).await
 }

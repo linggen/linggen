@@ -2,7 +2,7 @@ import React from 'react';
 import type { AppConfig } from '../types';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
-const labelCls = 'text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
+const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
 const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 
 export const GeneralTab: React.FC<{
@@ -74,7 +74,7 @@ export const GeneralTab: React.FC<{
             value={config.server.port}
             onChange={(e) => onChange({ ...config, server: { ...config.server, port: parseInt(e.target.value) || 8080 } })}
           />
-          <p className="text-[10px] text-amber-500 mt-1">Changing the port requires a server restart to take effect.</p>
+          <p className="text-[11px] text-amber-500 mt-1">Changing the port requires a server restart to take effect.</p>
         </div>
       </section>
 

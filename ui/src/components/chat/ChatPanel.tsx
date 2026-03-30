@@ -56,7 +56,7 @@ const ChatMessageRow = React.memo<{
       ref={isLastUser ? lastUserMsgRef : undefined}
       className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
     >
-      <div className={cn(isUser ? 'max-w-[96%]' : 'max-w-full', 'text-[13px] leading-relaxed', messageClass)}>
+      <div className={cn(isUser ? 'max-w-[96%]' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
         {isUser ? (
           <>
             {msg.text}
@@ -150,7 +150,7 @@ const SessionModelSelector: React.FC = () => {
       value={sessionModel ?? ''}
       onChange={(e) => setSessionModel(e.target.value || null)}
       onClick={(e) => e.stopPropagation()}
-      className="ml-auto text-[10px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none max-w-[14rem] truncate"
+      className="ml-auto text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none max-w-[14rem] truncate"
       title="Session model override"
     >
       <option value="">Default ({defaultLabel})</option>
@@ -724,7 +724,7 @@ export const ChatPanel: React.FC<{
     <section className="h-full flex flex-col bg-white dark:bg-[#0f0f0f] rounded-xl border border-slate-200 dark:border-white/5 overflow-hidden min-h-0 relative">
       <div className="px-1.5 py-1 border-b border-slate-200 dark:border-white/5 bg-slate-50/70 dark:bg-white/[0.02] space-y-1">
         {(sessionId || selectedMainRunId) && (
-          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[10px] text-slate-600 dark:text-slate-300">
+          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
             <summary className="cursor-pointer flex flex-wrap items-center gap-2">
               {sessionId && (() => {
                 const sessionMeta = useProjectStore.getState().allSessions.find(s => s.id === sessionId);
@@ -733,12 +733,12 @@ export const ChatPanel: React.FC<{
                     <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
                     {sessionMeta?.project_name && (
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[9px]">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[10px]">
                         📁 {sessionMeta.project_name}
                       </span>
                     )}
                     {sessionMeta?.creator && sessionMeta.creator !== 'user' && (
-                      <span className={cn('px-1.5 py-0.5 rounded text-[9px] font-medium',
+                      <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium',
                         sessionMeta.creator === 'mission' ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400'
                           : 'bg-purple-100 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400'
                       )}>
@@ -746,7 +746,7 @@ export const ChatPanel: React.FC<{
                       </span>
                     )}
                     {sessionMeta?.skill && sessionMeta.creator !== 'mission' && (
-                      <span className="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-500/5 text-purple-500 text-[9px]">
+                      <span className="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-500/5 text-purple-500 text-[10px]">
                         {sessionMeta.skill}
                       </span>
                     )}
@@ -769,7 +769,7 @@ export const ChatPanel: React.FC<{
                     setSelectedMainRunByAgent((prev) => ({ ...prev, [selectedAgentKey]: runId }));
                     setPinnedMainRunByAgent((prev) => ({ ...prev, [selectedAgentKey]: true }));
                   }}
-                  className="text-[10px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none min-w-[10rem]"
+                  className="text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none min-w-[10rem]"
                   title="Select run context"
                 >
                   {selectedMainRunOptions.map((run) => (
@@ -798,7 +798,7 @@ export const ChatPanel: React.FC<{
                   }
                 }}
                 className={cn(
-                  'px-2 py-1 rounded border text-[10px] font-semibold',
+                  'px-2 py-1 rounded border text-[11px] font-semibold',
                   selectedMainPinned
                     ? 'bg-slate-100 text-slate-600 border-slate-300'
                     : 'bg-blue-50 text-blue-600 border-blue-200'
@@ -812,7 +812,7 @@ export const ChatPanel: React.FC<{
                   onClick={() => onCancelRun(selectedMainRunningRunId)}
                   disabled={!!cancellingRunIds?.[selectedMainRunningRunId]}
                   className={cn(
-                    'px-2 py-1 rounded border text-[10px] font-semibold transition-colors',
+                    'px-2 py-1 rounded border text-[11px] font-semibold transition-colors',
                     cancellingRunIds?.[selectedMainRunningRunId]
                       ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                       : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
@@ -836,7 +836,7 @@ export const ChatPanel: React.FC<{
         )}
 
         {subagents.length > 0 && (
-          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[10px]">
+          <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px]">
             <summary className="cursor-pointer font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <Sparkles size={11} />
               Subagents ({subagents.length})
@@ -847,7 +847,7 @@ export const ChatPanel: React.FC<{
                   key={sub.id}
                   onClick={() => setOpenSubagentId(sub.id)}
                   className={cn(
-                    'px-2 py-1 rounded-md text-[10px] border transition-colors flex items-center gap-1',
+                    'px-2 py-1 rounded-md text-[11px] border transition-colors flex items-center gap-1',
                     openSubagentId === sub.id
                       ? 'bg-blue-600 text-white border-blue-600'
                       : 'bg-slate-100 dark:bg-white/5 border-slate-200 dark:border-white/10 hover:bg-slate-200 dark:hover:bg-white/10'
@@ -867,7 +867,7 @@ export const ChatPanel: React.FC<{
       <div ref={chatScrollRef} className="relative flex-1 overflow-y-scroll px-2 py-1.5 flex flex-col gap-2 custom-scrollbar min-h-0">
         {showLastUserMsg && lastUserMsgInfo && (
           <div
-            className="sticky top-0 z-20 mx-1 mb-1 px-3 py-2 rounded-md bg-slate-100/95 dark:bg-white/10 backdrop-blur text-[12px] text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-white/10 cursor-pointer"
+            className="sticky top-0 z-20 mx-1 mb-1 px-3 py-2 rounded-md bg-slate-100/95 dark:bg-white/10 backdrop-blur text-[13px] text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-white/10 cursor-pointer"
             onClick={() => lastUserMsgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
             title={lastUserMsgInfo.text}
           >
@@ -879,11 +879,11 @@ export const ChatPanel: React.FC<{
         )}
         <div className="flex items-center justify-between gap-2 mb-1">
           {selectedMainTimeline.length > 0 ? (
-            <details className="text-[10px] text-slate-500">
+            <details className="text-[11px] text-slate-500">
               <summary className="cursor-pointer">Timeline ({selectedMainTimeline.length})</summary>
               <div className="mt-1 space-y-1 max-h-28 overflow-auto custom-scrollbar pr-2">
                 {selectedMainTimeline.map((evt, idx) => (
-                  <div key={`${evt.ts}-${evt.label}-${idx}`} className="text-[10px] text-slate-500 dark:text-slate-400">
+                  <div key={`${evt.ts}-${evt.label}-${idx}`} className="text-[11px] text-slate-500 dark:text-slate-400">
                     {formatTs(evt.ts)} • {evt.label}
                     {evt.detail ? ` • ${evt.detail}` : ''}
                   </div>
@@ -897,7 +897,7 @@ export const ChatPanel: React.FC<{
             value={mainMessageFilter}
             onChange={(e) => setMainMessageFilter(e.target.value)}
             placeholder="Filter messages"
-            className="w-52 text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
+            className="w-52 text-[12px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
           />
         </div>
         <ChatMessageList
@@ -948,7 +948,7 @@ export const ChatPanel: React.FC<{
       {/* Status spinner — always visible when active or just completed */}
       {isAgentActive ? (
         <div className="px-3 py-1.5">
-          <div className="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
+          <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
             <span className="text-blue-500">✶</span>
             <span>
               {agentStatusText?.[selectedAgent] || (currentStatus === 'model_loading' ? 'Loading model' : spinnerVerb || 'Thinking')}…
@@ -977,7 +977,7 @@ export const ChatPanel: React.FC<{
         </div>
       ) : lastRunSummary && (
         <div className="px-3 py-1.5">
-          <div className="flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500 italic">
+          <div className="flex items-center gap-1.5 text-[13px] text-slate-400 dark:text-slate-500 italic">
             <span>✻</span>
             <span>
               {lastRunSummary.verb} for{' '}

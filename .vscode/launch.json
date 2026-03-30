@@ -44,7 +44,7 @@
   "compounds": [
     {
       "name": "Agent Dev (Server + UI)",
-      "configurations": ["Agent Server (Dev)", "Agent UI"],
+      "configurations": ["Agent (Dev)", "Agent UI"],
       "stopAll": true
     }
   ]

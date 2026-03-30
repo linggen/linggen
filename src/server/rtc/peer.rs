@@ -634,10 +634,21 @@ fn forward_event_to_channels(
     pending_events.retain(|_, (created, _)| now.duration_since(*created) < Duration::from_secs(60));
     // Map the server event to a UI message (same as SSE handler)
     let seq = state.event_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let ui_msg = match crate::server::map_server_event_to_ui_message(event.clone(), seq) {
+    let mut ui_msg = match crate::server::map_server_event_to_ui_message(event.clone(), seq) {
         Some(msg) => msg,
         None => return,
     };
+
+    // Enrich with session_id from agent_sessions map (same as SSE path).
+    if ui_msg.session_id.is_none() {
+        if let Some(aid) = &ui_msg.agent_id {
+            if let Ok(map) = state.agent_sessions.read() {
+                if let Some(sid) = map.get(aid) {
+                    ui_msg.session_id = Some(sid.clone());
+                }
+            }
+        }
+    }
 
     let json = match serde_json::to_string(&ui_msg) {
         Ok(j) => j,

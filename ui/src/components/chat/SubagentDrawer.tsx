@@ -60,12 +60,12 @@ export const SubagentDrawer: React.FC<{
       <div>
         <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Subagent Context</div>
         <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedSubagent.id}</div>
-        <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
           {selectedSubagent.folder}/{selectedSubagent.file}
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <span className={cn('text-[10px] px-2 py-1 rounded-full uppercase tracking-wide', statusBadgeClass(selectedSubagent.status))}>
+        <span className={cn('text-[11px] px-2 py-1 rounded-full uppercase tracking-wide', statusBadgeClass(selectedSubagent.status))}>
           {selectedSubagent.status}
         </span>
         {selectedSubagentRunningRunId && onCancelRun && (
@@ -73,7 +73,7 @@ export const SubagentDrawer: React.FC<{
             onClick={() => onCancelRun(selectedSubagentRunningRunId)}
             disabled={!!cancellingRunIds?.[selectedSubagentRunningRunId]}
             className={cn(
-              'px-2 py-1 rounded-lg text-[10px] font-semibold border transition-colors',
+              'px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors',
               cancellingRunIds?.[selectedSubagentRunningRunId]
                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                 : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
@@ -94,10 +94,10 @@ export const SubagentDrawer: React.FC<{
     </div>
 
     <div className="p-4 border-b border-slate-200 dark:border-white/10">
-      <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Active Paths</div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2">Active Paths</div>
       <div className="space-y-1 max-h-28 overflow-auto custom-scrollbar">
         {selectedSubagent.paths.map((path) => (
-          <div key={path} className="text-[11px] font-mono text-slate-600 dark:text-slate-300 truncate">
+          <div key={path} className="text-[12px] font-mono text-slate-600 dark:text-slate-300 truncate">
             {path}
           </div>
         ))}
@@ -105,9 +105,9 @@ export const SubagentDrawer: React.FC<{
     </div>
 
     <div className="flex-1 overflow-auto p-4 space-y-3 custom-scrollbar">
-      <div className="text-[10px] uppercase tracking-widest text-slate-500">Messages</div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-500">Messages</div>
       {selectedSubagentRunId && (
-        <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 px-2.5 py-2 text-[10px] text-slate-500 dark:text-slate-400">
+        <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 px-2.5 py-2 text-[11px] text-slate-500 dark:text-slate-400">
           <div className="font-mono text-slate-600 dark:text-slate-300 break-all">{selectedSubagentRunId}</div>
           {selectedSubagentRunOptions.length > 1 && (
             <div className="mt-1">
@@ -119,7 +119,7 @@ export const SubagentDrawer: React.FC<{
                   setSelectedSubagentRunById((prev) => ({ ...prev, [selectedSubagentKey]: runId }));
                   setPinnedSubagentRunById((prev) => ({ ...prev, [selectedSubagentKey]: true }));
                 }}
-                className="w-full text-[10px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
+                className="w-full text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
                 title="Select subagent run context"
               >
                 {selectedSubagentRunOptions.map((run) => (
@@ -151,7 +151,7 @@ export const SubagentDrawer: React.FC<{
                   }
                 }}
                 className={cn(
-                  'px-2 py-1 rounded border text-[10px] font-semibold',
+                  'px-2 py-1 rounded border text-[11px] font-semibold',
                   selectedSubagentPinned
                     ? 'bg-slate-100 text-slate-600 border-slate-300'
                     : 'bg-blue-50 text-blue-600 border-blue-200'
@@ -174,23 +174,23 @@ export const SubagentDrawer: React.FC<{
       )}
       <div className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.03] px-2.5 py-2 space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] uppercase tracking-widest text-slate-500">Context Tools</div>
+          <div className="text-[11px] uppercase tracking-widest text-slate-500">Context Tools</div>
           <input
             value={subagentMessageFilter}
             onChange={(e) => setSubagentMessageFilter(e.target.value)}
             placeholder="Filter messages"
-            className="w-40 text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
+            className="w-40 text-[12px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-2 py-1 outline-none"
           />
         </div>
         {selectedSubagentTimeline.length > 0 && (
           <details>
-            <summary className="cursor-pointer text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+            <summary className="cursor-pointer text-[12px] font-semibold text-slate-600 dark:text-slate-300">
               Timeline ({selectedSubagentTimeline.length})
             </summary>
             <div className="mt-1.5 space-y-1.5 max-h-28 overflow-auto custom-scrollbar">
               {selectedSubagentTimeline.map((evt, idx) => (
-                <div key={`${evt.ts}-${evt.label}-${idx}`} className="text-[11px] text-slate-600 dark:text-slate-300">
-                  <span className="font-mono text-[10px] text-slate-500 mr-2">{formatTs(evt.ts)}</span>
+                <div key={`${evt.ts}-${evt.label}-${idx}`} className="text-[12px] text-slate-600 dark:text-slate-300">
+                  <span className="font-mono text-[11px] text-slate-500 mr-2">{formatTs(evt.ts)}</span>
                   <span className="font-semibold">{evt.label}</span>
                   {evt.detail && <span className="text-slate-500"> • {evt.detail}</span>}
                 </div>
@@ -204,10 +204,10 @@ export const SubagentDrawer: React.FC<{
       )}
       {filteredSubagentMessages.slice(-20).map((msg, idx) => (
         <div key={`${msg.timestamp}-${idx}-${msg.from || msg.role}`} className="rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 p-2.5">
-          <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-1">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
             {(msg.from || msg.role).toUpperCase()} {msg.to ? `\u2192 ${msg.to.toUpperCase()}` : ''}
           </div>
-          <div className="text-[12px] text-slate-700 dark:text-slate-200 break-words">
+          <div className="text-[13px] text-slate-700 dark:text-slate-200 break-words">
             <MarkdownContent text={visibleMessageText(msg)} />
           </div>
         </div>

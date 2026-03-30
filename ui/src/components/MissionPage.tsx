@@ -140,12 +140,12 @@ const MissionNav: React.FC<{
       <div className="p-3 border-b border-slate-200 dark:border-white/5 flex items-center gap-2">
         <button
           onClick={onCreate}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
         >
           <Plus size={13} /> New Mission
         </button>
         {enabledCount > 0 && (
-          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 shrink-0">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 shrink-0">
             {enabledCount} active
           </span>
         )}
@@ -188,16 +188,16 @@ const MissionNav: React.FC<{
                       'w-2 h-2 rounded-full shrink-0',
                       mission.enabled ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600',
                     )} />
-                    <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate">
+                    <span className="text-[12px] font-bold text-slate-800 dark:text-slate-200 truncate">
                       {mission.name || 'Untitled Mission'}
                     </span>
                   </div>
-                  <div className="ml-5 text-[10px] text-slate-400 truncate mt-0.5">
+                  <div className="ml-5 text-[11px] text-slate-400 truncate mt-0.5">
                     {describeCron(mission.schedule)}
                     {projLabel && <> &middot; {projLabel}</>}
                   </div>
                   {!isExpanded && runs.length > 0 && (
-                    <div className="ml-5 text-[10px] text-slate-400 mt-0.5">
+                    <div className="ml-5 text-[11px] text-slate-400 mt-0.5">
                       {runs.length} run{runs.length !== 1 ? 's' : ''}
                     </div>
                   )}
@@ -252,7 +252,7 @@ const MissionNav: React.FC<{
               {isExpanded && (
                 <div className="ml-3 mt-0.5 space-y-0.5">
                   {sortedRuns.length === 0 ? (
-                    <div className="px-2.5 py-2 text-[10px] text-slate-400 italic">
+                    <div className="px-2.5 py-2 text-[11px] text-slate-400 italic">
                       No runs yet
                     </div>
                   ) : sortedRuns.map((run, i) => {
@@ -262,7 +262,7 @@ const MissionNav: React.FC<{
                         key={`${run.run_id}-${i}`}
                         onClick={() => onSelectRun(mission, run)}
                         className={cn(
-                          'w-full text-left px-2.5 py-1.5 rounded-lg transition-colors text-[11px]',
+                          'w-full text-left px-2.5 py-1.5 rounded-lg transition-colors text-[12px]',
                           isActive
                             ? 'bg-blue-100/80 dark:bg-blue-500/15 border-l-2 border-blue-500'
                             : 'hover:bg-slate-50 dark:hover:bg-white/5',
@@ -272,7 +272,7 @@ const MissionNav: React.FC<{
                           <span className="text-slate-600 dark:text-slate-300 font-medium">
                             {formatShortTime(run.triggered_at)}
                           </span>
-                          <span className={cn('text-[9px] font-bold px-1 py-0 rounded uppercase tracking-wide', statusBadgeClass(run))}>
+                          <span className={cn('text-[10px] font-bold px-1 py-0 rounded uppercase tracking-wide', statusBadgeClass(run))}>
                             {run.skipped ? 'skip' : run.status === 'completed' ? 'ok' : run.status}
                           </span>
                         </div>
@@ -355,28 +355,28 @@ export const MissionEditor: React.FC<{
         {error && <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-600 dark:text-red-400">{error}</div>}
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Name</label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Name</label>
           <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Daily code review"
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Cron Schedule</label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Cron Schedule</label>
           <input type="text" value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="*/30 * * * *"
             className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
           <div className="flex flex-wrap gap-1.5 mt-2">
             {CRON_PRESETS.map(p => (
               <button key={p.value} onClick={() => setSchedule(p.value)} className={cn(
-                'text-[10px] px-2 py-0.5 rounded-full border transition-colors',
+                'text-[11px] px-2 py-0.5 rounded-full border transition-colors',
                 schedule === p.value ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'border-slate-200 dark:border-white/10 text-slate-500 hover:bg-slate-50 dark:hover:bg-white/5',
               )}>{p.label}</button>
             ))}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1.5">{describeCron(schedule)}</div>
+          <div className="text-[11px] text-slate-400 mt-1.5">{describeCron(schedule)}</div>
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Agent</label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Agent</label>
           <div className="flex items-center gap-2">
             <div className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.03] text-slate-500">
               <span className="font-semibold text-purple-600 dark:text-purple-400">mission</span>
@@ -389,7 +389,7 @@ export const MissionEditor: React.FC<{
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Permissions</label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Permissions</label>
           <div className="space-y-2">
             {PERMISSION_TIERS.map(tier => {
               const selected = permissionTier === tier.value;
@@ -420,18 +420,18 @@ export const MissionEditor: React.FC<{
                   <div className={cn('w-3 h-3 rounded-full mt-0.5 shrink-0 border-2', selected ? dotMap[tier.color] + ' border-transparent' : 'border-slate-300 dark:border-white/20')} />
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{tier.label}</div>
-                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{tier.desc}</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{tier.desc}</div>
                     {tier.value === 'standard' && !selectedProject && (
-                      <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">Select a project below to enable this tier</div>
+                      <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">Select a project below to enable this tier</div>
                     )}
                     {tier.value === 'readonly' && selected && (
-                      <div className="text-[10px] text-slate-400 mt-0.5">Tools: Read, Glob, Grep, WebSearch, WebFetch, Task</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Tools: Read, Glob, Grep, WebSearch, WebFetch, Task</div>
                     )}
                     {tier.value === 'standard' && selected && (
-                      <div className="text-[10px] text-slate-400 mt-0.5">Tools: Read, Write, Edit, Glob, Grep, Bash (build/test only), WebSearch, WebFetch, Task, Skill</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Tools: Read, Write, Edit, Glob, Grep, Bash (build/test only), WebSearch, WebFetch, Task, Skill</div>
                     )}
                     {tier.value === 'full' && selected && (
-                      <div className="text-[10px] text-slate-400 mt-0.5">All tools including unrestricted Bash</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">All tools including unrestricted Bash</div>
                     )}
                   </div>
                 </button>
@@ -441,7 +441,7 @@ export const MissionEditor: React.FC<{
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Model <span className="text-slate-400">(optional)</span></label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Model <span className="text-slate-400">(optional)</span></label>
           <select value={model} onChange={e => setModel(e.target.value)}
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30">
             <option value="">Default (inherit from agent)</option>
@@ -450,7 +450,7 @@ export const MissionEditor: React.FC<{
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">
             Project {permissionTier === 'standard' && <span className="text-amber-600 dark:text-amber-400">(required for Standard tier)</span>}
             {permissionTier !== 'standard' && <span className="text-slate-400">(optional)</span>}
           </label>
@@ -462,7 +462,7 @@ export const MissionEditor: React.FC<{
         </div>
 
         <div>
-          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Prompt</label>
+          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Prompt</label>
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="The instruction to send to the agent on each trigger..." rows={6}
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
@@ -508,7 +508,7 @@ const AgentViewer: React.FC<{ onBack: () => void; projectRoot: string }> = ({ on
         <div className="flex items-center gap-3">
           <button onClick={onBack} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-500"><ArrowLeft size={14} /></button>
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            Mission Agent <span className="text-[10px] text-slate-400 font-normal ml-1">agents/mission.md</span>
+            Mission Agent <span className="text-[11px] text-slate-400 font-normal ml-1">agents/mission.md</span>
           </h2>
         </div>
         {loading ? <div className="text-center py-16 text-sm text-slate-400">Loading...</div>
@@ -536,7 +536,7 @@ const RightPanel: React.FC<{
       <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
         <Target size={32} className="mb-3 opacity-30" />
         <p className="text-sm">Select a mission run to view its session</p>
-        <p className="text-[11px] mt-1 text-slate-400">Or create a new mission to get started</p>
+        <p className="text-[12px] mt-1 text-slate-400">Or create a new mission to get started</p>
       </div>
     );
   }
@@ -549,7 +549,7 @@ const RightPanel: React.FC<{
         <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
           <Pause size={28} className="mb-2 opacity-40 text-amber-500" />
           <p className="text-sm">Run was skipped</p>
-          <p className="text-[11px] mt-1">Agent was busy when this trigger fired</p>
+          <p className="text-[12px] mt-1">Agent was busy when this trigger fired</p>
         </div>
       );
     }
@@ -754,7 +754,7 @@ export const MissionPage: React.FC<{
           <h1 className="text-lg font-bold tracking-tight">Missions</h1>
         </div>
         {enabledCount > 0 && (
-          <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400">
+          <span className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400">
             {enabledCount} active
           </span>
         )}

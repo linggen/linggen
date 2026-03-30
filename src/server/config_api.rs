@@ -164,11 +164,19 @@ pub(crate) async fn get_codex_auth_status() -> impl IntoResponse {
 }
 
 /// Start ChatGPT OAuth browser login flow.
-pub(crate) async fn start_codex_auth_login() -> impl IntoResponse {
+pub(crate) async fn start_codex_auth_login(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let manager = state.manager.clone();
     // Spawn the browser login in a background task
-    tokio::spawn(async {
+    tokio::spawn(async move {
         match codex_auth::browser_login().await {
-            Ok(_) => tracing::info!("ChatGPT OAuth login completed via Web UI"),
+            Ok(_) => {
+                tracing::info!("ChatGPT OAuth login completed via Web UI");
+                // Clear all session engines so they pick up the fresh token
+                manager.session_engines.lock().await.clear();
+                tracing::info!("Cleared session engines after re-login");
+            }
             Err(e) => tracing::warn!("ChatGPT OAuth login failed: {}", e),
         }
     });

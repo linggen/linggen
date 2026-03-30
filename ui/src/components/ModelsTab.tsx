@@ -3,7 +3,7 @@ import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
-const labelCls = 'text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
+const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
 const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 
 const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; placeholder: string; authMode?: string }> = {
@@ -39,7 +39,7 @@ const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: '
     return (
       <span className="inline-flex items-center gap-1.5" title={label}>
         <span className={`w-2 h-2 rounded-full ${cls}`} />
-        <span className="text-[10px] text-slate-500">
+        <span className="text-[11px] text-slate-500">
           {health.health === 'quota_exhausted' ? 'Quota' : 'Down'}
         </span>
       </span>
@@ -53,7 +53,7 @@ const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: '
   return (
     <span className="inline-flex items-center gap-1.5" title={label}>
       <span className={`w-2 h-2 rounded-full ${cls}`} />
-      <span className="text-[10px] text-slate-500">{label}</span>
+      <span className="text-[11px] text-slate-500">{label}</span>
     </span>
   );
 };
@@ -276,7 +276,7 @@ export const ModelsTab: React.FC<{
               <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border border-slate-100 dark:border-white/5">
                 <span className="text-xs font-medium flex-1">
                   {modelId}
-                  {model && model.model && <span className="text-[10px] text-slate-400 ml-1.5">({model.model})</span>}
+                  {model && model.model && <span className="text-[11px] text-slate-400 ml-1.5">({model.model})</span>}
                 </span>
                 <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />
                 <button
@@ -297,7 +297,7 @@ export const ModelsTab: React.FC<{
         <label className="flex items-center justify-between cursor-pointer">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Auto Fallback</span>
-            <p className="text-[10px] text-slate-500 mt-0.5">Automatically try the next model on timeout, rate limit, or connection errors</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Automatically try the next model on timeout, rate limit, or connection errors</p>
           </div>
           <input
             type="checkbox"
@@ -312,7 +312,7 @@ export const ModelsTab: React.FC<{
       <section className={sectionCls}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Models</h2>
-          <button onClick={addModel} className="flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-700">
+          <button onClick={addModel} className="flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700">
             <Plus size={12} /> Add Model
           </button>
         </div>
@@ -373,7 +373,7 @@ export const ModelsTab: React.FC<{
                         <label className={labelCls}>ChatGPT OAuth</label>
                         {codexAuthStatus?.authenticated ? (
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="inline-flex items-center gap-1.5 text-[10px] text-green-600 dark:text-green-400 font-medium">
+                            <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400 font-medium">
                               <span className="w-2 h-2 rounded-full bg-green-500" />
                               Signed in
                               {codexAuthStatus.account_id && (
@@ -382,7 +382,7 @@ export const ModelsTab: React.FC<{
                             </span>
                             <button
                               onClick={handleCodexLogout}
-                              className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-600 font-medium"
+                              className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600 font-medium"
                             >
                               <LogOut size={10} /> Sign out
                             </button>
@@ -391,13 +391,13 @@ export const ModelsTab: React.FC<{
                           <button
                             onClick={handleCodexLogin}
                             disabled={codexAuthLoading}
-                            className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                            className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
                           >
                             <LogIn size={12} />
                             {codexAuthLoading ? 'Waiting for browser login...' : 'Sign in with ChatGPT'}
                           </button>
                         )}
-                        <p className="text-[9px] text-slate-400 mt-1">Uses your ChatGPT Plus/Pro subscription — no API key needed.</p>
+                        <p className="text-[10px] text-slate-400 mt-1">Uses your ChatGPT Plus/Pro subscription — no API key needed.</p>
                       </>
                     ) : (
                       <>
@@ -494,8 +494,8 @@ export const ModelsTab: React.FC<{
             </button>
           </div>
         )}
-        <p className="mt-3 text-[10px] text-slate-400">
-          API keys are stored in <code className="text-[10px]">~/.linggen/credentials.json</code>, not in the config file.
+        <p className="mt-3 text-[11px] text-slate-400">
+          API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, not in the config file.
           Click the <Star size={10} className="inline text-amber-500" /> icon on a model to add it to the default fallback chain.
         </p>
       </section>

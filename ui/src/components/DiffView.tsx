@@ -75,7 +75,7 @@ export default function DiffView({ diff }: { diff: string }) {
 
   return (
     <div className="max-h-80 overflow-auto custom-scrollbar rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black/30">
-      <pre className="font-mono text-[11px] leading-5 whitespace-pre-wrap m-0">
+      <pre className="font-mono text-[12px] leading-5 whitespace-pre-wrap m-0">
         {parsed.map((line, i) => {
           if (line.type === 'hunk') {
             return (

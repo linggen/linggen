@@ -420,10 +420,10 @@ export const SkillsTab: React.FC<{
               <X size={14} />
             </button>
             <span className="text-xs font-mono text-slate-600 dark:text-slate-300">{editingSkill}</span>
-            {editDirty && <span className="text-[11px] text-amber-600">Unsaved</span>}
+            {editDirty && <span className="text-[12px] text-amber-600">Unsaved</span>}
           </div>
           <div className="flex items-center gap-1.5">
-            {error && <span className="text-[10px] text-red-500 max-w-60 truncate">{error}</span>}
+            {error && <span className="text-[11px] text-red-500 max-w-60 truncate">{error}</span>}
             <button
               onClick={saveSkillFile}
               disabled={saving || !editDirty}
@@ -456,7 +456,7 @@ export const SkillsTab: React.FC<{
             </div>
             <div>
               <h3 className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-none">Skills</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">{totalInstalled} installed</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">{totalInstalled} installed</p>
             </div>
           </div>
         </div>
@@ -502,10 +502,10 @@ export const SkillsTab: React.FC<{
                 <div className="text-slate-400 transition-transform duration-200" style={{ transform: collapsedGroups.has('_global') ? 'rotate(0deg)' : 'rotate(90deg)' }}>
                   <ChevronRight size={12} />
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${sourceBadgeCls.Global}`}>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${sourceBadgeCls.Global}`}>
                   Global Skills
                 </span>
-                <span className="text-[10px] text-slate-400 tabular-nums">{globalSkills.length} skill{globalSkills.length !== 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-slate-400 tabular-nums">{globalSkills.length} skill{globalSkills.length !== 1 ? 's' : ''}</span>
               </button>
 
               {!collapsedGroups.has('_global') && (
@@ -523,11 +523,11 @@ export const SkillsTab: React.FC<{
                             <ChevronRight size={11} />
                           </div>
                           <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex-1">{skill.name}</span>
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${sourceBadgeCls[skill.source?.type] || sourceBadgeCls.Compat}`}>
+                          <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md border ${sourceBadgeCls[skill.source?.type] || sourceBadgeCls.Compat}`}>
                             {subLabel}
                           </span>
                           {skill.tool_defs && skill.tool_defs.length > 0 && (
-                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 bg-slate-100/80 dark:bg-white/5 px-1.5 py-0.5 rounded-md">
+                            <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 bg-slate-100/80 dark:bg-white/5 px-1.5 py-0.5 rounded-md">
                               <Wrench size={8} /> {skill.tool_defs.length}
                             </span>
                           )}
@@ -535,7 +535,7 @@ export const SkillsTab: React.FC<{
                             <button
                               onClick={() => uninstallMarketplaceSkill(skill.name, 'global')}
                               disabled={mpUninstalling.has(skill.name)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 border border-transparent hover:border-red-200 dark:hover:border-red-500/20 transition-all disabled:opacity-50"
+                              className="px-1.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 border border-transparent hover:border-red-200 dark:hover:border-red-500/20 transition-all disabled:opacity-50"
                               title="Remove"
                             >
                               {mpUninstalling.has(skill.name) ? <RefreshCw size={10} className="animate-spin" /> : <span className="flex items-center gap-1"><Trash2 size={9} /> Remove</span>}
@@ -545,10 +545,10 @@ export const SkillsTab: React.FC<{
 
                         {expanded && (
                           <div className="px-4 pb-3 pl-9 space-y-2">
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{skill.description}</p>
+                            <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">{skill.description}</p>
                             {skill.tool_defs && skill.tool_defs.length > 0 && (
                               <div className="overflow-x-auto rounded-lg border border-slate-100 dark:border-white/5">
-                                <table className="w-full text-[10px]">
+                                <table className="w-full text-[11px]">
                                   <thead>
                                     <tr className="text-left text-slate-400 bg-slate-50/80 dark:bg-white/[0.02]">
                                       <th className="py-1.5 px-2.5 font-bold">Tool</th>
@@ -569,9 +569,9 @@ export const SkillsTab: React.FC<{
                               </div>
                             )}
                             {skill.content && (
-                              <details className="text-[10px] group/details">
+                              <details className="text-[11px] group/details">
                                 <summary className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 font-medium transition-colors">Content preview</summary>
-                                <pre className="mt-1.5 p-2.5 bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5 rounded-lg text-[9px] overflow-x-auto max-h-32 whitespace-pre-wrap text-slate-600 dark:text-slate-400">
+                                <pre className="mt-1.5 p-2.5 bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5 rounded-lg text-[10px] overflow-x-auto max-h-32 whitespace-pre-wrap text-slate-600 dark:text-slate-400">
                                   {skill.content.slice(0, 400)}{skill.content.length > 400 ? '...' : ''}
                                 </pre>
                               </details>
@@ -596,10 +596,10 @@ export const SkillsTab: React.FC<{
                 <div className="text-slate-400 transition-transform duration-200" style={{ transform: collapsedGroups.has('_project') ? 'rotate(0deg)' : 'rotate(90deg)' }}>
                   <ChevronRight size={12} />
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${sourceBadgeCls.Project}`}>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${sourceBadgeCls.Project}`}>
                   Project Skills
                 </span>
-                <span className="text-[10px] text-slate-400 tabular-nums">{projectSkills.length} skill{projectSkills.length !== 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-slate-400 tabular-nums">{projectSkills.length} skill{projectSkills.length !== 1 ? 's' : ''}</span>
               </button>
 
               {!collapsedGroups.has('_project') && (
@@ -618,7 +618,7 @@ export const SkillsTab: React.FC<{
                           </div>
                           <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex-1">{skill.name}</span>
                           {skill.tool_defs && skill.tool_defs.length > 0 && (
-                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 bg-slate-100/80 dark:bg-white/5 px-1.5 py-0.5 rounded-md">
+                            <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 bg-slate-100/80 dark:bg-white/5 px-1.5 py-0.5 rounded-md">
                               <Wrench size={8} /> {skill.tool_defs.length}
                             </span>
                           )}
@@ -631,7 +631,7 @@ export const SkillsTab: React.FC<{
                             <button
                               onClick={() => handleMoveToGlobal(skill.name)}
                               disabled={mpMoving.has(skill.name)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 border border-transparent hover:border-indigo-200 dark:hover:border-indigo-500/20 transition-all disabled:opacity-50"
+                              className="px-1.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 border border-transparent hover:border-indigo-200 dark:hover:border-indigo-500/20 transition-all disabled:opacity-50"
                               title="Move to Global"
                             >
                               {mpMoving.has(skill.name) ? <RefreshCw size={10} className="animate-spin" /> : <span className="flex items-center gap-1"><ArrowUpRight size={9} /> Global</span>}
@@ -639,7 +639,7 @@ export const SkillsTab: React.FC<{
                             <button
                               onClick={() => uninstallMarketplaceSkill(skill.name, 'project')}
                               disabled={mpUninstalling.has(skill.name)}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 border border-transparent hover:border-red-200 dark:hover:border-red-500/20 transition-all disabled:opacity-50"
+                              className="px-1.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 border border-transparent hover:border-red-200 dark:hover:border-red-500/20 transition-all disabled:opacity-50"
                               title="Remove"
                             >
                               {mpUninstalling.has(skill.name) ? <RefreshCw size={10} className="animate-spin" /> : <span className="flex items-center gap-1"><Trash2 size={9} /> Remove</span>}
@@ -649,10 +649,10 @@ export const SkillsTab: React.FC<{
 
                         {expanded && (
                           <div className="px-4 pb-3 pl-9 space-y-2">
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{skill.description}</p>
+                            <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">{skill.description}</p>
                             {skill.tool_defs && skill.tool_defs.length > 0 && (
                               <div className="overflow-x-auto rounded-lg border border-slate-100 dark:border-white/5">
-                                <table className="w-full text-[10px]">
+                                <table className="w-full text-[11px]">
                                   <thead>
                                     <tr className="text-left text-slate-400 bg-slate-50/80 dark:bg-white/[0.02]">
                                       <th className="py-1.5 px-2.5 font-bold">Tool</th>
@@ -673,9 +673,9 @@ export const SkillsTab: React.FC<{
                               </div>
                             )}
                             {skill.content && (
-                              <details className="text-[10px] group/details">
+                              <details className="text-[11px] group/details">
                                 <summary className="text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 font-medium transition-colors">Content preview</summary>
-                                <pre className="mt-1.5 p-2.5 bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5 rounded-lg text-[9px] overflow-x-auto max-h-32 whitespace-pre-wrap text-slate-600 dark:text-slate-400">
+                                <pre className="mt-1.5 p-2.5 bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5 rounded-lg text-[10px] overflow-x-auto max-h-32 whitespace-pre-wrap text-slate-600 dark:text-slate-400">
                                   {skill.content.slice(0, 400)}{skill.content.length > 400 ? '...' : ''}
                                 </pre>
                               </details>
@@ -695,8 +695,8 @@ export const SkillsTab: React.FC<{
               <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-3">
                 <Package size={18} className="text-slate-300 dark:text-slate-600" />
               </div>
-              <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">No skills installed</p>
-              <p className="text-[10px] text-slate-400 mt-1">Install skills from the Library</p>
+              <p className="text-[13px] font-medium text-slate-500 dark:text-slate-400">No skills installed</p>
+              <p className="text-[11px] text-slate-400 mt-1">Install skills from the Library</p>
             </div>
           )}
         </div>
@@ -736,7 +736,7 @@ export const SkillsTab: React.FC<{
               <div className="px-3 py-2 border-b border-amber-200/60 dark:border-amber-500/10 bg-amber-50/60 dark:bg-amber-500/[0.04]">
                 <div className="flex items-center gap-2">
                   <ShieldAlert size={13} className="text-amber-500 shrink-0" />
-                  <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 leading-snug">
+                  <p className="text-[12px] font-medium text-amber-700 dark:text-amber-400 leading-snug">
                     Community skills are third-party code — review before installing, use at your own risk.
                   </p>
                 </div>
@@ -762,16 +762,16 @@ export const SkillsTab: React.FC<{
                           <div className="flex items-center gap-1.5">
                             <Sparkles size={10} className="text-blue-500 shrink-0" />
                             <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{bi.name}</span>
-                            <span className="text-[10px] font-semibold text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded uppercase">Linggen</span>
+                            <span className="text-[11px] font-semibold text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded uppercase">Linggen</span>
                           </div>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{bi.description}</p>
+                          <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{bi.description}</p>
                         </div>
                         <div className="shrink-0 pt-0.5">
                           {bi.installed ? (
                             <button
                               onClick={() => installBuiltInSkill(bi.name)}
                               disabled={biInstalling.has(bi.name)}
-                              className="px-2 py-1 text-[10px] font-semibold rounded-md border border-slate-200 dark:border-white/10 text-slate-500 hover:text-blue-600 hover:border-blue-200 dark:hover:border-blue-500/30 hover:bg-blue-50/50 dark:hover:bg-blue-500/5 disabled:opacity-50 transition-all"
+                              className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-200 dark:border-white/10 text-slate-500 hover:text-blue-600 hover:border-blue-200 dark:hover:border-blue-500/30 hover:bg-blue-50/50 dark:hover:bg-blue-500/5 disabled:opacity-50 transition-all"
                             >
                               {biInstalling.has(bi.name) ? '...' : 'Update'}
                             </button>
@@ -779,7 +779,7 @@ export const SkillsTab: React.FC<{
                             <button
                               onClick={() => installBuiltInSkill(bi.name)}
                               disabled={biInstalling.has(bi.name)}
-                              className="px-3 py-1 text-[10px] font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm shadow-blue-600/20 transition-colors"
+                              className="px-3 py-1 text-[11px] font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm shadow-blue-600/20 transition-colors"
                             >
                               {biInstalling.has(bi.name) ? (
                                 <span className="inline-flex items-center gap-1">
@@ -798,7 +798,7 @@ export const SkillsTab: React.FC<{
                   {filteredBuiltIn.length > 0 && filteredMpResults.length > 0 && (
                     <div className="flex items-center gap-2 py-1.5 px-1">
                       <div className="flex-1 border-t border-slate-200/60 dark:border-white/5" />
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                         {mpQuery.trim() ? 'Community' : 'Trending'}
                       </span>
                       <div className="flex-1 border-t border-slate-200/60 dark:border-white/5" />
@@ -828,12 +828,12 @@ export const SkillsTab: React.FC<{
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{skill.name}</span>
                               {skill.source_registry === 'clawhub' ? (
-                                <span className="text-[9px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 py-0.5 rounded">ClawHub</span>
+                                <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 py-0.5 rounded">ClawHub</span>
                               ) : skill.source_registry === 'skills.sh' ? (
-                                <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 px-1 py-0.5 rounded">skills.sh</span>
+                                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 px-1 py-0.5 rounded">skills.sh</span>
                               ) : null}
                               {skill.install_count > 0 && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
+                                <span className="inline-flex items-center gap-0.5 text-[11px] text-slate-400">
                                   <Download size={8} />
                                   {skill.install_count.toLocaleString()}
                                 </span>
@@ -841,10 +841,10 @@ export const SkillsTab: React.FC<{
                             </div>
                             {/* Row 2: description */}
                             {skill.description && (
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{skill.description}</p>
+                              <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{skill.description}</p>
                             )}
                             {/* Row 3: metadata line — source repo + updated_at */}
-                            <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
                               {skill.url && (
                                 <a
                                   href={skill.url}
@@ -870,14 +870,14 @@ export const SkillsTab: React.FC<{
                           </div>
                           <div className="shrink-0 pt-0.5">
                             {isInstalled ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded-md text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-200/50 dark:border-emerald-500/20">
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-200/50 dark:border-emerald-500/20">
                                 <Check size={9} /> Installed
                               </span>
                             ) : (
                               <button
                                 onClick={() => installMarketplaceSkill(skill)}
                                 disabled={isInstalling}
-                                className="px-3 py-1 text-[10px] font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm shadow-blue-600/20 transition-colors"
+                                className="px-3 py-1 text-[11px] font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm shadow-blue-600/20 transition-colors"
                               >
                                 {isInstalling ? (
                                   <span className="inline-flex items-center gap-1">
@@ -899,10 +899,10 @@ export const SkillsTab: React.FC<{
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-500/10 dark:to-blue-500/5 flex items-center justify-center mb-3">
                       <Book size={20} className="text-blue-400" />
                     </div>
-                    <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">
+                    <p className="text-[13px] font-medium text-slate-500 dark:text-slate-400">
                       {mpQuery ? 'No skills found' : 'Loading skills...'}
                     </p>
-                    <p className="text-[10px] text-slate-400 mt-1 text-center max-w-[180px]">
+                    <p className="text-[11px] text-slate-400 mt-1 text-center max-w-[180px]">
                       {mpQuery
                         ? 'Try a different search term'
                         : 'Fetching community skills'}

@@ -38,10 +38,10 @@ export const TodoPanel: React.FC<{
           ) : (
             <ChevronDown size={14} className="text-slate-400 shrink-0" />
           )}
-          <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 truncate">
+          <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 truncate">
             {plan.summary}
           </span>
-          <span className="text-[10px] text-slate-400 dark:text-slate-500 ml-auto shrink-0">
+          <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto shrink-0">
             {completed}/{total}
           </span>
           {/* Progress bar */}
@@ -62,7 +62,7 @@ export const TodoPanel: React.FC<{
                 className="flex items-center gap-2 py-0.5"
               >
                 <StatusIcon status={item.status} />
-                <span className={`text-[11px] ${
+                <span className={`text-[12px] ${
                   item.status === 'completed' || item.status === 'done'
                     ? 'text-slate-400 dark:text-slate-500 line-through'
                     : item.status === 'in_progress' || item.status === 'working'

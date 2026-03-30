@@ -20,13 +20,13 @@ export const CollapsibleCard: React.FC<{
           onClick={() => setOpen((v) => !v)}
           className="flex-1 px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-slate-100 dark:hover:bg-white/[0.04] transition-colors select-none"
         >
-          <h3 className={`text-[10px] font-bold uppercase tracking-widest ${iconColor} flex items-center gap-2`}>
+          <h3 className={`text-[11px] font-bold uppercase tracking-widest ${iconColor} flex items-center gap-2`}>
             {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
             {icon}
             {title}
           </h3>
           {badge && (
-            <span className="text-[10px] text-slate-400">{badge}</span>
+            <span className="text-[11px] text-slate-400">{badge}</span>
           )}
         </button>
         {headerAction && (

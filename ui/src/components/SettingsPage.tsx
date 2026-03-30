@@ -111,8 +111,8 @@ export const SettingsPage: React.FC<{
             <ArrowLeft size={16} /> Back
           </button>
           <div className="flex items-center gap-2">
-            {error && <span className="text-[10px] text-red-500 max-w-40 truncate">{error}</span>}
-            {success && <span className="text-[10px] text-green-500">Saved</span>}
+            {error && <span className="text-[11px] text-red-500 max-w-40 truncate">{error}</span>}
+            {success && <span className="text-[11px] text-green-500">Saved</span>}
             {showSaveButton && (
               <button
                 onClick={saveConfig}

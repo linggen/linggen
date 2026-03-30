@@ -36,18 +36,18 @@ export function tryRenderSpecialBlock(
         <div className="space-y-2">
           <div className="font-bold text-blue-500">Task Finalized: {packet.title}</div>
           {userStories.length > 0 && (
-            <div className="space-y-1 text-[11px]">
-              <div className="uppercase tracking-wider text-[9px] text-slate-500">User Stories</div>
+            <div className="space-y-1 text-[12px]">
+              <div className="uppercase tracking-wider text-[10px] text-slate-500">User Stories</div>
               {userStories.map((story: string, idx: number) => (
-                <div key={idx} className="text-[11px] opacity-90">- {story}</div>
+                <div key={idx} className="text-[12px] opacity-90">- {story}</div>
               ))}
             </div>
           )}
           {criteria.length > 0 && (
-            <div className="space-y-1 text-[11px]">
-              <div className="uppercase tracking-wider text-[9px] text-slate-500">Acceptance Criteria</div>
+            <div className="space-y-1 text-[12px]">
+              <div className="uppercase tracking-wider text-[10px] text-slate-500">Acceptance Criteria</div>
               {criteria.map((crit: string, idx: number) => (
-                <div key={idx} className="text-[11px] opacity-90">- {crit}</div>
+                <div key={idx} className="text-[12px] opacity-90">- {crit}</div>
               ))}
             </div>
           )}

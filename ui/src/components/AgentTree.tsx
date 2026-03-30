@@ -89,13 +89,13 @@ export const AgentTree: React.FC<{
               className="w-full px-3 py-2 text-left border-b border-slate-200 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors"
               title={project.path}
             >
-              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
                 {project.name}
               </div>
             </button>
 
             {rows.length === 0 && (
-              <div className="px-3 py-2 text-[11px] italic text-slate-500">
+              <div className="px-3 py-2 text-[12px] italic text-slate-500">
                 No active agent paths.
               </div>
             )}
@@ -111,19 +111,19 @@ export const AgentTree: React.FC<{
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-300">
+                        <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-300">
                           {agent}
                         </div>
                         <div className="text-xs font-medium text-slate-800 dark:text-slate-100 flex items-center gap-1.5 mt-0.5">
                           <FileText size={12} className="shrink-0 text-blue-500" />
                           <span className="truncate">{parts.file}</span>
                         </div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
                           <FolderOpen size={11} className="shrink-0" />
                           <span>{parts.folder}</span>
                         </div>
                       </div>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0 bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0 bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center gap-1">
                         <Activity size={9} />
                         active
                       </span>

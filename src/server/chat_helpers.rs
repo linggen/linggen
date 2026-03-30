@@ -645,11 +645,11 @@ pub(crate) fn emit_outcome_event(
     outcome: &AgentOutcome,
     events_tx: &broadcast::Sender<ServerEvent>,
     from_id: &str,
+    session_id: Option<&str>,
 ) {
+    let sid = session_id.map(|s| s.to_string());
     match outcome {
         AgentOutcome::Plan(plan) => {
-            // Emit plan as a Message so it persists in chat history and
-            // renders as a PlanBlock via tryRenderSpecialBlock.
             let _ = events_tx.send(ServerEvent::Message {
                 from: from_id.to_string(),
                 to: "user".to_string(),
@@ -658,10 +658,8 @@ pub(crate) fn emit_outcome_event(
                     "plan": plan
                 })
                 .to_string(),
-                session_id: None,
+                session_id: sid.clone(),
             });
-            // Note: PlanUpdate SSE is already emitted by the engine's
-            // finalize_plan_mode → persist_and_emit_plan. Don't duplicate.
         }
         AgentOutcome::PlanApproved(plan) => {
             let _ = events_tx.send(ServerEvent::Message {
@@ -672,7 +670,7 @@ pub(crate) fn emit_outcome_event(
                     "plan": plan
                 })
                 .to_string(),
-                session_id: None,
+                session_id: sid.clone(),
             });
             let _ = events_tx.send(ServerEvent::PlanUpdate {
                 agent_id: from_id.to_string(),

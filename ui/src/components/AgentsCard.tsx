@@ -85,7 +85,7 @@ export const AgentsCard: React.FC<{
             key={agent.name}
             onClick={() => setSelectedAgent(id)}
             className={cn(
-              'w-full text-left px-2.5 py-2 rounded-lg border text-[10px] transition-colors',
+              'w-full text-left px-2.5 py-2 rounded-lg border text-[11px] transition-colors',
               isSelected
                 ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-300 dark:border-blue-500/30 ring-1 ring-blue-400/30'
                 : isActive
@@ -96,7 +96,7 @@ export const AgentsCard: React.FC<{
             {/* Row 1: Name + Status + Model */}
             <div className="flex items-center gap-1.5 min-w-0">
               <Bot size={12} className={cn('shrink-0', isSelected ? 'text-blue-500' : 'text-purple-500')} />
-              <span className="font-bold uppercase tracking-tight text-[11px]">{agent.name}</span>
+              <span className="font-bold uppercase tracking-tight text-[12px]">{agent.name}</span>
               <span className={cn('text-[8px] font-bold px-1.5 py-px rounded-full uppercase tracking-wide shrink-0', statusStyle(status))}>
                 {statusLabel(status, agentStatusText?.[agent.name])}
               </span>
@@ -172,8 +172,8 @@ export const AgentsCard: React.FC<{
       {/* Active Task */}
       {workspaceState?.active_task && (
         <div className="pt-1.5 mt-1 border-t border-slate-100 dark:border-white/5">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Active Task</div>
-          <p className="text-[10px] text-slate-500 dark:text-slate-400 italic truncate">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Active Task</div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 italic truncate">
             {workspaceState.active_task[1].substring(0, 100)}
           </p>
         </div>

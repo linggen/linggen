@@ -319,6 +319,7 @@ pub(crate) async fn delete_mission_session(
     State(state): State<Arc<ServerState>>,
     Path((mission_id, session_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    state.manager.remove_session_engine(&session_id).await;
     if let Err(e) = state.manager.global_sessions.remove_session(&session_id) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

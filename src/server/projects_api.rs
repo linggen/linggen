@@ -453,6 +453,8 @@ pub(crate) async fn reload_skills(
         let root_buf = std::path::PathBuf::from(root);
         let _ = state.manager.invalidate_agent_cache(&root_buf, None).await;
     }
+    // Clear per-session engines so they get recreated with new skills.
+    state.manager.session_engines.lock().await.clear();
     let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
     axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
@@ -789,6 +791,7 @@ pub(crate) async fn remove_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RemoveSessionRequest>,
 ) -> impl IntoResponse {
+    state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
         Ok(_) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -891,6 +894,7 @@ pub(crate) async fn remove_skill_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RemoveSkillSessionRequest>,
 ) -> impl IntoResponse {
+    state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
         Ok(_) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -1099,6 +1103,7 @@ pub(crate) async fn delete_unified_session(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<DeleteUnifiedSessionRequest>,
 ) -> impl IntoResponse {
+    state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
         Ok(_) => StatusCode::OK.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),

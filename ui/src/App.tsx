@@ -444,7 +444,7 @@ const App: React.FC = () => {
             className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors flex-shrink-0">
             <Plus size={14} />
           </button>
-          <span className={`text-[10px] flex-shrink-0 ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
+          <span className={`text-[11px] flex-shrink-0 ${isRunning ? 'text-green-500' : 'text-slate-400'}`}>
             {isRunning ? 'Running' : 'Idle'}
           </span>
         </div>

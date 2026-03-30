@@ -88,7 +88,7 @@ export const ToolsTab: React.FC = () => {
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
           Built-in Tools
         </h2>
-        <p className="text-[10px] text-slate-400 mb-4">
+        <p className="text-[11px] text-slate-400 mb-4">
           Tools available to agents during execution. Some tools require API keys to function.
         </p>
 
@@ -98,12 +98,12 @@ export const ToolsTab: React.FC = () => {
               <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-200 w-40 shrink-0">
                 {tool.name}
               </span>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400 flex-1">
+              <span className="text-[12px] text-slate-500 dark:text-slate-400 flex-1">
                 {tool.description}
               </span>
               {tool.credentialKey && (
                 <div className="flex items-center gap-2 shrink-0 w-72">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 shrink-0">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 shrink-0">
                     API Key
                     {hasKey(tool.credentialKey) && <span className="ml-1 text-green-500 text-[8px]">(set)</span>}
                   </label>
@@ -143,14 +143,14 @@ export const ToolsTab: React.FC = () => {
         )}
 
         <div className="mt-3 flex items-center gap-4">
-          <p className="text-[10px] text-slate-400">
-            API keys are stored in <code className="text-[10px]">~/.linggen/credentials.json</code>, not in the config file.
+          <p className="text-[11px] text-slate-400">
+            API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, not in the config file.
           </p>
           <a
             href="https://tavily.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-600 transition-colors shrink-0"
+            className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-600 transition-colors shrink-0"
           >
             Get a free Tavily API key <ExternalLink size={10} />
           </a>

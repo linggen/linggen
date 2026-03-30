@@ -54,10 +54,10 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <div className="min-w-0 flex-1">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+          <span className="text-[12px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
             Permission Required
           </span>
-          <pre className="mt-1 text-[12px] text-slate-700 dark:text-slate-300 font-mono leading-snug overflow-x-auto whitespace-pre-wrap break-all">
+          <pre className="mt-1 text-[13px] text-slate-700 dark:text-slate-300 font-mono leading-snug overflow-x-auto whitespace-pre-wrap break-all">
             <span className="font-semibold text-amber-700 dark:text-amber-300">{toolName}</span>{commandText ? ` ${commandText}` : ''}
           </pre>
         </div>
@@ -72,7 +72,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
             <button
               key={opt.label}
               onClick={() => handleClick(opt.label)}
-              className={`text-left text-[11px] px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+              className={`text-left text-[12px] px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
                 isDeny(opt.label)
                   ? 'bg-white text-slate-400 border-slate-200 hover:border-red-300 hover:text-red-500 dark:bg-white/5 dark:text-slate-500 dark:border-white/10 dark:hover:border-red-500/40 dark:hover:text-red-400'
                   : isBlanketOption(opt.label)
@@ -87,7 +87,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
                 </svg>
               )}
               {opt.description && (
-                <span className="ml-2 text-[10px] text-slate-400 dark:text-slate-500">
+                <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
                   {opt.description}
                 </span>
               )}
@@ -97,14 +97,14 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
           {/* "Other..." toggle button */}
           <button
             onClick={() => setOtherActive(prev => !prev)}
-            className={`text-left text-[11px] px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+            className={`text-left text-[12px] px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
               otherActive
                 ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/30'
                 : 'bg-white text-slate-400 border-dashed border-slate-200 hover:border-amber-300 hover:text-amber-600 dark:bg-transparent dark:text-slate-500 dark:border-white/10 dark:hover:border-amber-500/30 dark:hover:text-amber-400'
             }`}
           >
             <span className="font-medium">Other…</span>
-            <span className="ml-2 text-[10px] text-slate-400 dark:text-slate-500">
+            <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
               Tell the agent what to do instead
             </span>
           </button>
@@ -120,12 +120,12 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
               value={customText}
               onChange={e => setCustomText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && customText.trim()) handleOtherSubmit(); }}
-              className="flex-1 text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:border-amber-400 dark:focus:border-amber-500/40"
+              className="flex-1 text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:border-amber-400 dark:focus:border-amber-500/40"
             />
             <button
               onClick={handleOtherSubmit}
               disabled={!customText.trim()}
-              className={`text-[11px] px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+              className={`text-[12px] px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                 customText.trim()
                   ? 'bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-700'
                   : 'bg-slate-100 text-slate-300 dark:bg-white/5 dark:text-slate-600 cursor-not-allowed'
