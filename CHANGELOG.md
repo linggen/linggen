@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.9.1 (2026-03-31)
+
+Simplified run system, daemon mode, ChatGPT default model, and bug fixes.
+
+### Added
+
+- **Background daemon mode** — bare `ling` now spawns a background daemon and opens the Web UI in the browser. Terminal returns immediately. Use `ling --tui` for classic TUI mode.
+- **ChatGPT OAuth default** — new installs default to GPT-5.4 via ChatGPT subscription. No API key or local model download needed.
+- **Unified working folder** — all tools (Read, Write, Edit, Glob, Grep) resolve relative paths from the agent's cwd, not just Bash. When the agent `cd`s into a git repo, the workspace root, CLAUDE.md, and permissions update automatically.
+- **User `! cd` tracking** — `! cd /path` in the Web UI now persists cwd per session, same as agent Bash commands.
+- **UI follows cwd changes** — `selectedProjectRoot` updates when the agent changes working folder.
+
+### Changed
+
+- **In-memory run store** — agent run records are no longer persisted to `{run_id}.json` files on disk. Runs are tracked in memory only (for cancellation and status during execution).
+- **Removed run history UI** — run picker dropdowns, context display, timeline, pin/unpin removed from ChatPanel and SubagentDrawer.
+- **Removed dead code** — `AgentsCard.tsx` (never imported), `timeline.ts`, run context types (`AgentRunSummary`, `AgentRunContextResponse`, etc.).
+- **Simplified cancel response** — `POST /api/agent-cancel` returns `{ status: "ok" }` instead of `{ cancelled_run_ids: [...] }`.
+- **Font size +1px** — all UI font sizes bumped by 1px for mobile readability.
+- **Logo** — shortened to "Linggen", links to linggen.dev.
+- **install.sh** — removed `--with-memory` flag and ling-mem install block.
+
+### Fixed
+
+- **Plan reject buttons not disappearing** — `PlanUpdate` events now carry `session_id`, so they're delivered via WebRTC data channels (was `None`, events were lost).
+- **Queued messages stuck after cancel** — `cancel_agent_run()` now drains the queue for cancelled agents.
+- **Queued messages showing in chat** — queued messages are no longer persisted to `messages.jsonl` at queue time. They're persisted when dequeued, preventing the sync-back from re-adding them.
+- **Session header not showing for user sessions** — `fetchSessions` was resetting `activeSessionId` when the session wasn't in the project-filtered list. Now checks `allSessions` before resetting.
+- **Working folder in non-git dirs** — `check_working_folder_change()` now uses the cwd as workspace root when no git repo is found (was falling back to `~`).
+- **macOS `/tmp` symlink** — cwd is canonicalized before use as workspace root (resolves `/tmp` → `/private/tmp`).
+
 ## v0.9.0 (2026-03-30)
 
 Working folder model, per-session engines, WebRTC-first transport, and UX improvements.
