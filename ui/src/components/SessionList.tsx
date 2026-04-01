@@ -13,6 +13,7 @@ import {
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission } from '../types';
 import { useProjectStore } from '../stores/projectStore';
+import { useUiStore } from '../stores/uiStore';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -304,7 +305,7 @@ export const SessionList: React.FC<{
         <div className="border-t border-slate-100 dark:border-white/[0.03]">
           {missions.length === 0 && (
             <div className="px-3 py-3 text-xs text-slate-400 text-center">
-              No missions. {onOpenSettings && <button onClick={() => onOpenSettings('missions')} className="text-blue-500 hover:underline">Create one</button>}
+              No missions. <button onClick={() => useUiStore.getState().openMissionEditor(null)} className="text-blue-500 hover:underline">Create one</button>
             </div>
           )}
           {missions.map((m) => (

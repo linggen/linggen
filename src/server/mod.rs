@@ -49,6 +49,7 @@ use projects_api::{
     delete_unified_session, get_skill_session_state, list_all_sessions, list_sessions, list_skill_files_api, list_skill_sessions, list_skills, reload_agents, reload_skills,
     remove_project, remove_session_api, remove_skill_session_api,
     rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
+    get_user_me,
 };
 use marketplace_api::{builtin_skills_install, builtin_skills_install_all, builtin_skills_list, clawhub_scan, community_search, marketplace_install, marketplace_move_to_global, marketplace_uninstall};
 use missions_api::{
@@ -1269,6 +1270,7 @@ pub async fn prepare_server(
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))
+        .route("/api/user/me", get(get_user_me))
         .route("/api/health", get(health_handler))
         .route("/api/utils/pick-folder", get(pick_folder))
         .route("/api/utils/ollama-status", get(get_ollama_status))

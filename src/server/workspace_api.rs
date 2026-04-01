@@ -196,45 +196,50 @@ pub(crate) async fn get_workspace_state(
     Query(query): Query<ProjectQuery>,
 ) -> impl IntoResponse {
     let root = expand_project_root(&query.project_root);
-    if let Ok(ctx) = state.manager.get_or_create_project(root).await {
-        let active_task = ctx.state_fs.read_file("active.md").ok();
-        let user_stories = ctx.state_fs.read_file("user-stories.md").ok();
-        let tasks = ctx.state_fs.list_tasks().unwrap_or_default();
-
-        let messages = match query.session_id.as_deref() {
-            Some(sid) if !sid.is_empty() => state.manager.global_sessions
-                .get_chat_history(sid)
-                .unwrap_or_default(),
-            _ => Vec::new(),
+    // Project context is optional — session messages are stored globally and
+    // should still load even when the project directory no longer exists.
+    let (active_task, user_stories, tasks) =
+        if let Ok(ctx) = state.manager.get_or_create_project(root).await {
+            (
+                ctx.state_fs.read_file("active.md").ok(),
+                ctx.state_fs.read_file("user-stories.md").ok(),
+                ctx.state_fs.list_tasks().unwrap_or_default(),
+            )
+        } else {
+            (None, None, Vec::new())
         };
 
-        let mapped_messages: Vec<(crate::state_fs::StateFile, String)> = messages
-            .into_iter()
-            .filter_map(|m| {
-                let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;
-                Some((
-                    crate::state_fs::StateFile::Message {
-                        id: format!("msg-{}", m.timestamp),
-                        from: m.from_id,
-                        to: m.to_id,
-                        ts: m.timestamp,
-                        task_id: None,
-                    },
-                    cleaned,
-                ))
-            })
-            .collect();
+    let messages = match query.session_id.as_deref() {
+        Some(sid) if !sid.is_empty() => state.manager.global_sessions
+            .get_chat_history(sid)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
 
-        Json(WorkspaceStateResponse {
-            active_task,
-            user_stories,
-            tasks,
-            messages: mapped_messages,
+    let mapped_messages: Vec<(crate::state_fs::StateFile, String)> = messages
+        .into_iter()
+        .filter_map(|m| {
+            let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;
+            Some((
+                crate::state_fs::StateFile::Message {
+                    id: format!("msg-{}", m.timestamp),
+                    from: m.from_id,
+                    to: m.to_id,
+                    ts: m.timestamp,
+                    task_id: None,
+                },
+                cleaned,
+            ))
         })
-        .into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
-    }
+        .collect();
+
+    Json(WorkspaceStateResponse {
+        active_task,
+        user_stories,
+        tasks,
+        messages: mapped_messages,
+    })
+    .into_response()
 }
 
 pub(crate) async fn get_agent_tree(
@@ -356,13 +361,13 @@ pub(crate) async fn run_bash_api(
         expand_project_root(&req.project_root)
     };
 
-    if !base_cwd.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("Directory does not exist: {}", base_cwd.display()),
-        )
-            .into_response();
-    }
+    // Fall back to home directory when the session's cwd no longer exists
+    // (e.g. project directory was deleted). This lets the user `! cd` elsewhere.
+    let base_cwd = if !base_cwd.is_dir() {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
+    } else {
+        base_cwd
+    };
 
     let timeout = Duration::from_millis(req.timeout_ms);
 

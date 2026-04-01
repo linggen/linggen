@@ -672,13 +672,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   fetchWorkspaceState: async (opts) => {
     const projectState = useProjectStore.getState();
-    const selectedProjectRoot = opts?.projectRoot ?? projectState.selectedProjectRoot;
+    let selectedProjectRoot = opts?.projectRoot ?? projectState.selectedProjectRoot;
     const activeSessionId = opts?.sessionId ?? projectState.activeSessionId;
     const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = projectState;
     if (!activeSessionId) return;
     if (isMissionSession && !activeMissionId) return;
     if (isSkillSession && !activeSkillName) return;
-    if (!isMissionSession && !isSkillSession && !selectedProjectRoot) return;
+    // When no project is selected, fall back to the active session's cwd/project
+    // so messages still load after page refresh in project-less workspaces.
+    if (!isMissionSession && !isSkillSession && !selectedProjectRoot) {
+      const sess = projectState.allSessions.find((s) => s.id === activeSessionId);
+      selectedProjectRoot = sess?.project || sess?.cwd || '';
+      if (!selectedProjectRoot) return;
+    }
     try {
       let url: URL;
       if (isMissionSession && activeMissionId) {

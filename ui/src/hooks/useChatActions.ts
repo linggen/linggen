@@ -147,18 +147,34 @@ export function useChatActions(
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ project_root: root, command: cmd, session_id: sid }),
         });
-        const data = await resp.json();
-        const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
-        const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
         const resultTs = new Date();
-        chat.addMessage({
-          role: 'assistant', from: 'system', to: 'user',
-          text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
-          timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
-        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => `HTTP ${resp.status}`);
+          chat.addMessage({
+            role: 'assistant', from: 'system', to: 'user',
+            text: `Error: ${errText}`, isError: true,
+            timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
+          });
+        } else {
+          const data = await resp.json();
+          const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
+          const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
+          chat.addMessage({
+            role: 'assistant', from: 'system', to: 'user',
+            text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
+            timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
+          });
+        }
         scrollToBottom();
       } catch (e) {
         console.error('Bash error:', e);
+        const errTs = new Date();
+        chat.addMessage({
+          role: 'assistant', from: 'system', to: 'user',
+          text: `Error: ${e instanceof Error ? e.message : String(e)}`, isError: true,
+          timestamp: errTs.toLocaleTimeString(), timestampMs: errTs.getTime(), isGenerating: false,
+        });
+        scrollToBottom();
       }
       return;
     }

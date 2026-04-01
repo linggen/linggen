@@ -168,7 +168,7 @@ const App: React.FC = () => {
   // --- React to session changes ---
   useEffect(() => {
     const { isSkillSession } = projectStore;
-    if (selectedProjectRoot || isMissionSession || isSkillSession) {
+    if (selectedProjectRoot || isMissionSession || isSkillSession || activeSessionId) {
       const prev = prevSessionIdRef.current;
       prevSessionIdRef.current = activeSessionId;
       const isSessionAdoption = prev === null && activeSessionId !== null;
@@ -486,7 +486,7 @@ const App: React.FC = () => {
                 }}
                 onCreateSession={() => { projectStore.createSession(); setMobileMenuOpen(false); }}
                 onDeleteSession={(id) => projectStore.removeSession(id)}
-                onOpenSettings={(tab) => { uiStore.setCurrentPage('settings'); setMobileMenuOpen(false); }}
+                onOpenSettings={(tab) => { uiStore.openSettings(tab as any); setMobileMenuOpen(false); }}
               />
             </div>
           </>
@@ -514,7 +514,7 @@ const App: React.FC = () => {
             }}
             onCreateSession={() => projectStore.createSession()}
             onDeleteSession={(id) => projectStore.removeSession(id)}
-            onOpenSettings={(tab) => uiStore.setCurrentPage('settings')}
+            onOpenSettings={(tab) => uiStore.openSettings(tab as any)}
           />
         </div>
         )}

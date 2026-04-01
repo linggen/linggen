@@ -8,7 +8,6 @@ impl AgentEngine {
     /// server to store as pending. The user reviews and approves via PlanBlock
     /// buttons (CC-aligned — no modal AskUser dialog).
     pub(crate) async fn finalize_plan_mode(&mut self, plan_text: String) -> AgentOutcome {
-        let summary = Self::extract_plan_summary(&plan_text);
         // Preserve items from any prior UpdatePlan call during plan mode.
         // If no items exist (model didn't call UpdatePlan), auto-extract from
         // numbered headings/steps in the plan text.
@@ -21,6 +20,30 @@ impl AgentEngine {
                 info!("Auto-extracted {} plan items from headings", items.len());
             }
         }
+        // If UpdatePlan already set items but the plan_text from ExitPlanMode is
+        // very short (e.g. DeepSeek puts the real plan in <think> which gets
+        // stripped), rebuild plan_text from the items so the PlanBlock shows
+        // meaningful content instead of a stub.
+        let plan_text = if !items.is_empty() && plan_text.len() < 100 {
+            let existing_plan_text = self.plan.as_ref()
+                .map(|p| p.plan_text.clone())
+                .filter(|t| t.len() > plan_text.len());
+            existing_plan_text.unwrap_or_else(|| {
+                let mut lines = Vec::new();
+                if !plan_text.trim().is_empty() {
+                    lines.push(format!("# {}", plan_text.trim()));
+                    lines.push(String::new());
+                }
+                for item in &items {
+                    lines.push(format!("- [ ] {}", item.title));
+                }
+                info!("Rebuilt plan_text from {} items (original was {} chars)", items.len(), plan_text.len());
+                lines.join("\n")
+            })
+        } else {
+            plan_text
+        };
+        let summary = Self::extract_plan_summary(&plan_text);
         let plan = Plan {
             summary,
             status: PlanStatus::Planned,

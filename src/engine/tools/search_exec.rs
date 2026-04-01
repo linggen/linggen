@@ -132,7 +132,15 @@ impl Tools {
         const CWD_SENTINEL: &str = "__LINGGEN_CWD__";
 
         let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(30000));
-        let cwd = self.cwd();
+        let cwd = {
+            let c = self.cwd();
+            if c.is_dir() {
+                c
+            } else {
+                tracing::warn!("Bash cwd {:?} does not exist, falling back to root {:?}", c, self.root);
+                self.root.clone()
+            }
+        };
 
         // Wrap the user command to capture the final working directory.
         // Preserves the original exit code while appending a sentinel + pwd.

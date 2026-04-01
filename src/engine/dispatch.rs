@@ -330,15 +330,26 @@ impl AgentEngine {
             "ExitPlanMode" => {
                 if self.plan_mode {
                     tracing::info!("ExitPlanMode → submitting plan for review");
-                    let plan_text = action.args.get("plan_text")
+                    // Gather plan text from both the tool argument and the
+                    // response text.  Some models (e.g. Gemini) stream the full
+                    // plan as response content but only put a truncated version
+                    // in the ExitPlanMode plan_text argument.  Pick whichever
+                    // source is more complete so the PlanBlock shows the full plan.
+                    let arg_text = action.args.get("plan_text")
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.trim().is_empty())
                         .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            crate::engine::actions::text_before_first_json(
-                                &state.last_assistant_response,
-                            )
-                        });
+                        .unwrap_or_default();
+                    let response_text = crate::engine::actions::text_before_first_json(
+                        &state.last_assistant_response,
+                    );
+                    let plan_text = if !response_text.is_empty() && response_text.len() > arg_text.len() {
+                        response_text
+                    } else if !arg_text.is_empty() {
+                        arg_text
+                    } else {
+                        response_text
+                    };
                     if !plan_text.is_empty() {
                         self.last_assistant_text = Some(plan_text.clone());
                     }

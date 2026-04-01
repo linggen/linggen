@@ -107,9 +107,11 @@ Examples:
 
 ## How to save memories
 
+Always use the Write tool to create and update memory files.
+
 Saving a memory is a two-step process:
 
-**Step 1** — Write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:
+**Step 1** — Use Write to create the memory file (e.g., `user_role.md`, `feedback_testing.md`) with this frontmatter format:
 
 ```markdown
 ---
@@ -151,7 +153,7 @@ You also have a **global** memory at: `{global_mem_dir}`
 
 Global memory is shared across ALL projects. Use it for user-level info that applies everywhere: location, timezone, language, name, role, general preferences. Project-specific memories go in the project memory above.
 
-Save global memories using the same format (frontmatter + MEMORY.md index) but write files to the global memory directory instead.
+Use the Write tool to save global memories in the same format (frontmatter + MEMORY.md index) to the global memory directory.
 
 ## Global MEMORY.md
 
@@ -171,7 +173,7 @@ Global memory is shared across ALL projects. Use it for user-level info that app
 
 No global MEMORY.md exists yet. Create it when you learn something about the user that applies across projects.
 
-Save global memories using the same format (frontmatter + MEMORY.md index) but write files to the global memory directory instead.
+Use the Write tool to save global memories in the same format (frontmatter + MEMORY.md index) to the global memory directory.
 --- END GLOBAL MEMORY ---'''
 
 [delegation_header]

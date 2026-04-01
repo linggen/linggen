@@ -136,6 +136,10 @@ pub struct AgentEngine {
     pub cfg: EngineConfig,
     pub model_manager: Arc<ModelManager>,
     pub model_id: String,
+    /// The originally-configured model ID (before any fallback).
+    /// Used to reset model_id at the start of each turn when no session
+    /// override is active, so fallback state doesn't persist.
+    pub default_model_id: String,
     pub tools: ToolRegistry,
     pub role: AgentRole,
     pub task: Option<String>,
@@ -337,6 +341,7 @@ impl AgentEngine {
         Ok(Self {
             cfg,
             model_manager,
+            default_model_id: model_id.clone(),
             model_id,
             tools,
             role,

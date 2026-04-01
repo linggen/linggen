@@ -140,10 +140,8 @@ pub(crate) async fn clear_chat_history_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
-    let root = match PathBuf::from(&req.project_root).canonicalize() {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
-    };
+    // project_root is not needed — chat history is stored globally by session ID.
+    // Skipping canonicalize avoids failures when the project directory is deleted.
     match state.manager.global_sessions.clear_chat_history(&session_id) {
         Ok(removed) => {
             // Clear in-memory chat history for this session's engine
@@ -1286,6 +1284,9 @@ pub(crate) async fn chat_handler(
                 }
 
                 // Apply session-level model override if provided.
+                // When no override is sent (user selected "Default"), reset
+                // model_id to the configured default so fallback state from a
+                // previous turn doesn't persist.
                 if let Some(ref mid) = req_model_id {
                     if engine.model_manager.has_model(mid) {
                         engine.model_id = mid.clone();
@@ -1299,6 +1300,8 @@ pub(crate) async fn chat_handler(
                             }
                         }
                     }
+                } else {
+                    engine.model_id = engine.default_model_id.clone();
                 }
 
                 // Set session_id on engine tools so subagent delegations inherit it.

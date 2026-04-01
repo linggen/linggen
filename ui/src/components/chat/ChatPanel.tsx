@@ -139,19 +139,38 @@ const SessionModelSelector: React.FC = () => {
   const defaultModels = useAgentStore((s) => s.defaultModels);
   const sessionModel = useUiStore((s) => s.sessionModel);
   const setSessionModel = useUiStore((s) => s.setSessionModel);
+  const sessionId = useProjectStore((s) => s.activeSessionId);
+  const selectedProjectRoot = useProjectStore((s) => s.selectedProjectRoot);
 
   const defaultLabel = defaultModels.length > 0 ? defaultModels[0] : 'default';
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value || null;
+    setSessionModel(value);
+    // Persist model choice to session metadata immediately
+    if (sessionId) {
+      fetch('/api/sessions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_root: selectedProjectRoot || '',
+          session_id: sessionId,
+          model_id: value ?? '',
+        }),
+      }).catch(() => {});
+    }
+  };
 
   return (
     <select
       value={sessionModel ?? ''}
-      onChange={(e) => setSessionModel(e.target.value || null)}
+      onChange={handleChange}
       onClick={(e) => e.stopPropagation()}
       className="ml-auto text-[11px] bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 outline-none max-w-[14rem] truncate"
       title="Session model override"
     >
       <option value="">Default ({defaultLabel})</option>
-      {models.map((m) => (
+      {models.filter((m) => !defaultModels.includes(m.id)).map((m) => (
         <option key={m.id} value={m.id}>{m.id}</option>
       ))}
     </select>
@@ -450,11 +469,15 @@ export const ChatPanel: React.FC<{
                   <>
                     <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
-                    {sessionMeta?.project_name && (
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[10px]">
-                        📁 {sessionMeta.project_name}
-                      </span>
-                    )}
+                    {(sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
+                      const fullPath = sessionMeta?.cwd || sessionMeta?.project || '';
+                      const displayName = sessionMeta?.project_name || fullPath.split('/').filter(Boolean).pop() || fullPath;
+                      return (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-500 text-[10px] shrink-0" title={fullPath}>
+                          📁 {displayName}
+                        </span>
+                      );
+                    })()}
                     {sessionMeta?.creator && sessionMeta.creator !== 'user' && (
                       <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium',
                         sessionMeta.creator === 'mission' ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400'
@@ -548,7 +571,7 @@ export const ChatPanel: React.FC<{
           expandedMessages={expandedMessages}
           setExpandedMessages={setExpandedMessages}
           verboseMode={verboseMode}
-          lastUserMsgInfo={streamingMessage ? null : lastUserMsgInfo}
+          lastUserMsgInfo={lastUserMsgInfo}
           lastUserMsgRef={lastUserMsgRef}
           selectedAgent={selectedAgent}
           pendingPlanAgentId={pendingPlanAgentId}

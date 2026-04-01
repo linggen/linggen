@@ -1,10 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Copy, Eraser, FileText, Menu, Settings, Sparkles } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUiStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useAgentStore } from '../stores/agentStore';
 import logoUrl from '../assets/logo.svg';
+
+/** Cached user profile from linggen.dev (fetched once on mount). */
+let _userCache: { avatar_url?: string; display_name?: string } | null | undefined;
+const UserAvatar: React.FC = () => {
+  const [user, setUser] = useState(_userCache);
+  useEffect(() => {
+    if (_userCache !== undefined) return; // already fetched (or failed)
+    _userCache = null; // mark as fetching
+    fetch('/api/user/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { _userCache = data; setUser(data); })
+      .catch(() => { _userCache = null; });
+  }, []);
+  if (!user?.avatar_url) return null;
+  return (
+    <a href="https://linggen.dev/app" target="_blank" rel="noopener noreferrer"
+       title={user.display_name || 'Account'}>
+      <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full ring-1 ring-slate-200 dark:ring-white/10 hover:ring-blue-400 transition-all" />
+    </a>
+  );
+};
 
 export const HeaderBar: React.FC<{
   copyChat: () => void;
@@ -111,7 +132,7 @@ export const HeaderBar: React.FC<{
         </button>
       </div>
 
-      {/* Right: Status + Info + Settings */}
+      {/* Right: Status + Info + Settings + Avatar */}
       <div className="flex items-center gap-2 bg-slate-100 dark:bg-white/5 px-2.5 py-1.5 rounded-full border border-slate-200 dark:border-white/10 shadow-sm">
         {connectionStatus === 'reconnecting' ? (
           <div className="flex items-center gap-1.5">
@@ -145,6 +166,7 @@ export const HeaderBar: React.FC<{
             </button>
           </>
         )}
+        <UserAvatar />
       </div>
     </header>
   );

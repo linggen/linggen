@@ -917,20 +917,34 @@ pub(crate) async fn remove_skill_session_api(
 pub(crate) struct RenameSessionRequest {
     project_root: String,
     session_id: String,
-    title: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
 }
 
 pub(crate) async fn rename_session_api(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RenameSessionRequest>,
 ) -> impl IntoResponse {
-    match state.manager.global_sessions.rename_session(&req.session_id, &req.title) {
-        Ok(_) => {
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
-            StatusCode::OK
+    // Update title if provided
+    if let Some(ref title) = req.title {
+        if let Err(_) = state.manager.global_sessions.rename_session(&req.session_id, title) {
+            return StatusCode::INTERNAL_SERVER_ERROR;
         }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+    // Update model_id if provided
+    if let Some(ref model_id) = req.model_id {
+        if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(&req.session_id) {
+            let new_val = if model_id.is_empty() { None } else { Some(model_id.clone()) };
+            if meta.model_id != new_val {
+                meta.model_id = new_val;
+                let _ = state.manager.global_sessions.update_session_meta(&meta);
+            }
+        }
+    }
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+    StatusCode::OK
 }
 
 #[derive(Deserialize)]
@@ -1155,5 +1169,38 @@ pub(crate) async fn list_all_sessions(
             Json(serde_json::json!({ "sessions": all })).into_response()
         }
         Err(_) => Json(serde_json::json!({ "sessions": [] })).into_response(),
+    }
+}
+
+// ── User profile (from linggen.dev) ─────────────────────────────────────
+
+/// GET /api/user/me — fetch the authenticated user's profile from linggen.dev.
+/// Reads the API token from `~/.linggen/remote.toml` and proxies to the relay.
+pub(crate) async fn get_user_me() -> impl IntoResponse {
+    let config = match crate::cli::login::load_remote_config() {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, "Not logged in").into_response(),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let resp = client
+        .get(format!("{}/api/auth/me", config.relay_url))
+        .header("Authorization", format!("Bearer {}", config.api_token))
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            match r.json::<serde_json::Value>().await {
+                Ok(body) => Json(body).into_response(),
+                Err(_) => (StatusCode::BAD_GATEWAY, "Invalid response").into_response(),
+            }
+        }
+        Ok(r) => (StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY), "Auth failed").into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("Relay error: {}", e)).into_response(),
     }
 }

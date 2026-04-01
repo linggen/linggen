@@ -792,6 +792,9 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       if (m.isGenerating) return true;
       if (result.some((p) => likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
+      // Keep client-side-only messages (e.g. `! bash` results) — they are never
+      // persisted on the server, so dropping them loses them permanently.
+      if (m.from === 'system' || m.to === 'system') return true;
       // Never expire messages with tool content blocks — they hold irreplaceable
       // ephemeral data (tool steps, activity) that cannot be recovered after loss.
       if (m.content && m.content.length > 0) return true;
@@ -801,7 +804,20 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
   );
   const merged = [...result, ...uniqueExtras];
 
-  return dedupPlanMessages(merged);
+  // Final content-based dedup: remove consecutive messages with identical
+  // content from the same sender.  This catches duplicates that slip through
+  // the merge passes above (e.g. when a finalized live message and its
+  // persisted counterpart have slightly different timestamps).
+  const deduped: typeof merged = [];
+  const seenContent = new Set<string>();
+  for (const msg of merged) {
+    const key = `${msg.from || msg.role}|${msg.to || ''}|${normalizeMessageTextForDedup(msg.text)}`;
+    if (seenContent.has(key) && !msg.isGenerating) continue;
+    seenContent.add(key);
+    deduped.push(msg);
+  }
+
+  return dedupPlanMessages(deduped);
 };
 
 export const shouldHideInternalChatMessage = (_from?: string, text?: string): boolean => {
