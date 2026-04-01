@@ -149,6 +149,13 @@ const SessionModelSelector: React.FC = () => {
     setSessionModel(value);
     // Persist model choice to session metadata immediately
     if (sessionId) {
+      // Update local session cache so switching away and back restores correctly
+      const ps = useProjectStore.getState();
+      const updated = ps.allSessions.map((s) =>
+        s.id === sessionId ? { ...s, model_id: value } : s
+      );
+      useProjectStore.setState({ allSessions: updated });
+      // Persist to backend
       fetch('/api/sessions', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -300,9 +307,9 @@ export const ChatPanel: React.FC<{
     }
   }, [chatMessages, chatEndRef]);
 
-  // Track agent active state and elapsed time
+  // Track agent active state and elapsed time — keyed by session ID
   const agentStatusText = useAgentStore((s) => s.agentStatusText);
-  const currentStatus = agentStatus?.[selectedAgent];
+  const currentStatus = agentStatus?.[sessionId || ''];
   const isAgentActive = !!currentStatus && currentStatus !== 'idle';
   const _isThinking = currentStatus === 'thinking' || currentStatus === 'model_loading';
   const [spinnerVerb, setSpinnerVerb] = useState('');
@@ -617,8 +624,8 @@ export const ChatPanel: React.FC<{
           <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
             <span className="text-blue-500">✶</span>
             <span>
-              {agentStatusText?.[selectedAgent] || (currentStatus === 'model_loading' ? 'Loading model' : spinnerVerb || 'Thinking')}…
-              {(thinkingElapsed > 0 || (agentContext?.[selectedAgent]?.tokens ?? 0) > 0) && (
+              {agentStatusText?.[sessionId || ''] || (currentStatus === 'model_loading' ? 'Loading model' : spinnerVerb || 'Thinking')}…
+              {(thinkingElapsed > 0 || (agentContext?.[sessionId || '']?.tokens ?? 0) > 0) && (
                 <span className="font-normal text-slate-400 dark:text-slate-500 ml-1">
                   ({[
                     thinkingElapsed >= 60
@@ -627,10 +634,10 @@ export const ChatPanel: React.FC<{
                     (tokensPerSec ?? 0) > 0
                       ? `${tokensPerSec!.toFixed(1)} tok/s`
                       : '',
-                    (agentContext?.[selectedAgent]?.tokens ?? 0) > 0
+                    (agentContext?.[sessionId || '']?.tokens ?? 0) > 0
                       ? (() => {
-                          const t = agentContext?.[selectedAgent]?.tokens ?? 0;
-                          const lim = agentContext?.[selectedAgent]?.tokenLimit;
+                          const t = agentContext?.[sessionId || '']?.tokens ?? 0;
+                          const lim = agentContext?.[sessionId || '']?.tokenLimit;
                           const tk = `${(t / 1000).toFixed(1)}k`;
                           return lim ? `${tk}/${lim >= 1_000_000 ? `${(lim / 1_000_000).toFixed(lim % 1_000_000 === 0 ? 0 : 1)}M` : `${Math.round(lim / 1000)}K`} ctx (${Math.round(t / lim * 100)}%)` : `${tk} ctx`;
                         })()

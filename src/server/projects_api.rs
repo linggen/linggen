@@ -1204,3 +1204,87 @@ pub(crate) async fn get_user_me() -> impl IntoResponse {
         Err(e) => (StatusCode::BAD_GATEWAY, format!("Relay error: {}", e)).into_response(),
     }
 }
+
+/// GET /api/auth/login — redirect to linggen.dev OAuth with callback to this server.
+pub(crate) async fn auth_login(
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let port = params.get("port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(9898);
+    let callback = format!("http://localhost:{}/api/auth/callback", port);
+    let state = uuid::Uuid::new_v4().to_string();
+    let url = format!(
+        "https://linggen.dev/auth/link?callback={}&state={}",
+        urlencoding::encode(&callback),
+        urlencoding::encode(&state),
+    );
+    axum::response::Redirect::temporary(&url).into_response()
+}
+
+/// GET /api/auth/callback — receives token from linggen.dev OAuth redirect.
+pub(crate) async fn auth_callback(
+    State(state): State<Arc<ServerState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let token = match params.get("token") {
+        Some(t) if t.starts_with("usr_") => t.clone(),
+        _ => {
+            return axum::response::Html(
+                "<html><body><h2>Authentication failed</h2><p>No valid token received.</p></body></html>"
+                    .to_string(),
+            )
+            .into_response()
+        }
+    };
+
+    // Save config (same as `ling login`)
+    let instance_id = crate::cli::login::get_or_create_instance_id().unwrap_or_else(|_| "unknown".into());
+    let instance_name = gethostname::gethostname().to_string_lossy().to_string();
+
+    // Register instance with linggen.dev
+    let client = reqwest::Client::new();
+    let _ = client
+        .post("https://linggen.dev/api/instances")
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "instance_id": instance_id,
+            "name": instance_name,
+        }))
+        .send()
+        .await;
+
+    let config = crate::cli::login::RemoteConfig {
+        relay_url: "https://linggen.dev".to_string(),
+        api_token: token,
+        instance_name,
+        instance_id,
+    };
+    let path = crate::paths::linggen_home().join("remote.toml");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
+    let _ = std::fs::write(&path, &toml_str);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Restart relay to pick up the new config
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+
+    axum::response::Html(
+        r#"<html><body><h2>Authenticated!</h2><p>You can close this tab.</p><script>window.opener&&window.opener.postMessage({type:'linggen-auth-done'},'*');window.close()</script></body></html>"#.to_string()
+    ).into_response()
+}
+
+/// POST /api/auth/logout — remove remote.toml to log out.
+pub(crate) async fn auth_logout() -> impl IntoResponse {
+    let path = crate::paths::linggen_home().join("remote.toml");
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+        Json(serde_json::json!({ "ok": true })).into_response()
+    } else {
+        Json(serde_json::json!({ "ok": true, "message": "Not logged in" })).into_response()
+    }
+}

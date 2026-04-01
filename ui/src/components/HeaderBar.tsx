@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Copy, Eraser, FileText, Menu, Settings, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Copy, Eraser, FileText, LogIn, Menu, Settings, Sparkles } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUiStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -8,22 +8,94 @@ import logoUrl from '../assets/logo.svg';
 
 /** Cached user profile from linggen.dev (fetched once on mount). */
 let _userCache: { avatar_url?: string; display_name?: string } | null | undefined;
+function fetchUserProfile(setUser: (u: typeof _userCache) => void) {
+  _userCache = undefined; // reset
+  fetch('/api/user/me')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => { _userCache = data; setUser(data); })
+    .catch(() => { _userCache = null; setUser(null); });
+}
+
 const UserAvatar: React.FC = () => {
   const [user, setUser] = useState(_userCache);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (_userCache !== undefined) return; // already fetched (or failed)
-    _userCache = null; // mark as fetching
-    fetch('/api/user/me')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { _userCache = data; setUser(data); })
-      .catch(() => { _userCache = null; });
+    if (_userCache !== undefined) { setUser(_userCache); return; }
+    fetchUserProfile(setUser);
   }, []);
-  if (!user?.avatar_url) return null;
+
+  // Listen for auth completion from popup
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'linggen-auth-done') fetchUserProfile(setUser);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  if (user === undefined) return null; // still loading
+
+  // Not logged in — show login button
+  if (!user) {
+    return (
+      <button
+        onClick={() => window.open('/api/auth/login?port=' + window.location.port, '_blank', 'width=500,height=600')}
+        className="p-1 hover:text-blue-500 text-slate-500 transition-colors"
+        title="Sign in to linggen.dev for remote access"
+      >
+        <LogIn size={14} />
+      </button>
+    );
+  }
+
+  // Logged in — show avatar with dropdown
   return (
-    <a href="https://linggen.dev/app" target="_blank" rel="noopener noreferrer"
-       title={user.display_name || 'Account'}>
-      <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full ring-1 ring-slate-200 dark:ring-white/10 hover:ring-blue-400 transition-all" />
-    </a>
+    <div className="relative" ref={ref}>
+      <button onClick={() => setMenuOpen(!menuOpen)} title={user.display_name || 'Account'}>
+        {user.avatar_url ? (
+          <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full ring-1 ring-slate-200 dark:ring-white/10 hover:ring-blue-400 transition-all" />
+        ) : (
+          <div className="w-6 h-6 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center">
+            {(user.display_name || '?')[0].toUpperCase()}
+          </div>
+        )}
+      </button>
+      {menuOpen && (
+        <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-lg shadow-lg py-1 z-50">
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-white/5">
+            <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{user.display_name}</div>
+            <div className="text-[10px] text-slate-400">linggen.dev</div>
+          </div>
+          <a href="https://linggen.dev/app" target="_blank" rel="noopener noreferrer"
+             className="block px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5">
+            Dashboard
+          </a>
+          <button
+            onClick={async () => {
+              await fetch('/api/auth/logout', { method: 'POST' });
+              _userCache = null;
+              setUser(null);
+              setMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 

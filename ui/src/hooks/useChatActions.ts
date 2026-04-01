@@ -182,13 +182,16 @@ export function useChatActions(
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       const focus = trimmed.slice('/compact'.length).trim() || undefined;
       const { setAgentStatus, setAgentStatusText } = useAgentStore.getState();
-      setAgentStatus((s) => ({ ...s, [agentToUse]: 'thinking' as const }));
-      setAgentStatusText((s) => ({ ...s, [agentToUse]: 'Compacting conversation' }));
+      if (sid) {
+        setAgentStatus((s) => ({ ...s, [sid]: 'thinking' as const }));
+        setAgentStatusText((s) => ({ ...s, [sid]: 'Compacting conversation' }));
+      }
       try {
         const data = await getTransport().sendCompact(root, sid, agentToUse, focus) as any;
         const clearStatus = () => {
-          setAgentStatus((s) => ({ ...s, [agentToUse]: 'idle' as const }));
-          setAgentStatusText((s) => { const n = { ...s }; delete n[agentToUse]; return n; });
+          if (!sid) return;
+          setAgentStatus((s) => ({ ...s, [sid]: 'idle' as const }));
+          setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
         };
         clearStatus();
         if (data.compacted) {
@@ -213,8 +216,10 @@ export function useChatActions(
         }
         scrollToBottom();
       } catch (e) {
-        setAgentStatus((s) => ({ ...s, [agentToUse]: 'idle' as const }));
-        setAgentStatusText((s) => { const n = { ...s }; delete n[agentToUse]; return n; });
+        if (sid) {
+          setAgentStatus((s) => ({ ...s, [sid]: 'idle' as const }));
+          setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
+        }
         console.error('Compact error:', e);
       }
       return;
@@ -251,8 +256,10 @@ export function useChatActions(
         useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
         return;
       }
-      useAgentStore.getState().setAgentStatus((prev) => ({ ...prev, [agentToUse]: 'model_loading' }));
-      useAgentStore.getState().setAgentStatusText((prev) => ({ ...prev, [agentToUse]: 'Model Loading' }));
+      if (sid) {
+        useAgentStore.getState().setAgentStatus((prev) => ({ ...prev, [sid]: 'model_loading' }));
+        useAgentStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
+      }
       useChatStore.getState().upsertGenerating(agentToUse, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);

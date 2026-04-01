@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bot, Brain, Star } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useProjectStore } from '../stores/projectStore';
 import type { AgentInfo, ChatMessage, ModelInfo, OllamaPsResponse } from '../types';
 
 /** Check if a model supports reasoning effort control. */
@@ -145,7 +146,8 @@ export const ModelsCard: React.FC<{
             {assignedAgents.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-white/5">
                 {assignedAgents.map((agent) => {
-                  const ctx = agentContext?.[agent.name.toLowerCase()];
+                  const sessionId = useProjectStore.getState().activeSessionId || '';
+                  const ctx = agentContext?.[sessionId];
                   const tokens = ctx?.tokens || 0;
                   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : null;
                   const pct = limit ? Math.round((tokens / limit) * 100) : null;

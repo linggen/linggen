@@ -86,8 +86,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     [agentTreesByProject, effectiveRoot],
   );
   const subagents = useMemo(
-    () => buildSubagentInfos(agentTree, mainAgentIds, agentStatus),
-    [agentTree, mainAgentIds, agentStatus],
+    () => buildSubagentInfos(agentTree, mainAgentIds),
+    [agentTree, mainAgentIds],
   );
 
   // --- Model switcher ---

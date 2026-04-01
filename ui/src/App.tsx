@@ -85,16 +85,15 @@ const App: React.FC = () => {
 
   // --- Derived memos (sidebar only) ---
   const activeModelId = useMemo(() => {
-    for (const name of Object.keys(agentStatusText)) {
-      const status = agentStatus[name];
-      if (status && status !== 'idle') {
-        const text = agentStatusText[name] || '';
-        const match = text.match(/\(([^)]+)\)/);
-        if (match) return match[1];
-      }
+    if (!activeSessionId) return undefined;
+    const status = agentStatus[activeSessionId];
+    if (status && status !== 'idle') {
+      const text = agentStatusText[activeSessionId] || '';
+      const match = text.match(/\(([^)]+)\)/);
+      if (match) return match[1];
     }
     return undefined;
-  }, [agentStatus, agentStatusText]);
+  }, [agentStatus, agentStatusText, activeSessionId]);
 
   const mainAgentIds = useMemo(() => agents.map((a) => a.name.toLowerCase()), [agents]);
 
@@ -183,6 +182,9 @@ const App: React.FC = () => {
         ui.setActivePlan(null);
         ui.setPendingPlan(null);
         ui.setPendingPlanAgentId(null);
+        // Reset agent status so activity from the previous session
+        // doesn't leak into the new one (spinner, status text, etc.)
+        useAgentStore.getState().resetStatus();
       }
       // Always fetch to merge latest server state into the bucket
       chatStore.fetchWorkspaceState();

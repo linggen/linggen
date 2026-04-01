@@ -24,15 +24,15 @@ interface AgentState {
   reloadingSkills: boolean;
   reloadingAgents: boolean;
 
-  // Agent activity (live status)
-  agentStatus: Record<string, AgentStatusValue>;
-  agentStatusText: Record<string, string>;
-  agentContext: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
-  tokensPerSec: number;
+  // Agent activity (live status) — all keyed by **session ID**, not agent name.
+  agentStatus: Record<string, AgentStatusValue>;       // key: session ID
+  agentStatusText: Record<string, string>;              // key: session ID
+  agentContext: Record<string, { tokens: number; messages: number; tokenLimit?: number }>; // key: session ID
+  tokensPerSec: number; // global — not per-session
 
   // Non-reactive tracking (not in React state, just plain properties)
-  _runStartTs: Record<string, number>;
-  _latestContextTokens: Record<string, number>;
+  _runStartTs: Record<string, number>;          // key: session ID
+  _latestContextTokens: Record<string, number>; // key: session ID
   _subagentParentMap: Record<string, string>;
   _subagentStats: Record<string, { toolCount: number; contextTokens: number }>;
   _tokenRateSamples: Array<{ ts: number; tokens: number }>;

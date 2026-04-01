@@ -80,6 +80,16 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Resolve a session ID for keying status maps. Prefer the event's session_id,
+ *  fall back to the currently active session. */
+function getSessionId(item: UiEvent): string {
+  return item.session_id || useProjectStore.getState().activeSessionId || '';
+}
+
+// ---------------------------------------------------------------------------
 // Main dispatcher
 // ---------------------------------------------------------------------------
 
@@ -147,9 +157,10 @@ function handleRun(item: UiEvent): void {
         ? item.data.agent_id.toLowerCase()
         : (item.agent_id || '').toLowerCase();
     if (!agentIdKey) return;
+    const sid = getSessionId(item);
 
     const estTokens = Number(item.data.estimated_tokens || 0);
-    agentStore._latestContextTokens[agentIdKey] = estTokens;
+    if (sid) agentStore._latestContextTokens[sid] = estTokens;
 
     const parentId = agentStore._subagentParentMap[agentIdKey];
     if (parentId) {
@@ -157,16 +168,16 @@ function handleRun(item: UiEvent): void {
       if (stats) stats.contextTokens = estTokens;
       chatStore.updateSubagentTree(parentId, agentIdKey,
         (entry) => ({ ...entry, contextTokens: estTokens }));
-    } else {
+    } else if (sid) {
       agentStore.setAgentContext((prev) => ({
         ...prev,
-        [agentIdKey]: {
+        [sid]: {
           tokens: estTokens,
           messages: Number(item.data.message_count || 0),
           tokenLimit:
             typeof item.data.token_limit === 'number'
               ? Number(item.data.token_limit)
-              : prev[agentIdKey]?.tokenLimit,
+              : prev[sid]?.tokenLimit,
         },
       }));
     }
@@ -323,12 +334,13 @@ function handleActivity(item: UiEvent): void {
     return;
   }
 
-  if (statusRaw) {
+  const sid = getSessionId(item);
+  if (statusRaw && sid) {
     if (item.phase !== 'done' || nextStatus === 'idle') {
-      agentStore.setAgentStatus((prev) => ({ ...prev, [agentId]: nextStatus }));
+      agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: nextStatus }));
       agentStore.setAgentStatusText((prev) => ({
         ...prev,
-        [agentId]:
+        [sid]:
           nextStatus === 'idle'
             ? 'Idle'
             : statusText.length > 0
@@ -346,8 +358,8 @@ function handleActivity(item: UiEvent): void {
     }
   }
 
-  if (!agentStore._runStartTs[agentId]) {
-    agentStore._runStartTs[agentId] = Date.now();
+  if (sid && !agentStore._runStartTs[sid]) {
+    agentStore._runStartTs[sid] = Date.now();
   }
 
   if (statusText.length > 0 && item.phase !== 'done') {
@@ -362,10 +374,13 @@ function handleActivity(item: UiEvent): void {
   }
 
   if (nextStatus === 'idle' || item.phase === 'failed') {
-    const startTs = agentStore._runStartTs[agentId];
+    const startTs = sid ? agentStore._runStartTs[sid] : undefined;
     const elapsed = startTs ? Date.now() - startTs : undefined;
-    const ctxTokens = agentStore._latestContextTokens[agentId] || undefined;
-    delete agentStore._runStartTs[agentId];
+    const ctxTokens = (sid ? agentStore._latestContextTokens[sid] : undefined) || undefined;
+    if (sid) {
+      delete agentStore._runStartTs[sid];
+      delete agentStore._latestContextTokens[sid];
+    }
     chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens);
     uiStore.setActivePlan(null);
   }
@@ -446,10 +461,11 @@ function handleMessage(item: UiEvent): void {
   }
 
   const tsMs = Number(item.ts_ms || Date.now());
-  const msgStartTs = agentStore._runStartTs[from];
+  const sid = getSessionId(item);
+  const msgStartTs = sid ? agentStore._runStartTs[sid] : undefined;
   const msgElapsed = msgStartTs ? Date.now() - msgStartTs : undefined;
-  const msgCtxTokens = agentStore._latestContextTokens[from] || undefined;
-  delete agentStore._runStartTs[from];
+  const msgCtxTokens = (sid ? agentStore._latestContextTokens[sid] : undefined) || undefined;
+  if (sid) delete agentStore._runStartTs[sid];
 
   const isError = from !== 'user' && content.startsWith('Error:');
 
@@ -514,11 +530,13 @@ function handleContentBlock(item: UiEvent): void {
       const activityLine = formatToolStartLine(toolName, toolArgs);
       chatStore.appendActivity(agentId, activityLine);
 
-      agentStore.setAgentStatus((prev) => ({ ...prev, [agentId]: 'calling_tool' as AgentStatusValue }));
-      agentStore.setAgentStatusText((prev) => ({ ...prev, [agentId]: activityLine }));
-
-      if (!agentStore._runStartTs[agentId]) {
-        agentStore._runStartTs[agentId] = Date.now();
+      const sid = getSessionId(item);
+      if (sid) {
+        agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'calling_tool' as AgentStatusValue }));
+        agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: activityLine }));
+        if (!agentStore._runStartTs[sid]) {
+          agentStore._runStartTs[sid] = Date.now();
+        }
       }
     }
   } else if (item.phase === 'update') {
@@ -560,18 +578,24 @@ function handleTurnComplete(item: UiEvent): void {
   const durationMs = typeof data.duration_ms === 'number' ? data.duration_ms : undefined;
   const contextTokens = typeof data.context_tokens === 'number' ? data.context_tokens : undefined;
 
-  const startTs = agentStore._runStartTs[agentId];
+  const sid = getSessionId(item);
+  const startTs = sid ? agentStore._runStartTs[sid] : undefined;
   const elapsed = durationMs || (startTs ? Date.now() - startTs : undefined);
-  const ctxTokens = contextTokens || agentStore._latestContextTokens[agentId] || undefined;
-  delete agentStore._runStartTs[agentId];
+  const ctxTokens = contextTokens || (sid ? agentStore._latestContextTokens[sid] : undefined) || undefined;
+  if (sid) {
+    delete agentStore._runStartTs[sid];
+    delete agentStore._latestContextTokens[sid];
+  }
 
   useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens);
   useUiStore.getState().setPendingAskUser(null);
 
-  // Ensure agent status transitions to idle — the subsequent AgentStatus(idle)
+  // Ensure status transitions to idle — the subsequent AgentStatus(idle)
   // event may arrive late or be missed, leaving the spinner stuck on "Thinking…".
-  agentStore.setAgentStatus((prev) => ({ ...prev, [agentId]: 'idle' }));
-  agentStore.setAgentStatusText((prev) => ({ ...prev, [agentId]: 'Idle' }));
+  if (sid) {
+    agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' }));
+    agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
+  }
 }
 
 function handleToolProgress(item: UiEvent): void {
@@ -610,10 +634,11 @@ function handleModelFallback(item: UiEvent): void {
     timestampMs: Date.now(),
     isGenerating: false,
   });
-  if (agentId) {
+  const sid = getSessionId(item);
+  if (sid) {
     useAgentStore.getState().setAgentStatusText((prev) => ({
       ...prev,
-      [agentId]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
+      [sid]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
     }));
   }
 }

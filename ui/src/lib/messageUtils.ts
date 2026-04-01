@@ -553,7 +553,6 @@ export const normalizeAgentStatus = (
 export const buildSubagentInfos = (
   tree: Record<string, AgentTreeItem>,
   mainAgentIds: string[],
-  agentStatus: Record<string, 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working'>
 ): SubagentInfo[] => {
   const entries: ActivityEntry[] = [];
   collectActivityEntries(tree, entries);
@@ -576,11 +575,9 @@ export const buildSubagentInfos = (
 
       const parts = splitFilePath(current.path);
       const uniquePaths = Array.from(new Set(sorted.map((entry) => entry.path))).slice(0, 8);
-      const liveStatus = agentStatus[id];
-
       acc.push({
         id,
-        status: liveStatus || (active.length > 0 ? 'working' : 'idle'),
+        status: active.length > 0 ? 'working' : 'idle',
         path: current.path,
         file: parts.file,
         folder: parts.folder,
