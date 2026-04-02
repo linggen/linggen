@@ -56,6 +56,7 @@ Events fall into these categories:
 | Plan | Plan created, updated, approved |
 | Queue | User message queued while agent is busy |
 | Run outcome | Agent turn finished, files changed |
+| Widget resolved | Interactive widget dismissed (permission prompt, etc.) |
 
 ## Agent status lifecycle
 
@@ -200,6 +201,14 @@ Each configured model has a semaphore with capacity 1. When a session's agent ca
 4. When the stream completes, the permit is released and the next waiting session proceeds.
 
 This means model busy status is **global** — a model serving project A is unavailable to project B until the request completes. The UI should reflect this: show a loading/busy indicator on all sessions waiting for the same model.
+
+## Widget sync across clients
+
+Interactive widgets (permission prompts, plan approval) can be displayed on multiple clients simultaneously (localhost + remote). When a user responds on one client, all other clients must dismiss the widget.
+
+Pattern: the server emits a `WidgetResolved { widget_id }` event after processing the user's response. All connected clients receive this event and dismiss the matching widget. The `widget_id` corresponds to the original widget identifier (e.g., `question_id` for AskUser prompts).
+
+Plan approval/rejection is already synced via PlanUpdate status changes — no separate WidgetResolved needed.
 
 ## Message queue
 

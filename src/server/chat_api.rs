@@ -1784,7 +1784,13 @@ pub(crate) async fn ask_user_response_handler(
 
     match sender {
         Some(entry) => {
+            let session_id = entry.session_id.clone();
             if entry.sender.send(req.answers).is_ok() {
+                // Broadcast so all clients (including remote) dismiss the widget.
+                let _ = state.events_tx.send(crate::server::ServerEvent::WidgetResolved {
+                    widget_id: req.question_id,
+                    session_id,
+                });
                 Json(serde_json::json!({ "status": "ok" })).into_response()
             } else {
                 (StatusCode::GONE, Json(serde_json::json!({ "error": "Question already expired" }))).into_response()

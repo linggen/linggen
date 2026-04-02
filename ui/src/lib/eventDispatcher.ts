@@ -96,7 +96,7 @@ function getSessionId(item: UiEvent): string {
 export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
   const effectiveSessionId = sessionIdOverride ?? useProjectStore.getState().activeSessionId;
   // Allow notifications and permission prompts through regardless — they are global events.
-  if (item.kind !== 'notification' && item.kind !== 'ask_user' && item.session_id && item.session_id !== 'global') {
+  if (item.kind !== 'notification' && item.kind !== 'ask_user' && item.kind !== 'widget_resolved' && item.session_id && item.session_id !== 'global') {
     // Drop events from other sessions when we have an active session.
     if (effectiveSessionId && item.session_id !== effectiveSessionId) return;
     // Drop session-scoped events when no session is active — they belong to
@@ -130,6 +130,7 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
     case 'app_launched':   handleAppLaunched(item); return;
     case 'notification':   handleNotification(item); return;
     case 'working_folder': handleWorkingFolder(item); return;
+    case 'widget_resolved': handleWidgetResolved(item); return;
   }
 }
 
@@ -693,5 +694,16 @@ function handleWorkingFolder(item: UiEvent): void {
     if (newRoot && newRoot !== store.selectedProjectRoot) {
       store.setSelectedProjectRoot(newRoot);
     }
+  }
+}
+
+function handleWidgetResolved(item: UiEvent): void {
+  const widgetId = item.data?.widget_id as string | undefined;
+  if (!widgetId) return;
+  // Dismiss the AskUser permission widget if it matches.
+  const uiStore = useUiStore.getState();
+  const pending = uiStore.pendingAskUser;
+  if (pending && pending.questionId === widgetId) {
+    uiStore.setPendingAskUser(null);
   }
 }

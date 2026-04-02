@@ -260,6 +260,12 @@ pub enum ServerEvent {
         questions: Vec<crate::engine::tools::AskUserQuestion>,
         session_id: Option<String>,
     },
+    /// Generic "widget resolved" event — dismisses any interactive widget
+    /// (AskUser permission, plan approval, etc.) on all connected clients.
+    WidgetResolved {
+        widget_id: String,
+        session_id: Option<String>,
+    },
     ModelFallback {
         agent_id: String,
         preferred_model: String,
@@ -780,6 +786,22 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
                 "question_id": question_id,
                 "questions": questions,
             })),
+        }),
+        ServerEvent::WidgetResolved {
+            widget_id,
+            session_id,
+        } => Some(UiEvent {
+            id: format!("resolved-{widget_id}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "widget_resolved".to_string(),
+            phase: None,
+            text: None,
+            agent_id: None,
+            session_id,
+            project_root: None,
+            data: Some(json!({ "widget_id": widget_id })),
         }),
         ServerEvent::ModelFallback {
             agent_id,
