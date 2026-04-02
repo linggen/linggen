@@ -722,7 +722,7 @@ impl AgentEngine {
                             (c, &a.args)
                         })
                         .collect();
-                    if has_write_path_conflicts(&pairs, &self.cfg.ws_root) {
+                    if has_write_path_conflicts(&pairs, &self.tools.builtins.cwd()) {
                         1
                     } else {
                         candidate_count

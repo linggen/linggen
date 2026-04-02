@@ -1026,7 +1026,14 @@ pub(crate) async fn update_session_permission(
 
     // Block edit/admin mode on system zone paths (per permission-spec.md).
     if mode > PermissionMode::Read {
-        let zone = crate::engine::permission::path_zone(std::path::Path::new(&req.path));
+        let expanded = if req.path.starts_with("~/") {
+            dirs::home_dir()
+                .map(|h| h.join(&req.path[2..]))
+                .unwrap_or_else(|| PathBuf::from(&req.path))
+        } else {
+            PathBuf::from(&req.path)
+        };
+        let zone = crate::engine::permission::path_zone(&expanded);
         if zone == crate::engine::permission::PathZone::System {
             return StatusCode::FORBIDDEN;
         }

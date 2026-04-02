@@ -358,22 +358,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
       return next;
     }
-    // First PlanUpdate (from ExitPlanMode during planning). Morph the
-    // generating message into the plan message in-place so the DOM
-    // position stays the same — no flash.
-    const genIdx = findLastGeneratingMessageIndex(state, agentId);
-    if (genIdx >= 0) {
-      const next = [...state];
-      next[genIdx] = {
-        ...next[genIdx],
-        text: planText,
-        liveText: undefined,
-        isGenerating: undefined,
-        timestampMs: Date.now(),
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      return next;
-    }
+    // First PlanUpdate (from ExitPlanMode). Insert as new message.
+    // No streaming to morph — plan text streaming is disabled.
     return [...state, {
       role: 'agent' as const,
       from: agentId,

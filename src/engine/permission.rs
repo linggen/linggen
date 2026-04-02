@@ -169,9 +169,9 @@ pub fn is_web_tool(tool: &str) -> bool {
 }
 
 /// Build a human-readable summary of what the tool is about to do.
-pub fn permission_target_summary(tool: &str, args: &serde_json::Value, ws_root: &Path) -> String {
+pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Path) -> String {
     match tool {
-        "Write" | "Edit" => normalize_tool_path_arg(ws_root, args)
+        "Write" | "Edit" => normalize_tool_path_arg(cwd, args)
             .unwrap_or_else(|| "<unknown file>".to_string()),
         "Bash" => args
             .get("cmd")
@@ -485,7 +485,7 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
         "find", "grep", "rg", "ag", "ack", "fd", "tree", "bat", "jq", "yq",
         "uname", "hostname", "date", "id", "whoami", "realpath", "dirname", "basename",
         "ping", "dig", "nslookup", "host", "test", "true", "false", "seq", "sort",
-        "uniq", "tr", "cut", "paste", "diff", "comm", "tee",
+        "uniq", "tr", "cut", "paste", "diff", "comm",
     ];
 
     // Read-class git subcommands
@@ -515,7 +515,7 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
     // Write-class programs
     const WRITE_PROGRAMS: &[&str] = &[
         "mkdir", "cp", "mv", "touch", "sed", "awk", "patch",
-        "ln", "install", "rsync",
+        "ln", "install", "rsync", "tee",
     ];
 
     // Write-class git subcommands
@@ -797,6 +797,7 @@ pub fn check_permission(
     tool: &str,
     bash_command: Option<&str>,
     file_path: Option<&str>,
+    session_cwd: &Path,
     session_perms: &SessionPermissions,
     deny_rules: &[String],
     ask_rules: &[String],
@@ -804,7 +805,7 @@ pub fn check_permission(
     // 0. Chat mode = no tools at all, hard-block everything
     let target_path_for_chat = file_path
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        .unwrap_or_else(|| session_cwd.to_path_buf());
     if let Some(PermissionMode::Chat) = effective_mode_for_path(&session_perms.path_modes, &target_path_for_chat) {
         return PermissionCheckResult::Blocked("Chat mode: no tools available".to_string());
     }
@@ -847,8 +848,7 @@ pub fn check_permission(
     // 4. Resolve target path + zone
     let target_path = file_path
         .map(PathBuf::from)
-        .or_else(|| Some(std::env::current_dir().unwrap_or_default()));
-    let target_path = target_path.unwrap();
+        .unwrap_or_else(|| session_cwd.to_path_buf());
     let zone = path_zone(&target_path);
 
     // 5. System zone + write/edit/admin → per-action only
@@ -1311,10 +1311,11 @@ mod tests {
         sp.set_path_mode("~/workspace", PermissionMode::Chat);
 
         if let Some(home) = dirs::home_dir() {
+            let cwd = home.join("workspace");
             let result = check_permission(
                 "Read", None,
                 Some(home.join("workspace/file.txt").to_str().unwrap()),
-                &sp, &[], &[],
+                &cwd, &sp, &[], &[],
             );
             assert!(matches!(result, PermissionCheckResult::Blocked(_)));
         }
@@ -1413,12 +1414,13 @@ mod tests {
         let sp = SessionPermissions::default();
         let deny = vec!["Bash(sudo *)".to_string()];
         let ask: Vec<String> = vec![];
+        let cwd = dirs::home_dir().unwrap_or_default();
 
-        let result = check_permission("Bash", Some("sudo apt install foo"), None, &sp, &deny, &ask);
+        let result = check_permission("Bash", Some("sudo apt install foo"), None, &cwd, &sp, &deny, &ask);
         assert!(matches!(result, PermissionCheckResult::Blocked(_)));
 
         // Non-matching command should not be blocked by deny
-        let result = check_permission("Bash", Some("ls -la"), None, &sp, &deny, &ask);
+        let result = check_permission("Bash", Some("ls -la"), None, &cwd, &sp, &deny, &ask);
         assert!(!matches!(result, PermissionCheckResult::Blocked(_)));
     }
 
@@ -1428,16 +1430,18 @@ mod tests {
         let deny: Vec<String> = vec![];
         let ask = vec!["Bash(git push *)".to_string()];
 
-        let result = check_permission("Bash", Some("git push origin main"), None, &sp, &deny, &ask);
+        let cwd = dirs::home_dir().unwrap_or_default();
+
+        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp, &deny, &ask);
         assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
 
         // After user allows for session (stores the rule pattern), should not prompt again
         let mut sp2 = SessionPermissions::default();
         sp2.allows.insert("Bash(git push *)".to_string()); // stores the rule, not the exact command
-        let result = check_permission("Bash", Some("git push origin main"), None, &sp2, &deny, &ask);
+        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp2, &deny, &ask);
         assert!(!matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
         // Different command matching same rule pattern — also suppressed
-        let result = check_permission("Bash", Some("git push origin feature"), None, &sp2, &deny, &ask);
+        let result = check_permission("Bash", Some("git push origin feature"), None, &cwd, &sp2, &deny, &ask);
         assert!(!matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
     }
 
@@ -1455,14 +1459,14 @@ mod tests {
             // Read within edit ceiling → allowed
             let result = check_permission(
                 "Read", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
 
             // Write within edit ceiling → allowed
             let result = check_permission(
                 "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
         }
@@ -1482,7 +1486,7 @@ mod tests {
             // Write exceeds read ceiling → prompt
             let result = check_permission(
                 "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask,
             );
             assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })));
         }
@@ -1493,9 +1497,10 @@ mod tests {
         let sp = SessionPermissions::default();
         let deny: Vec<String> = vec![];
         let ask: Vec<String> = vec![];
+        let cwd = dirs::home_dir().unwrap_or_default();
 
         // Write to /etc → system zone prompt
-        let result = check_permission("Write", None, Some("/etc/hosts"), &sp, &deny, &ask);
+        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
         assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::SystemZoneWrite { .. })));
     }
 
@@ -1506,9 +1511,10 @@ mod tests {
 
         let deny: Vec<String> = vec![];
         let ask: Vec<String> = vec![];
+        let cwd = dirs::home_dir().unwrap_or_default();
 
         // Write to system zone while locked → blocked
-        let result = check_permission("Write", None, Some("/etc/hosts"), &sp, &deny, &ask);
+        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
         assert!(matches!(result, PermissionCheckResult::Blocked(_)));
     }
 
@@ -1522,12 +1528,14 @@ mod tests {
             let deny: Vec<String> = vec![];
             let ask: Vec<String> = vec![];
 
+            let cwd = dirs::home_dir().unwrap_or_default();
+
             // Read in system zone with grant → allowed
-            let result = check_permission("Read", None, Some("/etc/hosts"), &sp, &deny, &ask);
+            let result = check_permission("Read", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
             assert!(matches!(result, PermissionCheckResult::Allowed));
 
             // Write in system zone → still per-action
-            let result = check_permission("Write", None, Some("/etc/hosts"), &sp, &deny, &ask);
+            let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
             assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::SystemZoneWrite { .. })));
         }
     }

@@ -264,7 +264,10 @@ impl AgentEngine {
         let file_path_arg = if matches!(canonical_tool.as_str(), "Write" | "Edit" | "Read") {
             normalize_tool_path_arg(&self.tools.builtins.cwd(), &args)
         } else {
-            None
+            // For tools without an explicit file path (Glob, Grep, Task, etc.),
+            // use the agent's cwd so permission checks resolve against the
+            // session's path_mode grants for the workspace.
+            Some(self.tools.builtins.cwd().to_string_lossy().to_string())
         };
 
         // Auto-block retries of denied tool calls.
@@ -303,6 +306,7 @@ impl AgentEngine {
             &canonical_tool,
             bash_command.as_deref(),
             file_path_arg.as_deref(),
+            &self.tools.builtins.cwd(),
             &self.session_permissions,
             &self.cfg.deny_rules,
             &self.cfg.ask_rules,
@@ -383,7 +387,8 @@ impl AgentEngine {
                                 let _ = self.persist_assistant_message(&msg, session_id).await;
                                 return PreExecOutcome::Blocked(LoopControl::Return(AgentOutcome::None));
                             }
-                            _ => {
+                            Some(permission::PermissionAction::Deny)
+                            | Some(permission::PermissionAction::DenyWithMessage(_)) => {
                                 self.session_permissions.denied_sigs.insert(sig.clone());
                                 if let Some(ref sdir) = self.session_dir {
                                     self.session_permissions.save(sdir);
@@ -395,6 +400,7 @@ impl AgentEngine {
                                 messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
                                 return PreExecOutcome::Blocked(LoopControl::Continue);
                             }
+                            _ => { /* unexpected response — allow once as fallback */ }
                         }
                     }
                     permission::PromptKind::AskRuleOverride { rule, tool_summary } => {

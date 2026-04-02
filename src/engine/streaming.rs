@@ -14,11 +14,29 @@ const INTER_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Unescape common JSON string escape sequences so streamed plan text
 /// renders as readable markdown in the UI.
+/// Unescape JSON string escape sequences in a streaming delta.
+/// Processes character by character to handle `\\n` (literal backslash + n)
+/// vs `\n` (newline) correctly, unlike chained `.replace()`.
 fn unescape_json_str(s: &str) -> String {
-    s.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('/') => out.push('/'),
+                Some(other) => { out.push('\\'); out.push(other); }
+                None => out.push('\\'), // trailing backslash
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -87,12 +105,12 @@ pub(crate) fn can_parallel_tool(tool: &str) -> bool {
 /// exist, meaning the batch must fall back to sequential execution.
 pub(crate) fn has_write_path_conflicts(
     actions: &[(&str, &serde_json::Value)],
-    ws_root: &Path,
+    cwd: &Path,
 ) -> bool {
     let mut write_paths: HashSet<String> = HashSet::new();
     for (tool, args) in actions {
         if matches!(*tool, "Write" | "Edit") {
-            match normalize_tool_path_arg(ws_root, args) {
+            match normalize_tool_path_arg(cwd, args) {
                 Some(path) => {
                     if !write_paths.insert(path) {
                         return true; // duplicate path
@@ -255,9 +273,6 @@ impl AgentEngine {
         let mut tc_names: Vec<Option<String>> = Vec::new();
         let mut tc_args: Vec<String> = Vec::new();
         let mut tc_thought_sigs: Vec<Option<String>> = Vec::new();
-        // Track whether we're inside the plan_text JSON value for streaming.
-        // false = still in the JSON envelope; true = streaming plan content.
-        let mut plan_text_streaming = false;
         // Track whether any regular content tokens were streamed. If so, skip
         // streaming ExitPlanMode tool args to avoid showing plan text twice
         // (models like DeepSeek/Gemini output plan as text AND tool arg).
@@ -322,40 +337,10 @@ impl AgentEngine {
                         tc_names[idx] = Some(name.clone());
                     }
                     if let Some(args_delta) = tc.arguments_delta {
-                        // In plan mode, stream ExitPlanMode's plan_text argument
-                        // deltas so the user sees the plan being written in real
-                        // time. The generating message is replaced by PlanBlock
-                        // when PlanUpdate arrives.
-                        if self.plan_mode && !had_content_tokens {
-                            let is_exit_plan = tc_names[idx].as_deref()
-                                .map(|n| n == "ExitPlanMode" || n == "exit_plan_mode")
-                                .unwrap_or(false);
-                            if is_exit_plan {
-                                if !plan_text_streaming {
-                                    // Look for the opening of the plan_text value
-                                    // in the accumulated args so far (including this delta).
-                                    let full = format!("{}{}", tc_args[idx], args_delta);
-                                    if let Some(pos) = full.find("plan_text\":\"") {
-                                        // Start streaming from after the opening quote
-                                        let start = pos + "plan_text\":\"".len();
-                                        if start < full.len() {
-                                            let initial = &full[start..];
-                                            let readable = unescape_json_str(initial);
-                                            if let Some(tx) = &self.thinking_tx {
-                                                let _ = tx.send(ThinkingEvent::ContentToken(readable));
-                                            }
-                                        }
-                                        plan_text_streaming = true;
-                                    }
-                                } else {
-                                    // Already inside plan_text value — stream the delta directly.
-                                    let readable = unescape_json_str(&args_delta);
-                                    if let Some(tx) = &self.thinking_tx {
-                                        let _ = tx.send(ThinkingEvent::ContentToken(readable));
-                                    }
-                                }
-                            }
-                        }
+                        // Plan text streaming removed — the PlanBlock from
+                        // finalize_plan_mode renders the full plan cleanly.
+                        // Streaming caused: wrong position, \n formatting bugs,
+                        // content disappearing due to finalizeMessage race.
                         tc_args[idx].push_str(&args_delta);
                     }
                     if tc.thought_signature.is_some() {
