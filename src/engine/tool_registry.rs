@@ -30,7 +30,7 @@ impl ToolRegistry {
         // Skill tools are dispatched via SkillToolDef.
         if let Some(skill_tool) = self.skill_tools.get(&call.tool) {
             debug!("Skill tool: {} args={}", call.tool, tools::summarize_tool_args(&call.tool, &call.args));
-            return skill_tool.execute(&call.args, self.builtins.workspace_root());
+            return skill_tool.execute(&call.args, &self.builtins.cwd());
         }
 
         anyhow::bail!("unknown tool: {}", call.tool)

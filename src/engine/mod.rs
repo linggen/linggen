@@ -74,8 +74,9 @@ impl AgentEngine {
 
             // Initialize default path_modes if empty (new session = read on cwd).
             if self.session_permissions.path_modes.is_empty() && !self.session_permissions.locked {
+                let actual_cwd = self.tools.builtins.cwd();
                 let cwd_str = if let Some(home) = dirs::home_dir() {
-                    let ws = self.cfg.ws_root.to_string_lossy();
+                    let ws = actual_cwd.to_string_lossy();
                     let hs = home.to_string_lossy();
                     if ws.starts_with(hs.as_ref()) {
                         format!("~{}", &ws[hs.len()..])
@@ -83,7 +84,7 @@ impl AgentEngine {
                         ws.to_string()
                     }
                 } else {
-                    self.cfg.ws_root.to_string_lossy().to_string()
+                    actual_cwd.to_string_lossy().to_string()
                 };
                 self.session_permissions.set_path_mode(
                     &cwd_str,

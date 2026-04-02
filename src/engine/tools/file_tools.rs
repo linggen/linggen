@@ -84,7 +84,8 @@ impl Tools {
             } else {
                 Some(&rel_globs)
             })?;
-            let walker = WalkBuilder::new(&self.root)
+            let cwd = self.cwd();
+            let walker = WalkBuilder::new(&cwd)
                 .standard_filters(true)
                 .hidden(true)
                 .build();
@@ -98,7 +99,7 @@ impl Tools {
                     continue;
                 }
                 let path = entry.path();
-                let rel = to_rel_string(&self.root, path)?;
+                let rel = to_rel_string(&cwd, path)?;
                 if let Some(gs) = &globset {
                     if !gs.is_match(Path::new(&rel)) {
                         continue;
@@ -165,12 +166,13 @@ impl Tools {
             )));
         }
 
-        let rel = sanitize_rel_path(&self.root, &args.path).unwrap_or_else(|_| args.path.clone());
+        let cwd = self.cwd();
+        let rel = sanitize_rel_path(&cwd, &args.path).unwrap_or_else(|_| args.path.clone());
         let filename = Path::new(&rel)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(&rel);
-        let path = self.root.join(&rel);
+        let path = cwd.join(&rel);
 
         if path.exists() && path.is_dir() {
             anyhow::bail!(
@@ -190,7 +192,7 @@ impl Tools {
         info!("File not found: {}. Attempting smart search...", rel);
         let candidates = self.smart_search_candidates(&rel, 10)?;
         if let Some(best_match) = candidates.first() {
-            let full_path = self.root.join(best_match);
+            let full_path = cwd.join(best_match);
             let note = if candidates.len() > 1 {
                 self.prompt(
                     crate::prompts::keys::SMART_SEARCH_REDIRECT_MULTI,
@@ -254,7 +256,8 @@ impl Tools {
         // 2) Case-insensitive filename/path contains matches.
         let query_lower = query.to_lowercase();
         let filename_lower = filename.to_lowercase();
-        let walker = WalkBuilder::new(&self.root)
+        let cwd2 = self.cwd();
+        let walker = WalkBuilder::new(&cwd2)
             .standard_filters(true)
             .hidden(true)
             .build();
@@ -268,7 +271,7 @@ impl Tools {
                 continue;
             }
             let path = entry.path();
-            let rel = match to_rel_string(&self.root, path) {
+            let rel = match to_rel_string(&cwd2, path) {
                 Ok(v) => v,
                 Err(_) => continue,
             };

@@ -366,8 +366,10 @@ pub fn path_zone(path: &Path) -> PathZone {
             .join(path)
     };
 
-    // Temp zone
-    if path.starts_with("/tmp") || path.starts_with("/var/tmp") {
+    // Temp zone — include /private/tmp (macOS symlinks /tmp → /private/tmp)
+    if path.starts_with("/tmp") || path.starts_with("/private/tmp")
+        || path.starts_with("/var/tmp") || path.starts_with("/private/var/tmp")
+    {
         return PathZone::Temp;
     }
     #[cfg(windows)]
@@ -1211,6 +1213,9 @@ mod tests {
         assert_eq!(path_zone(Path::new("/tmp")), PathZone::Temp);
         assert_eq!(path_zone(Path::new("/tmp/build")), PathZone::Temp);
         assert_eq!(path_zone(Path::new("/var/tmp/scratch")), PathZone::Temp);
+        // macOS: /tmp is symlinked to /private/tmp
+        assert_eq!(path_zone(Path::new("/private/tmp")), PathZone::Temp);
+        assert_eq!(path_zone(Path::new("/private/tmp/arcadegame")), PathZone::Temp);
     }
 
     #[test]

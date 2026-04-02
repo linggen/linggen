@@ -183,7 +183,7 @@ impl AgentEngine {
         );
         info!("Tool: {} {}", canonical_tool, safe_args);
         if canonical_tool == "Read" {
-            if let Some(path) = normalize_tool_path_arg(&self.cfg.ws_root, &args) {
+            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), &args) {
                 read_paths.insert(path);
             }
         }
@@ -193,8 +193,8 @@ impl AgentEngine {
 
         // --- write-safety gate ---
         if matches!(canonical_tool.as_str(), "Write" | "Edit") {
-            if let Some(path) = normalize_tool_path_arg(&self.cfg.ws_root, &args) {
-                let existing = self.cfg.ws_root.join(&path).exists();
+            if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), &args) {
+                let existing = self.tools.builtins.cwd().join(&path).exists();
                 if existing && !read_paths.contains(&path) {
                     let action = if canonical_tool == "Edit" {
                         "Edit"
@@ -262,7 +262,7 @@ impl AgentEngine {
             None
         };
         let file_path_arg = if matches!(canonical_tool.as_str(), "Write" | "Edit" | "Read") {
-            normalize_tool_path_arg(&self.cfg.ws_root, &args)
+            normalize_tool_path_arg(&self.tools.builtins.cwd(), &args)
         } else {
             None
         };
@@ -270,7 +270,7 @@ impl AgentEngine {
         // Auto-block retries of denied tool calls.
         if self.session_permissions.denied_sigs.contains(&sig) {
             let summary =
-                permission::permission_target_summary(&canonical_tool, &args, &self.cfg.ws_root);
+                permission::permission_target_summary(&canonical_tool, &args, &self.tools.builtins.cwd());
             let msg = self.prompt_store.render_or_fallback(
                 crate::prompts::keys::PERMISSION_DENIED,
                 &[("tool", &canonical_tool), ("summary", &summary)],
@@ -313,7 +313,7 @@ impl AgentEngine {
             permission::PermissionCheckResult::Blocked(reason) => {
                 info!("Permission blocked: {} — {}", canonical_tool, reason);
                 let summary =
-                    permission::permission_target_summary(&canonical_tool, &args, &self.cfg.ws_root);
+                    permission::permission_target_summary(&canonical_tool, &args, &self.tools.builtins.cwd());
                 let msg = self.prompt_store.render_or_fallback(
                     crate::prompts::keys::PERMISSION_DENIED,
                     &[("tool", &canonical_tool), ("summary", &summary)],
@@ -323,7 +323,7 @@ impl AgentEngine {
             }
             permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => {
                 let summary =
-                    permission::permission_target_summary(&canonical_tool, &args, &self.cfg.ws_root);
+                    permission::permission_target_summary(&canonical_tool, &args, &self.tools.builtins.cwd());
 
                 match prompt_kind {
                     permission::PromptKind::ExceedsCeiling { target_mode, path, tool_summary } => {
@@ -555,7 +555,7 @@ impl AgentEngine {
             .to_string();
             manager
                 .add_chat_message(
-                    &self.cfg.ws_root,
+                    &self.tools.builtins.cwd(),
                     session_id.unwrap_or("default"),
                     &crate::state_fs::sessions::ChatMsg {
                         agent_id: from.clone(),
@@ -625,7 +625,7 @@ impl AgentEngine {
                 // Invalidate cached Read results for the same file after a successful mutation.
                 if matches!(canonical_tool.as_str(), "Write" | "Edit") {
                     if let Some(path) =
-                        normalize_tool_path_arg(&self.cfg.ws_root, &original_args)
+                        normalize_tool_path_arg(&self.tools.builtins.cwd(), &original_args)
                     {
                         tool_cache.retain(|key, _| {
                             if !key.starts_with("Read|") {
@@ -853,9 +853,9 @@ impl AgentEngine {
 
                 // Compute start_line by reading the (post-edit) file and finding new_string.
                 // old_string has already been replaced, so we search for new_string instead.
-                let rel = normalize_tool_path_arg(&self.cfg.ws_root, original_args)
+                let rel = normalize_tool_path_arg(&self.tools.builtins.cwd(), original_args)
                     .unwrap_or_else(|| path.to_string());
-                let file_path = self.cfg.ws_root.join(&rel);
+                let file_path = self.tools.builtins.cwd().join(&rel);
                 let start_line = std::fs::read_to_string(&file_path)
                     .ok()
                     .and_then(|content| {
@@ -884,7 +884,7 @@ impl AgentEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let rel = normalize_tool_path_arg(&self.cfg.ws_root, original_args)
+                let rel = normalize_tool_path_arg(&self.tools.builtins.cwd(), original_args)
                     .unwrap_or_else(|| path.to_string());
                 let line_count = content.lines().count();
 

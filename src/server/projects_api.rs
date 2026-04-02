@@ -982,6 +982,19 @@ pub(crate) async fn get_session_permission(
             serde_json::Value::String(mode.to_string()),
         ));
     }
+    // Include zone so UI can disable mode switching for system paths.
+    if let Some(cwd) = params.get("cwd") {
+        let zone = crate::engine::permission::path_zone(std::path::Path::new(cwd));
+        let zone_str = match zone {
+            crate::engine::permission::PathZone::Home => "home",
+            crate::engine::permission::PathZone::Temp => "temp",
+            crate::engine::permission::PathZone::System => "system",
+        };
+        resp.as_object_mut().map(|m| m.insert(
+            "zone".to_string(),
+            serde_json::Value::String(zone_str.to_string()),
+        ));
+    }
     match serde_json::to_string(&resp) {
         Ok(json) => (StatusCode::OK, json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -1010,6 +1023,14 @@ pub(crate) async fn update_session_permission(
         "admin" => PermissionMode::Admin,
         _ => return StatusCode::BAD_REQUEST,
     };
+
+    // Block edit/admin mode on system zone paths (per permission-spec.md).
+    if mode > PermissionMode::Read {
+        let zone = crate::engine::permission::path_zone(std::path::Path::new(&req.path));
+        if zone == crate::engine::permission::PathZone::System {
+            return StatusCode::FORBIDDEN;
+        }
+    }
 
     let session_dir = crate::paths::global_sessions_dir().join(&req.session_id);
     let mut perms = SessionPermissions::load(&session_dir);

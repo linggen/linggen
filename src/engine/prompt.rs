@@ -429,7 +429,7 @@ impl AgentEngine {
 
         // Pre-populate read_paths from prior context.
         let mut read_paths: HashSet<String> = HashSet::new();
-        let ws_root = self.cfg.ws_root.clone();
+        let base_dir = self.tools.builtins.cwd();
         let mut ingest_read_file_text = |text: &str| {
             if !text.contains("Read:") || text.contains("tool_error:") {
                 return;
@@ -449,8 +449,8 @@ impl AgentEngine {
                     return;
                 }
                 read_paths.insert(clean_path.clone());
-                if let Ok(abs) = ws_root.join(&clean_path).canonicalize() {
-                    if let Ok(rel) = abs.strip_prefix(&ws_root) {
+                if let Ok(abs) = base_dir.join(&clean_path).canonicalize() {
+                    if let Ok(rel) = abs.strip_prefix(&base_dir) {
                         read_paths.insert(rel.to_string_lossy().to_string());
                     }
                 }

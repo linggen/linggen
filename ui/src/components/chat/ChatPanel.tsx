@@ -192,6 +192,7 @@ const SessionModeSelector: React.FC = () => {
   const sessionMode = useUiStore((s) => s.sessionMode);
   const setSessionMode = useUiStore((s) => s.setSessionMode);
   const sessionId = useProjectStore((s) => s.activeSessionId);
+  const [zone, setZone] = React.useState<string>('home');
 
   const modes = [
     { value: 'read', label: 'read', color: 'text-emerald-600 dark:text-emerald-400' },
@@ -199,8 +200,9 @@ const SessionModeSelector: React.FC = () => {
     { value: 'admin', label: 'admin', color: 'text-amber-600 dark:text-amber-400' },
   ];
 
-  // Load effective mode from backend on mount / session change.
-  // Pass cwd so the backend resolves the most-specific matching path_mode.
+  const isSystemZone = zone === 'system';
+
+  // Load effective mode + zone from backend on mount / session change.
   React.useEffect(() => {
     if (!sessionId) return;
     const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
@@ -217,31 +219,38 @@ const SessionModeSelector: React.FC = () => {
         } else {
           setSessionMode('read');
         }
+        setZone(resp?.zone || 'home');
       })
-      .catch(() => setSessionMode('read'));
+      .catch(() => { setSessionMode('read'); setZone('home'); });
   }, [sessionId, setSessionMode]);
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setSessionMode(value);
     if (sessionId) {
-      // Get the cwd from session meta for the path grant
       const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
       const cwd = sessionMeta?.cwd || sessionMeta?.project || '~/';
-      // Persist to backend
       fetch('/api/sessions/permission', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          path: cwd,
-          mode: value,
-        }),
+        body: JSON.stringify({ session_id: sessionId, path: cwd, mode: value }),
       }).catch(() => {});
     }
   };
 
   const current = modes.find((m) => m.value === (sessionMode || 'read'));
+
+  // System zone: show read-only badge, no dropdown.
+  if (isSystemZone) {
+    return (
+      <span
+        className="text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 font-semibold bg-slate-50 dark:bg-black/30 text-slate-400 dark:text-slate-500"
+        title="System path — read only, no mode switch"
+      >
+        read (system)
+      </span>
+    );
+  }
 
   return (
     <select

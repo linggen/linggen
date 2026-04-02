@@ -78,7 +78,8 @@ impl Tools {
 
         let mut matches = Vec::new();
         let mut searcher = Searcher::new();
-        let walker = WalkBuilder::new(&self.root)
+        let cwd = self.cwd();
+        let walker = WalkBuilder::new(&cwd)
             .standard_filters(true)
             .hidden(true)
             .build();
@@ -93,7 +94,7 @@ impl Tools {
             }
 
             let path = entry.path();
-            let rel_path = to_rel_string(&self.root, path)?;
+            let rel_path = to_rel_string(&cwd, path)?;
             if let Some(gs) = &globset {
                 if !gs.is_match(Path::new(&rel_path)) {
                     continue;

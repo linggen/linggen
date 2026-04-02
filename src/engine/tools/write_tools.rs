@@ -54,7 +54,7 @@ impl Tools {
         if let (Some(manager), Some(agent_id)) = (&self.manager, &self.agent_id) {
             // 1. Check path access
             let allowed = block_on_async(async {
-                manager.is_path_allowed(&self.root, agent_id, rel).await
+                manager.is_path_allowed(&self.cwd(), agent_id, rel).await
             });
 
             if !allowed {
@@ -98,9 +98,9 @@ impl Tools {
         let (target, display) = if abs_path.is_absolute() {
             (abs_path.to_path_buf(), args.path.clone())
         } else {
-            let rel = sanitize_rel_path(&self.root, &args.path)?;
+            let rel = sanitize_rel_path(&self.cwd(), &args.path)?;
             self.enforce_write_access(&rel)?;
-            let p = self.root.join(&rel);
+            let p = self.cwd().join(&rel);
             (p, rel)
         };
 
@@ -142,9 +142,9 @@ impl Tools {
         let (target, display) = if abs_path.is_absolute() {
             (abs_path.to_path_buf(), args.path.clone())
         } else {
-            let rel = sanitize_rel_path(&self.root, &args.path)?;
+            let rel = sanitize_rel_path(&self.cwd(), &args.path)?;
             self.enforce_write_access(&rel)?;
-            let p = self.root.join(&rel);
+            let p = self.cwd().join(&rel);
             (p, rel)
         };
 
