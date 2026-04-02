@@ -109,39 +109,31 @@ Skipped triggers (agent busy) are also logged with `"skipped": true` and no `ses
 
 ## Autonomous permissions
 
-Missions run without a human in the loop. The permission system is overridden accordingly:
+Missions run without a human in the loop. Mission sessions are always **locked** — no interactive prompts. See `permission-spec.md` for the full permission model.
 
-- **`tool_permission_mode` forced to `Auto`**: regardless of the global config (`Ask`, `AcceptEdits`), mission runs always use `Auto`. This prevents the agent from hanging on permission prompts that no one will answer.
-- **No AskUser tool**: the mission agent's tool list excludes `AskUser`. The model is instructed it cannot ask questions.
+- **No AskUser tool**: the mission agent cannot ask questions.
 - **No interactive commands**: the agent prompt forbids commands requiring stdin (`git rebase -i`, `vim`, etc.).
-- **Project deny rules still apply**: `.linggen/permissions.json` deny rules are hard-blocks that missions cannot bypass.
+- **Config deny rules still apply**: `linggen.toml` deny rules are hard-blocks that missions cannot bypass.
 
 ### Permission tiers
 
-Each mission has a `permission_tier` that controls what tools are available:
+Each mission has a `permission_tier` that maps to a session permission mode:
 
-| Tier | Tools | Bash | Requires project |
-|:-----|:------|:-----|:-----------------|
-| **Read-only** | Read, Glob, Grep, WebSearch, WebFetch, Task | No | No |
-| **Standard** | All tools | Build/test commands only | Yes |
-| **Full access** | All tools | Unrestricted | No |
+| Tier | Mode | Bash | Use case |
+|:-----|:-----|:-----|:---------|
+| **Read-only** | read | read-class only | Monitoring, analysis |
+| **Standard** | edit | write-class + curated prefixes | Build, test, maintenance |
+| **Full access** | admin | Unrestricted | Trusted automation |
 
-**Read-only**: For monitoring, analysis, and reporting missions. Cannot modify files or run commands.
+All tiers are locked — actions within the mode ceiling proceed, everything else is blocked.
 
-**Standard**: For code maintenance missions. Can edit files scoped to the project root. Bash is restricted to safe command prefixes: `cargo`, `npm`, `go`, `make`, `pytest`, `git status/log/diff/show`, `ls`, `cat`, etc. This prevents accidental destructive commands while allowing build/test workflows.
+### Safety
 
-**Full access** (default): No tool restrictions. The agent can run any command. Use for trusted automation tasks.
-
-### Safety trade-off
-
-Even with full access, safety is maintained through:
-
-1. **Agent prompt guardrails**: the mission agent is instructed to be conservative, read before writing, scope changes tightly, and avoid destructive operations unless explicitly asked.
-2. **Permission tiers**: users choose the minimum access level needed.
-3. **Project deny rules**: admins can deny specific tools or patterns (e.g., `Bash:rm -rf *`) in `.linggen/permissions.json`.
-4. **`max_iters` cap**: bounds total tool calls per run.
-5. **Daily trigger cap**: 100 triggers per mission per day.
-6. **Session audit trail**: every action is logged in the session, fully reviewable after the fact.
+1. **Permission tiers**: users choose the minimum access level needed.
+2. **Config deny rules**: hard-block specific commands (e.g., `Bash(rm -rf *)`).
+3. **`max_iters` cap**: bounds total tool calls per run.
+4. **Daily trigger cap**: 100 triggers per mission per day.
+5. **Session audit trail**: every action is logged, fully reviewable.
 
 ## Safety
 
@@ -154,8 +146,8 @@ Even with full access, safety is maintained through:
 | No mission = no triggers | — | Missions must be explicitly created |
 | Disabled missions | Skip silently | `enabled: false` stops all triggers |
 | No interactive tools | — | Mission agent cannot block waiting for human input |
-| Permission mode | Forced `Auto` | Prevents hanging on unanswered permission prompts |
-| Project deny rules | Still enforced | Hard-block mechanism for restricting mission capabilities |
+| Locked session | Always | No prompts; blocked if action exceeds ceiling. See `permission-spec.md` |
+| Config deny rules | Still enforced | Hard-block mechanism for restricting mission capabilities |
 
 ## Lifecycle
 

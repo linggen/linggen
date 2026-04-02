@@ -88,7 +88,14 @@ pub struct EngineConfig {
     pub ws_root: PathBuf,
     pub max_iters: usize,
     pub write_safety_mode: crate::config::WriteSafetyMode,
+    /// Legacy field — kept for backward compat during migration. Use `permission_mode`.
     pub tool_permission_mode: crate::config::ToolPermissionMode,
+    /// New permission mode (chat/read/edit/admin). See permission-spec.md.
+    pub permission_mode: crate::engine::permission::PermissionMode,
+    /// Config deny rules from `[permissions]` in linggen.toml.
+    pub deny_rules: Vec<String>,
+    /// Config ask rules from `[permissions]` in linggen.toml.
+    pub ask_rules: Vec<String>,
     pub prompt_loop_breaker: Option<String>,
     pub interface_mode: InterfaceMode,
     /// When set, Bash commands must match one of these prefixes.

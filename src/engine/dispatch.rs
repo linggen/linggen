@@ -329,7 +329,7 @@ impl AgentEngine {
         match tool_name {
             "ExitPlanMode" => {
                 if self.plan_mode {
-                    tracing::info!("ExitPlanMode → submitting plan for review");
+                    tracing::info!("[plan] ExitPlanMode → submitting plan for review");
                     // Gather plan text from both the tool argument and the
                     // response text.  Some models (e.g. Gemini) stream the full
                     // plan as response content but only put a truncated version
@@ -353,6 +353,27 @@ impl AgentEngine {
                     if !plan_text.is_empty() {
                         self.last_assistant_text = Some(plan_text.clone());
                     }
+                    // Merge items from ExitPlanMode args into stored plan items.
+                    if let Some(items_arr) = action.args.get("items").and_then(|v| v.as_array()) {
+                        let mut plan_items = Vec::new();
+                        for item in items_arr {
+                            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                            let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+                            plan_items.push(PlanItem { id, title, status });
+                        }
+                        if !plan_items.is_empty() {
+                            // Store items so finalize_plan_mode picks them up.
+                            let plan = self.plan.get_or_insert_with(|| Plan {
+                                summary: String::new(),
+                                status: PlanStatus::Planned,
+                                plan_text: String::new(),
+                                items: Vec::new(),
+                            });
+                            plan.items = plan_items;
+                            tracing::info!("[plan] ExitPlanMode: merged {} items from args", plan.items.len());
+                        }
+                    }
                     state.messages.push(self.tool_result_msg_for(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::PLAN_SUBMITTED, &[],
@@ -375,11 +396,11 @@ impl AgentEngine {
                 let reason = action.args.get("reason")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                tracing::info!("EnterPlanMode: {:?}", reason);
+                tracing::info!("[plan] EnterPlanMode: {:?}", reason);
                 // If already in plan mode, treat as a no-op so the model
                 // continues researching instead of exiting the loop.
                 if self.plan_mode {
-                    tracing::warn!("EnterPlanMode called while already in plan mode — ignoring");
+                    tracing::warn!("[plan] EnterPlanMode called while already in plan mode — ignoring");
                     state.messages.push(self.tool_result_msg_for(
                         "You are already in plan mode. Continue researching and produce your plan text directly — do not call EnterPlanMode again.".to_string(),
                         &tc_id, "EnterPlanMode",
@@ -401,7 +422,41 @@ impl AgentEngine {
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
-                self.handle_update_plan_action(plan_text, items, &mut state.messages, session_id, &tc_id).await;
+                // During planning (before approval), store items silently
+                // without emitting PlanUpdate to the UI. The PlanBlock is
+                // only created when ExitPlanMode fires. This avoids the
+                // premature PlanBlock + duplicate content bug.
+                if self.plan_mode && self.plan.as_ref().map(|p| p.status == PlanStatus::Planned).unwrap_or(true) {
+                    let mut plan_items = Vec::new();
+                    for item in &items {
+                        let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                        let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+                        plan_items.push(PlanItem { id, title, status });
+                    }
+                    let plan = self.plan.get_or_insert_with(|| Plan {
+                        summary: String::new(),
+                        status: PlanStatus::Planned,
+                        plan_text: String::new(),
+                        items: Vec::new(),
+                    });
+                    if !plan_items.is_empty() {
+                        plan.items = plan_items;
+                    }
+                    if let Some(text) = plan_text.filter(|s| !s.trim().is_empty()) {
+                        plan.plan_text = text;
+                    }
+                    info!("[plan] UpdatePlan (planning phase): stored {} items silently, no SSE", plan.items.len());
+                    state.messages.push(self.tool_result_msg_for(
+                        self.prompt_store.render_or_fallback(
+                            crate::prompts::keys::PLAN_UPDATED,
+                            &[("count", &items.len().to_string())],
+                        ),
+                        &tc_id, "UpdatePlan",
+                    ));
+                } else {
+                    self.handle_update_plan_action(plan_text, items, &mut state.messages, session_id, &tc_id).await;
+                }
                 return None;
             }
             _ => {}
@@ -472,7 +527,7 @@ impl AgentEngine {
                 .filter(|s| *s == PlanStatus::Planned || *s == PlanStatus::Approved)
                 .unwrap_or(PlanStatus::Executing)
         };
-        info!("UpdatePlan: plan_mode={} existing_status={:?} → new_status={:?}",
+        info!("[plan] UpdatePlan: plan_mode={} existing_status={:?} → new_status={:?}",
             self.plan_mode,
             self.plan.as_ref().map(|p| &p.status),
             status);
@@ -488,7 +543,7 @@ impl AgentEngine {
             crate::prompts::keys::PLAN_UPDATED,
             &[("count", &items.len().to_string())],
         );
-        info!("UpdatePlan: {}", ack);
+        info!("[plan] UpdatePlan: {}", ack);
 
         // Push acknowledgement to model messages so it sees the feedback.
         messages.push(self.tool_result_msg_for(ack.clone(), tc_id, "UpdatePlan"));

@@ -97,33 +97,17 @@ Dispatch order in `ToolRegistry.execute()`:
 
 ## Access control
 
-- Per-agent via `spec.tools` in frontmatter. Wildcard `tools: ["*"]` = unrestricted.
-- Capabilities determined by effective tool set (see `session-spec.md`): Write/Edit = can patch, Task = can delegate.
+Session permission mode controls which tools are available. See `permission-spec.md` for the full model.
+
+- **Four modes**: chat (no tools), read, edit, admin — each a ceiling on what the agent can do.
+- **Path-scoped**: permissions are tied to directory trees, aligned with OS ownership (home vs system).
+- **Deny/ask rules**: configured in `linggen.toml` to hard-block or force-prompt specific commands.
 - Write-safety mode: checks that file was Read before Write/Edit.
-- Tool permission mode: user approval for destructive tools (`Write`, `Edit`, `Bash`).
 - Redundancy detection: cache + loop-breaker for repeated calls.
 
-## Tool permission mode
+**Flow**: permission gate in `handle_tool_action()` → classify action tier → check deny/ask rules → check path zone + mode ceiling → emit `AskUser` SSE event if needed → proceed or block.
 
-Three modes:
-
-- **`ask`** (default) — destructive tool calls require user approval before execution.
-- **`accept_edits`** — auto-approve `Write`/`Edit` but still prompt for `Bash`.
-- **`auto`** — no prompting, all tools auto-approved.
-
-**Destructive tools**: `Write`, `Edit`, `Bash`.
-
-**Approval options**:
-- **Allow once** — proceed this one time only.
-- **Allow all {tool} for this session** — session-scoped, in-memory.
-- **Allow all {tool} for this project** — persisted to `{workspace}/.linggen/permissions.json`.
-- **Cancel** — deny the tool call; agent sees a denial message.
-
-**Flow**: permission gate in `handle_tool_action()` → check `PermissionStore` → if not allowed, emit `AskUser` SSE event (header="Permission") → await user response → proceed or deny.
-
-Reuses the AskUser bridge — no new endpoints. Web UI renders `ToolPermissionCard`, TUI renders `InteractivePrompt`.
-
-**Implementation**: `engine/permission.rs` (store, helpers), `engine/mod.rs` (gate, `ask_permission()`), `ui/src/components/ToolPermissionCard.tsx` (UI).
+**Implementation**: `engine/permission.rs`, `engine/tool_exec.rs`, `ui/src/components/ToolPermissionCard.tsx`.
 
 ## File safety
 

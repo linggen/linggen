@@ -293,7 +293,7 @@ impl AgentEngine {
                                 self.model_id
                             )
                         };
-                        info!("Empty response streak in plan mode → auto-finalizing plan");
+                        info!("[plan] Empty response streak in plan mode → auto-finalizing plan");
                         let outcome = self.finalize_plan_mode(plan_text).await;
                         return Ok(outcome);
                     }
@@ -420,7 +420,7 @@ impl AgentEngine {
                     // Plan mode fallback: model emitted Done without calling
                     // ExitPlanMode.  Treat the text as the plan and auto-finalize.
                     if self.plan_mode {
-                        info!("Done-only tool call in plan mode → implicit ExitPlanMode");
+                        info!("[plan] Done-only tool call in plan mode → implicit ExitPlanMode");
                         let plan_text = raw.trim().to_string();
                         if !plan_text.is_empty() {
                             self.last_assistant_text = Some(plan_text.clone());
@@ -468,7 +468,7 @@ impl AgentEngine {
                     // Plan mode fallback: model output plan text without calling
                     // ExitPlanMode.  Treat the text as the plan and auto-finalize.
                     if self.plan_mode {
-                        info!("Text-only response in plan mode → implicit ExitPlanMode");
+                        info!("[plan] Text-only response in plan mode → implicit ExitPlanMode");
                         let plan_text = raw.trim().to_string();
                         if !plan_text.is_empty() {
                             self.last_assistant_text = Some(plan_text.clone());

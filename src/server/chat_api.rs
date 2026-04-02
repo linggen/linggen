@@ -1461,7 +1461,7 @@ async fn recover_plan_from_session(
                 if let Some(plan_val) = parsed.get("plan") {
                     if let Ok(plan) = serde_json::from_value::<crate::engine::Plan>(plan_val.clone()) {
                         if plan.status == crate::engine::PlanStatus::Planned {
-                            tracing::info!("Recovered pending plan from session history for {agent_id}");
+                            tracing::info!("[plan] Recovered pending plan from session history for {agent_id}");
                             return Some(plan);
                         }
                         // Most recent plan is not "planned" — no pending plan

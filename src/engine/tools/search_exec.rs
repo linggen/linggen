@@ -282,8 +282,8 @@ impl Tools {
                                         .unwrap_or_default();
                                     let _ = tx.send((
                                         "__cwd_changed__".to_string(),
-                                        new_cwd.to_string_lossy().to_string(),
                                         format!("{}|{}", project, project_name),
+                                        new_cwd.to_string_lossy().to_string(),
                                     ));
                                 }
                             }

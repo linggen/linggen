@@ -342,6 +342,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   })),
 
   upsertPlan: (agentId, planText) => set(mutate((state) => {
+    // Find existing plan message to update in-place (e.g. during execution
+    // progress updates, or when ExitPlanMode refines a plan after feedback).
     const existingIdx = state.findIndex((m) => {
       if ((m.from || m.role) !== agentId) return false;
       return isPlanMessage(m);
@@ -356,13 +358,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
       return next;
     }
-    // Remove the generating message that streamed plan tokens — the plan
-    // block replaces it so we don't show duplicate content.
+    // First PlanUpdate (from ExitPlanMode during planning). Morph the
+    // generating message into the plan message in-place so the DOM
+    // position stays the same — no flash.
     const genIdx = findLastGeneratingMessageIndex(state, agentId);
-    const filtered = genIdx >= 0
-      ? state.filter((_, i) => i !== genIdx)
-      : state;
-    return [...filtered, {
+    if (genIdx >= 0) {
+      const next = [...state];
+      next[genIdx] = {
+        ...next[genIdx],
+        text: planText,
+        liveText: undefined,
+        isGenerating: undefined,
+        timestampMs: Date.now(),
+        timestamp: new Date().toLocaleTimeString(),
+      };
+      return next;
+    }
+    return [...state, {
       role: 'agent' as const,
       from: agentId,
       to: 'user',

@@ -154,7 +154,10 @@ const SessionModelSelector: React.FC = () => {
       const updated = ps.allSessions.map((s) =>
         s.id === sessionId ? { ...s, model_id: value } : s
       );
-      useProjectStore.setState({ allSessions: updated });
+      const updatedSessions = ps.sessions.map((s) =>
+        s.id === sessionId ? { ...s, model_id: value } : s
+      );
+      useProjectStore.setState({ allSessions: updated, sessions: updatedSessions });
       // Persist to backend
       fetch('/api/sessions', {
         method: 'PATCH',

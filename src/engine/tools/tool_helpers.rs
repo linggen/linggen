@@ -318,9 +318,9 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "ExitPlanMode",
-            "args": {"plan_text": "string"},
+            "args": {"plan_text": "string", "items": "[{id: string, title: string, status: string}]?"},
             "returns": "success",
-            "notes": "Submit your plan for user approval. Include the full plan text. The system will prompt the user to approve, reject, or give feedback."
+            "notes": "Submit your plan for user approval. Include the full detailed plan in plan_text. Optionally include items as a structured task list for progress tracking (all pending). If items is omitted, the system auto-extracts steps from your plan text."
         }),
         serde_json::json!({
             "name": "EnterPlanMode",
@@ -332,7 +332,7 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
             "name": "UpdatePlan",
             "args": {"plan_text": "string?", "items": "[{id: string, title: string, status: string}]?"},
             "returns": "success",
-            "notes": "Update plan content and/or progress checklist. Use plan_text for detailed plan, items for progress tracking. Status values: pending, in_progress, completed."
+            "notes": "Track execution progress during plan execution (after approval). Update item status: pending → in_progress → completed. Do NOT call this during planning — use ExitPlanMode instead."
         }),
     ]
 }

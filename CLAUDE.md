@@ -24,6 +24,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/insight.md` — vision, roadmap, competitive positioning
 - `doc/webrtc-spec.md` — WebRTC transport: P2P remote access, signaling, data channels
 - `doc/proxy-spec.md` — proxy rooms: community model sharing, credits, auto-dispatch
+- `doc/permission-spec.md` — permission system: modes, layers, tool classification, remote trust
 
 ## Build, Test, Run
 
@@ -121,6 +122,6 @@ Follow `doc/code-style.md`:
 - **App skills**: skills with `app` frontmatter section run directly (no model). Launcher types: `web` (static files served at `/apps/{name}/`), `bash` (script execution), `url` (external link). Model can also call `RunApp` tool.
 - **Delegation depth**: configurable via `max_delegation_depth` (default 2). Any agent can delegate to any other agent.
 - **Model routing**: default model chain with health tracking and auto-fallback on errors/rate limits.
-- **Tool permissions**: three modes — `auto` (always allow), `warn` (log destructive ops), `ask` (prompt user via AskUser bridge).
+- **Tool permissions**: session-scoped, path-aware permission model with four modes (chat/read/edit/admin), deny/ask rules, and OS-aligned path zones. See `doc/permission-spec.md`.
 
 When working on a task, read the relevant `doc/*.md` spec files for context — don't read all of them upfront.

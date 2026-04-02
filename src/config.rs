@@ -18,6 +18,9 @@ pub struct Config {
     /// Default working folder for new sessions. Defaults to `~` if not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_path: Option<String>,
+    /// Permission rules (deny/ask). See permission-spec.md.
+    #[serde(default)]
+    pub permissions: PermissionsConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -110,12 +113,32 @@ pub struct AgentConfig {
     pub max_iters: usize,
     #[serde(default)]
     pub write_safety_mode: WriteSafetyMode,
+    /// Legacy permission mode (ask/auto/accept_edits). Use `default_permission_mode` instead.
     #[serde(default)]
     pub tool_permission_mode: ToolPermissionMode,
+    /// New permission mode (chat/read/edit/admin). Takes precedence over `tool_permission_mode`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_permission_mode: Option<crate::engine::permission::PermissionMode>,
     #[serde(default)]
     pub prompt_loop_breaker: Option<String>,
     #[serde(default = "default_max_delegation_depth")]
     pub max_delegation_depth: usize,
+}
+
+impl AgentConfig {
+    /// Resolve effective permission mode — new field takes precedence, falls back to legacy.
+    pub fn effective_permission_mode(&self) -> crate::engine::permission::PermissionMode {
+        use crate::engine::permission::PermissionMode;
+        if let Some(ref mode) = self.default_permission_mode {
+            return mode.clone();
+        }
+        // Convert legacy mode
+        match self.tool_permission_mode {
+            ToolPermissionMode::Ask => PermissionMode::Read,
+            ToolPermissionMode::AcceptEdits => PermissionMode::Edit,
+            ToolPermissionMode::Auto => PermissionMode::Admin,
+        }
+    }
 }
 
 fn default_max_delegation_depth() -> usize {
@@ -150,6 +173,17 @@ impl Default for ToolPermissionMode {
     fn default() -> Self {
         ToolPermissionMode::Ask
     }
+}
+
+/// Permission rules from `[permissions]` in linggen.toml. See permission-spec.md.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PermissionsConfig {
+    /// Hard-block rules — always denied, no prompt. E.g. `["Bash(sudo *)"]`
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// Force-prompt rules — always prompted even within mode ceiling. E.g. `["Bash(git push *)"]`
+    #[serde(default)]
+    pub ask: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -341,6 +375,7 @@ impl Default for Config {
                 max_iters: 200,
                 write_safety_mode: WriteSafetyMode::default(),
                 tool_permission_mode: ToolPermissionMode::default(),
+                default_permission_mode: None,
                 prompt_loop_breaker: None,
                 max_delegation_depth: default_max_delegation_depth(),
             },
@@ -352,6 +387,7 @@ impl Default for Config {
             agents: Vec::new(),
             routing: RoutingConfig::default(),
             home_path: None,
+            permissions: PermissionsConfig::default(),
         }
     }
 }

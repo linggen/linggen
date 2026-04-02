@@ -76,7 +76,7 @@ Messages are queued per-agent and checked at each iteration boundary via an inte
 
 The loop includes gates and streak detection:
 
-- **Permission gate** — destructive tools (`Write`, `Edit`, `Bash`, `Patch`) require user approval when `tool_permission_mode = "ask"`. See `tool-spec.md`.
+- **Permission gate** — tools are checked against the session's permission mode, path zones, and deny/ask rules. See `permission-spec.md`.
 - Empty search results → nudge to broaden query.
 - Redundant tool calls → nudge to try different approach.
 - Invalid JSON parsing → retry hint.

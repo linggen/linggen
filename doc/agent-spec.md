@@ -30,7 +30,7 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 |:------|:---------|:--------|
 | `name` | yes | Agent identity |
 | `description` | yes | What the agent does (used for discovery and delegation) |
-| `tools` | yes | Default tool access. Skill `allowed-tools` can narrow this at runtime. |
+| `tools` | yes | Tool declarations (used for prompt assembly). Session permission mode controls actual access — see `permission-spec.md`. |
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.

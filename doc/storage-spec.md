@@ -58,7 +58,7 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── memory/                           # Global memory
 │   └── ...
 ├── credentials.json                  # API keys for model providers (JSON)
-├── permissions.json                  # Global tool permissions (home mode)
+├── permissions.json                  # (legacy, ignored — see permission-spec.md)
 ├── missions/
 │   └── {mission_id}/
 │       ├── mission.md                # Mission definition (markdown + YAML frontmatter)
@@ -71,14 +71,14 @@ All sessions live in one flat directory. The `creator`, `project`, and `skill` f
 
 ## Project-local state (`{repo}/.linggen/`)
 
-Project-specific settings live inside the repo itself, not in `~/.linggen/`. Created when the agent grants project-scoped permissions.
+Project-specific state lives inside the repo, not in `~/.linggen/`.
 
 ```
 {repo}/.linggen/
-└── permissions.json                  # Project-scoped tool permissions (JSON)
+└── (reserved for future project-specific config)
 ```
 
-Can be gitignored. Same pattern as Claude Code's `{repo}/.claude/settings.local.json`.
+Note: `permissions.json` is no longer used at project level. Permissions are session-scoped — see `permission-spec.md`.
 
 
 ## Data formats
@@ -94,17 +94,22 @@ Can be gitignored. Same pattern as Claude Code's `{repo}/.claude/settings.local.
 
 Stored at `~/.linggen/credentials.json`. Keyed by model `id` from `linggen.toml`. Never committed to git. See `models.md` → Credentials.
 
-### Tool permissions (`permissions.json`)
+### Session permissions (`permission.json`)
 
 ```json
-{ "tool_allows": ["Write", "Edit"] }
+{
+  "path_modes": [
+    { "path": "~/workspace/linggen", "mode": "edit" }
+  ],
+  "locked": false,
+  "allows": ["Bash:git push *"],
+  "denied_sigs": []
+}
 ```
 
-Two locations:
-- `~/.linggen/permissions.json` — global permissions (home mode)
-- `{repo}/.linggen/permissions.json` — project-scoped permissions (loaded when agent enters a git repo)
+Stored at `~/.linggen/sessions/{session_id}/permission.json`. Per-session, cleared on session end. See `permission-spec.md` for the full model.
 
-Created when user selects "Allow all {tool}". See `tool-spec.md` → Tool permission mode.
+Global deny/ask rules are configured in `linggen.toml` under `[permissions]`, not in a separate file.
 
 ### Session metadata (`session.yaml`)
 

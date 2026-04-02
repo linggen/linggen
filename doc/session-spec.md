@@ -137,34 +137,23 @@ Layers 5-7 are sensitive to the working folder. When the session transitions bet
 
 A zero-tool session (e.g., game-table skill with `allowed-tools: []`) gets layers 1-7 only — a minimal, focused prompt for pure conversation.
 
-## Effective tools
+## Effective tools and permissions
 
-The tools available in a session are determined by the skill when bound:
+Session permission mode controls which tools are available. See `permission-spec.md` for the full model.
 
-```
-effective_tools = skill.allowed_tools              (if skill is bound)
-                  agent.tools                       (if no skill)
-```
+- **Session is the single source of truth** for permissions. No tool lists in agent specs or skill frontmatter control access.
+- **Four modes** (chat/read/edit/admin) define the ceiling. Mode is path-scoped and persisted per-session.
+- **Skills** that need elevated permissions declare a `permission` section in frontmatter — the user approves when invoking, and the grant is written to the session's `permission.json`.
+- **Missions** set mode + locked flag at creation time.
 
-- `agent.tools: ["*"]` means all built-in tools.
-- `skill.allowed-tools: []` means no tools at all.
-- `skill.allowed-tools: ["Read", "Grep"]` means only those tools.
-- No `allowed-tools` field means no restriction (falls through to agent tools).
+Available tools depend on the session's current mode for the current path:
 
-Capabilities are determined by which tools are present:
-
-| Capability | Requires tool |
-|:-----------|:-------------|
-| Read files | `Read` |
-| Write/edit files | `Write`, `Edit` |
-| Run commands | `Bash` |
-| Search code | `Grep`, `Glob` |
-| Delegate to sub-agent | `Task` |
-| Web access | `WebSearch`, `WebFetch` |
-| Invoke skills | `Skill` |
-| Ask the user | `AskUser` |
-
-No separate policy system — the tool list IS the permission model.
+| Mode | Available tools |
+|:-----|:---------------|
+| chat | None |
+| read | Read, Glob, Grep, WebSearch, capture_screenshot, plan tools, AskUser, read-class Bash |
+| edit | Everything in read + Write, Edit, write-class Bash |
+| admin | Everything |
 
 ## Storage
 
@@ -197,12 +186,13 @@ The chat handler detects this by checking the session's current `creator` field.
 | Aspect | Before (mission) | After (user) |
 |:-------|:-----------------|:-------------|
 | `creator` field | `"mission"` | `"user"` |
-| `tool_permission_mode` | `Auto` (forced by scheduler) | Config default (from `linggen.toml`) |
-| `mission_allowed_tools` | Set by permission tier | Cleared |
-| `bash_allow_prefixes` | Set by permission tier | Cleared |
+| Permission mode | Mission tier (locked) | Config default from `linggen.toml` (unlocked) |
+| Locked flag | `true` | `false` — interactive prompts resume |
 | System prompt | Rebuilt from `ling.md` | Same — but cache invalidated to pick up any config changes |
 | Chat history | Mission messages | Preserved — user sees full mission context |
-| Session files | Stay in `~/.linggen/missions/{mission_id}/sessions/` | No move — files stay in place |
+| Session files | Stay in place | No move |
+
+See `permission-spec.md` for the full permission model and session promotion details.
 
 ### What stays the same
 

@@ -985,12 +985,13 @@ impl AgentEngine {
                         .clone()
                         .unwrap_or_else(|| "unknown".to_string());
                     // Emit structured ContentBlockUpdate (failed) for the Web UI.
+                    let err_summary = format!("{}: {}", tool_failed_status, e);
                     manager
                         .send_event(crate::agent_manager::AgentEvent::ContentBlockUpdate {
                             agent_id: agent_id.clone(),
                             block_id: block_id.clone(),
                             status: Some("failed".to_string()),
-                            summary: Some(tool_failed_status.clone()),
+                            summary: Some(err_summary),
                             is_error: Some(true),
                             parent_id: self.parent_agent_id.clone(),
                             extra: None,

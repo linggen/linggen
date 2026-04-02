@@ -17,7 +17,7 @@ impl AgentEngine {
         if items.is_empty() {
             items = Self::extract_plan_items(&plan_text);
             if !items.is_empty() {
-                info!("Auto-extracted {} plan items from headings", items.len());
+                info!("[plan] Auto-extracted {} plan items from headings", items.len());
             }
         }
         // If UpdatePlan already set items but the plan_text from ExitPlanMode is
@@ -37,7 +37,7 @@ impl AgentEngine {
                 for item in &items {
                     lines.push(format!("- [ ] {}", item.title));
                 }
-                info!("Rebuilt plan_text from {} items (original was {} chars)", items.len(), plan_text.len());
+                info!("[plan] Rebuilt plan_text from {} items (original was {} chars)", items.len(), plan_text.len());
                 lines.join("\n")
             })
         } else {
@@ -50,14 +50,14 @@ impl AgentEngine {
             plan_text,
             items,
         };
-        info!("finalize_plan_mode: status={:?} items={}", plan.status, plan.items.len());
+        info!("[plan] finalize_plan_mode: status={:?} items={}", plan.status, plan.items.len());
         self.persist_and_emit_plan(plan.clone()).await;
         AgentOutcome::Plan(plan)
     }
 
     /// Store the plan in memory and emit a PlanUpdate SSE event.
     pub(crate) async fn persist_and_emit_plan(&mut self, plan: Plan) {
-        info!("persist_and_emit_plan: status={:?} items={}", plan.status, plan.items.len());
+        info!("[plan] persist_and_emit_plan: status={:?} items={}", plan.status, plan.items.len());
         self.plan = Some(plan);
 
         if let Some(manager) = self.tools.get_manager() {
