@@ -277,15 +277,21 @@ async fn run_peer(
 
             // Forward server events to the appropriate session data channel
             result = events_rx.recv() => {
-                if let Ok(event) = result {
-                    forward_event_to_channels(
-                        &event,
-                        &session_channels,
-                        control_channel_id,
-                        &mut pending_events,
-                        &mut pending_dc_writes,
-                        &state,
-                    );
+                match result {
+                    Ok(event) => {
+                        forward_event_to_channels(
+                            &event,
+                            &session_channels,
+                            control_channel_id,
+                            &mut pending_events,
+                            &mut pending_dc_writes,
+                            &state,
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("WebRTC event relay lagged — dropped {n} events");
+                    }
+                    Err(_) => {}
                 }
             }
 

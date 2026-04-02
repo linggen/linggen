@@ -52,6 +52,7 @@ interface UiState {
 
   // Session permission mode (read/edit/admin — loaded from session permission.json)
   sessionMode: string | null;
+  permissionVersion: number; // bumped when permission state may have changed
 
   // Chat UI
   queuedMessages: QueuedChatItem[];
@@ -84,6 +85,7 @@ interface UiState {
   setModelPickerOpen: (open: boolean) => void;
   setSessionModel: (model: string | null) => void;
   setSessionMode: (mode: string | null) => void;
+  bumpPermissionVersion: () => void;
   setShowAgentSpecEditor: (show: boolean) => void;
   setOpenApp: (app: AppPanelState | null) => void;
 
@@ -113,6 +115,7 @@ export const useUiStore = create<UiState>((set) => ({
   modelPickerOpen: false,
   sessionModel: null,
   sessionMode: null,
+  permissionVersion: 0,
   showAgentSpecEditor: false,
   openApp: null,
   selectedFileContent: null,
@@ -151,6 +154,7 @@ export const useUiStore = create<UiState>((set) => ({
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setSessionModel: (model) => set({ sessionModel: model }),
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
+  bumpPermissionVersion: () => set((s) => ({ permissionVersion: s.permissionVersion + 1 })),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),
   setOpenApp: (app) => set({ openApp: app }),
 

@@ -343,7 +343,38 @@ impl SessionPermissions {
     }
 
     /// Add or update a path-mode grant. If a grant for the exact path exists, update it.
+    /// Prunes child entries that are now redundant (child mode <= new parent mode)
+    /// or that conflict with a downgrade (parent lowered, children should follow).
     pub fn set_path_mode(&mut self, path: &str, mode: PermissionMode) {
+        // Expand tilde for prefix comparison.
+        let expanded = if path.starts_with("~/") {
+            dirs::home_dir()
+                .map(|h| h.join(&path[2..]).to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string())
+        } else {
+            path.to_string()
+        };
+
+        // Remove child entries covered by this grant.
+        self.path_modes.retain(|pm| {
+            if pm.path == path {
+                return true; // keep the exact match — we'll update it below
+            }
+            let pm_expanded = if pm.path.starts_with("~/") {
+                dirs::home_dir()
+                    .map(|h| h.join(&pm.path[2..]).to_string_lossy().to_string())
+                    .unwrap_or_else(|| pm.path.clone())
+            } else {
+                pm.path.clone()
+            };
+            // Is pm a child of the path being set?
+            let is_child = pm_expanded.starts_with(&expanded)
+                && (pm_expanded.len() == expanded.len()
+                    || pm_expanded.as_bytes().get(expanded.len()) == Some(&b'/'));
+            !is_child // keep non-children
+        });
+
+        // Update or insert.
         if let Some(existing) = self.path_modes.iter_mut().find(|pm| pm.path == path) {
             existing.mode = mode;
         } else {
@@ -845,9 +876,12 @@ pub fn check_permission(
         }
     }
 
-    // 4. Resolve target path + zone
+    // 4. Resolve target path + zone (ensure absolute for grant matching)
     let target_path = file_path
-        .map(PathBuf::from)
+        .map(|fp| {
+            let p = PathBuf::from(fp);
+            if p.is_absolute() { p } else { session_cwd.join(p) }
+        })
         .unwrap_or_else(|| session_cwd.to_path_buf());
     let zone = path_zone(&target_path);
 
@@ -895,18 +929,19 @@ pub fn check_permission(
                 });
             }
 
-            // For write/admin actions, offer mode upgrade
+            // For write/admin actions, offer mode upgrade on the session cwd
+            // (not the specific file — per spec, "Switch to edit mode" grants on cwd/**)
             let target_mode = action_tier.clone();
             let path_str = if let Some(home) = dirs::home_dir() {
-                let ts = target_path.to_string_lossy();
+                let cs = session_cwd.to_string_lossy();
                 let hs = home.to_string_lossy();
-                if ts.starts_with(hs.as_ref()) {
-                    format!("~{}", &ts[hs.len()..])
+                if cs.starts_with(hs.as_ref()) {
+                    format!("~{}", &cs[hs.len()..])
                 } else {
-                    ts.to_string()
+                    cs.to_string()
                 }
             } else {
-                target_path.to_string_lossy().to_string()
+                session_cwd.to_string_lossy().to_string()
             };
             let summary = rule_arg.unwrap_or(tool).to_string();
             PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {
@@ -1195,9 +1230,46 @@ mod tests {
         assert_eq!(sp.path_modes.len(), 1); // no duplicate
         assert_eq!(sp.path_modes[0].mode, PermissionMode::Admin);
 
-        // Add different path
+        // Add different path (sibling, not child)
         sp.set_path_mode("~/other", PermissionMode::Edit);
         assert_eq!(sp.path_modes.len(), 2);
+    }
+
+    #[test]
+    fn test_set_path_mode_prunes_children() {
+        let mut sp = SessionPermissions::default();
+
+        // Set up: child edit grants from per-file prompts.
+        sp.set_path_mode("/tmp/project/src/a.rs", PermissionMode::Edit);
+        sp.set_path_mode("/tmp/project/src/b.rs", PermissionMode::Edit);
+        sp.set_path_mode("/tmp/other", PermissionMode::Read); // sibling, not child
+        assert_eq!(sp.path_modes.len(), 3);
+
+        // Upgrade parent → children pruned.
+        sp.set_path_mode("/tmp/project", PermissionMode::Edit);
+        assert_eq!(sp.path_modes.len(), 2); // /tmp/project + /tmp/other
+        assert!(sp.path_modes.iter().any(|pm| pm.path == "/tmp/project"));
+        assert!(sp.path_modes.iter().any(|pm| pm.path == "/tmp/other"));
+
+        // Downgrade parent → children also pruned (no leftover overrides).
+        sp.set_path_mode("/tmp/project/deep/child", PermissionMode::Admin);
+        assert_eq!(sp.path_modes.len(), 3);
+        sp.set_path_mode("/tmp/project", PermissionMode::Read);
+        assert_eq!(sp.path_modes.len(), 2); // deep/child pruned
+        assert_eq!(
+            sp.path_modes.iter().find(|pm| pm.path == "/tmp/project").unwrap().mode,
+            PermissionMode::Read,
+        );
+    }
+
+    #[test]
+    fn test_set_path_mode_prunes_tilde_children() {
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode("~/workspace/linggen/src/main.rs", PermissionMode::Edit);
+        sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
+        // Child should be pruned.
+        assert_eq!(sp.path_modes.len(), 1);
+        assert_eq!(sp.path_modes[0].path, "~/workspace/linggen");
     }
 
     #[test]

@@ -191,6 +191,7 @@ const SessionModelSelector: React.FC = () => {
 const SessionModeSelector: React.FC = () => {
   const sessionMode = useUiStore((s) => s.sessionMode);
   const setSessionMode = useUiStore((s) => s.setSessionMode);
+  const permissionVersion = useUiStore((s) => s.permissionVersion);
   const sessionId = useProjectStore((s) => s.activeSessionId);
   const [zone, setZone] = React.useState<string>('home');
 
@@ -222,7 +223,7 @@ const SessionModeSelector: React.FC = () => {
         setZone(resp?.zone || 'home');
       })
       .catch(() => { setSessionMode('read'); setZone('home'); });
-  }, [sessionId, setSessionMode]);
+  }, [sessionId, permissionVersion, setSessionMode]);
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;

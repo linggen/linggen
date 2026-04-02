@@ -148,6 +148,7 @@ function handleRun(item: UiEvent): void {
     projectStore.fetchAllAgentTrees();
     agentStore.fetchAgentRuns();
     projectStore.fetchSessions();
+    useUiStore.getState().bumpPermissionVersion();
     return;
   }
 

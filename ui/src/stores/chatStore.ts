@@ -431,9 +431,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
       const keepTs = existingMsg.timestampMs && existingMsg.timestampMs > 0;
+      // Don't overwrite plan message text — upsertPlan already set it
+      // and finalizeMessage runs after, which would destroy the plan JSON.
+      const keepText = isPlanMessage(existingMsg);
       next[generatingIdx] = {
         ...existingMsg,
-        text: content,
+        text: keepText ? existingMsg.text : content,
         to: to || existingMsg.to || 'user',
         isGenerating: keepGenerating,
         isThinking: false,

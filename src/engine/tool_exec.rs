@@ -342,6 +342,13 @@ impl AgentEngine {
                                 if let Some(ref sdir) = self.session_dir {
                                     self.session_permissions.save(sdir);
                                 }
+                                // Notify UI so the mode badge updates.
+                                if let Some(manager) = self.tools.get_manager() {
+                                    manager.send_event(
+                                        crate::agent_manager::AgentEvent::StateUpdated,
+                                        self.session_id.clone(),
+                                    );
+                                }
                             }
                             Some(permission::PermissionAction::Deny) => {
                                 self.session_permissions.denied_sigs.insert(sig.clone());

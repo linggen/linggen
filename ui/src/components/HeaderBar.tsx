@@ -49,9 +49,19 @@ const UserAvatar: React.FC = () => {
 
   // Not logged in — show login button
   if (!user) {
+    const handleLogin = () => {
+      // Build absolute localhost URL so it works from both local and remote UI.
+      const port = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? window.location.port || '9898'
+        : '9898';
+      const url = `http://localhost:${port}/api/auth/login?port=${port}`;
+      const popup = window.open(url, '_blank', 'width=500,height=600');
+      // If popup was blocked, navigate directly
+      if (!popup || popup.closed) window.location.assign(url);
+    };
     return (
       <button
-        onClick={() => window.open('/api/auth/login?port=' + window.location.port, '_blank', 'width=500,height=600')}
+        onClick={handleLogin}
         className="p-1 hover:text-blue-500 text-slate-500 transition-colors"
         title="Sign in to linggen.dev for remote access"
       >
