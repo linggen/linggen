@@ -667,6 +667,7 @@ fn forward_event_to_channels(
     // updates when a skill or mission creates a new session).
     let is_broadcast = matches!(ui_msg.kind.as_str(),
         "agent_status" | "activity" | "run" | "notification"
+        | "ask_user" | "widget_resolved"
     );
     match ui_msg.session_id.as_deref() {
         Some("global") | None => {

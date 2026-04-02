@@ -700,10 +700,14 @@ function handleWorkingFolder(item: UiEvent): void {
 function handleWidgetResolved(item: UiEvent): void {
   const widgetId = item.data?.widget_id as string | undefined;
   if (!widgetId) return;
-  // Dismiss the AskUser permission widget if it matches.
   const uiStore = useUiStore.getState();
-  const pending = uiStore.pendingAskUser;
-  if (pending && pending.questionId === widgetId) {
+  // Dismiss AskUser permission widget
+  if (uiStore.pendingAskUser?.questionId === widgetId) {
     uiStore.setPendingAskUser(null);
+  }
+  // Dismiss plan widget (defensive — plan normally syncs via PlanUpdate)
+  if (uiStore.pendingPlanAgentId === widgetId) {
+    uiStore.setPendingPlan(null);
+    uiStore.setPendingPlanAgentId(null);
   }
 }
