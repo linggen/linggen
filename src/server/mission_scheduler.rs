@@ -20,6 +20,8 @@ struct MissionState {
     /// Daily trigger count + the date it applies to.
     daily_count: u32,
     daily_date: Option<chrono::NaiveDate>,
+    /// True while a dispatched mission run is still executing.
+    running: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MissionState {
@@ -28,6 +30,7 @@ impl MissionState {
             last_fire_minute: None,
             daily_count: 0,
             daily_date: None,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -105,9 +108,21 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                 });
             let root = std::path::PathBuf::from(&project_path);
 
+            // Busy-skip: if previous run is still executing, skip and log.
+            if ms.running.load(std::sync::atomic::Ordering::Relaxed) {
+                info!(
+                    "Mission scheduler: mission '{}' still running, skipping trigger",
+                    mission.id
+                );
+                record_mission_run(&state, mission, "", None, "skipped", true);
+                ms.last_fire_minute = Some(current_minute);
+                continue;
+            }
+
             // Fire!
             ms.last_fire_minute = Some(current_minute);
             ms.daily_count += 1;
+            ms.running.store(true, std::sync::atomic::Ordering::Relaxed);
 
             info!(
                 "Mission scheduler: triggering mission '{}' (project: {:?})",
@@ -123,6 +138,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
             let mission_owned = mission.clone();
             let project_path_owned = project_path.clone();
             let root_owned = root.clone();
+            let running_flag = ms.running.clone();
 
             tokio::spawn(async move {
                 dispatch_mission_prompt(
@@ -133,6 +149,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                     None,
                 )
                 .await;
+                running_flag.store(false, std::sync::atomic::Ordering::Relaxed);
             });
         }
 

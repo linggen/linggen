@@ -86,7 +86,10 @@ impl StateFs {
     }
 
     pub fn read_file(&self, rel_path: &str) -> Result<(StateFile, String)> {
-        let path = self.safe_resolve(rel_path)?;
+        let path = self.root.join(rel_path);
+        if !path.exists() {
+            anyhow::bail!("State file not found: {}", rel_path);
+        }
         let content = fs::read_to_string(&path)?;
         self.parse_markdown(&content)
     }
@@ -103,6 +106,9 @@ impl StateFs {
     }
 
     pub fn list_tasks(&self) -> Result<Vec<(StateFile, String)>> {
+        if !self.root.exists() {
+            return Ok(Vec::new());
+        }
         let tasks_dir = self.root.join("tasks");
         if !tasks_dir.exists() {
             return Ok(Vec::new());

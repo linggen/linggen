@@ -26,7 +26,6 @@ Two-tier layout, aligned with Claude Code's `~/.claude/` + `{repo}/.claude/` con
 |-----------|---------|
 | `~/.linggen/` | Global home (override with `$LINGGEN_HOME`) |
 | `~/.linggen/sessions/` | All sessions (flat, creator/project tracked in metadata) |
-| `~/.linggen/runs/` | All agent run records |
 | `~/.linggen/memory/` | Global memory |
 | `~/.linggen/missions/` | Mission definitions and run history |
 | `~/.linggen/skills/{name}/` | Per-skill state |
@@ -53,8 +52,6 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
 │       └── messages.jsonl            # Chat messages, append-only (JSONL)
-├── runs/                             # All agent run records
-│   └── {run_id}.json
 ├── memory/                           # Global memory
 │   └── ...
 ├── credentials.json                  # API keys for model providers (JSON)
@@ -133,24 +130,9 @@ One JSON object per line, append-only.
 { "agent_id": "ling", "from_id": "user", "to_id": "ling", "content": "...", "timestamp": 1700000000, "is_observation": false }
 ```
 
-### Agent run record (`{run_id}.json`)
+### Agent run records (in-memory)
 
-```json
-{
-  "run_id": "run-ling-1700000000-123456",
-  "repo_path": "/abs/path",
-  "session_id": "sess-...",
-  "agent_id": "ling",
-  "agent_kind": "main",
-  "parent_run_id": null,
-  "status": "completed",
-  "detail": "chat:structured-loop",
-  "started_at": 1700000000,
-  "ended_at": 1700000060
-}
-```
-
-Status values: `running`, `completed`, `failed`, `cancelled`.
+Agent run records (`AgentRunRecord`) are held in-memory only — they track live and recent runs for cancel/status operations. Lost on server restart by design (no cleanup needed). Not persisted to disk.
 
 ### Mission (`mission.md`)
 
@@ -210,7 +192,7 @@ Search order for `linggen.toml`:
 | `paths.rs` | All `~/.linggen/` path constants |
 | `project_store/mod.rs` | Projects, agent overrides |
 | `project_store/missions.rs` | Global mission store (CRUD, cron, run history) |
-| `project_store/runs.rs` | Run records (CRUD) |
+| `project_store/runs.rs` | Run records (in-memory CRUD) |
 | `project_store/path_encoding.rs` | Path → directory name encoding |
 | `state_fs/sessions.rs` | Sessions, chat messages (CRUD) |
 | `state_fs/mod.rs` | Workspace-level state files |

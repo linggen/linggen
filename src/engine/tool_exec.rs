@@ -965,6 +965,13 @@ impl AgentEngine {
                     }
                 };
                 self.drain_tool_progress(progress_rx).await;
+
+                // Check cancellation after tool execution before feeding
+                // the result back into context (spec: agentic-loop.md).
+                if self.is_cancelled().await {
+                    return LoopControl::Return(AgentOutcome::None);
+                }
+
                 self.post_execute_tool(exec, result, messages, tool_cache, empty_search_streak, session_id)
                     .await
             }

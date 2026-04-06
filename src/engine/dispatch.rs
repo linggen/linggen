@@ -152,7 +152,7 @@ impl AgentEngine {
             });
         }
 
-        // Await all and collect results.
+        // Await all and collect results, checking cancellation between joins.
         let mut results: Vec<(usize, String, anyhow::Result<tools::ToolResult>)> = Vec::new();
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
@@ -162,6 +162,12 @@ impl AgentEngine {
                     results.push((usize::MAX, "unknown".to_string(),
                         Err(anyhow::anyhow!("delegation task panicked: {}", join_err))));
                 }
+            }
+            // Check cancellation after each delegation completes so we
+            // stop collecting results promptly (spec: agentic-loop.md).
+            if self.is_cancelled().await {
+                join_set.abort_all();
+                return Some(AgentOutcome::None);
             }
         }
         results.sort_by_key(|(idx, _, _)| *idx);
@@ -295,10 +301,13 @@ impl AgentEngine {
             }
         }
 
-        // Phase 3: post-execute each result sequentially.
+        // Phase 3: post-execute each result sequentially, checking cancellation.
         let mut results = results;
         results.sort_by_key(|(idx, _, _)| *idx);
         for (_idx, exec, result) in results {
+            if self.is_cancelled().await {
+                return Some(AgentOutcome::None);
+            }
             match self
                 .post_execute_tool(
                     exec, result, &mut state.messages,

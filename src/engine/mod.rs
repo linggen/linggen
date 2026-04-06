@@ -694,6 +694,11 @@ impl AgentEngine {
         let mut action_idx: usize = 0;
 
         while !actions.is_empty() {
+            // Check cancellation before dispatching each tool/batch.
+            if self.is_cancelled().await {
+                return Some(AgentOutcome::None);
+            }
+
             let front_is_delegation = {
                 let tool = &actions[0].tool;
                 self.tools
