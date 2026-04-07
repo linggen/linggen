@@ -247,8 +247,10 @@ export const ChatPanel: React.FC<{
         programmaticScrollRef.current = false;
       } else {
         const delta = scrollTop - lastScrollTopRef.current;
-        if (delta < -1) {
-          // User scrolled up — detach auto-scroll
+        if (delta < -1 && distanceFromBottom > 150) {
+          // User scrolled up AND is far from bottom — detach auto-scroll.
+          // The distanceFromBottom check prevents false detach from layout
+          // reflows during streaming (content growth can cause small negative deltas).
           isNearBottomRef.current = false;
         } else if (distanceFromBottom <= 1) {
           // User scrolled all the way to the bottom — re-attach
