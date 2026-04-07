@@ -746,9 +746,11 @@ function handlePageState(item: UiEvent): void {
   if (ps.skills) useAgentStore.setState({ skills: ps.skills });
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
   if (ps.pending_ask_user !== undefined) {
-    // Restore pending ask-user from server state (array of pending items).
-    // Only set if there are actually pending items and none is already active.
-    const items = Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [];
+    // Restore pending ask-user from server state — only for the active session.
+    // Without session filtering, prompts from other sessions leak into skill iframes.
+    const activeSessionId = useProjectStore.getState().activeSessionId;
+    const items = (Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [])
+      .filter((item: any) => !item.session_id || item.session_id === activeSessionId);
     const uiStore = useUiStore.getState();
     if (items.length > 0 && !uiStore.pendingAskUser) {
       const first = items[0];

@@ -256,7 +256,11 @@ const App: React.FC = () => {
   useEffect(() => { clearChatRef.current = clearChat; sendChatMessageRef.current = sendChatMessage; }, [clearChat, sendChatMessage]);
   useEffect(() => {
     if (!isCompact) return;
-    document.documentElement.setAttribute('data-compact', '');
+    // Only apply VS Code dark theme overrides when NOT in a skill iframe.
+    // Skill iframes use compact layout but should follow system color scheme.
+    if (!compactSkill) {
+      document.documentElement.setAttribute('data-compact', '');
+    }
     const handleMessage = (e: MessageEvent) => {
       if (e.data?.type !== 'linggen-clipboard') return;
       const sel = window.getSelection();
