@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Square, X, FolderOpen, FileText } from 'lucide-react';
 import { cn } from '../../lib/cn';
+import { useUiStore } from '../../stores/uiStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
 import { normalizeAgentKey } from './utils/message';
@@ -311,7 +312,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <div className="px-2 py-1.5 text-[12px] rounded-md border border-amber-300/40 bg-amber-50/80 dark:bg-amber-500/10 dark:border-amber-500/20">
             <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium select-none">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-              {visibleQueued.length} message{visibleQueued.length > 1 ? 's' : ''} queued — agent is busy
+              <span className="flex-1">{visibleQueued.length} message{visibleQueued.length > 1 ? 's' : ''} queued — agent is busy</span>
+              <button
+                onClick={() => useUiStore.getState().setQueuedMessages([])}
+                className="text-[11px] px-1.5 py-0.5 rounded bg-amber-200/50 dark:bg-amber-500/20 hover:bg-amber-300/60 dark:hover:bg-amber-500/30 transition-colors"
+                title="Dismiss queue"
+              >
+                <X size={10} />
+              </button>
             </div>
             <div className="mt-1 space-y-0.5 text-amber-700 dark:text-amber-300/80">
               {visibleQueued.map((item) => (
