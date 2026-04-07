@@ -3,7 +3,6 @@
  */
 import { create } from 'zustand';
 import type { CronMission, ManagementTab, Plan, PendingAskUser, QueuedChatItem } from '../types';
-import { dedupFetch } from '../lib/dedupFetch';
 
 export type Page = 'main' | 'settings' | 'mission-editor';
 export type SidebarTab = 'projects' | 'missions';
@@ -50,9 +49,9 @@ interface UiState {
   // Session-level model override (not persisted — resets on session change)
   sessionModel: string | null;
 
-  // Session permission mode (read/edit/admin — loaded from session permission.json)
+  // Session permission mode (read/edit/admin — pushed by server page_state)
   sessionMode: string | null;
-  permissionVersion: number; // bumped when permission state may have changed
+  sessionZone: string; // 'home' | 'temp' | 'system'
 
   // Chat UI
   queuedMessages: QueuedChatItem[];
@@ -85,7 +84,7 @@ interface UiState {
   setModelPickerOpen: (open: boolean) => void;
   setSessionModel: (model: string | null) => void;
   setSessionMode: (mode: string | null) => void;
-  bumpPermissionVersion: () => void;
+  setSessionZone: (zone: string) => void;
   setShowAgentSpecEditor: (show: boolean) => void;
   setOpenApp: (app: AppPanelState | null) => void;
 
@@ -97,7 +96,6 @@ interface UiState {
   setPendingPlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
   setPendingPlanAgentId: (id: string | null) => void;
   setPendingAskUser: (ask: PendingAskUser | null | ((prev: PendingAskUser | null) => PendingAskUser | null)) => void;
-  fetchPendingAskUser: () => Promise<void>;
   setActivePlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
   setVerboseMode: (mode: boolean) => void;
   setCopyChatStatus: (status: 'idle' | 'copied' | 'error') => void;
@@ -115,7 +113,7 @@ export const useUiStore = create<UiState>((set) => ({
   modelPickerOpen: false,
   sessionModel: null,
   sessionMode: null,
-  permissionVersion: 0,
+  sessionZone: 'home',
   showAgentSpecEditor: false,
   openApp: null,
   selectedFileContent: null,
@@ -154,7 +152,7 @@ export const useUiStore = create<UiState>((set) => ({
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setSessionModel: (model) => set({ sessionModel: model }),
   setSessionMode: (mode: string | null) => set({ sessionMode: mode }),
-  bumpPermissionVersion: () => set((s) => ({ permissionVersion: s.permissionVersion + 1 })),
+  setSessionZone: (zone) => set({ sessionZone: zone }),
   setShowAgentSpecEditor: (show) => set({ showAgentSpecEditor: show }),
   setOpenApp: (app) => set({ openApp: app }),
 
@@ -172,38 +170,6 @@ export const useUiStore = create<UiState>((set) => ({
   setPendingAskUser: (updater) => set((s) => ({
     pendingAskUser: typeof updater === 'function' ? updater(s.pendingAskUser) : updater,
   })),
-  fetchPendingAskUser: async () => {
-    try {
-      const resp = await dedupFetch('/api/pending-ask-user');
-      if (!resp.ok) return;
-      const items = await resp.json();
-      if (Array.isArray(items) && items.length > 0) {
-        // Get current active session from project store
-        const { useProjectStore } = await import('./projectStore');
-        const activeSessionId = useProjectStore.getState().activeSessionId;
-        // Only show ask_user for the current session, or if no session is active
-        // show ask_user items that have no session_id (legacy/global)
-        const filtered = items.filter((item: { session_id?: string | null }) => {
-          if (!activeSessionId) return !item.session_id; // main page: only show global
-          return item.session_id === activeSessionId || !item.session_id;
-        });
-        if (filtered.length > 0) {
-          const item = filtered[0];
-          set({
-            pendingAskUser: {
-              questionId: item.question_id,
-              agentId: item.agent_id,
-              questions: item.questions,
-            },
-          });
-        } else {
-          set({ pendingAskUser: null });
-        }
-      } else {
-        set({ pendingAskUser: null });
-      }
-    } catch { /* ignore */ }
-  },
   setActivePlan: (updater) => set((s) => ({
     activePlan: typeof updater === 'function' ? updater(s.activePlan) : updater,
   })),

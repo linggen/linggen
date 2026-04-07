@@ -62,10 +62,8 @@ export const SessionModelSelector: React.FC = () => {
 export const SessionModeSelector: React.FC = () => {
   const sessionMode = useUiStore((s) => s.sessionMode);
   const setSessionMode = useUiStore((s) => s.setSessionMode);
-  const permissionVersion = useUiStore((s) => s.permissionVersion);
+  const sessionZone = useUiStore((s) => s.sessionZone);
   const sessionId = useProjectStore((s) => s.activeSessionId);
-  const [zone, setZone] = React.useState<string>('home');
-  const skipRefetchUntil = React.useRef(0);
 
   const modes = [
     { value: 'read', label: 'read', color: 'text-emerald-600 dark:text-emerald-400' },
@@ -73,38 +71,11 @@ export const SessionModeSelector: React.FC = () => {
     { value: 'admin', label: 'admin', color: 'text-amber-600 dark:text-amber-400' },
   ];
 
-  const isSystemZone = zone === 'system';
-
-  React.useEffect(() => {
-    if (!sessionId) return;
-    if (Date.now() < skipRefetchUntil.current) return;
-    const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
-    const cwd = sessionMeta?.cwd || sessionMeta?.project || '';
-    const params = new URLSearchParams({ session_id: sessionId });
-    if (cwd) params.set('cwd', cwd);
-    fetch(`/api/sessions/permission?${params}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((resp) => {
-        if (Date.now() < skipRefetchUntil.current) return;
-        if (resp?.effective_mode) {
-          setSessionMode(resp.effective_mode);
-        } else if (resp?.path_modes?.length > 0) {
-          setSessionMode(resp.path_modes[0].mode);
-        } else {
-          setSessionMode('read');
-        }
-        setZone(resp?.zone || 'home');
-      })
-      .catch(() => {
-        if (Date.now() < skipRefetchUntil.current) return;
-        setSessionMode('read'); setZone('home');
-      });
-  }, [sessionId, permissionVersion, setSessionMode]);
+  const isSystemZone = sessionZone === 'system';
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setSessionMode(value);
-    skipRefetchUntil.current = Date.now() + 2000;
     if (sessionId) {
       const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
       const cwd = sessionMeta?.cwd || sessionMeta?.project || '~/';

@@ -31,12 +31,6 @@ export function sendViewContext() {
   } catch { /* transport not ready */ }
 }
 
-/** Fallback: refetch critical state via HTTP if page_state push doesn't arrive.
- *  Only used as a safety net — normally page_state handles everything. */
-function resyncStateFallback() {
-  useChatStore.getState().fetchSessionState();
-  useUiStore.getState().fetchPendingAskUser();
-}
 
 /** Map transport status to the UI store's connection status values. */
 function mapStatus(status: TransportStatus): 'connected' | 'reconnecting' | 'disconnected' {

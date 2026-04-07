@@ -262,11 +262,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_id: runId }),
       });
-      const projectStore = useProjectStore.getState();
-      await Promise.all([
-        get().fetchAgentRuns(),
-        projectStore.fetchAllAgentTrees(),
-      ]);
+      await get().fetchAgentRuns();
     } catch (e) {
       console.error(`Error cancelling run ${runId}:`, e);
     } finally {

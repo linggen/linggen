@@ -762,5 +762,6 @@ function handlePageState(item: UiEvent): void {
     const perm = ps.session_permission;
     const uiStore = useUiStore.getState();
     if (perm.effective_mode) uiStore.setSessionMode(perm.effective_mode);
+    if (perm.zone) uiStore.setSessionZone(perm.zone);
   }
 }

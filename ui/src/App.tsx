@@ -136,10 +136,6 @@ const App: React.FC = () => {
   // Agent trees and session counts are now delivered via server-pushed page_state.
   // No per-project HTTP fan-out needed.
 
-  const fetchPendingAskUser = useCallback(() => {
-    useUiStore.getState().fetchPendingAskUser();
-  }, []);
-
   // --- React to session changes ---
   useEffect(() => {
     const { isSkillSession } = projectStore;
@@ -171,7 +167,7 @@ const App: React.FC = () => {
       // Notify server of view context change → triggers page_state push
       sendViewContext();
     }
-  }, [activeSessionId, selectedProjectRoot, isMissionSession, projectStore.isSkillSession, fetchPendingAskUser]);
+  }, [activeSessionId, selectedProjectRoot, isMissionSession, projectStore.isSkillSession]);
 
   // --- Restore persisted session-level model override ---
   useEffect(() => {
@@ -540,7 +536,7 @@ const App: React.FC = () => {
       <FilePreview selectedFilePath={selectedFilePath} selectedFileContent={selectedFileContent} onClose={() => uiStore.closeFilePreview()} />
       <AgentSpecEditorModal open={showAgentSpecEditor} projectRoot={selectedProjectRoot}
         onClose={() => uiStore.setShowAgentSpecEditor(false)}
-        onChanged={() => { agentStore.fetchAgents(selectedProjectRoot); chatStore.fetchSessionState(); projectStore.fetchAllAgentTrees(); }} />
+        onChanged={() => { agentStore.fetchAgents(selectedProjectRoot); chatStore.fetchSessionState(); }} />
 
       {openApp && <AppPanel app={openApp} onClose={() => uiStore.setOpenApp(null)} />}
 

@@ -21,7 +21,6 @@ interface ProjectState {
   isSkillSession: boolean;
   activeSkillName: string | null;
   agentTreesByProject: Record<string, Record<string, AgentTreeItem>>;
-  sessionCountsByProject: Record<string, number>;
   currentPath: string;
 
   // Add-project UI
@@ -51,10 +50,6 @@ interface ProjectState {
   createSession: () => Promise<void>;
   removeSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
-  fetchAllSessionCounts: () => Promise<void>;
-
-  fetchAgentTree: (projectRoot?: string) => Promise<void>;
-  fetchAllAgentTrees: () => Promise<void>;
   fetchFiles: (path?: string) => Promise<void>;
 }
 
@@ -81,7 +76,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   isSkillSession: false,
   activeSkillName: null,
   agentTreesByProject: {},
-  sessionCountsByProject: {},
   currentPath: '',
   newProjectPath: '',
   showAddProject: false,
@@ -263,7 +257,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   createSession: async () => {
-    const { fetchSessions, fetchAllSessions, fetchAllSessionCounts } = get();
+    const { fetchSessions, fetchAllSessions } = get();
     const now = new Date();
     const title = `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
     try {
@@ -276,14 +270,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ activeSessionId: data.id });
       fetchSessions();
       fetchAllSessions();
-      fetchAllSessionCounts();
     } catch (e) {
       console.error('Error creating session:', e);
     }
   },
 
   removeSession: async (id) => {
-    const { activeSessionId, allSessions, fetchSessions, fetchAllSessions, fetchAllSessionCounts } = get();
+    const { activeSessionId, allSessions, fetchSessions, fetchAllSessions } = get();
     if (!confirm('Remove this session?')) return;
     // Find session metadata to route the delete to the correct store
     const session = allSessions.find(s => s.id === id);
@@ -304,7 +297,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
       fetchSessions();
       fetchAllSessions();
-      fetchAllSessionCounts();
     } catch (e) {
       console.error('Error removing session:', e);
     }
@@ -323,71 +315,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('Error renaming session:', e);
     }
-  },
-
-  fetchAllSessionCounts: async () => {
-    const { projects } = get();
-    if (projects.length === 0) return;
-    const counts: Record<string, number> = {};
-    await Promise.all(
-      projects.map(async (project) => {
-        try {
-          const resp = await dedupFetch(`/api/sessions?project_root=${encodeURIComponent(project.path)}&limit=1`);
-          const data = await resp.json();
-          // Use total from paginated response, or fall back to array length
-          counts[project.path] = data.total ?? (Array.isArray(data) ? data.length : Array.isArray(data.sessions) ? data.sessions.length : 0);
-        } catch {
-          counts[project.path] = 0;
-        }
-      }),
-    );
-    set({ sessionCountsByProject: counts });
-  },
-
-  fetchAgentTree: async (projectRoot?: string) => {
-    const { selectedProjectRoot } = get();
-    const root = projectRoot || selectedProjectRoot;
-    if (!root) return;
-    try {
-      const resp = await dedupFetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
-      const data = await resp.json();
-      set((s) => ({
-        agentTreesByProject: { ...s.agentTreesByProject, [root]: data },
-      }));
-    } catch (e) {
-      console.error(`Error fetching agent tree (${root}):`, e);
-    }
-  },
-
-  fetchAllAgentTrees: async () => {
-    const { projects, selectedProjectRoot } = get();
-    if (projects.length === 0) return;
-    const entries = await Promise.all(
-      projects.map(async (p) => {
-        const root = p.path;
-        try {
-          const resp = await dedupFetch(`/api/workspace/tree?project_root=${encodeURIComponent(root)}`);
-          return [root, await resp.json()] as const;
-        } catch (e) {
-          console.error(`Error fetching agent tree (${root}):`, e);
-          return null;
-        }
-      }),
-    );
-    // Batch all tree updates into a single set() to avoid cascading re-renders.
-    const prev = get().agentTreesByProject;
-    const trees: Record<string, any> = { ...prev };
-    let changed = false;
-    for (const entry of entries) {
-      if (entry) {
-        const [root, tree] = entry;
-        if (JSON.stringify(prev[root]) !== JSON.stringify(tree)) {
-          trees[root] = tree;
-          changed = true;
-        }
-      }
-    }
-    if (changed) set({ agentTreesByProject: trees });
   },
 
   fetchFiles: async (path = '') => {
