@@ -6,6 +6,7 @@ import React from 'react';
 import { useAgentStore } from '../../stores/agentStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { suppressPermissionSync } from '../../lib/eventDispatcher';
 
 /** Compact per-session model selector shown in the run bar. */
 export const SessionModelSelector: React.FC = () => {
@@ -76,6 +77,7 @@ export const SessionModeSelector: React.FC = () => {
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setSessionMode(value);
+    suppressPermissionSync();
     if (sessionId) {
       const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
       const cwd = sessionMeta?.cwd || sessionMeta?.project || '~/';

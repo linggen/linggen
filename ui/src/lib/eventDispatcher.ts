@@ -18,6 +18,18 @@ import {
 } from './messageUtils';
 
 // ---------------------------------------------------------------------------
+// Permission suppress — prevents page_state from overwriting optimistic mode changes
+// ---------------------------------------------------------------------------
+
+let _permissionSuppressedUntil = 0;
+
+/** Call after a user-initiated permission mode change to suppress page_state
+ *  overwrites for a short window (3s, enough for the PATCH to propagate). */
+export function suppressPermissionSync(): void {
+  _permissionSuppressedUntil = Date.now() + 3000;
+}
+
+// ---------------------------------------------------------------------------
 // Tool activity text parser
 // ---------------------------------------------------------------------------
 
@@ -96,9 +108,10 @@ function getSessionId(item: UiEvent): string {
 
 export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
   const effectiveSessionId = sessionIdOverride ?? useProjectStore.getState().activeSessionId;
-  // Allow notifications, permission prompts, and agent status through regardless — they are global events.
+  // Allow notifications and agent status through regardless — they are global events.
   // agent_status must pass through so the session list can show spinners for busy sessions.
-  if (item.kind !== 'notification' && item.kind !== 'ask_user' && item.kind !== 'widget_resolved' && item.kind !== 'agent_status' && item.session_id && item.session_id !== 'global') {
+  // ask_user and widget_resolved are session-scoped — they should only show in their own session.
+  if (item.kind !== 'notification' && item.kind !== 'agent_status' && item.session_id && item.session_id !== 'global') {
     // Drop events from other sessions when we have an active session.
     if (effectiveSessionId && item.session_id !== effectiveSessionId) return;
     // Drop session-scoped events when no session is active — they belong to
@@ -761,7 +774,11 @@ function handlePageState(item: UiEvent): void {
   if (ps.session_permission) {
     const perm = ps.session_permission;
     const uiStore = useUiStore.getState();
-    if (perm.effective_mode) uiStore.setSessionMode(perm.effective_mode);
+    // Only update mode if user hasn't made a local change recently
+    // (prevents page_state from overwriting optimistic UI updates)
+    if (perm.effective_mode && !_permissionSuppressedUntil || Date.now() >= _permissionSuppressedUntil) {
+      uiStore.setSessionMode(perm.effective_mode);
+    }
     if (perm.zone) uiStore.setSessionZone(perm.zone);
   }
 }
