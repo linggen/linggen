@@ -40,10 +40,8 @@ async fn create_peer_inner(offer_sdp: String, state: Arc<ServerState>, remote: b
         .context("Failed to parse SDP offer")?;
 
     // Bind a UDP socket for this peer connection.
-    // Local: 127.0.0.1 (fast, no STUN needed)
-    // Remote: 0.0.0.0 (allows STUN to discover public IP)
-    let bind_addr = if remote { "0.0.0.0:0" } else { "127.0.0.1:0" };
-    let socket = UdpSocket::bind(bind_addr)
+    // Always bind to 0.0.0.0 so WebRTC works when accessing via LAN IP.
+    let socket = UdpSocket::bind("0.0.0.0:0")
         .await
         .context("Failed to bind UDP socket")?;
     let local_addr = socket.local_addr()?;
@@ -56,14 +54,10 @@ async fn create_peer_inner(offer_sdp: String, state: Arc<ServerState>, remote: b
         .set_ice_lite(true)
         .build(Instant::now());
 
-    // Add local candidate (the UDP socket address).
-    // For remote peers bound to 0.0.0.0, resolve the actual local IP.
-    let candidate_addr = if remote {
-        let local_ip = get_local_ip().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-        std::net::SocketAddr::new(local_ip, local_addr.port())
-    } else {
-        local_addr
-    };
+    // Add local candidate with the real LAN IP (not 127.0.0.1)
+    // so WebRTC works both via localhost and via LAN IP.
+    let local_ip = get_local_ip().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let candidate_addr = std::net::SocketAddr::new(local_ip, local_addr.port());
     let candidate = Candidate::host(candidate_addr, "udp").context("Failed to create host candidate")?;
     rtc.add_local_candidate(candidate)
         .context("Failed to add local candidate")?;
