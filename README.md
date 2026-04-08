@@ -5,93 +5,106 @@
 <h1 align="center">Linggen</h1>
 
 <p align="center">
-  Open-source AI agent system. Run any model. Add skills by dropping files. Access from anywhere.
+  <strong>Local AI coding agent you can access from anywhere.</strong><br>
+  Open-source. Any model. WebRTC remote access. Skills you can share.
 </p>
 
 <p align="center">
-  <a href="https://linggen.dev">linggen.dev</a> &middot;
+  <a href="https://linggen.dev">Website</a> &middot;
+  <a href="https://linggen.dev">Demo Video</a> &middot;
   <a href="https://linggen.dev/docs">Docs</a> &middot;
-  <a href="https://linggen.dev/skills">Skills</a>
+  <a href="https://linggen.dev/skills">Skills Marketplace</a> &middot;
+  <a href="https://discord.gg/linggen">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/linggen/linggen/releases"><img src="https://img.shields.io/github/v/release/linggen/linggen?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/linggen/linggen/blob/main/LICENSE"><img src="https://img.shields.io/github/license/linggen/linggen?style=flat-square" alt="MIT License" /></a>
+  <a href="https://github.com/linggen/linggen/stargazers"><img src="https://img.shields.io/github/stars/linggen/linggen?style=flat-square" alt="Stars" /></a>
 </p>
 
 ---
 
-Linggen runs on your machine and gives you a fully-featured AI coding agent — with the models you choose, the skills you need, and access from any device.
+## What is Linggen?
 
-## Why Linggen
-
-**You own everything.** Linggen runs locally. Your code, your keys, your data — nothing leaves your machine unless you tell it to.
-
-**Any model.** Ollama, OpenAI, Claude, Gemini, DeepSeek, Groq, OpenRouter — use one or all of them.
-
-**Skills, not plugins.** Drop a `SKILL.md` file into your project and the agent gains new capabilities instantly. Skills follow the open [Agent Skills](https://agentskills.io) standard, compatible with Claude Code and Codex.
-
-**Access from anywhere.** Built-in WebRTC transport lets you use your linggen from your phone, laptop, or any browser — no VPN or port forwarding needed.
-
-**Web-native.** Full web interface with real-time streaming, visual apps, and rich skill UIs.
-
-## Install
+Linggen is an AI coding agent that runs on your machine — and lets you access it from any device via WebRTC. Start a task on your desktop, check on it from your phone. No cloud hosting, no subscriptions, your models and your data.
 
 ```bash
 curl -fsSL https://linggen.dev/install.sh | bash
+ling
 ```
 
-Then:
+That's it. Opens a web UI at `localhost:9898`.
 
-```bash
-ling init    # set up ~/.linggen/ with default config
-ling         # start server + open Web UI at localhost:9898
-```
+## Why Linggen over Claude Code / Cursor / Codex?
+
+| | Linggen | Claude Code | Cursor | Codex |
+|---|---|---|---|---|
+| **Runs locally** | Yes | Yes | No (cloud) | Cloud-only |
+| **Any model** | Ollama, Claude, GPT, Gemini, DeepSeek, Groq, OpenRouter | Claude only | Multi-model | GPT only |
+| **Remote access** | Built-in WebRTC — use from any device | No | No | No |
+| **Open source** | MIT | No | No | CLI only |
+| **Skills/extensions** | Drop-in SKILL.md files ([Agent Skills](https://agentskills.io) standard) | Custom slash commands | Plugins | No |
+| **Web UI** | Full web interface with streaming | Terminal only | IDE-embedded | Web (cloud) |
+| **Cost** | Free + your model costs | $20/mo or API costs | $20/mo | API costs |
 
 ## Key Features
 
-### Skills Marketplace
+### Remote Access via WebRTC
 
-Search and install community skills in one click — or write your own. Skills can add tools, knowledge, interactive apps, and more. Browse the [marketplace](https://linggen.dev/skills).
-
-### Multi-Agent Delegation
-
-Agents can delegate tasks to other agents. Each agent has its own context, tools, and model. Delegation depth is configurable — like `fork()` for AI.
-
-### Mission System
-
-Schedule recurring tasks with cron expressions. Agents self-initiate work on a schedule — code reviews, dependency updates, monitoring, whatever you define.
-
-### Remote Access
-
-Link your linggen to [linggen.dev](https://linggen.dev) for remote access via WebRTC. One command to set up:
+Start a coding task on your desktop, monitor it from your phone. No VPN, no port forwarding — peer-to-peer encrypted connection.
 
 ```bash
-ling login
+ling login   # link to linggen.dev
 ```
 
-Then connect from any browser at `linggen.dev/app`.
+Then open `linggen.dev/app` from any browser, anywhere.
 
-### Plan Mode
+### Any Model, Your Choice
 
-For complex tasks, the agent proposes a plan before acting. Review, edit, or approve — then it executes. Keeps you in control on high-stakes changes.
+Use local models via Ollama, or cloud APIs — Claude, GPT, Gemini, DeepSeek, Groq, OpenRouter. Switch models mid-conversation. Configure fallback chains so work never stops.
 
-## Adding Skills
+### Skills, Not Plugins
+
+Drop a `SKILL.md` into your project and the agent gains new capabilities instantly. Skills follow the open [Agent Skills](https://agentskills.io) standard, compatible with Claude Code and Codex.
 
 ```
 ~/.linggen/skills/my-skill/SKILL.md
 ```
 
-```markdown
----
-name: my-skill
-description: Does something useful.
-allowed-tools: [Bash, Read]
----
+Browse and install community skills from the [marketplace](https://linggen.dev/skills).
 
-Instructions for the agent when this skill is invoked.
+### Multi-Agent Delegation
+
+Agents delegate tasks to other agents — each with its own context, tools, and model. Like `fork()` for AI.
+
+### Plan Mode
+
+For complex tasks, the agent proposes a plan before acting. Review, edit, or approve — then it executes. Stay in control on high-stakes changes.
+
+### Mission System
+
+Schedule recurring tasks with cron expressions. Code reviews, dependency updates, monitoring — agents self-initiate work on your schedule.
+
+## Quick Start
+
+```bash
+# Install
+curl -fsSL https://linggen.dev/install.sh | bash
+
+# First-time setup
+ling init
+
+# Start (opens browser)
+ling
+
+# Optional: enable remote access
+ling login
 ```
-
-Invoke via `/my-skill` in chat. Skills are also triggered automatically based on context.
 
 ## Adding Agents
 
-Drop a markdown file in `~/.linggen/agents/`:
+Drop a markdown file in `~/.linggen/agents/` — available immediately, no restart:
 
 ```markdown
 ---
@@ -104,11 +117,15 @@ model: claude-sonnet-4-20250514
 You review code for bugs, style issues, and security vulnerabilities.
 ```
 
-Available immediately — no restart needed.
-
 ## Documentation
 
-Design docs: [`doc/`](doc/) | Full docs: [linggen.dev/docs](https://linggen.dev/docs)
+- [Design docs](doc/) — architecture, specs, and internals
+- [Full docs](https://linggen.dev/docs) — guides and reference
+- [Skill spec](doc/skill-spec.md) — how to write skills
+
+## Contributing
+
+Contributions welcome. See the [design docs](doc/) for architecture context.
 
 ## License
 
