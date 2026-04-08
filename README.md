@@ -42,10 +42,11 @@ That's it. Opens a web UI at `localhost:9898`.
 |---|---|---|---|---|
 | **Runs locally** | Yes | Yes | No (cloud) | Cloud-only |
 | **Any model** | Ollama, Claude, GPT, Gemini, DeepSeek, Groq, OpenRouter | Claude only | Multi-model | GPT only |
-| **Remote access** | Built-in WebRTC — use from any device | No | No | No |
+| **Remote access** | P2P WebRTC — your machine, any device | Cloud-hosted web app | No | Cloud-only |
 | **Open source** | MIT | No | No | CLI only |
 | **Skills/extensions** | Drop-in SKILL.md files ([Agent Skills](https://agentskills.io) standard) | Custom slash commands | Plugins | No |
-| **Web UI** | Full web interface with streaming | Terminal only | IDE-embedded | Web (cloud) |
+| **Web UI** | Full web interface with streaming | Terminal + web app | IDE-embedded | Web (cloud) |
+| **Data stays local** | Always — P2P, no relay | Code sent to cloud for web app | Cloud-processed | Cloud-processed |
 | **Cost** | Free + your model costs | $20/mo or API costs | $20/mo | API costs |
 
 ## Key Features
