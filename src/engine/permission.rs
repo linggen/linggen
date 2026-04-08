@@ -25,20 +25,6 @@ pub enum PermissionAction {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// PermissionStore (legacy stub — kept for AgentEngine field compatibility)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub struct PermissionStore;
-
-impl PermissionStore {
-    /// Legacy load — returns empty stub. Permissions now in SessionPermissions.
-    pub fn load(_project_dir: &Path) -> Self {
-        Self
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Bash command pattern helpers
 // ---------------------------------------------------------------------------
 

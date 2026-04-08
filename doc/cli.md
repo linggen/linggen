@@ -20,7 +20,6 @@ The `ling` binary — Linggen AI coding agent.
 
 ```
 ling                              # Start background daemon + open browser (default)
-ling --web                        # Web server foreground (for dev/debugging)
 ling --port 8080                  # Custom port
 ling --root /path/to/project      # Custom workspace
 
@@ -74,7 +73,6 @@ ling [OPTIONS]
 |:-----|:-----------|
 | `--root <PATH>` | Workspace root (default: detect `.git`) |
 | `--port <PORT>` | Server port (default: `server.port` from config) |
-| `--web` | Web server foreground (for dev/debugging) |
 | `--dev` | Dev mode: proxy static assets to Vite dev server |
 
 When no flags are given, `ling` spawns a detached background daemon and opens the browser. The terminal returns immediately.

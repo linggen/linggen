@@ -40,7 +40,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
-| `WebSearch` | `query, max_results?` | Web search (DuckDuckGo) |
+| `WebSearch` | `query, max_results?` | Web search (Tavily — requires API key in settings) |
 | `WebFetch` | `url, max_bytes?` | Fetch URL content as text |
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |

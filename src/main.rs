@@ -42,7 +42,7 @@ struct Cli {
     port: Option<u16>,
 
     /// Web UI foreground (no daemon). For dev/debugging.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     web: bool,
 
     /// Run as background daemon (legacy, same as bare `ling`)

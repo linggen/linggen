@@ -82,6 +82,26 @@ These fields are Linggen-specific extensions.
 |:------|:--------|
 | `trigger` | Custom trigger prefix (e.g. `"!!"`, `"%%"`) |
 | `app` | App config — makes the skill a directly-runnable app (see below) |
+| `permission` | Permission request — user is prompted to approve before skill runs (see below) |
+
+## Skill permissions
+
+Skills can declare a `permission` field to request elevated access. When a skill with a permission request is invoked, the user is prompted to approve before execution. See `permission-spec.md` for the full permission model.
+
+```yaml
+permission:
+  mode: admin          # "read", "edit", or "admin"
+  paths: ["/", "~"]    # Paths to grant the mode on
+  warning: "This skill runs system commands that modify files"
+```
+
+| Field | Required | Description |
+|:------|:---------|:------------|
+| `mode` | yes | Required permission mode: `read`, `edit`, or `admin` |
+| `paths` | no | Paths to grant the mode on (default: workspace root) |
+| `warning` | no | Warning message shown to user before approval |
+
+If a skill only reads data (e.g. search, status checks), it should use `mode: read`. Skills that write files should use `mode: edit`. Skills that run arbitrary shell commands should use `mode: admin`.
 
 ## App skills
 

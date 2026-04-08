@@ -264,25 +264,26 @@ Three ways to create a session, each with different initial permissions:
 
 ### Skill invocation (within a user session)
 
-Skills don't create sessions — they run inside the current user session. Skills that need elevated permissions declare it in frontmatter:
+Skills don't create sessions — they run inside the current user session. Skills that need elevated permissions declare it in frontmatter. Example from the `sys-doctor` skill:
 
 ```yaml
 ---
-name: disk-cleaner
-description: Clean temp files and caches
+name: sys-doctor
+description: System health analyst — scans disk, apps, caches, and system info
 permission:
   mode: admin
   paths: ["/"]
-  warning: "Needs admin access to system directories to clean caches"
+  warning: "Sys Doctor runs diagnostic commands (df, du, sysctl, uname) and the AI may suggest cleanup commands."
 ---
 ```
 
-When the user invokes the skill (click card, `/disk-cleaner`, etc.):
+When the user invokes the skill (click card, `/sys-doctor`, etc.):
 
 ```
-Skill "disk-cleaner" requests:
+Skill "sys-doctor" requests:
   admin mode on /
-  ⚠️ Needs admin access to system directories to clean caches
+  ⚠️ Sys Doctor runs diagnostic commands (df, du, sysctl, uname)
+    and the AI may suggest cleanup commands.
 
   [Approve]           ← grants (/, admin) in session permission.json
   [Run in read mode]  ← skill runs with current permissions, may fail

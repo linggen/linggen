@@ -177,9 +177,7 @@ pub struct AgentEngine {
     pub plan: Option<Plan>,
     /// Base64-encoded images to attach to the next user message.
     pub pending_images: Vec<String>,
-    /// Tool permission store (session + project scoped allows). Legacy — kept during migration.
-    pub permission_store: permission::PermissionStore,
-    /// New session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
+    /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Directory for the current session (for persisting permission.json).
     pub session_dir: Option<PathBuf>,
@@ -332,11 +330,6 @@ impl AgentEngine {
         role: AgentRole,
     ) -> Result<Self> {
         let mut builtins = tools::Tools::new(cfg.ws_root.clone())?;
-        // Load project-scoped permissions from {workspace}/.linggen/permissions.json
-        let perm_store = {
-            let linggen_dir = cfg.ws_root.join(".linggen");
-            permission::PermissionStore::load(&linggen_dir)
-        };
         let prompt_store = {
             let override_dir = crate::prompts::PromptStore::default_override_dir();
             std::sync::Arc::new(crate::prompts::PromptStore::load(Some(override_dir.as_path())))
@@ -370,7 +363,6 @@ impl AgentEngine {
             plan_mode: false,
             plan: None,
             pending_images: Vec::new(),
-            permission_store: perm_store,
             session_permissions: permission::SessionPermissions::default(),
             session_dir: None,
             default_models: Vec::new(),
@@ -407,9 +399,6 @@ impl AgentEngine {
             // relative paths from the new workspace root.
             self.tools.builtins.set_workspace_root(new_ws_root.clone());
             self.cached_system_prompt = None; // Force rebuild with new CLAUDE.md
-            // Reload permissions from new project
-            let linggen_dir = new_ws_root.join(".linggen");
-            self.permission_store = crate::engine::permission::PermissionStore::load(&linggen_dir);
         }
     }
 

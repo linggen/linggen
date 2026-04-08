@@ -18,32 +18,60 @@ Hardware abstraction: model providers, routing policies, credentials, and auto-f
 
 ## Providers
 
-Linggen supports multiple model providers:
+Linggen supports multiple model providers. Each has a dedicated `provider` value:
 
-| Provider | Type | Config key |
-|:---------|:-----|:-----------|
-| Ollama | Local | `provider = "ollama"` |
-| OpenAI-compatible | Cloud/Local | `provider = "openai"` |
-| Claude API | Cloud | `provider = "openai"` (OpenAI-compatible endpoint) |
-| AWS Bedrock | Cloud | `provider = "openai"` (via proxy) |
+| Provider | Type | `provider` value | Auth |
+|:---------|:-----|:-----------------|:-----|
+| ChatGPT (Subscription) | Cloud | `chatgpt` | OAuth (`ling auth login`) |
+| Ollama | Local | `ollama` | None |
+| Google Gemini | Cloud | `gemini` | API key |
+| OpenAI | Cloud | `openai` | API key |
+| Groq | Cloud | `groq` | API key |
+| DeepSeek | Cloud | `deepseek` | API key |
+| OpenRouter | Cloud | `openrouter` | API key |
+| GitHub Models | Cloud | `github` | API key |
 
-Models are configured in `linggen.toml`:
+All cloud providers (except ChatGPT) use the OpenAI-compatible chat completions API. You can also use `provider = "openai"` with any OpenAI-compatible endpoint (vLLM, LM Studio, etc.).
+
+### Default: ChatGPT via subscription
+
+New installs default to GPT-5.4 via ChatGPT subscription. No API key needed — just sign in:
+
+```bash
+ling auth login     # Opens browser → sign in with OpenAI account
+```
+
+The model is auto-configured. Tokens are stored in `~/.linggen/codex_auth.json` and auto-refresh. To sign out: `ling auth logout`.
+
+### Configuration
+
+Models are configured in `linggen.runtime.toml`:
 
 ```toml
 [[models]]
 id = "local-qwen"
 provider = "ollama"
 url = "http://127.0.0.1:11434"
-model = "qwen3:32b"
+model = "qwen3.5:35b"
 
 [[models]]
 id = "gemini-flash"
-provider = "openai"
+provider = "gemini"
 url = "https://generativelanguage.googleapis.com/v1beta/openai"
-model = "gemini-2.0-flash"
+model = "gemini-2.5-flash"
 ```
 
-Optional `context_window` override for models where provider API doesn't report size.
+Optional fields:
+
+| Field | Purpose |
+|:------|:--------|
+| `context_window` | Override context size when provider API doesn't report it |
+| `supports_tools` | Force enable/disable native function calling (`true`/`false`) |
+| `reasoning_effort` | Reasoning effort hint (provider-specific) |
+
+### Web UI setup
+
+The easiest way to add models: open **Settings → Models** in the browser, click **Add Model**, pick a provider, paste your API key. The health indicator turns green when connected.
 
 ## Credentials
 
@@ -57,76 +85,40 @@ API keys are stored in `~/.linggen/credentials.json` — **not** in the TOML con
 ```
 
 **Resolution priority** (per model):
-1. TOML `api_key` field (backward compatible, not recommended)
-2. `~/.linggen/credentials.json` keyed by model `id`
+1. `~/.linggen/credentials.json` keyed by model `id` (recommended)
+2. TOML `api_key` field (backward compatible, not recommended)
 3. Environment variable `LINGGEN_API_KEY_{ID}` (hyphens → underscores, uppercase)
-
-**Web UI**: Settings → Models tab shows each model's API key field. Keys are saved via `PUT /api/credentials` to `credentials.json`, never to the TOML file.
-
-**Implementation**: `credentials.rs` (store), `server/config_api.rs` (API endpoints).
 
 ## Free API providers
 
-Several providers offer free tiers with OpenAI-compatible APIs:
+Some providers offer free tiers:
 
-| Provider | Free Tier | Models | Limits |
-|----------|-----------|--------|--------|
-| Google AI Studio | Free | Gemini 2.0 Flash, Gemini 2.5 Pro | 15 RPM, 1M TPD |
-| Groq | Free | Llama 3.3 70B, Mixtral | 30 RPM, 14.4K TPD |
-| DeepSeek | ~Free | DeepSeek-V3, DeepSeek-R1 | $0.14/M input tokens |
+| Provider | Free tier | Recommended models | Limits |
+|:---------|:----------|:-------------------|:-------|
+| Google AI Studio | Free | Gemini 2.5 Flash, Gemini 2.5 Pro | 15 RPM, 1M TPD |
+| Groq | Free | Llama 4 Scout, Qwen 3 | 30 RPM, 14.4K TPD |
+| DeepSeek | Near-free | DeepSeek-V3, DeepSeek-R1 | $0.14/M input tokens |
 | OpenRouter | Free tier | Various (free-tagged) | Varies by model |
-| GitHub Models | Free | GPT-4o-mini, Llama, Mistral | 15 RPM, 150K TPD |
+| GitHub Models | Free | GPT-4.1 mini, Llama, Mistral | 15 RPM, 150K TPD |
 
-All use `provider = "openai"`. Get a free API key from the provider's website.
+All use their respective `provider` value (or `provider = "openai"` with their endpoint URL). Get a free API key from the provider's website.
+
+## Default model
+
+Star a model in **Settings → Models** to set it as the default. All new sessions use this model.
 
 ## Auto-fallback
 
-When a model returns a rate limit (HTTP 429) or context limit (HTTP 400) error, the engine automatically tries the next configured model. If that also fails, it tries the next, and so on until all models are exhausted.
-
-On successful fallback, the engine switches to the fallback model for subsequent iterations in the same run.
-
-**Implementation**: `engine/mod.rs` → `stream_with_fallback()`, `agent_manager/models.rs` → `is_fallback_worthy_error()`.
-
-## Routing policies
-
-Named policies control which model handles each request.
-
-**Built-in policies**:
-- `local-first` — prefer local models, fall back to cloud.
-- `cloud-first` — prefer cloud models, fall back to local.
-
-**Custom policies**:
-
-```toml
-[routing]
-default_policy = "balanced"
-
-[[routing.policies]]
-name = "balanced"
-rules = [
-  { model = "qwen3:32b", priority = 1, max_complexity = "medium" },
-  { model = "claude-sonnet-4-6", priority = 2 },
-  { model = "claude-opus-4-6", priority = 3, min_complexity = "high" },
-]
-```
-
-## Complexity signal
-
-Estimated from:
-- Prompt length.
-- Tool call depth.
-- Skill metadata (`model` hint in frontmatter).
-
-Skills can declare `model: cloud` or `model: local` to influence routing.
+When the active model returns a rate limit (HTTP 429) or context limit (HTTP 400) error, the engine automatically tries the next available model. On successful fallback, the engine switches to the fallback model for the rest of that run.
 
 ## Per-agent model
 
-Agents can specify `model` in frontmatter to override the routing policy:
+Agents can specify `model` in frontmatter to override the default model:
 
 ```yaml
 ---
-name: coder
-model: claude-sonnet-4-6
+name: my-agent
+model: gpt-5.4
 ---
 ```
 
@@ -135,7 +127,8 @@ model: claude-sonnet-4-6
 - `credentials.rs`: credential store, resolution, API endpoints.
 - `config.rs`: `ModelConfig`, `RoutingConfig`, routing policy definitions.
 - `agent_manager/models.rs`: multi-provider dispatch, streaming, fallback error classification.
-- `agent_manager/routing.rs`: model routing resolution.
+- `agent_manager/routing.rs`: model routing, complexity signal, policy resolution.
 - `engine/mod.rs`: `stream_with_fallback()` — auto-retry with model fallback.
 - `ollama.rs`: Ollama API client.
-- `openai.rs`: OpenAI-compatible API client.
+- `openai.rs`: OpenAI-compatible API client (used by all cloud providers).
+- `codex_auth.rs`: ChatGPT OAuth token management.

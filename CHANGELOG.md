@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.9.3 (2026-04-08)
+
+Server-pushed PageState, TUI removal, auto-scroll rework, and UX polish.
+
+### Added
+
+- **Server-pushed PageState** — server aggregates projects, sessions, models, skills, agents, missions, and permissions into a single message pushed over the WebRTC control channel at 0.5 Hz with a dirty-flag mechanism. Replaces the HTTP polling storm that fired on every agent run.
+- **`set_view_context` message** — frontend tells the server which session/project is active, scoping PageState pushes to relevant data only.
+- **`busy_sessions` in PageState** — remote clients now see session busy status without needing per-session event channels.
+- **Dismiss button on queued messages banner** — manually clear the queue when it gets stuck (e.g. `QueueUpdated` event missed).
+- **Markdown links open in new tab** — `target="_blank"` on rendered links so clicking doesn't navigate away and text selection is easier.
+
+### Changed
+
+- **Auto-scroll rework** — replaced distance-threshold detection with scroll-direction detection. Added `distanceFromBottom > 150` guard so layout reflows during streaming no longer falsely detach auto-scroll. Consolidated duplicate scroll tracking from ChatPanel into the single `useAutoScroll` hook.
+- **Removed HTTP polling** — initial load fetches for projects, sessions, models, skills, agents, and config are all replaced by PageState delivery on WebRTC connect. Only Ollama status and session tokens remain as HTTP fetches.
+- **Removed 5 dead API endpoints** — `agent-children`, `agent-context`, `missions/:id GET`, `missions/:id/sessions`, `builtin-skills/install-all`.
+- **SessionModeSelector simplified** — reads mode and zone from store (pushed by PageState) instead of fetching `/api/sessions/permission` on every render.
+- **Extracted non-reactive agent tracking** — `agentTracker.ts` singleton replaces 15+ direct Zustand store mutations in `eventDispatcher`.
+- **Memoized skill suggestions** in ChatInput (was rebuilt twice per render).
+- **Tokens/sec display wired up** — `recordTokenSample` + `recomputeTokenRate` were never called; now functional.
+
+### Removed
+
+- **TUI** — terminal UI (ratatui) and `--tui` flag removed. Linggen is now Web UI only. `ling` starts the daemon and opens the browser; `ling --web` runs the server in foreground.
+- **SSE transport** — server-sent events transport removed. All real-time communication uses WebRTC data channels.
+
+### Fixed
+
+- **Auto-scroll fighting** — removed duplicate scroll tracker in ChatPanel that competed with `useAutoScroll` hook.
+- **Session mode selector race** — after user switches mode (e.g. admin → read), a 3-second suppress window prevents the next PageState push from overwriting the optimistic UI update.
+- **Page flash during streaming** — `floatingUserMsg` effect was re-subscribing on every token.
+- **Duplicate React key** in SubagentTreeView.
+- **Subagent state leak** — `agentTracker.reset()` called on session switch.
+- **Plan message overwrite** — `mutateLast` guard prevents fast-path from overwriting plan messages with streaming tokens.
+- **Skill session chat in remote mode** — skill app chat iframe now routes through the relay connect page when accessed via linggen.dev (was loading the landing page instead of the compact chat).
+- **Skill session restore** — reopening an existing skill session with no localStorage cache auto-triggers a fresh scan instead of showing an empty dashboard.
+
 ## v0.9.1 (2026-03-31)
 
 Simplified run system, daemon mode, ChatGPT default model, and bug fixes.

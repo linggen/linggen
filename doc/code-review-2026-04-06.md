@@ -36,7 +36,7 @@ Comprehensive review of all `doc/*.md` specs against implementation.
 ### ~~C6. `TurnComplete` emitted with all-None stats~~
 - **Location:** `server/chat_api.rs:1488-1495`
 - **Spec:** `chat-spec.md` — turn summary should show "total tool calls, context tokens used, elapsed time."
-- **Status:** [x] LOW PRIORITY — Server sends `None` but the UI has client-side fallbacks: duration from `_runStartTs` (client-measured) and tokens from `ContextUsage` SSE events. Footer renders correctly in practice. Server-side stats would be marginally more accurate but not worth the plumbing now.
+- **Status:** [x] LOW PRIORITY — Server sends `None` but the UI has client-side fallbacks: duration from `_runStartTs` (client-measured) and tokens from `ContextUsage` events via WebRTC. Footer renders correctly in practice. Server-side stats would be marginally more accurate but not worth the plumbing now.
 
 ---
 
