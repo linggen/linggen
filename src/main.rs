@@ -271,7 +271,12 @@ async fn main() -> Result<()> {
 
     // Default (bare `ling`) or --daemon: start background daemon + open browser
     if cli.daemon || (!cli.web && cli.cmd.is_none()) {
-        cli::daemon::start_agent(&config, global_port, global_root).await?;
+        let daemon_host = global_host.clone().or_else(|| {
+            // Use config host if it's not the default 127.0.0.1
+            let h = &config.server.host;
+            if h != "127.0.0.1" { Some(h.clone()) } else { None }
+        });
+        cli::daemon::start_agent(&config, global_port, daemon_host, global_root).await?;
         // Open browser on macOS
         let port = global_port.unwrap_or(config.server.port);
         let url = format!("http://localhost:{}", port);
@@ -281,7 +286,10 @@ async fn main() -> Result<()> {
         }
         #[cfg(target_os = "linux")]
         {
-            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            // Skip browser open on headless/SSH sessions (no DISPLAY or WAYLAND_DISPLAY)
+            if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
         }
         return Ok(());
     }

@@ -88,6 +88,7 @@ async fn stop_process_by_pid_file(pid_path: &Path, label: &str) -> Result<()> {
 pub async fn start_agent(
     config: &Config,
     port_override: Option<u16>,
+    host_override: Option<String>,
     root: Option<PathBuf>,
 ) -> Result<()> {
     let port = port_override.unwrap_or(config.server.port);
@@ -106,6 +107,10 @@ pub async fn start_agent(
     let log = agent_log_file();
 
     let mut args = vec!["--web".to_string(), "--port".to_string(), port.to_string()];
+    if let Some(ref h) = host_override {
+        args.push("--host".to_string());
+        args.push(h.clone());
+    }
     if let Some(ref r) = root {
         args.push("--root".to_string());
         args.push(r.display().to_string());
@@ -136,8 +141,9 @@ pub async fn start_agent(
         }
     }
 
+    let display_host = host_override.as_deref().unwrap_or("localhost");
     if ready {
-        println!("Agent server started on http://localhost:{} (PID {})", port, pid);
+        println!("Agent server started on http://{}:{} (PID {})", display_host, port, pid);
     } else {
         println!(
             "Agent server spawned (PID {}) but not yet reachable on port {}",
