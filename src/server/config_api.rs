@@ -173,9 +173,15 @@ pub(crate) async fn start_codex_auth_login(
         match codex_auth::browser_login().await {
             Ok(_) => {
                 tracing::info!("ChatGPT OAuth login completed via Web UI");
-                // Clear all session engines so they pick up the fresh token
+                // Rebuild ModelManager so it picks up the fresh token
+                let config = manager.get_config_snapshot().await;
+                let new_models = std::sync::Arc::new(
+                    crate::agent_manager::models::ModelManager::new(config.models.clone()),
+                );
+                *manager.models.write().await = new_models;
+                // Clear all session engines so they use the new models
                 manager.session_engines.lock().await.clear();
-                tracing::info!("Cleared session engines after re-login");
+                tracing::info!("Reloaded models after ChatGPT OAuth login");
             }
             Err(e) => tracing::warn!("ChatGPT OAuth login failed: {}", e),
         }

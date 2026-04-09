@@ -1188,13 +1188,18 @@ pub(crate) async fn get_user_me() -> impl IntoResponse {
 pub(crate) async fn auth_login(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let port = params.get("port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(9898);
-    let callback = format!("http://localhost:{}/api/auth/callback", port);
+    let host = params.get("host").cloned().unwrap_or_else(|| {
+        let port = params.get("port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(9898);
+        format!("localhost:{}", port)
+    });
+    let callback = format!("http://{}/api/auth/callback", host);
     let state = uuid::Uuid::new_v4().to_string();
+    let prompt = params.get("prompt").cloned().unwrap_or_default();
     let url = format!(
-        "https://linggen.dev/auth/link?callback={}&state={}",
+        "https://linggen.dev/auth/link?callback={}&state={}&prompt={}",
         urlencoding::encode(&callback),
         urlencoding::encode(&state),
+        urlencoding::encode(&prompt),
     );
     axum::response::Redirect::temporary(&url).into_response()
 }

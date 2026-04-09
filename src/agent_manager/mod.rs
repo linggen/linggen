@@ -6,8 +6,6 @@ use crate::project_store::ProjectStore;
 use crate::skills::SkillManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use anyhow::Result;
-use ignore::gitignore::GitignoreBuilder;
-use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -24,7 +22,6 @@ pub mod routing;
 pub struct ProjectContext {
     pub agents: Mutex<HashMap<String, Arc<Mutex<AgentEngine>>>>,
     pub state_fs: StateFs,
-    pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
 }
 
 pub struct AgentManager {
@@ -457,72 +454,7 @@ impl AgentManager {
         let ctx = Arc::new(ProjectContext {
             agents: Mutex::new(HashMap::new()),
             state_fs,
-            watcher: Mutex::new(None),
         });
-
-        // Setup watcher
-        let root_clone = root.clone();
-        let events_tx = self.events.clone();
-        let mut gitignore_builder = GitignoreBuilder::new(&root);
-        let root_gitignore = root.join(".gitignore");
-        if root_gitignore.exists() {
-            if let Some(path_str) = root_gitignore.to_str() {
-                if let Some(err) = gitignore_builder.add(path_str) {
-                    tracing::warn!("Failed to load .gitignore: {}", err);
-                }
-            }
-        }
-        let gitignore = Arc::new(gitignore_builder.build()?);
-
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    let gitignore = gitignore.clone();
-                    let is_ignored = |path: &std::path::Path| -> bool {
-                        match path.strip_prefix(&root_clone) {
-                            Ok(rel) => gitignore
-                                .matched_path_or_any_parents(rel, false)
-                                .is_ignore(),
-                            Err(_) => false,
-                        }
-                    };
-
-                    // Ignore internal and build directories
-                    if event.paths.iter().any(|p| {
-                        let s = p.to_string_lossy();
-                        s.contains("/target/")
-                            || s.contains("/.git/")
-                            || s.contains("/.linggen/")
-                            || s.contains("/node_modules/")
-                    }) {
-                        return;
-                    }
-
-                    match event.kind {
-                        EventKind::Remove(_) => {
-                            let has_relevant = event.paths.iter().any(|p| !is_ignored(p));
-                            if has_relevant {
-                                let _ = events_tx.send((AgentEvent::StateUpdated, None));
-                            }
-                        }
-                        EventKind::Modify(notify::event::ModifyKind::Name(
-                            notify::event::RenameMode::Both,
-                        )) => {
-                            if event.paths.len() == 2 {
-                                let old = &event.paths[0];
-                                let new = &event.paths[1];
-                                if !is_ignored(old) || !is_ignored(new) {
-                                    let _ = events_tx.send((AgentEvent::StateUpdated, None));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            })?;
-
-        watcher.watch(&root, RecursiveMode::Recursive)?;
-        *ctx.watcher.lock().await = Some(watcher);
 
         projects.insert(key.clone(), ctx.clone());
 

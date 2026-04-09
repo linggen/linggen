@@ -23,6 +23,8 @@ pub struct OpenAiClient {
     api_key: Option<String>,
     /// ChatGPT Account ID for OAuth mode (sent as `ChatGPT-Account-Id` header).
     chatgpt_account_id: Option<String>,
+    /// When true, reload token from codex_auth.json on each request (auto-refresh).
+    codex_auth_live: bool,
 }
 
 impl OpenAiClient {
@@ -37,10 +39,12 @@ impl OpenAiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
             chatgpt_account_id: None,
+            codex_auth_live: false,
         }
     }
 
     /// Create a client configured for ChatGPT OAuth (subscription-based access).
+    /// Reads fresh tokens from codex_auth.json on each request.
     pub fn new_chatgpt_oauth(
         base_url: String,
         access_token: String,
@@ -56,16 +60,28 @@ impl OpenAiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: Some(access_token),
             chatgpt_account_id: account_id,
+            codex_auth_live: true,
         }
     }
 
     /// Apply auth headers to a request builder.
     fn apply_auth(&self, mut rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        if let Some(key) = &self.api_key {
-            rb = rb.header("Authorization", format!("Bearer {}", key));
-        }
-        if let Some(account_id) = &self.chatgpt_account_id {
-            rb = rb.header("ChatGPT-Account-Id", account_id);
+        if self.codex_auth_live {
+            // Read fresh token from disk so login/refresh is picked up immediately
+            let tokens = crate::codex_auth::CodexAuthTokens::load(&crate::codex_auth::codex_auth_file());
+            if let Some(ref token) = tokens.access_token {
+                rb = rb.header("Authorization", format!("Bearer {}", token));
+            }
+            if let Some(ref account_id) = tokens.account_id {
+                rb = rb.header("ChatGPT-Account-Id", account_id);
+            }
+        } else {
+            if let Some(key) = &self.api_key {
+                rb = rb.header("Authorization", format!("Bearer {}", key));
+            }
+            if let Some(account_id) = &self.chatgpt_account_id {
+                rb = rb.header("ChatGPT-Account-Id", account_id);
+            }
         }
         rb
     }
