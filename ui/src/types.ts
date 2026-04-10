@@ -260,6 +260,12 @@ export interface SkillAppConfig {
   height?: number;
 }
 
+export interface SkillPermission {
+  mode: 'read' | 'edit' | 'admin';
+  paths?: string[];
+  warning?: string | null;
+}
+
 export interface SkillInfoFull {
   name: string;
   description: string;
@@ -273,6 +279,7 @@ export interface SkillInfoFull {
   trigger?: string | null;
   agent?: string | null;
   app?: SkillAppConfig | null;
+  permission?: SkillPermission | null;
 }
 
 export interface SkillFileInfo {

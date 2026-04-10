@@ -292,22 +292,6 @@ export const ModelsTab: React.FC<{
         </section>
       )}
 
-      {/* Auto-fallback toggle */}
-      <section className={sectionCls}>
-        <label className="flex items-center justify-between cursor-pointer">
-          <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Auto Fallback</span>
-            <p className="text-[11px] text-slate-500 mt-0.5">Automatically try the next model on timeout, rate limit, or connection errors</p>
-          </div>
-          <input
-            type="checkbox"
-            checked={config.routing?.auto_fallback !== false}
-            onChange={(e) => onChange({ ...config, routing: { ...config.routing, auto_fallback: e.target.checked } })}
-            className="w-4 h-4 accent-blue-600"
-          />
-        </label>
-      </section>
-
       {/* Model cards */}
       <section className={sectionCls}>
         <div className="flex items-center justify-between mb-4">

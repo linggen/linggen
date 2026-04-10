@@ -19,7 +19,7 @@ import { AgentMessage } from './AgentMessage';
 import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
 import { statusBadgeClass } from './MessageHelpers';
-import { SessionModelSelector, SessionModeSelector } from './SessionSelectors';
+import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 
 /** Render a single message row. */
 const ChatMessageRow = React.memo<{
@@ -457,6 +457,7 @@ export const ChatPanel: React.FC<{
               })()}
               <SessionModeSelector />
               <SessionModelSelector />
+              <SessionStats />
             </summary>
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
               {selectedMainRunningRunId && onCancelRun && (

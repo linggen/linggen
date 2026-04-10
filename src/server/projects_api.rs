@@ -609,7 +609,7 @@ pub(crate) async fn create_session(
         created_at: crate::util::now_ts_secs(),
         skill: req.skill.clone(),
         creator: if req.skill.is_some() { "skill".into() } else { "user".into() },
-        cwd, project: None, project_name: None, mission_id: None, model_id: None,
+        cwd, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
     };
 
     // All sessions go to the global flat store
@@ -657,7 +657,7 @@ pub(crate) async fn resolve_session_api(
         created_at: now,
         skill: None,
         creator: "user".into(),
-        cwd: Some(req.project_root.clone()), project: None, project_name: None, mission_id: None, model_id: None,
+        cwd: Some(req.project_root.clone()), project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
     };
     let _ = store.add_session(&meta);
     Json(serde_json::json!({

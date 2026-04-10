@@ -13,12 +13,9 @@ export interface InfoPanelProps {
   skills: SkillInfo[];
   agents: AgentInfo[];
   chatMessages: ChatMessage[];
-  tokensPerSec?: number;
   activeModelId?: string;
-  agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
   defaultModels: string[];
   ollamaStatus: string;
-  sessionTokens: number;
   reloadingSkills: boolean;
   projectRoot: string;
   onToggleDefault: (id: string) => void;
@@ -29,8 +26,8 @@ export interface InfoPanelProps {
 }
 
 export const InfoPanel: React.FC<InfoPanelProps> = ({
-  models, skills, agents, chatMessages, tokensPerSec, activeModelId,
-  agentContext, defaultModels, ollamaStatus, sessionTokens, reloadingSkills,
+  models, skills, agents, chatMessages, activeModelId,
+  defaultModels, ollamaStatus, reloadingSkills,
   projectRoot, onToggleDefault, onChangeReasoningEffort, onReloadSkills,
   onOpenSettings, onClickSkill,
 }) => (
@@ -43,8 +40,8 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
         </button>
       }>
       <ModelsCard models={models} agents={agents} ollamaStatus={ollamaStatus} chatMessages={chatMessages}
-        tokensPerSec={tokensPerSec} activeModelId={activeModelId} agentContext={agentContext}
-        defaultModels={defaultModels} onToggleDefault={onToggleDefault} onChangeReasoningEffort={onChangeReasoningEffort} sessionTokens={sessionTokens} />
+        activeModelId={activeModelId}
+        defaultModels={defaultModels} onToggleDefault={onToggleDefault} onChangeReasoningEffort={onChangeReasoningEffort} />
     </CollapsibleCard>
     <CollapsibleCard title="SKILLS" icon={<Zap size={12} />} iconColor="text-amber-500" badge={`${skills.length} loaded`} defaultOpen
       headerAction={

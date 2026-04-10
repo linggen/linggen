@@ -1178,6 +1178,7 @@ pub(crate) async fn chat_handler(
                 project: None, project_name: None,
                 mission_id: req.mission_id.clone(),
                 model_id: req.model_id.clone(),
+                consumer_user_id: None,
             };
             let _ = global_sessions.add_session(&meta);
         }
@@ -1195,6 +1196,7 @@ pub(crate) async fn chat_handler(
             project: None, project_name: None,
             mission_id: req.mission_id.clone(),
             model_id: req.model_id.clone(),
+            consumer_user_id: None,
         };
         let _ = global_sessions.add_session(&meta);
         // Emit session_created so the unified session list updates in real-time

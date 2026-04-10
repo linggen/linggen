@@ -51,6 +51,9 @@ pub struct SessionMeta {
     /// Originating mission ID (when creator is "mission").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission_id: Option<String>,
+    /// Consumer user ID (when session is created by a proxy room consumer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,7 +370,7 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+            cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
         };
         store.add_session(&meta).unwrap();
 
@@ -397,7 +400,7 @@ mod tests {
                     created_at: ts,
                     skill: None,
                     creator: "user".into(),
-                    cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                    cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
                 })
                 .unwrap();
         }
@@ -415,7 +418,7 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+            cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
         };
         store.add_session(&meta).unwrap();
 
@@ -454,7 +457,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .unwrap();
 
@@ -502,7 +505,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .unwrap();
         store
@@ -534,7 +537,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .unwrap();
         store
@@ -566,7 +569,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .is_err());
         assert!(store
@@ -576,7 +579,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .is_err());
         assert!(store
@@ -586,7 +589,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
             })
             .is_err());
     }

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharing Tab — Room Settings Wireframe</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwindcss.config = {
+  darkMode: 'class',
+  theme: { extend: {} }
+}
+</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+</style>
+</head>
+<body class="dark bg-[#0a0a0a] text-white min-h-screen">
+
+<div class="max-w-4xl mx-auto p-6 space-y-6">
+
+  <!-- Page Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-sm font-bold tracking-wide">Sharing</h1>
+      <p class="text-[11px] text-slate-500 mt-0.5">Share your AI models with others through proxy rooms</p>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- SECTION 1: Room Info (existing, condensed)   -->
+  <!-- ============================================ -->
+  <div class="bg-[#141414] rounded-xl border border-white/5 shadow-sm p-5 space-y-4">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Room</h2>
+        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+        <span class="text-[10px] text-green-400">Online</span>
+      </div>
+      <button class="text-[10px] text-red-400 hover:text-red-300 transition-colors">Delete Room</button>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div class="space-y-1.5">
+        <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Name</label>
+        <input type="text" value="Liang's Workshop" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50">
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Type</label>
+        <select class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50">
+          <option>Private (invite only)</option>
+          <option>Public (anyone)</option>
+        </select>
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Max Consumers</label>
+        <select class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50">
+          <option>1</option>
+          <option>2</option>
+          <option selected>3</option>
+          <option>4</option>
+        </select>
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Daily Token Budget</label>
+        <div class="flex items-center gap-2">
+          <input type="text" value="500000" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50">
+          <span class="text-[10px] text-slate-500 whitespace-nowrap">tokens</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token usage bar -->
+    <div class="space-y-1">
+      <div class="flex justify-between text-[10px] text-slate-500">
+        <span>Today's usage</span>
+        <span>124,500 / 500,000</span>
+      </div>
+      <div class="h-1.5 bg-white/5 rounded-full overflow-hidden">
+        <div class="h-full bg-blue-500 rounded-full" style="width: 25%"></div>
+      </div>
+    </div>
+
+    <!-- Invite link (private rooms) -->
+    <div class="space-y-1.5">
+      <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Invite Link</label>
+      <div class="flex items-center gap-2">
+        <input type="text" readonly value="https://linggen.dev/join/abc123xyz" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-400 outline-none font-mono">
+        <button class="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap">Copy</button>
+        <button class="px-3 py-2 rounded-lg text-xs text-slate-400 border border-white/10 hover:border-white/20 transition-colors whitespace-nowrap">Regen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- SECTION 2: Shared Models                     -->
+  <!-- ============================================ -->
+  <div class="bg-[#141414] rounded-xl border border-white/5 shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Shared Models</h2>
+      <span class="text-[10px] text-slate-500">2 of 5 shared</span>
+    </div>
+    <p class="text-[11px] text-slate-500">Which of your models consumers can use.</p>
+
+    <div class="space-y-1">
+      <!-- Model row: shared -->
+      <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" checked class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+          <span class="text-xs font-medium truncate">claude-sonnet-4-20250514</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 shrink-0">Anthropic</span>
+        </div>
+      </label>
+      <!-- Model row: shared -->
+      <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" checked class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+          <span class="text-xs font-medium truncate">gpt-4o</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 shrink-0">OpenAI</span>
+        </div>
+      </label>
+      <!-- Model row: not shared -->
+      <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+          <span class="text-xs font-medium truncate">llama3.1:8b</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 shrink-0">Ollama</span>
+        </div>
+      </label>
+      <!-- Model row: not shared -->
+      <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+          <span class="text-xs font-medium truncate">deepseek-r1:14b</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 shrink-0">Ollama</span>
+        </div>
+      </label>
+      <!-- Model row: offline -->
+      <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 cursor-pointer transition-colors opacity-50">
+        <input type="checkbox" disabled class="rounded border-white/20 bg-white/5">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
+          <span class="text-xs font-medium truncate text-slate-500">gemini-2.5-pro</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 shrink-0">Google</span>
+          <span class="text-[10px] text-red-400">Offline</span>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- SECTION 3: Consumer Permissions (NEW)        -->
+  <!-- ============================================ -->
+  <div class="bg-[#141414] rounded-xl border border-white/5 shadow-sm p-5 space-y-4">
+    <div>
+      <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Consumer Permissions</h2>
+      <p class="text-[11px] text-slate-500 mt-1">What consumers can do in your room.</p>
+    </div>
+
+    <!-- Tool Preset Selector -->
+    <div class="space-y-2">
+      <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Tool Preset</label>
+      <div class="grid grid-cols-3 gap-2">
+        <!-- Chat only -->
+        <button class="group relative px-3 py-3 rounded-lg border border-white/10 text-center hover:border-white/20 transition-all">
+          <div class="text-xs font-bold text-slate-300">Chat</div>
+          <div class="text-[10px] text-slate-500 mt-0.5">Conversation only</div>
+        </button>
+        <!-- Read (selected) -->
+        <button class="group relative px-3 py-3 rounded-lg border-2 border-blue-500 bg-blue-500/5 text-center">
+          <div class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+            <svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+          </div>
+          <div class="text-xs font-bold text-blue-400">Read</div>
+          <div class="text-[10px] text-slate-500 mt-0.5">Search & browse</div>
+        </button>
+        <!-- Edit -->
+        <button class="group relative px-3 py-3 rounded-lg border border-white/10 text-center hover:border-white/20 transition-all">
+          <div class="text-xs font-bold text-slate-300">Edit</div>
+          <div class="text-[10px] text-slate-500 mt-0.5">Full coding tools</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Individual Tool Checkboxes -->
+    <div class="space-y-2">
+      <div class="flex items-center justify-between">
+        <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Allowed Tools</label>
+        <span class="text-[10px] text-slate-500">2 enabled</span>
+      </div>
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1 px-1">
+        <!-- Included in Read preset -->
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" checked class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs">WebSearch</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" checked class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs">WebFetch</span>
+        </label>
+        <!-- Not in Read preset -->
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Read</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Write</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Edit</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Glob</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Grep</span>
+        </label>
+        <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+          <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5">
+          <span class="text-xs text-slate-500">Bash</span>
+        </label>
+      </div>
+      <p class="text-[10px] text-slate-600 px-1">Selecting individual tools overrides the preset. Preset resets on change.</p>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- SECTION 4: Shared Skills (NEW)               -->
+  <!-- ============================================ -->
+  <div class="bg-[#141414] rounded-xl border border-white/5 shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Shared Skills</h2>
+        <p class="text-[11px] text-slate-500 mt-1">Skills consumers can use. Requires matching permission level.</p>
+      </div>
+      <span class="text-[10px] text-slate-500">1 of 6 shared</span>
+    </div>
+
+    <!-- Legend -->
+    <div class="flex items-center gap-3 text-[10px] text-slate-500 px-1">
+      <span class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> no perm
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> read
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> edit
+      </span>
+      <span class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span> admin
+      </span>
+    </div>
+
+    <div class="space-y-1">
+
+      <!-- Skill: weather (no permission, shared) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" checked class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">weather</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400">no perm</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">Get current weather and forecasts</div>
+        </div>
+      </label>
+
+      <!-- Skill: translator (read permission, available, not shared) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">translator</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">read</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">Translate text between languages using WebSearch</div>
+        </div>
+      </label>
+
+      <!-- Skill: frontend-design (read permission, available) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/3 cursor-pointer transition-colors">
+        <input type="checkbox" class="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/30">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">frontend-design</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">read</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400">app</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">Create production-grade frontend interfaces</div>
+        </div>
+      </label>
+
+      <!-- Skill: code-review (edit permission, DISABLED — preset is Read) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-not-allowed opacity-40" title="Requires Edit preset">
+        <input type="checkbox" disabled class="rounded border-white/20 bg-white/5">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">code-review</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">edit</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">Review code for bugs and improvements</div>
+        </div>
+        <span class="text-[10px] text-amber-400 shrink-0">Needs Edit</span>
+      </label>
+
+      <!-- Skill: commit (edit permission, DISABLED) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-not-allowed opacity-40" title="Requires Edit preset">
+        <input type="checkbox" disabled class="rounded border-white/20 bg-white/5">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">commit</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">edit</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">Create git commits with smart messages</div>
+        </div>
+        <span class="text-[10px] text-amber-400 shrink-0">Needs Edit</span>
+      </label>
+
+      <!-- Skill: sys-doctor (admin permission, ALWAYS DISABLED) -->
+      <label class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-not-allowed opacity-40" title="Admin skills cannot be shared">
+        <input type="checkbox" disabled class="rounded border-white/20 bg-white/5">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium">sys-doctor</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">admin</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-0.5 truncate">System diagnostics and maintenance</div>
+        </div>
+        <span class="text-[10px] text-red-400 shrink-0">Not shareable</span>
+      </label>
+
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- SECTION 5: Members                           -->
+  <!-- ============================================ -->
+  <div class="bg-[#141414] rounded-xl border border-white/5 shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Members</h2>
+      <span class="text-[10px] text-slate-500">2 members</span>
+    </div>
+
+    <div class="space-y-1">
+      <!-- Member 1 -->
+      <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 transition-colors">
+        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0">A</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium truncate">alice-dev</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400">browser</span>
+          </div>
+          <div class="text-[10px] text-slate-500">Joined 2 days ago</div>
+        </div>
+        <button class="text-[10px] text-red-400 hover:text-red-300 transition-colors">Remove</button>
+      </div>
+      <!-- Member 2 -->
+      <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/3 transition-colors">
+        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0">B</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium truncate">bob-home-server</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">linggen</span>
+          </div>
+          <div class="text-[10px] text-slate-500">Joined 5 days ago</div>
+        </div>
+        <button class="text-[10px] text-red-400 hover:text-red-300 transition-colors">Remove</button>
+      </div>
+    </div>
+
+    <!-- Empty state hint -->
+    <div class="text-center py-2">
+      <p class="text-[10px] text-slate-600">Share your invite link to add members</p>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- Footer link                                  -->
+  <!-- ============================================ -->
+  <div class="text-center pb-4">
+    <a href="#" class="text-[11px] text-blue-400 hover:text-blue-300 transition-colors">
+      Manage rooms on linggen.dev →
+    </a>
+  </div>
+
+</div>
+
+</body>
+</html>

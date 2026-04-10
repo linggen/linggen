@@ -11,6 +11,7 @@ import { AgentSpecEditorModal } from './components/AgentSpecEditorModal';
 import { ToastContainer } from './components/ToastContainer';
 import { AppPanel } from './components/AppPanel';
 import { InfoPanel } from './components/InfoPanel';
+import { ConsumerChatPage } from './components/ConsumerChatPage';
 import {
   buildAgentWorkInfo,
 } from './lib/messageUtils';
@@ -353,8 +354,8 @@ const App: React.FC = () => {
   }, [sendChatMessage]);
 
   const infoPanelProps = {
-    models, skills, agents: mainAgents, chatMessages, tokensPerSec, activeModelId,
-    agentContext, defaultModels, ollamaStatus, sessionTokens, reloadingSkills,
+    models, skills, agents: mainAgents, chatMessages, activeModelId,
+    defaultModels, ollamaStatus, reloadingSkills,
     projectRoot: selectedProjectRoot,
     onToggleDefault: agentStore.toggleDefaultModel,
     onChangeReasoningEffort: agentStore.setReasoningEffort,
@@ -390,6 +391,7 @@ const App: React.FC = () => {
         />
       </div>
     )}
+    {currentPage === 'consumer' && <ConsumerChatPage />}
     {!isCompact && currentPage === 'settings' && (
       <SettingsPage
         onBack={() => {

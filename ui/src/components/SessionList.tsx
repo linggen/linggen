@@ -93,8 +93,11 @@ export const SessionList: React.FC<{
   onCreateSession: () => void;
   onDeleteSession?: (id: string) => void;
   onOpenSettings?: (tab?: string) => void;
-}> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings }) => {
-  const allSessions = useProjectStore((s) => s.allSessions);
+  /** When provided, overrides the sessions from the store (used by consumer mode to filter). */
+  filterSessions?: SessionInfo[];
+}> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions }) => {
+  const storeSessions = useProjectStore((s) => s.allSessions);
+  const allSessions = filterSessions ?? storeSessions;
   const agentStatus = useAgentStore((s) => s.agentStatus);
   const [filter, setFilter] = useState<CreatorFilter>('all');
   const [search, setSearch] = useState('');

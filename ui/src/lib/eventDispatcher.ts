@@ -156,6 +156,7 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
     case 'working_folder': handleWorkingFolder(item); return;
     case 'widget_resolved': handleWidgetResolved(item); return;
     case 'page_state':   handlePageState(item); return;
+    case 'consumer_mode': handleConsumerMode(item); return;
   }
 }
 
@@ -175,6 +176,7 @@ function handleRun(item: UiEvent): void {
   }
   if (item.phase === 'outcome') {
     chatStore.fetchSessionState();
+    useAgentStore.setState({ tokensPerSec: 0 });
     return;
   }
 
@@ -806,4 +808,19 @@ function handlePageState(item: UiEvent): void {
     }
     if (perm.zone) uiStore.setSessionZone(perm.zone);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Consumer mode — proxy room browser consumer
+// ---------------------------------------------------------------------------
+
+function handleConsumerMode(item: UiEvent): void {
+  const data = item.data;
+  if (!data) return;
+  useUiStore.getState().setConsumerMode(true, {
+    consumer_type: data.consumer_type,
+    token_budget_daily: data.token_budget_daily,
+    allowed_tools: data.allowed_tools,
+    allowed_skills: data.allowed_skills,
+  });
 }

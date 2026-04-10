@@ -248,6 +248,22 @@ impl AgentEngine {
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
 
+        // --- consumer skill restriction gate (defense-in-depth) ---
+        // When consumer_allowed_skills is set, block Skill invocations not in the list.
+        if canonical_tool == "Skill" {
+            if let Some(ref allowed_skills) = self.cfg.consumer_allowed_skills {
+                let skill_name = args.get("skill")
+                    .or_else(|| args.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !allowed_skills.contains(skill_name) {
+                    let msg = format!("Skill '{}' is not available to consumers.", skill_name);
+                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+                    return PreExecOutcome::Blocked(LoopControl::Continue);
+                }
+            }
+        }
+
         // --- new permission gate (permission-spec.md) ---
 
         // Extract bash command and file path for permission checking.

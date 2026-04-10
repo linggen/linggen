@@ -1,7 +1,6 @@
 import React from 'react';
-import { Bot, Brain, Star } from 'lucide-react';
+import { Brain, Star } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { useProjectStore } from '../stores/projectStore';
 import type { AgentInfo, ChatMessage, ModelInfo, OllamaPsResponse } from '../types';
 
 /** Check if a model supports reasoning effort control. */
@@ -21,28 +20,16 @@ function supportsReasoningEffort(model: ModelInfo): boolean {
   return false;
 }
 
-const formatCompactInt = (n: number) => {
-  if (!Number.isFinite(n)) return '';
-  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}m`;
-  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
-  if (n >= 1_000) return `${Math.round(n / 100) / 10}k`;
-  return `${n}`;
-};
-
 export const ModelsCard: React.FC<{
   models: ModelInfo[];
   agents: AgentInfo[];
   ollamaStatus: OllamaPsResponse | null;
   chatMessages: ChatMessage[];
-  tokensPerSec?: number;
   activeModelId?: string;
-  agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
   defaultModels?: string[];
   onToggleDefault?: (modelId: string) => void;
   onChangeReasoningEffort?: (modelId: string, effort: string | null) => void;
-  sessionTokens?: { prompt: number; completion: number };
-}> = ({ models, agents, ollamaStatus, tokensPerSec, activeModelId, agentContext, defaultModels = [], onToggleDefault, onChangeReasoningEffort, sessionTokens }) => {
-  const tps = Number.isFinite(Number(tokensPerSec)) ? Number(tokensPerSec) : 0;
+}> = ({ models, agents, ollamaStatus, activeModelId, defaultModels = [], onToggleDefault, onChangeReasoningEffort }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll to the default (starred) model on mount
@@ -57,19 +44,11 @@ export const ModelsCard: React.FC<{
       {models.map((m) => {
         const isActive = ollamaStatus?.models?.some((om) => om.name.includes(m.model) || m.model.includes(om.name));
         const activeInfo = ollamaStatus?.models?.find((om) => om.name.includes(m.model) || m.model.includes(om.name));
-        const assignedAgents = agents.filter((a) => {
-          const agentModel = a.model?.toLowerCase();
-          const modelId = m.id.toLowerCase();
-          const modelName = m.model.toLowerCase();
-          return agentModel === modelId || agentModel === modelName || (!agentModel && models.length === 1);
-        });
-
         const isStarred = defaultModels.includes(m.id);
         // Show token rate on the model currently generating, not just any Ollama model
         const isGeneratingModel = activeModelId
           ? (m.id.toLowerCase() === activeModelId.toLowerCase() || m.model.toLowerCase() === activeModelId.toLowerCase())
           : false;
-        const showTps = tps > 0 && isGeneratingModel;
         return (
           <div key={m.id} {...(isStarred ? { 'data-default-model': '' } : {})} className={cn(
             'rounded-lg border bg-slate-50/50 dark:bg-white/[0.02] p-2.5 space-y-1.5',
@@ -132,68 +111,17 @@ export const ModelsCard: React.FC<{
               );
             })()}
 
-            {/* Model stats when active */}
-            {(activeInfo || showTps) && (
+            {/* Ollama model stats (param size, quant, vram) */}
+            {activeInfo && (
               <div className="flex items-center gap-3 text-[10px] text-slate-400 font-mono">
-                {activeInfo && <span>{activeInfo.details.parameter_size}</span>}
-                {activeInfo && <span>{activeInfo.details.quantization_level}</span>}
-                {activeInfo && <span>{(activeInfo.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB</span>}
-                {showTps && <span className="text-emerald-500 font-semibold">{tps.toFixed(1)} tok/s</span>}
-              </div>
-            )}
-
-            {/* Assigned agents with context */}
-            {assignedAgents.length > 0 && (
-              <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-white/5">
-                {assignedAgents.map((agent) => {
-                  const sessionId = useProjectStore.getState().activeSessionId || '';
-                  const ctx = agentContext?.[sessionId];
-                  const tokens = ctx?.tokens || 0;
-                  const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : null;
-                  const pct = limit ? Math.round((tokens / limit) * 100) : null;
-
-                  return (
-                    <div key={agent.name} className="flex items-center gap-1.5 text-[11px]">
-                      <Bot size={9} className="text-purple-400 shrink-0" />
-                      <span className="font-semibold uppercase text-[10px] text-slate-500 dark:text-slate-400 w-16 truncate">{agent.name}</span>
-                      {ctx ? (
-                        <>
-                          <div className="flex-1 h-1 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
-                            <div
-                              className={cn(
-                                'h-full rounded-full transition-all',
-                                (pct ?? 0) > 80 ? 'bg-red-400' : (pct ?? 0) > 50 ? 'bg-amber-400' : 'bg-blue-400'
-                              )}
-                              style={{ width: `${Math.min(pct ?? 0, 100)}%` }}
-                            />
-                          </div>
-                          <span className="text-[8px] text-slate-400 tabular-nums shrink-0">
-                            {formatCompactInt(tokens)}{limit ? `/${formatCompactInt(limit)}` : ''}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-[8px] text-slate-300 dark:text-slate-600 italic">no context</span>
-                      )}
-                    </div>
-                  );
-                })}
+                <span>{activeInfo.details.parameter_size}</span>
+                <span>{activeInfo.details.quantization_level}</span>
+                <span>{(activeInfo.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB</span>
               </div>
             )}
           </div>
         );
       })}
-      {sessionTokens && (sessionTokens.prompt > 0 || sessionTokens.completion > 0) && (
-        <div className="pt-1.5 border-t border-slate-100 dark:border-white/5">
-          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-            <span>Session tokens</span>
-            <span className="tabular-nums">
-              <span title="Prompt tokens">↑{formatCompactInt(sessionTokens.prompt)}</span>
-              {' '}
-              <span title="Completion tokens">↓{formatCompactInt(sessionTokens.completion)}</span>
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

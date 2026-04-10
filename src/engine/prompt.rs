@@ -102,15 +102,24 @@ impl AgentEngine {
         // Don't list available skills for app skill sessions — the model
         // should focus entirely on the active skill.
         if !is_app_skill && !self.available_skills_metadata.is_empty() {
-            prompt.push_str(&self.prompt_store.render_or_fallback(
-                keys::SYSTEM_SKILLS_HEADER,
-                &[],
-            ));
-            for (name, description) in &self.available_skills_metadata {
+            // Filter by consumer_allowed_skills when in consumer mode.
+            let skills: Vec<&(String, String)> = match &self.cfg.consumer_allowed_skills {
+                Some(allowed) => self.available_skills_metadata.iter()
+                    .filter(|(name, _)| allowed.contains(name))
+                    .collect(),
+                None => self.available_skills_metadata.iter().collect(),
+            };
+            if !skills.is_empty() {
                 prompt.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_SKILL_ENTRY,
-                    &[("name", name.as_str()), ("description", description.as_str())],
+                    keys::SYSTEM_SKILLS_HEADER,
+                    &[],
                 ));
+                for (name, description) in skills {
+                    prompt.push_str(&self.prompt_store.render_or_fallback(
+                        keys::SYSTEM_SKILL_ENTRY,
+                        &[("name", name.as_str()), ("description", description.as_str())],
+                    ));
+                }
             }
         }
 

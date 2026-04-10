@@ -214,6 +214,7 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         }),
         mission_id: Some(mission.id.clone()),
         model_id: None,
+        consumer_user_id: None,
     };
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),

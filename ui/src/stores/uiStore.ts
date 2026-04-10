@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import type { CronMission, ManagementTab, Plan, PendingAskUser, QueuedChatItem } from '../types';
 
-export type Page = 'main' | 'settings' | 'mission-editor';
+export type Page = 'main' | 'settings' | 'mission-editor' | 'consumer';
 export type SidebarTab = 'projects' | 'missions';
 
 export interface Toast {
@@ -61,6 +61,13 @@ interface UiState {
   activePlan: Plan | null;
   verboseMode: boolean;
   copyChatStatus: 'idle' | 'copied' | 'error';
+
+  // Consumer mode (proxy room browser consumer)
+  consumerMode: boolean;
+  consumerInfo: { consumer_type?: string; token_budget_daily?: number | null; allowed_tools?: string[]; allowed_skills?: string[] } | null;
+  /** Timestamp when consumer mode was activated — sessions before this are the owner's. */
+  consumerConnectedAt: number;
+  setConsumerMode: (mode: boolean, info?: UiState['consumerInfo']) => void;
 
   // Transport connection status
   connectionStatus: 'connected' | 'reconnecting' | 'disconnected';
@@ -125,6 +132,11 @@ export const useUiStore = create<UiState>((set) => ({
   activePlan: null,
   verboseMode: typeof window !== 'undefined' ? window.localStorage.getItem(VERBOSE_MODE_STORAGE_KEY) === 'true' : false,
   copyChatStatus: 'idle',
+  consumerMode: false,
+  consumerInfo: null,
+  consumerConnectedAt: 0,
+  setConsumerMode: (mode, info) => set({ consumerMode: mode, consumerInfo: info ?? null, consumerConnectedAt: mode ? Math.floor(Date.now() / 1000) : 0, currentPage: mode ? 'consumer' : 'main' }),
+
   connectionStatus: (typeof document !== 'undefined' && document.querySelector('meta[name="linggen-instance"]')) ? 'disconnected' : 'connected',
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   toasts: [],
