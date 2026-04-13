@@ -56,6 +56,9 @@ pub struct RemoteConfig {
     pub api_token: String,
     pub instance_name: String,
     pub instance_id: String,
+    /// Owner's user ID on linggen.dev. Used to tag sessions and isolate data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
 }
 
 /// Start a one-shot localhost HTTP server that receives the token via redirect.
@@ -203,12 +206,17 @@ pub async fn run() -> Result<()> {
         bail!("Registration failed ({status}): {body}");
     }
 
+    // Parse user_id from registration response
+    let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let user_id = resp_body.get("user_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+
     // Step 6: Save config
     let config = RemoteConfig {
         relay_url: DEFAULT_RELAY_URL.to_string(),
         api_token: token,
         instance_name: instance_name.clone(),
         instance_id: instance_id.clone(),
+        user_id,
     };
 
     let toml_str = toml::to_string_pretty(&config).context("Failed to serialize config")?;

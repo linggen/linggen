@@ -33,6 +33,9 @@ pub(crate) struct ChatRequest {
     skill_name: Option<String>,
     /// Session-level model override. Takes priority over routing.default_models.
     model_id: Option<String>,
+    /// User ID of the session creator (linggen.dev user_id).
+    /// Injected by peer.rs for both owner and consumer connections.
+    user_id: Option<String>,
     #[serde(default)]
     images: Vec<String>,
 }
@@ -331,6 +334,21 @@ async fn run_skill_dispatch(
                 )
                 .await;
                 return;
+            }
+            // Check consumer skill allowlist
+            if let Some(ref allowed) = engine.cfg.consumer_allowed_skills {
+                if !allowed.contains(&skill.name) {
+                    let err_msg = format!(
+                        "Skill '{}' is not available in this room.",
+                        skill.name
+                    );
+                    persist_and_emit_message(
+                        &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
+                        &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+                    )
+                    .await;
+                    return;
+                }
             }
             // App skill: launch app UI only when --web flag is present.
             // Without --web, fall through to run as a regular skill (model uses tools).
@@ -1178,7 +1196,7 @@ pub(crate) async fn chat_handler(
                 project: None, project_name: None,
                 mission_id: req.mission_id.clone(),
                 model_id: req.model_id.clone(),
-                consumer_user_id: None,
+                user_id: req.user_id.clone(),
             };
             let _ = global_sessions.add_session(&meta);
         }
@@ -1196,7 +1214,7 @@ pub(crate) async fn chat_handler(
             project: None, project_name: None,
             mission_id: req.mission_id.clone(),
             model_id: req.model_id.clone(),
-            consumer_user_id: None,
+            user_id: req.user_id.clone(),
         };
         let _ = global_sessions.add_session(&meta);
         // Emit session_created so the unified session list updates in real-time

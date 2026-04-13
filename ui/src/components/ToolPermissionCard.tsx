@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { PendingAskUser, AskUserAnswer } from '../types';
+import { useUserStore } from '../stores/userStore';
 
 interface ToolPermissionCardProps {
   pending: PendingAskUser;
@@ -10,6 +11,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
   const question = pending.questions[0];
   const [otherActive, setOtherActive] = useState(false);
   const [customText, setCustomText] = useState('');
+  const userPermission = useUserStore((s) => s.userPermission);
 
   if (!question) return null;
 
@@ -72,7 +74,15 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
 
         {/* Vertical button list */}
         <div className="flex flex-col gap-1.5">
-          {question.options.map((opt) => (
+          {question.options
+          .filter((opt) => {
+            // Non-admin users can't escalate — hide mode switch and blanket allow
+            if (userPermission !== 'admin') {
+              if (isModeSwitch(opt.label) || isBlanketOption(opt.label)) return false;
+            }
+            return true;
+          })
+          .map((opt) => (
             <button
               key={opt.label}
               onClick={() => handleClick(opt.label)}

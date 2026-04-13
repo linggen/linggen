@@ -393,6 +393,11 @@ pub(crate) fn tool_status_line(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<String> {
+    // Hide [HIDDEN] messages (system prompts from app skills).
+    // Check contains — system messages may have a prefix before [HIDDEN].
+    if content.contains("[HIDDEN]") {
+        return None;
+    }
     if from == "user" {
         return Some(content.to_string());
     }

@@ -2,10 +2,10 @@
  * Derived run information — running main run IDs by agent.
  */
 import { useMemo } from 'react';
-import { useAgentStore } from '../stores/agentStore';
+import { useServerStore } from '../stores/serverStore';
 
 export function useRunInfo() {
-  const agentRuns = useAgentStore((s) => s.agentRuns);
+  const agentRuns = useServerStore((s) => s.agentRuns);
 
   const sortedAgentRuns = useMemo(() => {
     const statusScore = (status: string) => (status === 'running' ? 1 : 0);

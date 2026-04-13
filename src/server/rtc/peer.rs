@@ -25,25 +25,28 @@ use crate::server::ServerState;
 /// Returns the SDP answer string to send back to the client.
 /// Spawns a background task to run the peer connection event loop.
 pub async fn create_peer(offer_sdp: String, state: Arc<ServerState>) -> Result<String> {
-    create_peer_inner(offer_sdp, state, false, None).await
+    // Local WHIP — owner with Admin permission
+    let user_ctx = super::UserContext::owner(
+        crate::cli::login::load_remote_config().and_then(|c| c.user_id)
+    );
+    create_peer_inner(offer_sdp, state, false, user_ctx).await
 }
 
 /// Create a peer for a remote offer (via signaling relay).
 /// Binds to 0.0.0.0 so STUN can discover the public address.
-/// If `consumer_ctx` is Some, this is a proxy room consumer with restricted permissions.
 pub async fn create_remote_peer(
     offer_sdp: String,
     state: Arc<ServerState>,
-    consumer_ctx: Option<super::ConsumerContext>,
+    user_ctx: super::UserContext,
 ) -> Result<String> {
-    create_peer_inner(offer_sdp, state, true, consumer_ctx).await
+    create_peer_inner(offer_sdp, state, true, user_ctx).await
 }
 
 async fn create_peer_inner(
     offer_sdp: String,
     state: Arc<ServerState>,
     remote: bool,
-    consumer_ctx: Option<super::ConsumerContext>,
+    user_ctx: super::UserContext,
 ) -> Result<String> {
     // Parse the SDP offer (raw SDP text from WHIP POST body)
     let offer = SdpOffer::from_sdp_string(&offer_sdp)
@@ -84,7 +87,7 @@ async fn create_peer_inner(
     // Spawn the peer event loop
     let events_rx = state.events_tx.subscribe();
     tokio::spawn(async move {
-        if let Err(e) = run_peer(rtc, socket, candidate_addr, state, events_rx, consumer_ctx).await {
+        if let Err(e) = run_peer(rtc, socket, candidate_addr, state, events_rx, user_ctx).await {
             tracing::warn!("WebRTC peer exited: {e:#}");
         }
     });
@@ -103,12 +106,12 @@ async fn run_peer(
     local_candidate_addr: std::net::SocketAddr,
     state: Arc<ServerState>,
     mut events_rx: tokio::sync::broadcast::Receiver<crate::server::ServerEvent>,
-    consumer_ctx: Option<super::ConsumerContext>,
+    user_ctx: super::UserContext,
 ) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut control_channel_id = None;
-    // Track token usage for proxy room consumers with budgets
-    let mut consumer_tokens_used: i64 = 0;
+    // Track token usage for proxy room consumers with budgets (shared with spawned tasks)
+    let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
     let mut session_channels: HashMap<String, str0m::channel::ChannelId> = HashMap::new();
     let mut channel_sessions: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
     // Buffer events for sessions whose data channels aren't open yet.
@@ -125,6 +128,17 @@ async fn run_peer(
     let mut dc_write_paused = false;
     // Track when ICE entered Disconnected state for timeout-based cleanup.
     let mut disconnected_since: Option<Instant> = None;
+
+    // Track which session IDs belong to this user (for event filtering).
+    // Populated from session store on connect, updated on SessionCreated events.
+    let mut user_session_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
+        for s in sessions {
+            if s.user_id.as_deref() == Some(&user_ctx.user_id) {
+                user_session_ids.insert(s.id);
+            }
+        }
+    }
 
     // -- Page state push (replaces HTTP polling storm) --
     let mut view_ctx = super::page_state::ViewContext::default();
@@ -181,18 +195,24 @@ async fn run_peer(
                         tracing::info!("Data channel opened: {label} (id: {id:?})");
                         if label == "control" {
                             control_channel_id = Some(id);
-                            // Send consumer mode info + privacy warning to proxy room consumers
-                            if let Some(ref ctx) = consumer_ctx {
-                                let room_cfg = super::room_config::load_room_config();
-                                let mode_msg = serde_json::json!({
-                                    "kind": "consumer_mode",
-                                    "data": {
-                                        "consumer_type": ctx.consumer_type,
-                                        "token_budget_daily": ctx.token_budget_daily,
-                                        "allowed_tools": room_cfg.allowed_tools,
-                                        "allowed_skills": room_cfg.allowed_skills,
-                                    }
-                                });
+                            // Send user info to all peers on control channel open
+                            let room_cfg = super::room_config::load_room_config();
+                            let info_msg = serde_json::json!({
+                                "kind": "user_info",
+                                "data": {
+                                    "user_id": user_ctx.user_id,
+                                    "permission": user_ctx.permission.as_str(),
+                                    "token_budget_daily": user_ctx.token_budget_daily,
+                                    "room_name": user_ctx.room_name,
+                                    "allowed_tools": room_cfg.allowed_tools,
+                                    "allowed_skills": room_cfg.allowed_skills,
+                                }
+                            });
+                            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                                pending_dc_writes.push_back((id, info_msg.to_string()));
+                            }
+                            // Privacy warning for non-admin users
+                            if !user_ctx.permission.is_admin() {
                                 let warning = serde_json::json!({
                                     "kind": "notification",
                                     "data": {
@@ -201,21 +221,37 @@ async fn run_peer(
                                         "persistent": true
                                     }
                                 });
-                                if pending_dc_writes.len() + 2 <= MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes.push_back((id, mode_msg.to_string()));
+                                if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
                                     pending_dc_writes.push_back((id, warning.to_string()));
                                 }
                             }
                         } else if let Some(session_id) = label.strip_prefix("sess-") {
-                            session_channels.insert(session_id.to_string(), id);
-                            channel_sessions.insert(id, session_id.to_string());
-                            // Flush buffered events through the write queue (not directly —
-                            // direct writes without poll_output() cause SCTP corruption).
-                            if let Some((_created, buffered)) = pending_events.remove(session_id) {
-                                tracing::info!("Flushing {} buffered events for session {session_id}", buffered.len());
-                                for json in buffered {
-                                    if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                        pending_dc_writes.push_back((id, json));
+                            // Verify session ownership for non-admin users.
+                            // Check user_session_ids first (fast), then fall back to session store
+                            // (handles race where channel opens before session_created event).
+                            let mut allowed = user_ctx.permission.is_admin() || user_session_ids.contains(session_id);
+                            if !allowed {
+                                // Check session store — session may have just been created
+                                if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(session_id) {
+                                    if meta.user_id.as_deref() == Some(&user_ctx.user_id) {
+                                        user_session_ids.insert(session_id.to_string());
+                                        allowed = true;
+                                    }
+                                }
+                            }
+                            if !allowed {
+                                tracing::warn!("Rejected session channel for {session_id} — not owned by user {}", user_ctx.user_id);
+                            } else {
+                                session_channels.insert(session_id.to_string(), id);
+                                channel_sessions.insert(id, session_id.to_string());
+                                // Flush buffered events through the write queue (not directly —
+                                // direct writes without poll_output() cause SCTP corruption).
+                                if let Some((_created, buffered)) = pending_events.remove(session_id) {
+                                    tracing::info!("Flushing {} buffered events for session {session_id}", buffered.len());
+                                    for json in buffered {
+                                        if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                                            pending_dc_writes.push_back((id, json));
+                                        }
                                     }
                                 }
                             }
@@ -237,29 +273,22 @@ async fn run_peer(
                                 &mut force_page_state,
                             ) {
                                 // Enforce consumer permissions: browser consumers can only chat
-                                if let Some(ref ctx) = consumer_ctx {
-                                    if ctx.consumer_type == "browser" && req.msg_type == "http_request" {
-                                        // Only allow read-only API endpoints for browser consumers
-                                        let url = req.body.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                                        let allowed = url.starts_with("/api/sessions")
-                                            || url.starts_with("/api/projects")
-                                            || url.starts_with("/api/models")
-                                            || url.starts_with("/api/config")
-                                            || url == "/index.html"
-                                            || url.starts_with("/assets/");
-                                        let method = req.body.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
-                                        if !allowed || method != "GET" {
-                                            if let Some(rid) = &req.request_id {
-                                                let err = serde_json::json!({
-                                                    "request_id": rid,
-                                                    "data": { "status": 403, "body": "{\"error\":\"Not allowed in proxy room (browser consumer)\"}" }
-                                                });
-                                                if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                                    pending_dc_writes.push_back((data.id, err.to_string()));
-                                                }
+                                // and load static assets. All dynamic data (sessions, models,
+                                // skills) is pushed via page_state — no HTTP needed.
+                                if req.msg_type == "http_request" {
+                                    let url = req.body.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                    let method = req.body.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+                                    if !user_ctx.permission.can_access_endpoint(method, url) {
+                                        if let Some(rid) = &req.request_id {
+                                            let err = serde_json::json!({
+                                                "request_id": rid,
+                                                "data": { "status": 403, "body": "{\"error\":\"Not allowed\"}" }
+                                            });
+                                            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                                                pending_dc_writes.push_back((data.id, err.to_string()));
                                             }
-                                            continue;
                                         }
+                                        continue;
                                     }
                                 }
 
@@ -269,38 +298,35 @@ async fn run_peer(
                                 let client = http_client.clone();
                                 let rid = req.request_id.clone();
                                 let cid = req.channel_id;
-                                let ctx_clone = consumer_ctx.clone();
-                                let tokens_used = consumer_tokens_used;
+                                let ctx_clone = user_ctx.clone();
+                                let tok = tokens_used.clone();
 
                                 if req.msg_type == "inference" || req.msg_type == "list_models" {
                                     // Inference/model-list: may stream multiple responses
                                     tokio::spawn(async move {
-                                        process_inference_request(&req, &st, ctx_clone.as_ref(), tokens_used, &tx, cid).await;
+                                        process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
                                     });
                                 } else {
                                     tokio::spawn(async move {
-                                        let result = process_control_request_async(&req, &st, &client, ctx_clone.as_ref(), tokens_used).await;
+                                        let result = process_control_request_async(&req, &st, &client, &ctx_clone, &tok).await;
                                         let _ = tx.send((rid, cid, result)).await;
                                     });
                                 }
                             }
                         } else if let Some(session_id) = channel_sessions.get(&data.id).cloned() {
-                            // Enforce consumer permissions on session messages
-                            if let Some(ref ctx) = consumer_ctx {
-                                // Check token budget
-                                if let Some(budget) = ctx.token_budget_daily {
-                                    if consumer_tokens_used >= budget {
-                                        tracing::info!("Consumer token budget exhausted, rejecting session message");
-                                        continue;
-                                    }
+                            // Check token budget before session messages
+                            if let Some(budget) = user_ctx.token_budget_daily {
+                                if tokens_used.load(std::sync::atomic::Ordering::Relaxed) >= budget {
+                                    tracing::info!("Token budget exhausted, rejecting session message");
+                                    continue;
                                 }
                             }
                             // Spawn session message handling to avoid blocking str0m.
                             let st = state.clone();
                             let client = http_client.clone();
-                            let ctx_clone = consumer_ctx.clone();
+                            let ctx_clone = user_ctx.clone();
                             tokio::spawn(async move {
-                                handle_session_message(&text, &session_id, &st, &client, ctx_clone.as_ref()).await;
+                                handle_session_message(&text, &session_id, &st, &client, &ctx_clone).await;
                             });
                         }
                     }
@@ -348,15 +374,13 @@ async fn run_peer(
                 last_page_state_at = now_inst;
                 let cid = control_channel_id.unwrap();
                 let st = state.clone();
-                let ctx = view_ctx.clone();
                 let tx = ctrl_resp_tx.clone();
+                let user_ctx_clone = user_ctx.clone();
+                let ctx = view_ctx.clone();
                 tokio::spawn(async move {
-                    let ps = super::page_state::build_page_state(&st, &ctx, flags).await;
+                    let ps = super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone).await;
                     if let Ok(data) = serde_json::to_value(&ps) {
-                        let msg = serde_json::json!({
-                            "kind": "page_state",
-                            "data": data
-                        });
+                        let msg = serde_json::json!({ "kind": "page_state", "data": data });
                         let _ = tx.send((None, cid, msg)).await;
                     }
                 });
@@ -394,14 +418,15 @@ async fn run_peer(
             result = events_rx.recv() => {
                 match result {
                     Ok(event) => {
+                        let mut filter = EventFilter {
+                            session_ids: &mut user_session_ids,
+                            user_id: &user_ctx.user_id,
+                            is_admin: user_ctx.permission.is_admin(),
+                        };
                         forward_event_to_channels(
-                            &event,
-                            &session_channels,
-                            control_channel_id,
-                            &mut pending_events,
-                            &mut pending_dc_writes,
-                            &state,
-                            &mut dirty_flags,
+                            &event, &session_channels, control_channel_id,
+                            &mut pending_events, &mut pending_dc_writes,
+                            &state, &mut dirty_flags, &mut filter,
                         );
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -438,15 +463,13 @@ async fn run_peer(
                         last_page_state_at = now_inst;
                         let cid = control_channel_id.unwrap();
                         let st = state.clone();
-                        let ctx = view_ctx.clone();
                         let tx = ctrl_resp_tx.clone();
+                        let user_ctx_clone = user_ctx.clone();
+                        let ctx = view_ctx.clone();
                         tokio::spawn(async move {
-                            let ps = super::page_state::build_page_state(&st, &ctx, flags).await;
+                            let ps = super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone).await;
                             if let Ok(data) = serde_json::to_value(&ps) {
-                                let msg = serde_json::json!({
-                                    "kind": "page_state",
-                                    "data": data
-                                });
+                                let msg = serde_json::json!({ "kind": "page_state", "data": data });
                                 let _ = tx.send((None, cid, msg)).await;
                             }
                         });
@@ -548,19 +571,17 @@ async fn process_control_request_async(
     req: &ControlRequest,
     state: &Arc<ServerState>,
     client: &reqwest::Client,
-    consumer_ctx: Option<&super::ConsumerContext>,
-    consumer_tokens_used: i64,
+    user_ctx: &super::UserContext,
+    tokens_used: &std::sync::Arc<std::sync::atomic::AtomicI64>,
 ) -> serde_json::Value {
     let port = state.port;
 
-    // Check token budget for proxy room consumers before chat calls
-    if let Some(ctx) = consumer_ctx {
-        if let Some(budget) = ctx.token_budget_daily {
-            if consumer_tokens_used >= budget && matches!(req.msg_type.as_str(), "chat") {
-                return serde_json::json!({
-                    "error": "Token budget exhausted for today. Please try again tomorrow or ask the proxy owner to increase the budget."
-                });
-            }
+    // Check token budget before chat calls
+    if let Some(budget) = user_ctx.token_budget_daily {
+        if tokens_used.load(std::sync::atomic::Ordering::Relaxed) >= budget && matches!(req.msg_type.as_str(), "chat") {
+            return serde_json::json!({
+                "error": "Token budget exhausted for today. Please try again tomorrow or ask the proxy owner to increase the budget."
+            });
         }
     }
 
@@ -584,7 +605,11 @@ async fn process_control_request_async(
             } else {
                 tracing::info!("RTC http_request: {method} {url_path}");
             }
-            let body_val = req.body.get("body").unwrap_or(&serde_json::Value::Null).clone();
+            let mut body_val = req.body.get("body").unwrap_or(&serde_json::Value::Null).clone();
+            // Inject user_id into POST /api/sessions for session ownership tracking
+            if url_path == "/api/sessions" && method == "POST" {
+                body_val["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
+            }
             let resp = match method {
                 "POST" => client.post(&url).json(&body_val).send().await,
                 "PUT" => client.put(&url).json(&body_val).send().await,
@@ -615,8 +640,11 @@ async fn process_control_request_async(
                 "ask_user_response" => "/api/ask-user-response",
                 _ => unreachable!(),
             };
+            // Inject user_id into the request body for session ownership tracking
+            let mut body = req.body.clone();
+            body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             let url = format!("http://127.0.0.1:{port}{endpoint}");
-            match client.post(&url).json(&req.body).send().await {
+            match client.post(&url).json(&body).send().await {
                 Ok(r) => {
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
                     serde_json::json!({ "data": body })
@@ -639,8 +667,8 @@ async fn process_control_request_async(
 async fn process_inference_request(
     req: &ControlRequest,
     state: &Arc<ServerState>,
-    consumer_ctx: Option<&super::ConsumerContext>,
-    consumer_tokens_used: i64,
+    user_ctx: &super::UserContext,
+    tokens_used: &std::sync::Arc<std::sync::atomic::AtomicI64>,
     tx: &tokio::sync::mpsc::Sender<(Option<String>, str0m::channel::ChannelId, serde_json::Value)>,
     cid: str0m::channel::ChannelId,
 ) {
@@ -649,13 +677,11 @@ async fn process_inference_request(
     let rid = req.request_id.clone();
 
     // Only allow inference from linggen-type consumers (not browser consumers)
-    if let Some(ctx) = consumer_ctx {
-        if ctx.consumer_type != "linggen" {
-            let _ = tx.send((rid.clone(), cid, serde_json::json!({
-                "error": "Inference endpoint is only available for linggen server consumers"
-            }))).await;
-            return;
-        }
+    if user_ctx.consumer_type.as_deref() != Some("linggen") && !user_ctx.permission.is_admin() {
+        let _ = tx.send((rid.clone(), cid, serde_json::json!({
+            "error": "Inference endpoint is only available for linggen server consumers"
+        }))).await;
+        return;
     }
 
     match req.msg_type.as_str() {
@@ -682,14 +708,12 @@ async fn process_inference_request(
 
         "inference" => {
             // Check token budget
-            if let Some(ctx) = consumer_ctx {
-                if let Some(budget) = ctx.token_budget_daily {
-                    if consumer_tokens_used >= budget {
-                        let _ = tx.send((rid.clone(), cid, serde_json::json!({
-                            "error": "Token budget exhausted"
-                        }))).await;
-                        return;
-                    }
+            if let Some(budget) = user_ctx.token_budget_daily {
+                if tokens_used.load(std::sync::atomic::Ordering::Relaxed) >= budget {
+                    let _ = tx.send((rid.clone(), cid, serde_json::json!({
+                        "error": "Token budget exhausted"
+                    }))).await;
+                    return;
                 }
             }
 
@@ -759,6 +783,10 @@ async fn process_inference_request(
                         serde_json::json!({ "chunk": { "type": "token", "text": text } })
                     }
                     Ok(crate::agent_manager::models::StreamChunk::Usage(usage)) => {
+                        // Track token usage for budget enforcement
+                        if let Some(total) = usage.total_tokens {
+                            tokens_used.fetch_add(total as i64, std::sync::atomic::Ordering::Relaxed);
+                        }
                         serde_json::json!({ "chunk": { "type": "usage",
                             "prompt_tokens": usage.prompt_tokens,
                             "completion_tokens": usage.completion_tokens,
@@ -805,7 +833,7 @@ async fn handle_session_message(
     session_id: &str,
     state: &Arc<ServerState>,
     client: &reqwest::Client,
-    consumer_ctx: Option<&super::ConsumerContext>,
+    user_ctx: &super::UserContext,
 ) {
     let msg: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -823,11 +851,11 @@ async fn handle_session_message(
         "chat" => {
             let mut body = msg.clone();
             body["session_id"] = serde_json::Value::String(session_id.to_string());
-            // Enforce consumer permission mode for proxy room consumers.
-            // chat_api.rs loads allowed tools from room_config.toml server-side.
-            if consumer_ctx.is_some() {
-                body["mode"] = serde_json::Value::String("consumer".to_string());
+            // Inject permission mode and user_id
+            if let Some(mode) = user_ctx.permission.chat_mode() {
+                body["mode"] = serde_json::Value::String(mode.to_string());
             }
+            body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             ("/api/chat", body)
         }
         "ask_user_response" => ("/api/ask-user-response", msg.clone()),
@@ -985,6 +1013,14 @@ pub(crate) fn get_local_ip() -> Option<std::net::IpAddr> {
 /// Max buffered events per session before the channel opens.
 const MAX_PENDING_EVENTS: usize = 2000;
 
+/// Event filter context — passed to forward_event_to_channels for all peers.
+/// Admin peers skip session filtering; non-admin peers only see their own sessions.
+struct EventFilter<'a> {
+    session_ids: &'a mut std::collections::HashSet<String>,
+    user_id: &'a str,
+    is_admin: bool,
+}
+
 fn forward_event_to_channels(
     event: &crate::server::ServerEvent,
     session_channels: &HashMap<String, str0m::channel::ChannelId>,
@@ -993,12 +1029,14 @@ fn forward_event_to_channels(
     pending_dc_writes: &mut std::collections::VecDeque<(str0m::channel::ChannelId, String)>,
     state: &Arc<ServerState>,
     dirty_flags: &mut u64,
+    filter: &mut EventFilter<'_>,
 ) {
     // StateUpdated → set dirty flag for page state push, don't forward to DC
     if matches!(event, crate::server::ServerEvent::StateUpdated) {
         *dirty_flags |= super::page_state::DIRTY_ALL;
         return;
     }
+
     // Prune expired pending event buffers (older than 60s)
     let now = Instant::now();
     pending_events.retain(|_, (created, _)| now.duration_since(*created) < Duration::from_secs(60));
@@ -1008,6 +1046,30 @@ fn forward_event_to_channels(
         Some(msg) => msg,
         None => return,
     };
+
+    // Session isolation: non-admin peers only see their own sessions.
+    // Admin peers skip filtering entirely.
+    if !filter.is_admin {
+        match ui_msg.session_id.as_deref() {
+            Some("global") | None => {
+                // Global events — drop for non-admin (they get page_state instead)
+                return;
+            }
+            Some(sid) => {
+                // For SessionCreated events, check if the new session belongs to us
+                if ui_msg.kind == "session_created" {
+                    if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
+                        if meta.user_id.as_deref() == Some(filter.user_id) {
+                            filter.session_ids.insert(sid.to_string());
+                        }
+                    }
+                }
+                if !filter.session_ids.contains(sid) {
+                    return;
+                }
+            }
+        }
+    }
 
     let json = match serde_json::to_string(&ui_msg) {
         Ok(j) => j,

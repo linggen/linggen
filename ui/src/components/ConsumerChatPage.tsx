@@ -6,38 +6,26 @@
  * Layout mirrors the owner's main page: header + left sidebar (sessions) + center (chat)
  * + right sidebar (allowed skills). No settings button, no file browser.
  */
-import React, { useState, useMemo } from 'react';
-import { ShieldAlert, Plus, Menu, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldAlert, Plus, Menu, X, LogOut } from 'lucide-react';
 import { ChatWidget } from './chat/ChatWidget';
 import { SessionList } from './SessionList';
 import { SkillsCard } from './SkillsCard';
 import { CollapsibleCard } from './CollapsibleCard';
-import { useProjectStore } from '../stores/projectStore';
-import { useAgentStore } from '../stores/agentStore';
-import { useUiStore } from '../stores/uiStore';
-import type { SkillInfoFull } from '../types';
-
+import { useSessionStore } from '../stores/sessionStore';
+import { useServerStore } from '../stores/serverStore';
+import { useUserStore } from '../stores/userStore';
 export const ConsumerChatPage: React.FC = () => {
-  const activeSessionId = useProjectStore((s) => s.activeSessionId);
-  const selectedProjectRoot = useProjectStore((s) => s.selectedProjectRoot);
-  const allSessions = useProjectStore((s) => s.allSessions);
-  const projectStore = useProjectStore.getState();
-  const skills = useAgentStore((s) => s.skills);
-  const consumerInfo = useUiStore((s) => s.consumerInfo);
-  const consumerConnectedAt = useUiStore((s) => s.consumerConnectedAt);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const selectedProjectRoot = useSessionStore((s) => s.selectedProjectRoot);
+  const projectStore = useSessionStore.getState();
+  const skills = useServerStore((s) => s.skills);
+  const userRoomName = useUserStore((s) => s.userRoomName);
+  const userTokenBudget = useUserStore((s) => s.userTokenBudget);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Filter skills by consumer allowed list
-  const allowedSkillNames = consumerInfo?.allowed_skills;
-  const filteredSkills = allowedSkillNames
-    ? skills.filter((s: SkillInfoFull) => allowedSkillNames.includes(s.name))
-    : [];
-
-  // Filter sessions to only those created after consumer connected
-  const consumerSessions = useMemo(() => {
-    if (!consumerConnectedAt) return allSessions;
-    return allSessions.filter(s => s.created_at >= consumerConnectedAt);
-  }, [allSessions, consumerConnectedAt]);
+  // Skills are already filtered by the server in page_state
+  const filteredSkills = skills;
 
   const handleSelectSession = (session: any) => {
     projectStore.setActiveSessionId(session.id);
@@ -63,7 +51,7 @@ export const ConsumerChatPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <img src="/linggen-icon.svg" alt="Linggen" className="w-5 h-5" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-sm font-bold text-slate-900 dark:text-white">Linggen</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 font-medium">Proxy Room</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 font-medium">{userRoomName || 'Proxy Room'}</span>
           </div>
         </div>
 
@@ -75,11 +63,19 @@ export const ConsumerChatPage: React.FC = () => {
               Owner can see your messages
             </span>
           </div>
-          {consumerInfo?.token_budget_daily != null && (
+          {userTokenBudget != null && (
             <span className="text-[10px] text-slate-500 hidden sm:inline">
-              Budget: {consumerInfo.token_budget_daily.toLocaleString()} tokens/day
+              Budget: {userTokenBudget.toLocaleString()} tokens/day
             </span>
           )}
+          <button
+            onClick={() => { window.location.href = 'https://linggen.dev/app'; }}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-red-500 hover:bg-red-500/10 transition-colors"
+            title="Leave this room"
+          >
+            <LogOut size={12} />
+            <span className="hidden sm:inline">Leave</span>
+          </button>
         </div>
       </header>
 
@@ -96,8 +92,7 @@ export const ConsumerChatPage: React.FC = () => {
                 onSelectSession={handleSelectSession}
                 onCreateSession={() => { projectStore.createSession(); setMobileMenuOpen(false); }}
                 onDeleteSession={(id) => projectStore.removeSession(id)}
-                filterSessions={consumerSessions}
-              />
+                              />
             </div>
           </>
         )}
@@ -109,8 +104,7 @@ export const ConsumerChatPage: React.FC = () => {
             onSelectSession={handleSelectSession}
             onCreateSession={() => projectStore.createSession()}
             onDeleteSession={(id) => projectStore.removeSession(id)}
-            filterSessions={consumerSessions}
-          />
+                      />
         </div>
 
         {/* Center: Chat */}

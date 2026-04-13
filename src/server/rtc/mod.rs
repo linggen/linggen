@@ -15,17 +15,102 @@ pub mod proxy_room;
 pub mod relay;
 pub mod room_config;
 
-/// Context for a proxy room consumer connection.
-/// When present, the peer is a consumer (not the instance owner) and
-/// permissions/tools are restricted accordingly.
+/// User-level permission ceiling — the maximum level this user can operate at.
+/// Session permission (read/edit/admin) is per-session and changeable by the user,
+/// but always capped by UserPermission.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UserPermission {
+    Chat,   // Conversation only — no tools
+    Read,   // Browse + search (WebSearch, WebFetch)
+    Edit,   // Full coding tools (Read, Write, Edit, Bash, etc.)
+    Admin,  // Full access — settings, config, everything
+}
+
+impl UserPermission {
+    pub fn is_admin(&self) -> bool { matches!(self, UserPermission::Admin) }
+
+    /// Check if this permission level allows accessing an HTTP endpoint.
+    /// Admin can access everything. Others are restricted to static assets + session creation.
+    pub fn can_access_endpoint(&self, method: &str, url: &str) -> bool {
+        if self.is_admin() { return true; }
+        // Static assets (tunnel loading)
+        if (url == "/index.html" || url.starts_with("/assets/")) && method == "GET" {
+            return true;
+        }
+        // Session creation
+        if url == "/api/sessions" && method == "POST" { return true; }
+        // Workspace state — chat history on page load / refresh
+        if method == "GET" && (url.starts_with("/api/workspace/state") || url.starts_with("/api/skill-sessions/state")) {
+            return true;
+        }
+        false
+    }
+
+    /// Map to the chat_api mode string for tool permission loading.
+    pub fn chat_mode(&self) -> Option<&'static str> {
+        match self {
+            UserPermission::Admin => None,
+            UserPermission::Edit => Some("edit"),
+            UserPermission::Read | UserPermission::Chat => Some("consumer"),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UserPermission::Admin => "admin",
+            UserPermission::Edit => "edit",
+            UserPermission::Read => "read",
+            UserPermission::Chat => "chat",
+        }
+    }
+}
+
+/// Every WebRTC peer connection carries a UserContext — both owner and consumer.
+/// Owner = UserContext { user_id: "abc", permission: Admin, ... }
+/// Consumer = UserContext { user_id: "xyz", permission: Read, ... }
 #[derive(Debug, Clone)]
-pub struct ConsumerContext {
-    /// "browser" = chat mode only (no tools), "linggen" = read mode (capped)
-    pub consumer_type: String,
-    /// Optional daily token budget from the room config
+pub struct UserContext {
+    /// User ID on linggen.dev (or "__local__" for owner without remote login).
+    pub user_id: String,
+    /// Permission ceiling — max session permission this user can use.
+    pub permission: UserPermission,
+    /// Optional daily token budget (None = unlimited).
     pub token_budget_daily: Option<i64>,
-    /// Consumer's user ID on linggen.dev
-    pub consumer_user_id: Option<String>,
+    /// Room name (only for room consumers).
+    pub room_name: Option<String>,
+    /// Original consumer type for backward compat with inference endpoint.
+    /// "browser" or "linggen". None for owner.
+    pub consumer_type: Option<String>,
+}
+
+impl UserContext {
+    /// Build for owner (local or remote).
+    pub fn owner(user_id: Option<String>) -> Self {
+        Self {
+            user_id: user_id.unwrap_or_else(|| "__local__".to_string()),
+            permission: UserPermission::Admin,
+            token_budget_daily: None,
+            room_name: None,
+            consumer_type: None,
+        }
+    }
+
+    /// Build for a proxy room consumer.
+    pub fn consumer(
+        user_id: String,
+        consumer_type: String,
+        permission: UserPermission,
+        token_budget_daily: Option<i64>,
+        room_name: Option<String>,
+    ) -> Self {
+        Self {
+            user_id,
+            permission,
+            token_budget_daily,
+            room_name,
+            consumer_type: Some(consumer_type),
+        }
+    }
 }
 
 use axum::{

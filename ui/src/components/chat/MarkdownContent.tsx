@@ -85,7 +85,7 @@ export const MarkdownContent: React.FC<{ text: string }> = ({ text }) => (
         },
       }}
     >
-      {normalizeMarkdownish(text)}
+      {normalizeMarkdownish(text.replace(/<!--[\s\S]*?-->/g, ''))}
     </ReactMarkdown>
   </div>
 );

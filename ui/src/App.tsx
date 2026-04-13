@@ -12,13 +12,16 @@ import { ToastContainer } from './components/ToastContainer';
 import { AppPanel } from './components/AppPanel';
 import { InfoPanel } from './components/InfoPanel';
 import { ConsumerChatPage } from './components/ConsumerChatPage';
+import { recordSkillUsage } from './components/SkillsCard';
 import {
   buildAgentWorkInfo,
 } from './lib/messageUtils';
-import { useProjectStore } from './stores/projectStore';
-import { useAgentStore } from './stores/agentStore';
+import { useSessionStore } from './stores/sessionStore';
+import { useServerStore } from './stores/serverStore';
 import { useChatStore } from './stores/chatStore';
 import { useUiStore } from './stores/uiStore';
+import { useUserStore } from './stores/userStore';
+import { useInteractionStore } from './stores/interactionStore';
 import { useRunInfo } from './hooks/useRunInfo';
 import { useChatActions } from './hooks/useChatActions';
 import { useTransport, sendViewContext } from './hooks/useTransport';
@@ -59,8 +62,8 @@ const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector
 
 const App: React.FC = () => {
   // --- Stores ---
-  const projectStore = useProjectStore();
-  const agentStore = useAgentStore();
+  const projectStore = useSessionStore();
+  const agentStore = useServerStore();
   const chatStore = useChatStore();
   const uiStore = useUiStore();
 
@@ -73,8 +76,8 @@ const App: React.FC = () => {
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
 
   // Shortcuts
-  const { projects, selectedProjectRoot, sessions, activeSessionId, isMissionSession, agentTreesByProject } = projectStore;
-  const { agents, models, skills, selectedAgent, agentStatus, agentStatusText, agentContext, defaultModels, ollamaStatus, sessionTokens, tokensPerSec, reloadingSkills, reloadingAgents } = agentStore;
+  const { selectedProjectRoot, sessions, activeSessionId, isMissionSession } = projectStore;
+  const { agents, models, skills, selectedAgent, agentStatus, agentStatusText, agentContext, defaultModels, ollamaStatus, sessionTokens, tokensPerSec, reloadingSkills, reloadingAgents, agentTreesByProject } = agentStore;
   const { messages: chatMessages } = chatStore;
   const { currentPage, editingMission, missionRefreshKey, showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath, copyChatStatus } = uiStore;
 
@@ -116,21 +119,20 @@ const App: React.FC = () => {
   // Only fetch data not covered by page_state, or needed before WebRTC is ready.
   useEffect(() => {
     if (isCompact && compactSession) return;
-    useAgentStore.getState().fetchOllamaStatus();
-    useAgentStore.getState().fetchSessionTokens();
+    useServerStore.getState().fetchOllamaStatus();
+    useServerStore.getState().fetchSessionTokens();
   }, []);
 
   // --- React to selected project changes ---
   useEffect(() => {
     if (isCompact && compactSession) return;
     if (selectedProjectRoot) {
-      // Fetch file tree (not in page_state) and session state (chat history)
-      useProjectStore.getState().fetchFiles();
+      // Fetch session state (chat history) — skipped for non-admin (data via streaming)
       useChatStore.getState().fetchSessionState();
       // Other scoped data (agents, sessions, agentRuns, permission) delivered by page_state
       sendViewContext();
-      useUiStore.getState().setQueuedMessages([]);
-      useUiStore.getState().setActivePlan(null);
+      useInteractionStore.getState().setQueuedMessages([]);
+      useInteractionStore.getState().setActivePlan(null);
     }
   }, [selectedProjectRoot]);
 
@@ -150,17 +152,17 @@ const App: React.FC = () => {
       chatStore.setActiveSession(activeSessionId);
 
       if (!isSessionAdoption) {
-        const ui = useUiStore.getState();
-        ui.setQueuedMessages([]);
-        ui.setActivePlan(null);
-        ui.setPendingPlan(null);
-        ui.setPendingPlanAgentId(null);
+        const interaction = useInteractionStore.getState();
+        interaction.setQueuedMessages([]);
+        interaction.setActivePlan(null);
+        interaction.setPendingPlan(null);
+        interaction.setPendingPlanAgentId(null);
         // Clear status for the previous session only — preserve other sessions'
         // running state so the session list can show spinners for busy sessions.
         const prevSid = prevSessionIdRef.current;
         if (prevSid) {
-          useAgentStore.getState().setAgentStatus((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
-          useAgentStore.getState().setAgentStatusText((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
+          useServerStore.getState().setAgentStatus((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
+          useServerStore.getState().setAgentStatusText((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
         }
       }
       // Always fetch workspace state to merge latest persisted messages
@@ -190,7 +192,7 @@ const App: React.FC = () => {
     if (mainAgentIds.length === 0) return;
     if (!mainAgentIds.includes(selectedAgent.toLowerCase())) {
       const preferred = mainAgentIds.includes('ling') ? 'ling' : mainAgentIds[0];
-      useAgentStore.getState().setSelectedAgent(preferred);
+      useServerStore.getState().setSelectedAgent(preferred);
     }
   }, [mainAgentIds, selectedAgent]);
 
@@ -204,7 +206,7 @@ const App: React.FC = () => {
     // Clear selectedProjectRoot in memory (not localStorage) so API calls
     // don't inherit the main page's project — the backend will use cwd.
     if (compactSession) {
-      useProjectStore.setState({
+      useSessionStore.setState({
         activeSessionId: compactSession,
         selectedProjectRoot: '',
         ...(compactSkill ? { isSkillSession: true, activeSkillName: compactSkill } : {}),
@@ -218,7 +220,7 @@ const App: React.FC = () => {
 
     // VS Code compact mode: auto-create/resume project session
     if (!compactProject) return;
-    useProjectStore.getState().setSelectedProjectRoot(compactProject);
+    useSessionStore.getState().setSelectedProjectRoot(compactProject);
     (async () => {
       try {
         const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(compactProject)}`);
@@ -226,7 +228,7 @@ const App: React.FC = () => {
         const sessionList = data.sessions ?? data ?? [];
         const existing = sessionList.find((s: any) => s.title?.startsWith('VS Code'));
         if (existing) {
-          useProjectStore.getState().setActiveSessionId(existing.id);
+          useSessionStore.getState().setActiveSessionId(existing.id);
         } else {
           const createResp = await fetch('/api/sessions', {
             method: 'POST',
@@ -234,7 +236,7 @@ const App: React.FC = () => {
             body: JSON.stringify({ project_root: compactProject, title: 'VS Code' }),
           });
           const created = await createResp.json();
-          useProjectStore.getState().setActiveSessionId(created.id);
+          useSessionStore.getState().setActiveSessionId(created.id);
         }
       } catch (e) {
         console.error('Compact session init error:', e);
@@ -289,6 +291,14 @@ const App: React.FC = () => {
           sendChatMessageRef.current(payload?.text || '');
           break;
         }
+        case 'send_hidden': {
+          // Send message to agent without showing the user bubble in chat.
+          // Prefixes with [HIDDEN] — the user message is persisted (model needs context)
+          // but filtered out of the chat display.
+          const hiddenText = payload?.text || '';
+          if (hiddenText) sendChatMessageRef.current(`[HIDDEN] ${hiddenText}`);
+          break;
+        }
         case 'add_message':
           useChatStore.getState().addMessage({
             role: payload?.role === 'user' ? 'user' as const : 'agent' as const,
@@ -318,7 +328,7 @@ const App: React.FC = () => {
 
   // --- Sidebar callbacks ---
   const readFile = useCallback(async (path: string, projectRootOverride?: string) => {
-    const root = projectRootOverride || useProjectStore.getState().selectedProjectRoot;
+    const root = projectRootOverride || useSessionStore.getState().selectedProjectRoot;
     if (!root) return;
     try {
       const resp = await fetch(`/api/file?project_root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`);
@@ -329,12 +339,13 @@ const App: React.FC = () => {
   }, []);
 
   const selectAgentPathFromTree = useCallback((projectRoot: string, path: string) => {
-    if (projectRoot !== useProjectStore.getState().selectedProjectRoot) useProjectStore.getState().setSelectedProjectRoot(projectRoot);
+    if (projectRoot !== useSessionStore.getState().selectedProjectRoot) useSessionStore.getState().setSelectedProjectRoot(projectRoot);
     readFile(path, projectRoot);
   }, [readFile]);
 
   // --- Info panel props (shared between desktop sidebar and mobile drawer) ---
   const handleClickSkill = useCallback((skill: any) => {
+    recordSkillUsage(skill.name);
     if (skill.app) {
       if (skill.app.launcher === 'web') {
         const appUrl = `/apps/${skill.name}/${skill.app.entry}`;
@@ -365,7 +376,8 @@ const App: React.FC = () => {
   };
 
   // --- Remote mode: gate rendering until transport is connected ---
-  if (isRemoteMode && uiStore.connectionStatus === 'disconnected') {
+  const connectionStatus = useUserStore((s) => s.connectionStatus);
+  if (isRemoteMode && connectionStatus === 'disconnected') {
     return (
       <div className="h-screen flex items-center justify-center bg-white dark:bg-[#0b0e14]">
         <div className="text-center space-y-4">
@@ -502,14 +514,16 @@ const App: React.FC = () => {
         </div>
         )}
 
-        {/* Center: Chat */}
+        {/* Center: Chat — unmount when consumer page is active to avoid duplicate events */}
         <main className={`flex-1 flex flex-col overflow-hidden bg-slate-100/40 dark:bg-[#0a0a0a] min-h-0${isCompact || isMobile ? ' p-0' : ''}`}>
           <div className={`flex-1 min-h-0${isCompact || isMobile ? '' : ' p-2'}`}>
-            <ChatWidget
-              sessionId={activeSessionId}
-              projectRoot={selectedProjectRoot}
-              mode={isCompact ? 'compact' : isMobile ? 'mobile' : 'full'}
-            />
+            {currentPage !== 'consumer' && (
+              <ChatWidget
+                sessionId={activeSessionId}
+                projectRoot={selectedProjectRoot}
+                mode={isCompact ? 'compact' : isMobile ? 'mobile' : 'full'}
+              />
+            )}
           </div>
         </main>
 

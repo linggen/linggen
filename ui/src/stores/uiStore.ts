@@ -1,8 +1,8 @@
 /**
- * UI navigation & transient state.
+ * UI navigation, overlays, and transient chrome state.
  */
 import { create } from 'zustand';
-import type { CronMission, ManagementTab, Plan, PendingAskUser, QueuedChatItem } from '../types';
+import type { CronMission, ManagementTab } from '../types';
 
 export type Page = 'main' | 'settings' | 'mission-editor' | 'consumer';
 export type SidebarTab = 'projects' | 'missions';
@@ -54,24 +54,8 @@ interface UiState {
   sessionZone: string; // 'home' | 'temp' | 'system'
 
   // Chat UI
-  queuedMessages: QueuedChatItem[];
-  pendingPlan: Plan | null;
-  pendingPlanAgentId: string | null;
-  pendingAskUser: PendingAskUser | null;
-  activePlan: Plan | null;
   verboseMode: boolean;
   copyChatStatus: 'idle' | 'copied' | 'error';
-
-  // Consumer mode (proxy room browser consumer)
-  consumerMode: boolean;
-  consumerInfo: { consumer_type?: string; token_budget_daily?: number | null; allowed_tools?: string[]; allowed_skills?: string[] } | null;
-  /** Timestamp when consumer mode was activated — sessions before this are the owner's. */
-  consumerConnectedAt: number;
-  setConsumerMode: (mode: boolean, info?: UiState['consumerInfo']) => void;
-
-  // Transport connection status
-  connectionStatus: 'connected' | 'reconnecting' | 'disconnected';
-  setConnectionStatus: (status: 'connected' | 'reconnecting' | 'disconnected') => void;
 
   // Toasts
   toasts: Toast[];
@@ -99,11 +83,6 @@ interface UiState {
   setSelectedFilePath: (path: string | null) => void;
   closeFilePreview: () => void;
 
-  setQueuedMessages: (updater: QueuedChatItem[] | ((prev: QueuedChatItem[]) => QueuedChatItem[])) => void;
-  setPendingPlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
-  setPendingPlanAgentId: (id: string | null) => void;
-  setPendingAskUser: (ask: PendingAskUser | null | ((prev: PendingAskUser | null) => PendingAskUser | null)) => void;
-  setActivePlan: (plan: Plan | null | ((prev: Plan | null) => Plan | null)) => void;
   setVerboseMode: (mode: boolean) => void;
   setCopyChatStatus: (status: 'idle' | 'copied' | 'error') => void;
 }
@@ -125,20 +104,8 @@ export const useUiStore = create<UiState>((set) => ({
   openApp: null,
   selectedFileContent: null,
   selectedFilePath: null,
-  queuedMessages: [],
-  pendingPlan: null,
-  pendingPlanAgentId: null,
-  pendingAskUser: null,
-  activePlan: null,
   verboseMode: typeof window !== 'undefined' ? window.localStorage.getItem(VERBOSE_MODE_STORAGE_KEY) === 'true' : false,
   copyChatStatus: 'idle',
-  consumerMode: false,
-  consumerInfo: null,
-  consumerConnectedAt: 0,
-  setConsumerMode: (mode, info) => set({ consumerMode: mode, consumerInfo: info ?? null, consumerConnectedAt: mode ? Math.floor(Date.now() / 1000) : 0, currentPage: mode ? 'consumer' : 'main' }),
-
-  connectionStatus: (typeof document !== 'undefined' && document.querySelector('meta[name="linggen-instance"]')) ? 'disconnected' : 'connected',
-  setConnectionStatus: (status) => set({ connectionStatus: status }),
   toasts: [],
   addToast: (toast) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -172,19 +139,6 @@ export const useUiStore = create<UiState>((set) => ({
   setSelectedFilePath: (path) => set({ selectedFilePath: path }),
   closeFilePreview: () => set({ selectedFileContent: null, selectedFilePath: null }),
 
-  setQueuedMessages: (updater) => set((s) => ({
-    queuedMessages: typeof updater === 'function' ? updater(s.queuedMessages) : updater,
-  })),
-  setPendingPlan: (updater) => set((s) => ({
-    pendingPlan: typeof updater === 'function' ? updater(s.pendingPlan) : updater,
-  })),
-  setPendingPlanAgentId: (id) => set({ pendingPlanAgentId: id }),
-  setPendingAskUser: (updater) => set((s) => ({
-    pendingAskUser: typeof updater === 'function' ? updater(s.pendingAskUser) : updater,
-  })),
-  setActivePlan: (updater) => set((s) => ({
-    activePlan: typeof updater === 'function' ? updater(s.activePlan) : updater,
-  })),
   setVerboseMode: (mode) => {
     window.localStorage.setItem(VERBOSE_MODE_STORAGE_KEY, String(mode));
     set({ verboseMode: mode });

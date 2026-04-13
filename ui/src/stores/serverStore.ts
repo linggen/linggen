@@ -2,8 +2,8 @@
  * Agents, models, skills, runs, and live activity state.
  */
 import { create } from 'zustand';
-import type { AgentInfo, AgentRunInfo, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
-import { useProjectStore } from './projectStore';
+import type { AgentInfo, AgentRunInfo, AgentTreeItem, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
+import { useSessionStore } from './sessionStore';
 import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
 import { dedupFetch } from '../lib/dedupFetch';
 import { agentTracker } from '../lib/agentTracker';
@@ -12,7 +12,7 @@ export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_
 
 type StateSetter<T> = T | ((prev: T) => T);
 
-interface AgentState {
+interface ServerState {
   agents: AgentInfo[];
   models: ModelInfo[];
   ollamaStatus: OllamaPsResponse | null;
@@ -24,6 +24,7 @@ interface AgentState {
   cancellingRunIds: Record<string, boolean>;
   reloadingSkills: boolean;
   reloadingAgents: boolean;
+  agentTreesByProject: Record<string, Record<string, AgentTreeItem>>;
 
   // Agent activity (live status) — all keyed by **session ID**, not agent name.
   agentStatus: Record<string, AgentStatusValue>;       // key: session ID
@@ -59,7 +60,7 @@ interface AgentState {
 
 const SELECTED_AGENT_STORAGE_KEY = 'linggen:selected-agent';
 
-export const useAgentStore = create<AgentState>((set, get) => ({
+export const useServerStore = create<ServerState>((set, get) => ({
   agents: [],
   models: [],
   ollamaStatus: null,
@@ -73,6 +74,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   cancellingRunIds: {},
   reloadingSkills: false,
   reloadingAgents: false,
+  agentTreesByProject: {},
 
   agentStatus: {},
   agentStatusText: {},
@@ -103,36 +105,12 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set({ tokensPerSec: rate });
   },
 
-  fetchAgents: async (projectRootOverride) => {
-    const root = projectRootOverride || useProjectStore.getState().selectedProjectRoot;
-    if (!root) { set({ agents: [] }); return; }
-    try {
-      const resp = await dedupFetch(`/api/agents?project_root=${encodeURIComponent(root)}`);
-      const data = await resp.json();
-      set({ agents: data });
-    } catch (e) {
-      console.error('Failed to fetch agents:', e);
-    }
-  },
+  // Data arrives via page_state push — no HTTP fetch needed
+  fetchAgents: async () => {},
+  fetchModels: async () => {},
 
-  fetchModels: async () => {
-    try {
-      const resp = await dedupFetch('/api/models');
-      set({ models: await resp.json() });
-    } catch (e) {
-      console.error('Failed to fetch models:', e);
-    }
-  },
-
-  fetchDefaultModels: async () => {
-    try {
-      const resp = await dedupFetch('/api/config');
-      if (resp.ok) {
-        const data = await resp.json();
-        set({ defaultModels: data.routing?.default_models ?? [] });
-      }
-    } catch { /* ignore */ }
-  },
+  // Data arrives via page_state push — no HTTP fetch needed
+  fetchDefaultModels: async () => {},
 
   toggleDefaultModel: async (modelId) => {
     try {
@@ -189,19 +167,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
-  fetchSkills: async () => {
-    try {
-      const resp = await dedupFetch('/api/skills');
-      set({ skills: await resp.json() });
-    } catch (e) {
-      console.error('Failed to fetch skills:', e);
-    }
-  },
+  // Data arrives via page_state push — no HTTP fetch needed
+  fetchSkills: async () => {},
 
   reloadSkills: async () => {
     set({ reloadingSkills: true });
     try {
-      const { selectedProjectRoot } = useProjectStore.getState();
+      const { selectedProjectRoot } = useSessionStore.getState();
       await fetch('/api/skills/reload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -218,7 +190,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   reloadAgents: async () => {
     set({ reloadingAgents: true });
     try {
-      const { selectedProjectRoot } = useProjectStore.getState();
+      const { selectedProjectRoot } = useSessionStore.getState();
       await fetch('/api/agents/reload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -232,26 +204,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
-  fetchAgentRuns: async () => {
-    const { selectedProjectRoot, activeSessionId } = useProjectStore.getState();
-    if (!selectedProjectRoot) return;
-    if (!activeSessionId) { set({ agentRuns: [] }); return; }
-    try {
-      const url = new URL('/api/agent-runs', window.location.origin);
-      url.searchParams.append('project_root', selectedProjectRoot);
-      url.searchParams.append('session_id', activeSessionId);
-      const resp = await dedupFetch(url.toString());
-      if (!resp.ok) return;
-      const raw = await resp.json();
-      const data = Array.isArray(raw) ? raw : [];
-      // Skip update if runs haven't changed (prevents re-render loops from events)
-      const prev = get().agentRuns;
-      if (data.length === prev.length && data.every((r: any, i: number) => r.run_id === prev[i]?.run_id && r.status === prev[i]?.status)) return;
-      set({ agentRuns: data });
-    } catch (e) {
-      console.error('Error fetching agent runs:', e);
-    }
-  },
+  // Data arrives via page_state push — no HTTP fetch needed
+  fetchAgentRuns: async () => {},
 
   cancelAgentRun: async (runId) => {
     if (!runId) return;
@@ -275,7 +229,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   fetchSessionTokens: async () => {
-    const { selectedProjectRoot } = useProjectStore.getState();
+    const { selectedProjectRoot } = useSessionStore.getState();
     try {
       const resp = await dedupFetch(`/api/status?project_root=${encodeURIComponent(selectedProjectRoot)}`);
       if (resp.ok) {

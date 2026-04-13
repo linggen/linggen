@@ -692,6 +692,8 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
 
 export const shouldHideInternalChatMessage = (_from?: string, text?: string): boolean => {
   if (!text) return false;
+  // Hide [HIDDEN] messages (system prompts from app skills)
+  if (text.startsWith('[HIDDEN]')) return true;
   if (text.startsWith('Starting autonomous loop for task:')) return true;
   // Hide raw tool observation messages that leak from context (e.g. "Tool Bash: Bash output...")
   if (/^Tool\s+\w+:/i.test(text)) return true;

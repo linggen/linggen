@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, ArrowDown } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
-import { useProjectStore } from '../../stores/projectStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useServerStore } from '../../stores/serverStore';
+import { useUiStore } from '../../stores/uiStore';
+import { useUserStore } from '../../stores/userStore';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
 import type {
@@ -108,6 +110,8 @@ const ChatMessageList = React.memo<{
         </div>
       )}
       {messages.map((msg, i) => {
+        // Skip hidden system messages (used by app skills for internal prompts)
+        if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
         const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
         const isUser = msg.role === 'user';
         const isExpanded = verboseMode || expandedMessages.has(key);
@@ -241,7 +245,7 @@ export const ChatPanel: React.FC<{
   });
 
   // Track agent active state and elapsed time — keyed by session ID
-  const agentStatusText = useAgentStore((s) => s.agentStatusText);
+  const agentStatusText = useServerStore((s) => s.agentStatusText);
   const currentStatus = agentStatus?.[sessionId || ''];
   const isAgentActive = !!currentStatus && currentStatus !== 'idle';
   const _isThinking = currentStatus === 'thinking' || currentStatus === 'model_loading';
@@ -279,7 +283,7 @@ export const ChatPanel: React.FC<{
     [mainAgents]
   );
 
-  const isMissionSession = useProjectStore((s) => s.isMissionSession);
+  const isMissionSession = useSessionStore((s) => s.isMissionSession);
 
   const visibleMessages = useMemo(() => {
     // Mission sessions show all messages — no agent filtering needed.
@@ -425,12 +429,12 @@ export const ChatPanel: React.FC<{
           <details className="rounded-md border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/20 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300">
             <summary className="cursor-pointer flex flex-wrap items-center gap-2">
               {sessionId && (() => {
-                const sessionMeta = useProjectStore.getState().allSessions.find(s => s.id === sessionId);
+                const sessionMeta = useSessionStore.getState().allSessions.find(s => s.id === sessionId);
                 return (
                   <>
                     <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
-                    {(sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
+                    {useUserStore.getState().userPermission === 'admin' && (sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
                       const fullPath = sessionMeta?.cwd || sessionMeta?.project || '';
                       const displayName = sessionMeta?.project_name || fullPath.split('/').filter(Boolean).pop() || fullPath;
                       return (

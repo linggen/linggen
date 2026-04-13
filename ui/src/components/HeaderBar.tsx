@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Eraser, FileText, LogIn, Menu, Settings, Sparkles } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUiStore } from '../stores/uiStore';
-import { useProjectStore } from '../stores/projectStore';
-import { useAgentStore } from '../stores/agentStore';
+import { useUserStore } from '../stores/userStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { useServerStore } from '../stores/serverStore';
 import logoUrl from '../assets/logo.svg';
 
 /** Cached user profile from linggen.dev (fetched once on mount). */
@@ -124,7 +125,10 @@ export const HeaderBar: React.FC<{
   onToggleInfoPanel,
 }) => {
   const [spStatus, setSpStatus] = useState<'idle' | 'copied' | 'error'>('idle');
-  const connectionStatus = useUiStore((s) => s.connectionStatus);
+  const connectionStatus = useUserStore((s) => s.connectionStatus);
+  const userRoomName = useUserStore((s) => s.userRoomName);
+  const userPermission = useUserStore((s) => s.userPermission);
+
   return (
     <header className="flex items-center justify-between px-4 md:px-6 py-2.5 border-b border-slate-200 dark:border-white/5 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-md z-50">
       {/* Left: Hamburger (mobile) + Logo */}
@@ -138,6 +142,17 @@ export const HeaderBar: React.FC<{
           <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
           <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white">Linggen</h1>
         </a>
+        {userPermission === 'admin' && userRoomName && (
+          <button
+            onClick={() => {
+              useUiStore.getState().openSettings('sharing');
+            }}
+            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 font-medium hover:bg-amber-500/20 transition-colors"
+            title="Open Sharing settings"
+          >
+            {userRoomName}
+          </button>
+        )}
       </div>
 
       {/* Center: Chat actions */}
@@ -158,8 +173,8 @@ export const HeaderBar: React.FC<{
         </button>
         <button
           onClick={async () => {
-            const projectRoot = useProjectStore.getState().selectedProjectRoot;
-            const agentId = useAgentStore.getState().selectedAgent;
+            const projectRoot = useSessionStore.getState().selectedProjectRoot;
+            const agentId = useServerStore.getState().selectedAgent;
             if (!projectRoot) { setSpStatus('error'); setTimeout(() => setSpStatus('idle'), 1500); return; }
             try {
               const url = new URL('/api/chat/system-prompt', window.location.origin);

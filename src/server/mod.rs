@@ -36,12 +36,12 @@ use agent_api::{
 use chat_api::{approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api, compact_chat_api, edit_plan_handler, get_system_prompt_api, pending_ask_user_handler, reject_plan_handler};
 use config_api::{get_config_api, get_credentials_api, get_models_health, update_config_api, update_credentials_api, get_codex_auth_status, start_codex_auth_login, codex_auth_logout};
 use projects_api::{
-    add_project, create_session, delete_agent_file_api, delete_skill_file_api,
+    create_session, delete_agent_file_api, delete_skill_file_api,
     get_agent_file_api, get_skill_file_api,
     get_status_api,
-    list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api, list_projects,
+    list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api,
     delete_unified_session, get_skill_session_state, list_all_sessions, list_sessions, list_skill_files_api, list_skill_sessions, list_skills, reload_agents, reload_skills,
-    remove_project, remove_session_api, remove_skill_session_api,
+    remove_session_api, remove_skill_session_api,
     rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
     get_user_me, auth_login, auth_callback, auth_logout,
     get_session_permission, update_session_permission,
@@ -1217,23 +1217,21 @@ async fn prepare_server(
     }
 
     let app = Router::new()
-        .route("/api/projects", get(list_projects))
-        .route("/api/projects", post(add_project))
-        .route("/api/projects", delete(remove_project))
-        .route("/api/agents", get(list_agents_api))
+        // Agent & model file management (admin HTTP, not proxied for consumers)
         .route("/api/agent-files", get(list_agent_files_api))
         .route("/api/agent-file", get(get_agent_file_api))
         .route("/api/agent-file", post(upsert_agent_file_api))
         .route("/api/agent-file", delete(delete_agent_file_api))
-        .route("/api/agent-runs", get(list_agent_runs_api))
+        // Models & skills GETs — used by SharingTab and SkillsTab Settings pages directly.
+        // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
+        .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
         .route("/api/config", get(get_config_api).post(update_config_api))
         .route("/api/credentials", get(get_credentials_api).put(update_credentials_api))
         .route("/api/auth/codex/status", get(get_codex_auth_status))
         .route("/api/auth/codex/login", post(start_codex_auth_login))
         .route("/api/auth/codex/logout", post(codex_auth_logout))
-        .route("/api/skills", get(list_skills))
         .route("/api/skills/reload", post(reload_skills))
         .route("/api/agents/reload", post(reload_agents))
         .route("/api/community-skills/search", get(community_search))
@@ -1242,13 +1240,12 @@ async fn prepare_server(
         .route("/api/marketplace/move-to-global", post(marketplace_move_to_global))
         .route("/api/builtin-skills", get(builtin_skills_list))
         .route("/api/builtin-skills/install", post(builtin_skills_install))
-        .route("/api/clawhub/scan", get(clawhub_scan))
         .route("/api/skill-files", get(list_skill_files_api))
         .route("/api/skill-file", get(get_skill_file_api))
         .route("/api/skill-file", post(upsert_skill_file_api))
         .route("/api/skill-file", delete(delete_skill_file_api))
-        .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/all", get(list_all_sessions).delete(delete_unified_session))
+        // Session management (create/rename/delete still via HTTP, data via page_state)
+        .route("/api/sessions/all", delete(delete_unified_session))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions", patch(rename_session_api))
         .route("/api/sessions", delete(remove_session_api))
@@ -1256,16 +1253,15 @@ async fn prepare_server(
         .route("/api/skill-sessions", get(list_skill_sessions))
         .route("/api/skill-sessions", delete(remove_skill_session_api))
         .route("/api/skill-sessions/state", get(get_skill_session_state))
-        .route("/api/sessions/resolve", post(resolve_session_api))
         .route("/api/task", post(set_task))
-        .route("/api/run", post(run_agent))
         .route("/api/agent-cancel", post(cancel_agent_run))
-        .route("/api/tool-cancel", post(cancel_tool_execution))
+        // Missions
         .route("/api/missions", get(list_missions).post(create_mission))
         .route("/api/missions/sessions/state", get(get_mission_session_state))
         .route("/api/missions/{id}", put(update_mission).delete(delete_mission))
         .route("/api/missions/{id}/runs", get(list_mission_runs))
         .route("/api/missions/{id}/trigger", post(trigger_mission))
+        // Chat & plan (also accessible via named WebRTC RPC)
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))
         .route("/api/chat/compact", post(compact_chat_api))
@@ -1274,7 +1270,7 @@ async fn prepare_server(
         .route("/api/plan/edit", post(edit_plan_handler))
         .route("/api/plan/reject", post(reject_plan_handler))
         .route("/api/ask-user-response", post(ask_user_response_handler))
-        .route("/api/pending-ask-user", get(pending_ask_user_handler))
+        // Files & workspace
         .route("/api/workspace/tree", get(get_agent_tree))
         .route("/api/files", get(list_files))
         .route("/api/files/search", get(search_files))

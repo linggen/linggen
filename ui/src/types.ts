@@ -104,12 +104,6 @@ export interface SessionState {
   messages: [any, string][];
 }
 
-export interface ProjectInfo {
-  path: string;
-  name: string;
-  added_at: number;
-}
-
 export interface AgentTreeItem {
   type: 'file' | 'dir';
   agent?: string;

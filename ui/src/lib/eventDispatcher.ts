@@ -4,11 +4,13 @@
  * Reads/writes state directly via Zustand stores — no deps object needed.
  */
 import type { UiEvent, ContentBlock, SubagentTreeEntry, SubagentToolStep, Plan } from '../types';
-import { useProjectStore } from '../stores/projectStore';
-import { useAgentStore } from '../stores/agentStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
-import type { AgentStatusValue } from '../stores/agentStore';
+import { useUserStore } from '../stores/userStore';
+import { useInteractionStore } from '../stores/interactionStore';
+import type { AgentStatusValue } from '../stores/serverStore';
 import { agentTracker } from './agentTracker';
 import {
   stripEmbeddedStructuredJson,
@@ -99,7 +101,7 @@ function formatToolStartLine(toolName: string, argsStr: string): string {
 /** Resolve a session ID for keying status maps. Prefer the event's session_id,
  *  fall back to the currently active session. */
 function getSessionId(item: UiEvent): string {
-  return item.session_id || useProjectStore.getState().activeSessionId || '';
+  return item.session_id || useSessionStore.getState().activeSessionId || '';
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +109,7 @@ function getSessionId(item: UiEvent): string {
 // ---------------------------------------------------------------------------
 
 export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
-  const effectiveSessionId = sessionIdOverride ?? useProjectStore.getState().activeSessionId;
+  const effectiveSessionId = sessionIdOverride ?? useSessionStore.getState().activeSessionId;
   // Allow notifications and agent_status through regardless — they are global events.
   // agent_status must pass through so the session list can show spinners for busy sessions.
   // ask_user and widget_resolved are session-scoped — they should only show in their own session.
@@ -156,7 +158,7 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
     case 'working_folder': handleWorkingFolder(item); return;
     case 'widget_resolved': handleWidgetResolved(item); return;
     case 'page_state':   handlePageState(item); return;
-    case 'consumer_mode': handleConsumerMode(item); return;
+    case 'user_info':    handleUserInfo(item); return;
   }
 }
 
@@ -165,8 +167,7 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
 // ---------------------------------------------------------------------------
 
 function handleRun(item: UiEvent): void {
-  const projectStore = useProjectStore.getState();
-  const agentStore = useAgentStore.getState();
+  const agentStore = useServerStore.getState();
   const chatStore = useChatStore.getState();
 
   // sync/resync phases are now handled by server-pushed page_state — no HTTP fetches needed.
@@ -175,8 +176,11 @@ function handleRun(item: UiEvent): void {
     return;
   }
   if (item.phase === 'outcome') {
+    // Skip session state fetch for consumer mode — messages arrive via streaming
+    // events, and the HTTP fetch goes through the WebRTC tunnel which blocks
+    // /api/workspace/state for browser consumers.
     chatStore.fetchSessionState();
-    useAgentStore.setState({ tokensPerSec: 0 });
+    useServerStore.setState({ tokensPerSec: 0 });
     return;
   }
 
@@ -195,8 +199,8 @@ function handleRun(item: UiEvent): void {
     const promptDelta = Number(item.data.actual_prompt_tokens || 0);
     const completionDelta = Number(item.data.actual_completion_tokens || 0);
     if (promptDelta > 0 || completionDelta > 0) {
-      const prev = useAgentStore.getState().sessionTokens;
-      useAgentStore.setState({
+      const prev = useServerStore.getState().sessionTokens;
+      useServerStore.setState({
         sessionTokens: {
           prompt: prev.prompt + promptDelta,
           completion: prev.completion + completionDelta,
@@ -230,15 +234,15 @@ function handleRun(item: UiEvent): void {
     const rawId = String(item.agent_id || '');
     const match = rawId.match(/^run-(.+?)-\d+/);
     const agentId = match ? match[1] : rawId;
-    const uiStore = useUiStore.getState();
-    uiStore.setActivePlan(plan);
+    const interaction = useInteractionStore.getState();
+    interaction.setActivePlan(plan);
     if (plan.status === 'planned') {
-      uiStore.setPendingPlan(plan);
-      uiStore.setPendingPlanAgentId(agentId);
+      interaction.setPendingPlan(plan);
+      interaction.setPendingPlanAgentId(agentId);
     } else {
       // approved, executing, completed, rejected — no longer waiting for user decision
-      uiStore.setPendingPlan(null);
-      uiStore.setPendingPlanAgentId(null);
+      interaction.setPendingPlan(null);
+      interaction.setPendingPlanAgentId(null);
     }
     const planText = JSON.stringify({ type: 'plan', plan });
     chatStore.upsertPlan(agentId, planText);
@@ -279,18 +283,18 @@ function handleRun(item: UiEvent): void {
 }
 
 function handleQueue(item: UiEvent): void {
-  const { activeSessionId, selectedProjectRoot } = useProjectStore.getState();
+  const { activeSessionId, selectedProjectRoot } = useSessionStore.getState();
   const session = activeSessionId || 'default';
   if (item.project_root === selectedProjectRoot && item.session_id === session) {
     const items = Array.isArray(item.data?.items) ? item.data.items : [];
-    useUiStore.getState().setQueuedMessages(items);
+    useInteractionStore.getState().setQueuedMessages(items);
   }
 }
 
 function handleAskUser(item: UiEvent): void {
   const { question_id, questions } = item.data || {};
   if (question_id && questions) {
-    useUiStore.getState().setPendingAskUser({
+    useInteractionStore.getState().setPendingAskUser({
       questionId: question_id,
       agentId: String(item.agent_id || ''),
       questions,
@@ -317,9 +321,8 @@ function handleActivity(item: UiEvent): void {
   const nextStatus = normalizeAgentStatus(statusRaw) as AgentStatusValue;
   const statusText = String(item.text || '').trim();
 
-  const agentStore = useAgentStore.getState();
+  const agentStore = useServerStore.getState();
   const chatStore = useChatStore.getState();
-  const uiStore = useUiStore.getState();
 
   // Route subagent activity to parent tree
   const parentIdFromData = item.data?.parent_id ? String(item.data.parent_id) : null;
@@ -412,7 +415,7 @@ function handleActivity(item: UiEvent): void {
   if (nextStatus === 'idle' || item.phase === 'failed') {
     const { elapsed, contextTokens: ctxTokens } = sid ? agentTracker.clearRun(sid) : {};
     chatStore.finalizeOnIdle(agentId, elapsed, ctxTokens);
-    uiStore.setActivePlan(null);
+    useInteractionStore.getState().setActivePlan(null);
   }
 }
 
@@ -429,7 +432,7 @@ function flushTokenBuffer() {
     if (text) chatStore.appendToken(agentId, text, isThinking);
   }
   _tokenBuffer.clear();
-  useAgentStore.getState().recomputeTokenRate();
+  useServerStore.getState().recomputeTokenRate();
 }
 
 function handleToken(item: UiEvent): void {
@@ -450,7 +453,7 @@ function handleToken(item: UiEvent): void {
 
   const tokenText = String(item.text || '');
   if (!isThinking && tokenText) {
-    useAgentStore.getState().recordTokenEvent();
+    useServerStore.getState().recordTokenEvent();
   }
   const existing = _tokenBuffer.get(agentId);
   if (existing && existing.isThinking === isThinking) {
@@ -559,7 +562,7 @@ function handleContentBlock(item: UiEvent): void {
 
       const sid = getSessionId(item);
       if (sid) {
-        const agentStore = useAgentStore.getState();
+        const agentStore = useServerStore.getState();
         agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'calling_tool' as AgentStatusValue }));
         agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: activityLine }));
         agentTracker.ensureRunStarted(sid);
@@ -609,12 +612,12 @@ function handleTurnComplete(item: UiEvent): void {
   const ctxTokens = contextTokens || cleared.contextTokens;
 
   useChatStore.getState().turnComplete(agentId, elapsed, ctxTokens);
-  useUiStore.getState().setPendingAskUser(null);
+  useInteractionStore.getState().setPendingAskUser(null);
 
   // Ensure status transitions to idle — the subsequent AgentStatus(idle)
   // event may arrive late or be missed, leaving the spinner stuck on "Thinking…".
   if (sid) {
-    const agentStore = useAgentStore.getState();
+    const agentStore = useServerStore.getState();
     agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' }));
     agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
   }
@@ -658,7 +661,7 @@ function handleModelFallback(item: UiEvent): void {
   });
   const sid = getSessionId(item);
   if (sid) {
-    useAgentStore.getState().setAgentStatusText((prev) => ({
+    useServerStore.getState().setAgentStatusText((prev) => ({
       ...prev,
       [sid]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
     }));
@@ -693,7 +696,7 @@ function handleWorkingFolder(item: UiEvent): void {
   const data = item.data;
   if (!data || !item.session_id) return;
   // Update the session's metadata in the store
-  const store = useProjectStore.getState();
+  const store = useSessionStore.getState();
   const sessions = store.allSessions.map((s) => {
     if (s.id === item.session_id) {
       return {
@@ -705,7 +708,7 @@ function handleWorkingFolder(item: UiEvent): void {
     }
     return s;
   });
-  useProjectStore.setState({ allSessions: sessions });
+  useSessionStore.setState({ allSessions: sessions });
 
   // If this is the active session, update the global project root so
   // API calls, file tree, and sidebar reflect the new working folder.
@@ -720,15 +723,15 @@ function handleWorkingFolder(item: UiEvent): void {
 function handleWidgetResolved(item: UiEvent): void {
   const widgetId = item.data?.widget_id as string | undefined;
   if (!widgetId) return;
-  const uiStore = useUiStore.getState();
+  const interaction = useInteractionStore.getState();
   // Dismiss AskUser permission widget
-  if (uiStore.pendingAskUser?.questionId === widgetId) {
-    uiStore.setPendingAskUser(null);
+  if (interaction.pendingAskUser?.questionId === widgetId) {
+    interaction.setPendingAskUser(null);
   }
   // Dismiss plan widget (defensive — plan normally syncs via PlanUpdate)
-  if (uiStore.pendingPlanAgentId === widgetId) {
-    uiStore.setPendingPlan(null);
-    uiStore.setPendingPlanAgentId(null);
+  if (interaction.pendingPlanAgentId === widgetId) {
+    interaction.setPendingPlan(null);
+    interaction.setPendingPlanAgentId(null);
   }
 }
 
@@ -740,23 +743,31 @@ function handlePageState(item: UiEvent): void {
   const ps = item.data;
   if (!ps) return;
 
+  // -- Permission + room from unified page_state --
+  if (ps.permission) {
+    const userStore = useUserStore.getState();
+    if (userStore.userPermission !== ps.permission || userStore.userRoomName !== (ps.room_name ?? null)) {
+      userStore.setUserInfo(ps.permission, ps.room_name, userStore.userTokenBudget);
+      useUiStore.getState().setCurrentPage(ps.permission !== 'admin' ? 'consumer' : 'main');
+    }
+  }
+
   // -- Global fields --
-  if (ps.projects) useProjectStore.setState({ projects: ps.projects });
-  if (ps.all_sessions) useProjectStore.setState({ allSessions: ps.all_sessions });
-  if (ps.models) useAgentStore.setState({ models: ps.models });
-  if (ps.default_models) useAgentStore.setState({ defaultModels: ps.default_models });
-  if (ps.skills) useAgentStore.setState({ skills: ps.skills });
+  if (ps.all_sessions) useSessionStore.setState({ allSessions: ps.all_sessions });
+  if (ps.models) useServerStore.setState({ models: ps.models });
+  if (ps.default_models) useServerStore.setState({ defaultModels: ps.default_models });
+  if (ps.skills) useServerStore.setState({ skills: ps.skills });
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
   if (ps.pending_ask_user !== undefined) {
     // Restore pending ask-user from server state — only for the active session.
     // Without session filtering, prompts from other sessions leak into skill iframes.
-    const activeSessionId = useProjectStore.getState().activeSessionId;
+    const activeSessionId = useSessionStore.getState().activeSessionId;
     const items = (Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [])
       .filter((item: any) => !item.session_id || item.session_id === activeSessionId);
-    const uiStore = useUiStore.getState();
-    if (items.length > 0 && !uiStore.pendingAskUser) {
+    const interaction = useInteractionStore.getState();
+    if (items.length > 0 && !interaction.pendingAskUser) {
       const first = items[0];
-      uiStore.setPendingAskUser({
+      interaction.setPendingAskUser({
         questionId: first.question_id,
         agentId: first.agent_id || '',
         questions: first.questions || [],
@@ -768,7 +779,7 @@ function handlePageState(item: UiEvent): void {
   // Only set status for sessions not already tracked (real-time activity events
   // are authoritative for the active session).
   if (ps.busy_sessions) {
-    const agentStore = useAgentStore.getState();
+    const agentStore = useServerStore.getState();
     agentStore.setAgentStatus((prev) => {
       const next = { ...prev };
       // Clear sessions that are no longer busy
@@ -788,22 +799,22 @@ function handlePageState(item: UiEvent): void {
   }
 
   // -- Scoped fields --
-  if (ps.agents) useAgentStore.setState({ agents: ps.agents });
+  if (ps.agents) useServerStore.setState({ agents: ps.agents });
   if (ps.agent_runs) {
     // Skip update if runs haven't changed (prevents re-render loops)
-    const prev = useAgentStore.getState().agentRuns;
+    const prev = useServerStore.getState().agentRuns;
     const data = Array.isArray(ps.agent_runs) ? ps.agent_runs : [];
     if (data.length !== prev.length || !data.every((r: any, i: number) => r.run_id === prev[i]?.run_id && r.status === prev[i]?.status)) {
-      useAgentStore.setState({ agentRuns: data });
+      useServerStore.setState({ agentRuns: data });
     }
   }
-  if (ps.sessions) useProjectStore.setState({ sessions: ps.sessions });
+  if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
   if (ps.session_permission) {
     const perm = ps.session_permission;
     const uiStore = useUiStore.getState();
     // Only update mode if user hasn't made a local change recently
     // (prevents page_state from overwriting optimistic UI updates)
-    if (perm.effective_mode && !_permissionSuppressedUntil || Date.now() >= _permissionSuppressedUntil) {
+    if (perm.effective_mode && (Date.now() >= _permissionSuppressedUntil)) {
       uiStore.setSessionMode(perm.effective_mode);
     }
     if (perm.zone) uiStore.setSessionZone(perm.zone);
@@ -811,16 +822,13 @@ function handlePageState(item: UiEvent): void {
 }
 
 // ---------------------------------------------------------------------------
-// Consumer mode — proxy room browser consumer
+// User info — sent on control channel open for ALL peers
 // ---------------------------------------------------------------------------
 
-function handleConsumerMode(item: UiEvent): void {
+function handleUserInfo(item: UiEvent): void {
   const data = item.data;
   if (!data) return;
-  useUiStore.getState().setConsumerMode(true, {
-    consumer_type: data.consumer_type,
-    token_budget_daily: data.token_budget_daily,
-    allowed_tools: data.allowed_tools,
-    allowed_skills: data.allowed_skills,
-  });
+  const perm = data.permission || 'admin';
+  useUserStore.getState().setUserInfo(perm, data.room_name, data.token_budget_daily);
+  useUiStore.getState().setCurrentPage(perm !== 'admin' ? 'consumer' : 'main');
 }

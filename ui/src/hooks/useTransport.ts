@@ -11,17 +11,16 @@ import { getTransport, setTransport, type Transport, type TransportCallbacks, ty
 import { RtcTransport } from '../lib/rtcTransport';
 import { RelaySignaling } from '../lib/signaling';
 import { dispatchEvent } from '../lib/eventDispatcher';
-import { useUiStore } from '../stores/uiStore';
+import { useUserStore } from '../stores/userStore';
 import { useChatStore } from '../stores/chatStore';
-import { useAgentStore } from '../stores/agentStore';
-import { useProjectStore } from '../stores/projectStore';
+import { useSessionStore } from '../stores/sessionStore';
 
 /** Send the frontend's active view context to the server.
  *  The server uses this to scope its page_state push. */
 export function sendViewContext() {
   try {
     const transport = getTransport();
-    const { activeSessionId, selectedProjectRoot } = useProjectStore.getState();
+    const { activeSessionId, selectedProjectRoot } = useSessionStore.getState();
     const isCompact = new URLSearchParams(window.location.search).get('mode') === 'compact';
     transport.sendViewContext({
       sessionId: activeSessionId,
@@ -81,12 +80,13 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         dispatchEvent(event, sessionIdRef.current ?? undefined);
       },
       onStatusChange: (status) => {
-        useUiStore.getState().setConnectionStatus(mapStatus(status));
+        useUserStore.getState().setConnectionStatus(mapStatus(status));
       },
       onReconnect: () => {
         // Send view context to trigger server-pushed page_state
         sendViewContext();
         // Fetch workspace state immediately (chat history — not included in page_state)
+        // Skip for consumer mode — HTTP fetch blocked by WebRTC tunnel permissions.
         useChatStore.getState().fetchSessionState();
         if (onReconnectRef.current) {
           onReconnectRef.current();

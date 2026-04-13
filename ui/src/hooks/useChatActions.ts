@@ -3,15 +3,16 @@
  * All state is read via getState() — only scrollToBottom and projectRoot are injected.
  */
 import { useCallback, useEffect, useRef } from 'react';
-import { useProjectStore } from '../stores/projectStore';
-import { useAgentStore } from '../stores/agentStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
+import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
 
 /** Resolve the effective project root: explicit override > store value. */
 function getProjectRoot(override?: string | null): string {
-  return override || useProjectStore.getState().selectedProjectRoot;
+  return override || useSessionStore.getState().selectedProjectRoot;
 }
 
 export function useChatActions(
@@ -26,21 +27,21 @@ export function useChatActions(
 
   const clearChat = useCallback(async () => {
     const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useProjectStore.getState();
+    const { activeSessionId: sid } = useSessionStore.getState();
 
-    const selectedAgent = useAgentStore.getState().selectedAgent;
+    const selectedAgent = useServerStore.getState().selectedAgent;
     const runId = runningMainRunIds[selectedAgent];
     if (runId) {
-      useAgentStore.getState().cancelAgentRun(runId);
+      useServerStore.getState().cancelAgentRun(runId);
     }
 
     useChatStore.getState().clear();
-    const ui = useUiStore.getState();
-    ui.setQueuedMessages([]);
-    ui.setActivePlan(null);
-    ui.setPendingPlan(null);
-    ui.setPendingPlanAgentId(null);
-    ui.setPendingAskUser(null);
+    const interaction = useInteractionStore.getState();
+    interaction.setQueuedMessages([]);
+    interaction.setActivePlan(null);
+    interaction.setPendingPlan(null);
+    interaction.setPendingPlanAgentId(null);
+    interaction.setPendingAskUser(null);
     try {
       await getTransport().sendClear(root, sid);
       useChatStore.getState().clear();
@@ -50,8 +51,8 @@ export function useChatActions(
   const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[]) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useProjectStore.getState();
-    const agent = useAgentStore.getState().selectedAgent;
+    const { activeSessionId: sid } = useSessionStore.getState();
+    const agent = useServerStore.getState().selectedAgent;
     const agentToUse = targetAgent || agent;
     if (!agentToUse) return;
     const now = new Date();
@@ -73,7 +74,7 @@ export function useChatActions(
       const modelArg = trimmed.slice('/model'.length).trim();
       if (!modelArg) { ui.setModelPickerOpen(true); ui.setOverlay(null); }
       else {
-        const currentModels = useAgentStore.getState().models;
+        const currentModels = useServerStore.getState().models;
         const valid = currentModels.length === 0 || currentModels.some((m) => m.id === modelArg);
         if (!valid) { ui.setOverlay(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`); }
         else {
@@ -84,7 +85,7 @@ export function useChatActions(
               const newDefaults = [modelArg];
               const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
               const saveResp = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
-              if (saveResp.ok) { useAgentStore.setState({ defaultModels: newDefaults }); ui.setOverlay(`Switched default model to: \`${modelArg}\``); }
+              if (saveResp.ok) { useServerStore.setState({ defaultModels: newDefaults }); ui.setOverlay(`Switched default model to: \`${modelArg}\``); }
             }
           } catch (e) { ui.setOverlay(`Error switching model: ${e}`); }
         }
@@ -181,7 +182,7 @@ export function useChatActions(
 
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       const focus = trimmed.slice('/compact'.length).trim() || undefined;
-      const { setAgentStatus, setAgentStatusText } = useAgentStore.getState();
+      const { setAgentStatus, setAgentStatusText } = useServerStore.getState();
       if (sid) {
         setAgentStatus((s) => ({ ...s, [sid]: 'thinking' as const }));
         setAgentStatusText((s) => ({ ...s, [sid]: 'Compacting conversation' }));
@@ -234,7 +235,7 @@ export function useChatActions(
     }
 
     try {
-      const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useProjectStore.getState();
+      const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
       const data = await getTransport().sendChat({
         project_root: root,
         agent_id: agentToUse,
@@ -246,8 +247,8 @@ export function useChatActions(
         ...(images && images.length > 0 ? { images } : {}),
       }) as any;
       if (data?.session_id && !sid) {
-        useProjectStore.getState().setActiveSessionId(data.session_id);
-        useProjectStore.getState().fetchSessions();
+        useSessionStore.getState().setActiveSessionId(data.session_id);
+        useSessionStore.getState().fetchSessions();
         if (window.parent !== window) {
           window.parent.postMessage({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } }, '*');
         }
@@ -257,8 +258,8 @@ export function useChatActions(
         return;
       }
       if (sid) {
-        useAgentStore.getState().setAgentStatus((prev) => ({ ...prev, [sid]: 'model_loading' }));
-        useAgentStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
+        useServerStore.getState().setAgentStatus((prev) => ({ ...prev, [sid]: 'model_loading' }));
+        useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
       }
       useChatStore.getState().upsertGenerating(agentToUse, 'Model loading...', 'Model loading...');
     } catch (e) {
@@ -271,16 +272,16 @@ export function useChatActions(
       await getTransport().sendAskUserResponse({
         question_id: questionId,
         answers,
-        session_id: useProjectStore.getState().activeSessionId,
+        session_id: useSessionStore.getState().activeSessionId,
       });
-      useUiStore.getState().setPendingAskUser(null);
+      useInteractionStore.getState().setPendingAskUser(null);
     } catch (e) { console.error('Error responding to AskUser:', e); }
   }, []);
 
   const approvePlan = useCallback(async () => {
-    const { pendingPlanAgentId: planAgent } = useUiStore.getState();
+    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
     const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useProjectStore.getState();
+    const { activeSessionId: sid } = useSessionStore.getState();
     if (!planAgent || !root) return;
     try {
       await getTransport().sendPlanAction({
@@ -289,16 +290,15 @@ export function useChatActions(
         agent_id: planAgent,
         session_id: sid,
       });
-      const ui = useUiStore.getState();
       // Optimistically mark plan as approved so content stays visible but buttons hide
-      ui.setPendingPlan((p) => p ? { ...p, status: 'approved' } : null);
+      useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'approved' } : null);
     } catch (e) { console.error('Error approving plan:', e); }
   }, []);
 
   const rejectPlan = useCallback(async () => {
-    const { pendingPlanAgentId: planAgent } = useUiStore.getState();
+    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
     const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useProjectStore.getState();
+    const { activeSessionId: sid } = useSessionStore.getState();
     if (!planAgent || !root) return;
     try {
       await getTransport().sendPlanAction({
@@ -307,15 +307,14 @@ export function useChatActions(
         agent_id: planAgent,
         session_id: sid,
       });
-      const ui = useUiStore.getState();
-      ui.setPendingPlan((p) => p ? { ...p, status: 'rejected' } : null);
+      useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'rejected' } : null);
     } catch (e) { console.error('Error rejecting plan:', e); }
   }, []);
 
   const editPlan = useCallback(async (text: string) => {
-    const { pendingPlanAgentId: planAgent } = useUiStore.getState();
+    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
     const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useProjectStore.getState();
+    const { activeSessionId: sid } = useSessionStore.getState();
     if (!planAgent || !root) return;
     try {
       await getTransport().sendPlanAction({
@@ -325,15 +324,15 @@ export function useChatActions(
         session_id: sid,
         edited_plan: text,
       });
-      useUiStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
+      useInteractionStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
     } catch (e) { console.error('Error editing plan:', e); }
   }, []);
 
   const copyChat = useCallback(async () => {
     try {
       const root = getProjectRoot(projectRootRef.current);
-      const { activeSessionId: sid } = useProjectStore.getState();
-      const agent = useAgentStore.getState().selectedAgent;
+      const { activeSessionId: sid } = useSessionStore.getState();
+      const agent = useServerStore.getState().selectedAgent;
       const msgs = useChatStore.getState().displayMessages;
       const headerLines = [
         'Linggen Agent Chat Export', `Project: ${root || '(none)'}`,

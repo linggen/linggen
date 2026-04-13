@@ -129,13 +129,6 @@ fn resolve_agent_path(root: &std::path::Path, rel: &str) -> PathBuf {
     }
 }
 
-pub(crate) async fn list_projects(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    match state.manager.store.list_projects() {
-        Ok(projects) => Json(projects).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
 pub(crate) async fn list_agents_api(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<AgentsQuery>,
@@ -590,6 +583,9 @@ pub(crate) struct CreateSessionRequest {
     title: String,
     #[serde(default)]
     skill: Option<String>,
+    /// User ID of the session creator (injected by peer.rs).
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 pub(crate) async fn create_session(
@@ -609,7 +605,7 @@ pub(crate) async fn create_session(
         created_at: crate::util::now_ts_secs(),
         skill: req.skill.clone(),
         creator: if req.skill.is_some() { "skill".into() } else { "user".into() },
-        cwd, project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
+        cwd, project: None, project_name: None, mission_id: None, model_id: None, user_id: req.user_id,
     };
 
     // All sessions go to the global flat store
@@ -657,7 +653,7 @@ pub(crate) async fn resolve_session_api(
         created_at: now,
         skill: None,
         creator: "user".into(),
-        cwd: Some(req.project_root.clone()), project: None, project_name: None, mission_id: None, model_id: None, consumer_user_id: None,
+        cwd: Some(req.project_root.clone()), project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
     };
     let _ = store.add_session(&meta);
     Json(serde_json::json!({
@@ -738,6 +734,7 @@ pub(crate) async fn get_skill_session_state(
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
         .filter(|m| !m.is_observation)
+        .filter(|m| !m.content.contains("[HIDDEN]"))
         .filter_map(|m| {
             let cleaned =
                 crate::server::chat_helpers::sanitize_message_for_ui(&m.from_id, &m.content)?;
@@ -922,39 +919,6 @@ pub(crate) async fn update_session_permission(
     // Notify UI of state change
     let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
     StatusCode::OK
-}
-
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-pub(crate) struct AddProjectRequest {
-    path: String,
-}
-
-pub(crate) async fn add_project(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<AddProjectRequest>,
-) -> impl IntoResponse {
-    let path = PathBuf::from(&req.path);
-    match state.manager.get_or_create_project(path).await {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-pub(crate) async fn remove_project(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<AddProjectRequest>, // Reuse same struct for path
-) -> impl IntoResponse {
-    match state.manager.store.remove_project(&req.path) {
-        Ok(_) => {
-            // Also remove from active projects map
-            let mut projects = state.manager.projects.lock().await;
-            projects.remove(&req.path);
-            StatusCode::OK
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
 }
 
 // ── Status endpoint ──────────────────────────────────────────────────
@@ -1226,7 +1190,7 @@ pub(crate) async fn auth_callback(
 
     // Register instance with linggen.dev
     let client = reqwest::Client::new();
-    let _ = client
+    let user_id = match client
         .post("https://linggen.dev/api/instances")
         .bearer_auth(&token)
         .json(&serde_json::json!({
@@ -1234,13 +1198,19 @@ pub(crate) async fn auth_callback(
             "name": instance_name,
         }))
         .send()
-        .await;
+        .await
+    {
+        Ok(resp) => resp.json::<serde_json::Value>().await.ok()
+            .and_then(|v| v.get("user_id").and_then(|u| u.as_str()).map(|s| s.to_string())),
+        Err(_) => None,
+    };
 
     let config = crate::cli::login::RemoteConfig {
         relay_url: "https://linggen.dev".to_string(),
         api_token: token,
         instance_name,
         instance_id,
+        user_id,
     };
     let path = crate::paths::linggen_home().join("remote.toml");
     if let Some(parent) = path.parent() {

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ArrowLeft, Target, Plus, Play, Trash2, Clock, Edit3, Check, X, Eye, ChevronDown, ChevronRight, Pause } from 'lucide-react';
 import { cn } from '../lib/cn';
-import type { AgentInfo, CronMission, MissionRunEntry, ProjectInfo } from '../types';
+import type { AgentInfo, CronMission, MissionRunEntry } from '../types';
 import { ChatWidget } from './chat/ChatWidget';
-import { useProjectStore } from '../stores/projectStore';
+import { useSessionStore } from '../stores/sessionStore';
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -43,10 +43,9 @@ const describeCron = (schedule: string): string => {
   return schedule;
 };
 
-const projectLabel = (path: string | null | undefined, projects: ProjectInfo[]): string | null => {
+/** Display label for a working folder path — show the last segment. */
+const folderLabel = (path: string | null | undefined): string | null => {
   if (!path) return null;
-  const proj = projects.find(p => p.path === path);
-  if (proj) return proj.name || path.split('/').pop() || path;
   return path.split('/').pop() || path;
 };
 
@@ -119,7 +118,6 @@ type SidebarSelection =
 
 const MissionNav: React.FC<{
   missions: CronMission[];
-  projects: ProjectInfo[];
   runsMap: Record<string, MissionRunEntry[]>;
   expandedMissions: Set<string>;
   selection: SidebarSelection;
@@ -130,7 +128,7 @@ const MissionNav: React.FC<{
   onDelete: (id: string) => void;
   onTrigger: (m: CronMission) => void;
   onCreate: () => void;
-}> = ({ missions, projects, runsMap, expandedMissions, selection, onToggleExpand, onSelectRun, onToggleEnabled: _onToggleEnabled, onEdit, onDelete, onTrigger, onCreate }) => {
+}> = ({ missions, runsMap, expandedMissions, selection, onToggleExpand, onSelectRun, onToggleEnabled: _onToggleEnabled, onEdit, onDelete, onTrigger, onCreate }) => {
   const enabledCount = missions.filter(m => m.enabled).length;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -163,7 +161,7 @@ const MissionNav: React.FC<{
           const isExpanded = expandedMissions.has(mission.id);
           const runs = runsMap[mission.id] || [];
           const sortedRuns = [...runs].reverse();
-          const projLabel = projectLabel(mission.project, projects);
+          const projLabel = folderLabel(mission.project);
 
           return (
             <div key={mission.id} className="rounded-lg">
@@ -308,11 +306,11 @@ export const PERMISSION_TIERS = [
 
 export const MissionEditor: React.FC<{
   editing: CronMission | null;
-  projects: ProjectInfo[];
+  workingFolders: string[];
   onSave: (mission: CronMission) => void;
   onCancel: () => void;
   onViewAgent: () => void;
-}> = ({ editing, projects, onSave, onCancel, onViewAgent }) => {
+}> = ({ editing, workingFolders, onSave, onCancel, onViewAgent }) => {
   const [name, setName] = useState(editing?.name || '');
   const [schedule, setSchedule] = useState(editing?.schedule || '*/30 * * * *');
   const [prompt, setPrompt] = useState(editing?.prompt || '');
@@ -451,13 +449,13 @@ export const MissionEditor: React.FC<{
 
         <div>
           <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">
-            Project {permissionTier === 'standard' && <span className="text-amber-600 dark:text-amber-400">(required for Standard tier)</span>}
-            {permissionTier !== 'standard' && <span className="text-slate-400">(optional)</span>}
+            Working Folder {permissionTier === 'standard' && <span className="text-amber-600 dark:text-amber-400">(required for Standard tier)</span>}
+            {permissionTier !== 'standard' && <span className="text-slate-400">(optional, defaults to HOME)</span>}
           </label>
           <select value={selectedProject} onChange={e => setSelectedProject(e.target.value)}
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30">
-            <option value="">No project (global)</option>
-            {projects.map(p => <option key={p.path} value={p.path}>{p.name || p.path.split('/').pop()}</option>)}
+            <option value="">HOME (default)</option>
+            {workingFolders.map(p => <option key={p} value={p}>{p.split('/').pop() || p}</option>)}
           </select>
         </div>
 
@@ -586,22 +584,26 @@ export const MissionPage: React.FC<{
 }> = ({ onBack: rawOnBack, projectRoot, agents: _agents, embedded, onOpenSession }) => {
   // Reset mission session state when navigating away
   const onBack = useCallback(() => {
-    useProjectStore.setState({ isMissionSession: false, activeMissionId: null });
+    useSessionStore.setState({ isMissionSession: false, activeMissionId: null });
     rawOnBack();
   }, [rawOnBack]);
   const [missions, setMissions] = useState<CronMission[]>([]);
   const [loading, setLoading] = useState(true);
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [expandedMissions, setExpandedMissions] = useState<Set<string>>(new Set());
   const [runsMap, setRunsMap] = useState<Record<string, MissionRunEntry[]>>({});
   const [selection, setSelection] = useState<SidebarSelection>(null);
   const [rightView, setRightView] = useState<'session' | 'editor' | 'agent-viewer'>('session');
   const [editingMission, setEditingMission] = useState<CronMission | null>(null);
 
-  // Fetch projects
-  useEffect(() => {
-    fetch('/api/projects').then(r => r.ok ? r.json() : []).then((data: ProjectInfo[]) => setProjects(data)).catch(() => {});
-  }, []);
+  // Derive unique working folders from sessions' cwd field
+  const allSessions = useSessionStore((s) => s.allSessions);
+  const workingFolders = React.useMemo(() => {
+    const folders = new Set<string>();
+    for (const s of allSessions) {
+      if (s.cwd) folders.add(s.cwd);
+    }
+    return [...folders].sort();
+  }, [allSessions]);
 
   const loadMissions = useCallback(async () => {
     const data = await fetchMissions();
@@ -630,7 +632,7 @@ export const MissionPage: React.FC<{
     setRightView('session');
     // Set store state so ChatWidget uses mission session endpoints
     if (run.session_id) {
-      useProjectStore.setState({
+      useSessionStore.setState({
         activeSessionId: run.session_id,
         isMissionSession: true,
         activeMissionId: mission.id,
@@ -695,7 +697,6 @@ export const MissionPage: React.FC<{
         <div className="w-72 border-r border-slate-200 dark:border-white/5 flex flex-col bg-white dark:bg-[#0f0f0f] h-full">
           <MissionNav
             missions={missions}
-            projects={projects}
             runsMap={runsMap}
             expandedMissions={expandedMissions}
             selection={selection}
@@ -717,7 +718,7 @@ export const MissionPage: React.FC<{
         ) : rightView === 'editor' ? (
           <MissionEditor
             editing={editingMission}
-            projects={projects}
+            workingFolders={workingFolders}
             onSave={handleSave}
             onCancel={handleCancel}
             onViewAgent={handleViewAgent}

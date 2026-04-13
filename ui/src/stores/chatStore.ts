@@ -27,8 +27,9 @@ import {
 import { cacheImages, restoreImages, clearImageCache } from '../lib/imageCache';
 import { agentTracker } from '../lib/agentTracker';
 import { computeDisplay, mutate, mutateLast } from './chatMutationHelpers';
-import { useProjectStore } from './projectStore';
-import { useUiStore } from './uiStore';
+import { useSessionStore } from './sessionStore';
+import { useUserStore } from './userStore';
+import { useInteractionStore } from './interactionStore';
 
 interface ChatState {
   messages: ChatMessage[];
@@ -46,9 +47,6 @@ interface ChatState {
 
   // Session switching — swaps the active bucket without clear/refetch
   setActiveSession: (sessionId: string | null) => void;
-  /** Check whether messages are already cached for a session. */
-  hasSessionMessages: (sessionId: string | null) => boolean;
-
   // Actions — one per reducer action type
   clear: (withCooldown?: boolean) => void;
   syncPersisted: (persisted: ChatMessage[]) => void;
@@ -95,12 +93,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: msgs,
       displayMessages: computeDisplay(msgs),
     });
-  },
-
-  hasSessionMessages: (sessionId) => {
-    const sid = sessionId || '__none__';
-    const msgs = get()._messagesBySession[sid];
-    return !!msgs && msgs.length > 0;
   },
 
   clear: (withCooldown = true) => {
@@ -296,7 +288,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   })),
 
   finalizeMessage: (agentId, content, to, tsMs, elapsed, ctxTokens, isError) => set(mutate((state) => {
-    const generatingIdx = findLastGeneratingMessageIndex(state, agentId);
+    // Look for a generating message first; if turn_complete already finalized
+    // it, fall back to the last message from this agent (within 30s) so we
+    // update in place instead of creating a duplicate.
+    let generatingIdx = findLastGeneratingMessageIndex(state, agentId);
+    if (generatingIdx < 0) {
+      for (let i = state.length - 1; i >= 0; i--) {
+        const m = state[i];
+        if (m.from !== agentId || m.role === 'user') continue;
+        if (m.timestampMs && tsMs - m.timestampMs > 30_000) break;
+        generatingIdx = i;
+        break;
+      }
+    }
     if (generatingIdx >= 0) {
       const next = [...state];
       const existingMsg = next[generatingIdx];
@@ -308,7 +312,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const keepGenerating = hasRunningSubagents || hasRunningBlocks;
 
       let finalSegments = existingMsg.segments;
-      if (finalSegments && content.trim()) {
+      // Only append a text segment if the message is still generating.
+      // If turn_complete already finalized it, the segments are complete —
+      // appending the server's final text would duplicate visible content.
+      if (finalSegments && existingMsg.isGenerating && content.trim()) {
         const strippedContent = content
           .split('\n')
           .filter((line: string) => {
@@ -567,7 +574,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   })),
 
   fetchSessionState: async (opts) => {
-    const projectState = useProjectStore.getState();
+    // Wait until we know who the user is — 'pending' means user_info hasn't arrived yet.
+    const perm = useUserStore.getState().userPermission;
+    if (perm === 'pending') return;
+
+    const projectState = useSessionStore.getState();
     let selectedProjectRoot = opts?.projectRoot ?? projectState.selectedProjectRoot;
     const activeSessionId = opts?.sessionId ?? projectState.activeSessionId;
     const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = projectState;
@@ -658,16 +669,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Restore pending plan state from persisted messages (e.g. after server restart).
         // Find the MOST RECENT plan message — only set as pending if its status is "planned".
         // If the most recent plan is approved/executing/completed/rejected, there's no pending plan.
-        const uiState = useUiStore.getState();
-        if (!uiState.pendingPlanAgentId) {
+        const interactionState = useInteractionStore.getState();
+        if (!interactionState.pendingPlanAgentId) {
           for (let i = msgs.length - 1; i >= 0; i--) {
             const m = msgs[i];
             if (!isPlanMessage(m)) continue;
             try {
               const parsed = JSON.parse(m.text);
               if (parsed?.plan?.status === 'planned') {
-                uiState.setPendingPlan(parsed.plan);
-                uiState.setPendingPlanAgentId(m.from || m.role || '');
+                interactionState.setPendingPlan(parsed.plan);
+                interactionState.setPendingPlanAgentId(m.from || m.role || '');
               }
               // Stop at the first plan found regardless of status
               break;

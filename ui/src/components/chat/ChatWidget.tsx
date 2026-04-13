@@ -8,10 +8,11 @@ import { useTransport } from '../../hooks/useTransport';
 import { useChatActions } from '../../hooks/useChatActions';
 import { useRunInfo } from '../../hooks/useRunInfo';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { useProjectStore } from '../../stores/projectStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useServerStore } from '../../stores/serverStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
+import { useInteractionStore } from '../../stores/interactionStore';
 import { buildSubagentInfos } from '../../lib/messageUtils';
 
 export interface ChatWidgetProps {
@@ -29,24 +30,24 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   // --- Stores ---
   const displayMessages = useChatStore((s) => s.displayMessages);
   const chatMessages = useChatStore((s) => s.messages);
-  const agents = useAgentStore((s) => s.agents);
-  const models = useAgentStore((s) => s.models);
-  const skills = useAgentStore((s) => s.skills);
-  const selectedAgent = useAgentStore((s) => s.selectedAgent);
-  const agentStatus = useAgentStore((s) => s.agentStatus);
-  const agentContext = useAgentStore((s) => s.agentContext);
-  const defaultModels = useAgentStore((s) => s.defaultModels);
-  const cancellingRunIds = useAgentStore((s) => s.cancellingRunIds);
-  const tokensPerSec = useAgentStore((s) => s.tokensPerSec);
-  const isRunning = useAgentStore((s) => s.isRunning());
-  const agentTreesByProject = useProjectStore((s) => s.agentTreesByProject);
-  const selectedProjectRoot = useProjectStore((s) => s.selectedProjectRoot);
+  const agents = useServerStore((s) => s.agents);
+  const models = useServerStore((s) => s.models);
+  const skills = useServerStore((s) => s.skills);
+  const selectedAgent = useServerStore((s) => s.selectedAgent);
+  const agentStatus = useServerStore((s) => s.agentStatus);
+  const agentContext = useServerStore((s) => s.agentContext);
+  const defaultModels = useServerStore((s) => s.defaultModels);
+  const cancellingRunIds = useServerStore((s) => s.cancellingRunIds);
+  const tokensPerSec = useServerStore((s) => s.tokensPerSec);
+  const isRunning = useServerStore((s) => s.isRunning());
+  const agentTreesByProject = useServerStore((s) => s.agentTreesByProject);
+  const selectedProjectRoot = useSessionStore((s) => s.selectedProjectRoot);
 
-  const queuedMessages = useUiStore((s) => s.queuedMessages);
-  const pendingPlan = useUiStore((s) => s.pendingPlan);
-  const pendingPlanAgentId = useUiStore((s) => s.pendingPlanAgentId);
-  const pendingAskUser = useUiStore((s) => s.pendingAskUser);
-  const activePlan = useUiStore((s) => s.activePlan);
+  const queuedMessages = useInteractionStore((s) => s.queuedMessages);
+  const pendingPlan = useInteractionStore((s) => s.pendingPlan);
+  const pendingPlanAgentId = useInteractionStore((s) => s.pendingPlanAgentId);
+  const pendingAskUser = useInteractionStore((s) => s.pendingAskUser);
+  const activePlan = useInteractionStore((s) => s.activePlan);
   const verboseMode = useUiStore((s) => s.verboseMode);
   const overlay = useUiStore((s) => s.overlay);
   const modelPickerOpen = useUiStore((s) => s.modelPickerOpen);
@@ -76,7 +77,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     sessionId: effectiveSessionId,
     onParseError: () => {
       useChatStore.getState().fetchSessionState();
-      useAgentStore.getState().fetchAgentRuns();
+      useServerStore.getState().fetchAgentRuns();
     },
   });
 
@@ -100,7 +101,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
         const saveResp = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
         if (saveResp.ok) {
-          useAgentStore.setState({ defaultModels: newDefaults });
+          useServerStore.setState({ defaultModels: newDefaults });
           useUiStore.getState().setModelPickerOpen(false);
           useUiStore.getState().setOverlay(`Switched to: \`${modelId}\``);
         }
@@ -119,15 +120,15 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       projectRoot={effectiveRoot}
       sessionId={effectiveSessionId}
       selectedAgent={selectedAgent}
-      setSelectedAgent={useAgentStore.getState().setSelectedAgent}
+      setSelectedAgent={useServerStore.getState().setSelectedAgent}
       skills={skills}
       agents={agents}
       mainAgents={agents}
       subagents={subagents}
       runningMainRunIds={runningMainRunIds}
       cancellingRunIds={cancellingRunIds}
-      onCancelRun={(id) => useAgentStore.getState().cancelAgentRun(id)}
-      onCancelAgentRun={(id) => useAgentStore.getState().cancelAgentRun(id)}
+      onCancelRun={(id) => useServerStore.getState().cancelAgentRun(id)}
+      onCancelAgentRun={(id) => useServerStore.getState().cancelAgentRun(id)}
       isRunning={isRunning}
       onSendMessage={sendChatMessage}
       activePlan={activePlan}

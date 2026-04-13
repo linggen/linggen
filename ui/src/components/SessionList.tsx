@@ -12,8 +12,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission } from '../types';
-import { useProjectStore } from '../stores/projectStore';
-import { useAgentStore } from '../stores/agentStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { useServerStore } from '../stores/serverStore';
 import { useUiStore } from '../stores/uiStore';
 
 // ---------------------------------------------------------------------------
@@ -96,9 +96,9 @@ export const SessionList: React.FC<{
   /** When provided, overrides the sessions from the store (used by consumer mode to filter). */
   filterSessions?: SessionInfo[];
 }> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions }) => {
-  const storeSessions = useProjectStore((s) => s.allSessions);
+  const storeSessions = useSessionStore((s) => s.allSessions);
   const allSessions = filterSessions ?? storeSessions;
-  const agentStatus = useAgentStore((s) => s.agentStatus);
+  const agentStatus = useServerStore((s) => s.agentStatus);
   const [filter, setFilter] = useState<CreatorFilter>('all');
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -167,7 +167,7 @@ export const SessionList: React.FC<{
     try {
       await fetch(`/api/missions/${missionId}/trigger`, { method: 'POST' });
       // Refresh sessions to show the new mission session
-      setTimeout(() => useProjectStore.getState().fetchAllSessions(), 1000);
+      setTimeout(() => useSessionStore.getState().fetchAllSessions(), 1000);
     } catch (e) {
       console.error('Failed to trigger mission:', e);
     } finally {
@@ -194,7 +194,7 @@ export const SessionList: React.FC<{
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/5">
         <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Sessions</span>
         <div className="flex items-center gap-1">
-          <button onClick={() => { useProjectStore.getState().fetchAllSessions(); }}
+          <button onClick={() => { useSessionStore.getState().fetchAllSessions(); }}
             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
             title="Refresh sessions">
             <RefreshCw size={13} />

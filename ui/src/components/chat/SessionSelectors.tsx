@@ -3,17 +3,18 @@
  * Extracted from ChatPanel.tsx.
  */
 import React from 'react';
-import { useAgentStore } from '../../stores/agentStore';
+import { useServerStore } from '../../stores/serverStore';
 import { useUiStore } from '../../stores/uiStore';
-import { useProjectStore } from '../../stores/projectStore';
+import { useUserStore } from '../../stores/userStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
 
 const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
 /** Compact context usage display for the session top bar. */
 export const SessionStats: React.FC = () => {
-  const sessionId = useProjectStore((s) => s.activeSessionId) || '';
-  const ctx = useAgentStore((s) => s.agentContext[sessionId]);
+  const sessionId = useSessionStore((s) => s.activeSessionId) || '';
+  const ctx = useServerStore((s) => s.agentContext[sessionId]);
 
   const tokens = ctx?.tokens || 0;
   const limit = ctx?.tokenLimit && ctx.tokenLimit > 0 ? ctx.tokenLimit : 0;
@@ -31,12 +32,12 @@ export const SessionStats: React.FC = () => {
 
 /** Compact per-session model selector shown in the run bar. */
 export const SessionModelSelector: React.FC = () => {
-  const models = useAgentStore((s) => s.models);
-  const defaultModels = useAgentStore((s) => s.defaultModels);
+  const models = useServerStore((s) => s.models);
+  const defaultModels = useServerStore((s) => s.defaultModels);
   const sessionModel = useUiStore((s) => s.sessionModel);
   const setSessionModel = useUiStore((s) => s.setSessionModel);
-  const sessionId = useProjectStore((s) => s.activeSessionId);
-  const selectedProjectRoot = useProjectStore((s) => s.selectedProjectRoot);
+  const sessionId = useSessionStore((s) => s.activeSessionId);
+  const selectedProjectRoot = useSessionStore((s) => s.selectedProjectRoot);
 
   const defaultLabel = defaultModels.length > 0 ? defaultModels[0] : 'default';
 
@@ -44,14 +45,14 @@ export const SessionModelSelector: React.FC = () => {
     const value = e.target.value || null;
     setSessionModel(value);
     if (sessionId) {
-      const ps = useProjectStore.getState();
+      const ps = useSessionStore.getState();
       const updated = ps.allSessions.map((s) =>
         s.id === sessionId ? { ...s, model_id: value } : s
       );
       const updatedSessions = ps.sessions.map((s) =>
         s.id === sessionId ? { ...s, model_id: value } : s
       );
-      useProjectStore.setState({ allSessions: updated, sessions: updatedSessions });
+      useSessionStore.setState({ allSessions: updated, sessions: updatedSessions });
       fetch('/api/sessions', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -87,7 +88,8 @@ export const SessionModeSelector: React.FC = () => {
   const sessionMode = useUiStore((s) => s.sessionMode);
   const setSessionMode = useUiStore((s) => s.setSessionMode);
   const sessionZone = useUiStore((s) => s.sessionZone);
-  const sessionId = useProjectStore((s) => s.activeSessionId);
+  const userPermission = useUserStore((s) => s.userPermission);
+  const sessionId = useSessionStore((s) => s.activeSessionId);
 
   const modes = [
     { value: 'read', label: 'read', color: 'text-emerald-600 dark:text-emerald-400' },
@@ -97,12 +99,25 @@ export const SessionModeSelector: React.FC = () => {
 
   const isSystemZone = sessionZone === 'system';
 
+  // Non-admin users: show permission as read-only badge
+  if (userPermission !== 'admin') {
+    const current = modes.find((m) => m.value === (sessionMode || userPermission));
+    return (
+      <span
+        className={`text-[11px] border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 font-semibold bg-slate-50 dark:bg-black/30 ${current?.color || 'text-slate-400'}`}
+        title={`Permission: ${userPermission}`}
+      >
+        {sessionMode || userPermission}
+      </span>
+    );
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setSessionMode(value);
     suppressPermissionSync();
     if (sessionId) {
-      const sessionMeta = useProjectStore.getState().allSessions.find((s) => s.id === sessionId);
+      const sessionMeta = useSessionStore.getState().allSessions.find((s) => s.id === sessionId);
       const cwd = sessionMeta?.cwd || sessionMeta?.project || '~/';
       fetch('/api/sessions/permission', {
         method: 'PATCH',

@@ -218,6 +218,7 @@ pub(crate) async fn get_workspace_state(
 
     let mapped_messages: Vec<(crate::state_fs::StateFile, String)> = messages
         .into_iter()
+        .filter(|m| !m.content.contains("[HIDDEN]"))
         .filter_map(|m| {
             let cleaned = sanitize_message_for_ui(&m.from_id, &m.content)?;
             Some((

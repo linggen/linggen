@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Copy, Check, Trash2, RefreshCw, Users, Shield } from 'lucide-react';
 import type { SkillInfoFull } from '../types';
 
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -163,9 +164,11 @@ export const SharingTab: React.FC = () => {
       if (data.room) {
         setRoom(data.room);
         setMembers(data.members || []);
+        // Room name is now pushed via page_state from server
       } else {
         setRoom(null);
         setMembers([]);
+        // Room name cleared via page_state
       }
     } catch { /* ignore */ } finally {
       setLoading(false);
