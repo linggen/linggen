@@ -76,7 +76,7 @@ export const SessionModelSelector: React.FC = () => {
       <option value="">Default ({defaultLabel})</option>
       {models.filter((m) => !defaultModels.includes(m.id)).map((m) => (
         <option key={m.id} value={m.id}>
-          {m.id}{m.provided_by ? ` (By ${m.provided_by})` : ''}
+          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}
         </option>
       ))}
     </select>

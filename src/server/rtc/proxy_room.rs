@@ -223,7 +223,9 @@ pub async fn connect_proxy_room(
     }
 
     // Register new room's models
-    let registered_ids = new_mm.register_proxy_models(proxy_client.clone(), models, owner_name.clone());
+    // Use room_name for display (e.g. "My Room:gpt-5.4"), fall back to owner_name
+    let display_name = room_name.clone().or_else(|| owner_name.clone());
+    let registered_ids = new_mm.register_proxy_models(proxy_client.clone(), models, display_name);
 
     *model_lock = Arc::new(new_mm);
     drop(model_lock);
