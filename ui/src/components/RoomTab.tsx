@@ -702,8 +702,14 @@ export const RoomTab: React.FC = () => {
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 mb-1">Budget</label>
                     <BudgetInput
-                      value={room.token_budget_daily}
-                      onChange={val => { if (val !== room.token_budget_daily) updateRoom({ token_budget_daily: val }); }}
+                      value={localTokenUsage?.room_budget ?? room.token_budget_daily}
+                      onChange={val => {
+                        fetch('/api/room-config', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ token_budget_room_daily: val }),
+                        }).then(() => fetchRoom());
+                      }}
                       className="w-full px-2 py-1.5 bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-white/10 rounded text-xs outline-none"
                     />
                   </div>

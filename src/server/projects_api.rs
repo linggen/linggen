@@ -1295,6 +1295,12 @@ pub(crate) async fn update_room_config(
     if let Some(v) = body.get("auto_connect") {
         config.auto_connect = v.as_bool().unwrap_or(true);
     }
+    if let Some(v) = body.get("token_budget_room_daily") {
+        config.token_budget_room_daily = v.as_i64();
+    }
+    if let Some(v) = body.get("token_budget_consumer_daily") {
+        config.token_budget_consumer_daily = v.as_i64();
+    }
     if let Err(e) = crate::server::rtc::room_config::save_room_config(&config) {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("{e}") }))).into_response();
     }

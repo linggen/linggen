@@ -238,6 +238,7 @@ pub async fn connect_proxy_room(
     ).await;
 
     info!("Proxy room models registered successfully");
+    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
 
     // Watch for disconnect — auto-cleanup when proxy connection drops
     let iid = instance_id.to_string();
@@ -259,6 +260,7 @@ pub async fn disconnect_proxy_room_by_instance(state: Arc<ServerState>, instance
         Some(_) => {
             // Rebuild manager with remaining rooms
             rebuild_model_manager(&state).await;
+            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
             info!("Proxy room models removed (instance: {instance_id})");
         }
         None => {
