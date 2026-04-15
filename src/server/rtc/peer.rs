@@ -111,8 +111,14 @@ async fn run_peer(
     let mut buf = vec![0u8; 65536];
     let mut control_channel_id = None;
     let mut inference_channel_id: Option<str0m::channel::ChannelId> = None;
-    // Track token usage for proxy room consumers with budgets (shared with spawned tasks)
+    // Per-peer token counter — synced with persistent store for consumers.
     let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // Load existing usage from persistent store for this consumer
+    if user_ctx.is_consumer {
+        let store = state.token_usage.lock().await;
+        let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
+        tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
+    }
     let mut session_channels: HashMap<String, str0m::channel::ChannelId> = HashMap::new();
     let mut channel_sessions: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
     // Buffer events for sessions whose data channels aren't open yet.
@@ -360,14 +366,16 @@ async fn run_peer(
                                     // Room chat from proxy consumer — broadcast to all local peers
                                     let chat_text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                     if !chat_text.is_empty() && chat_text.len() <= 2000 {
-                                        let sender_name = user_ctx.user_name.as_deref()
-                                            .or_else(|| msg.get("sender_name").and_then(|v| v.as_str()))
+                                        let sender_name = msg.get("sender_name").and_then(|v| v.as_str())
+                                            .or(user_ctx.user_name.as_deref())
                                             .unwrap_or(&user_ctx.user_id)
                                             .chars().take(64).collect();
+                                        let avatar_url = msg.get("avatar_url").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                            .or_else(|| user_ctx.avatar_url.clone());
                                         let _ = state.events_tx.send(crate::server::ServerEvent::RoomChat {
                                             sender_id: user_ctx.user_id.clone(),
                                             sender_name,
-                                            avatar_url: user_ctx.avatar_url.clone(),
+                                            avatar_url,
                                             text: chat_text,
                                         });
                                     }
@@ -801,11 +809,17 @@ async fn process_inference_request(
         }
 
         "inference" => {
-            // Check token budget
-            if let Some(budget) = user_ctx.token_budget_daily {
-                if tokens_used.load(std::sync::atomic::Ordering::Relaxed) >= budget {
+            // Check token budget (persistent store: room-level + per-consumer)
+            {
+                let room_cfg = super::room_config::load_room_config();
+                let mut store = state.token_usage.lock().await;
+                if !store.check_budget(
+                    &user_ctx.user_id,
+                    room_cfg.token_budget_room_daily,
+                    room_cfg.token_budget_consumer_daily.or(user_ctx.token_budget_daily),
+                ) {
                     let _ = tx.send((rid.clone(), cid, serde_json::json!({
-                        "error": "Token budget exhausted"
+                        "error": "Token budget exhausted for today"
                     }))).await;
                     return;
                 }
@@ -877,9 +891,10 @@ async fn process_inference_request(
                         serde_json::json!({ "chunk": { "type": "token", "text": text } })
                     }
                     Ok(crate::agent_manager::models::StreamChunk::Usage(usage)) => {
-                        // Track token usage for budget enforcement
+                        // Track token usage for budget enforcement (in-memory + persistent)
                         if let Some(total) = usage.total_tokens {
                             tokens_used.fetch_add(total as i64, std::sync::atomic::Ordering::Relaxed);
+                            state.token_usage.lock().await.record_usage(&user_ctx.user_id, total as i64);
                         }
                         serde_json::json!({ "chunk": { "type": "usage",
                             "prompt_tokens": usage.prompt_tokens,

@@ -90,6 +90,8 @@ pub struct ServerState {
     pub user_bash_cwd: Arc<Mutex<HashMap<String, std::path::PathBuf>>>,
     /// Tracks active proxy room connections (per-room model tracking).
     pub proxy_connections: Arc<rtc::proxy_room::ProxyRoomConnections>,
+    /// Persistent token usage for proxy room budget enforcement.
+    pub token_usage: Arc<tokio::sync::Mutex<rtc::token_store::TokenUsageStore>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1181,7 +1183,19 @@ async fn prepare_server(
         whip_token: uuid::Uuid::new_v4().to_string(),
         user_bash_cwd: Arc::new(Mutex::new(HashMap::new())),
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
+        token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
     });
+
+    // Flush token usage to disk every 30 seconds.
+    {
+        let usage = state.token_usage.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                usage.lock().await.flush();
+            }
+        });
+    }
 
     // Bridge internal AgentManager events to the UI (broadcast channel → WebRTC).
     {

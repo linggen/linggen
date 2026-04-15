@@ -13,6 +13,7 @@ pub(crate) mod page_state;
 pub mod proxy_client;
 pub mod proxy_room;
 pub mod relay;
+pub mod token_store;
 pub mod room_config;
 
 /// User-level permission ceiling — the maximum level this user can operate at.

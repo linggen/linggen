@@ -40,6 +40,16 @@ pub struct RoomConfig {
     /// Auto-connect to room on linggen startup.
     #[serde(default = "default_true")]
     pub auto_connect: bool,
+
+    /// Daily token budget for the entire room (all consumers combined).
+    /// None = unlimited.
+    #[serde(default)]
+    pub token_budget_room_daily: Option<i64>,
+
+    /// Daily token budget per individual consumer.
+    /// None = unlimited (still subject to room budget).
+    #[serde(default)]
+    pub token_budget_consumer_daily: Option<i64>,
 }
 
 fn default_true() -> bool { true }
@@ -52,6 +62,8 @@ impl Default for RoomConfig {
             allowed_skills: Vec::new(),
             room_enabled: true,
             auto_connect: true,
+            token_budget_room_daily: None,
+            token_budget_consumer_daily: None,
         }
     }
 }
