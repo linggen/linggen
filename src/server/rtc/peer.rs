@@ -437,6 +437,10 @@ async fn run_peer(
             // Forward server events to the appropriate session data channel
             result = events_rx.recv() => {
                 match result {
+                    Ok(crate::server::ServerEvent::RoomDisabled) if user_ctx.is_consumer => {
+                        tracing::info!("Room disabled by owner — disconnecting consumer peer");
+                        return Ok(());
+                    }
                     Ok(event) => {
                         let mut filter = EventFilter {
                             session_ids: &mut user_session_ids,

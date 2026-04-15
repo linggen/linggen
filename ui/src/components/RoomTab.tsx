@@ -36,6 +36,7 @@ interface JoinedRoom {
   consumer_type: string;
   owner_name: string;
   online: boolean;
+  status: string;
   token_budget_daily: number | null;
 }
 
@@ -153,8 +154,9 @@ const permBadge: Record<string, string> = {
   admin: 'bg-red-500/10 text-red-500 dark:text-red-400',
 };
 
-const onlineDot = (online: boolean) =>
-  `w-1.5 h-1.5 rounded-full ${online ? 'bg-green-500' : 'bg-slate-400'}`;
+const statusDot = (online: boolean, status?: string) =>
+  `w-1.5 h-1.5 rounded-full ${status === 'disabled' ? 'bg-amber-500' : online ? 'bg-green-500' : 'bg-slate-400'}`;
+const onlineDot = (online: boolean) => statusDot(online);
 
 // ---------------------------------------------------------------------------
 // Component
@@ -473,13 +475,7 @@ export const RoomTab: React.FC = () => {
   const leaveRoom = async (roomId: string, instanceId: string) => {
     if (!confirm('Leave this room?')) return;
     try {
-      // Leave room first — if this fails, don't disconnect proxy
-      const resp = await fetch(`/api/rooms/${roomId}/leave`, { method: 'DELETE' });
-      if (!resp.ok) {
-        setError('Failed to leave room');
-        return;
-      }
-      // Then disconnect proxy models if connected
+      // Disconnect proxy FIRST so no in-flight offers hit the relay after membership is removed
       const conn = proxyConnections.find(c => c.instance_id === instanceId);
       if (conn) {
         await fetch('/api/proxy/disconnect', {
@@ -487,6 +483,12 @@ export const RoomTab: React.FC = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ instance_id: instanceId }),
         });
+      }
+      // Then remove room membership
+      const resp = await fetch(`/api/rooms/${roomId}/leave`, { method: 'DELETE' });
+      if (!resp.ok) {
+        setError('Failed to leave room');
+        return;
       }
     } catch { /* ignore */ } finally {
       fetchJoinedRooms();
@@ -508,12 +510,13 @@ export const RoomTab: React.FC = () => {
         setError(data.error || 'Failed to join');
         return;
       }
-      // Auto-connect after joining (join response includes instance_id + owner_name)
-      if (data.instance_id) {
-        await connectProxyRoom(data.instance_id, data.owner_name || '', data.room_name || '');
-      }
+      // Refresh room lists immediately so the UI updates before slow WebRTC connect
       fetchJoinedRooms();
       fetchPublicRooms();
+      // Auto-connect in background — don't block UI
+      if (data.instance_id) {
+        connectProxyRoom(data.instance_id, data.owner_name || '', data.room_name || '');
+      }
     } catch (e: any) { setError(e.message); } finally { setJoining(false); }
   };
 
@@ -537,12 +540,13 @@ export const RoomTab: React.FC = () => {
         return;
       }
       setInviteInput('');
-      // Auto-connect
-      if (data.instance_id) {
-        await connectProxyRoom(data.instance_id, data.owner_name || '', data.room_name || '');
-      }
+      // Refresh room lists immediately so the UI updates before slow WebRTC connect
       fetchJoinedRooms();
       fetchPublicRooms();
+      // Auto-connect in background — don't block UI
+      if (data.instance_id) {
+        connectProxyRoom(data.instance_id, data.owner_name || '', data.room_name || '');
+      }
     } catch (e: any) { setError(e.message); } finally { setJoining(false); }
   };
 
@@ -902,12 +906,15 @@ export const RoomTab: React.FC = () => {
                   <div key={jr.id} className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-white/5 bg-white dark:bg-white/[0.02] space-y-1.5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className={onlineDot(jr.online)} />
+                        <div className={statusDot(jr.online, jr.status)} />
                         <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{jr.name}</span>
                         <span className="text-[10px] text-slate-500 shrink-0">by {jr.owner_name}</span>
+                        {jr.status === 'disabled' && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold">Disabled</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {jr.online && !isConnected && (
+                        {jr.status !== 'disabled' && jr.online && !isConnected && (
                           <button
                             onClick={() => connectProxyRoom(jr.instance_id, jr.owner_name, jr.name)}
                             className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-blue-500 bg-blue-500/10 hover:bg-blue-500/20 rounded transition-colors"
@@ -943,10 +950,13 @@ export const RoomTab: React.FC = () => {
                         ))}
                       </div>
                     )}
-                    {!isConnected && !jr.online && (
+                    {jr.status === 'disabled' && (
+                      <p className="text-[9px] text-amber-500">Room disabled by owner</p>
+                    )}
+                    {jr.status !== 'disabled' && !isConnected && !jr.online && (
                       <p className="text-[9px] text-slate-400">Owner offline</p>
                     )}
-                    {!isConnected && jr.online && (
+                    {jr.status !== 'disabled' && !isConnected && jr.online && (
                       <p className="text-[9px] text-slate-400">Click Connect to fetch models</p>
                     )}
                   </div>

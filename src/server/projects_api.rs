@@ -1259,10 +1259,13 @@ pub(crate) async fn get_room_config() -> impl IntoResponse {
 
 /// POST /api/room-config — update local room config (shared models).
 pub(crate) async fn update_room_config(
+    State(state): State<Arc<ServerState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // Load current config as base, then merge incoming fields
     let mut config = crate::server::rtc::room_config::load_room_config();
+    let was_enabled = config.room_enabled;
+
     if let Some(v) = body.get("shared_models") {
         config.shared_models = serde_json::from_value(v.clone()).unwrap_or_default();
     }
@@ -1278,10 +1281,35 @@ pub(crate) async fn update_room_config(
     if let Some(v) = body.get("auto_connect") {
         config.auto_connect = v.as_bool().unwrap_or(true);
     }
-    match crate::server::rtc::room_config::save_room_config(&config) {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("{e}") }))).into_response(),
+    if let Err(e) = crate::server::rtc::room_config::save_room_config(&config) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("{e}") }))).into_response();
     }
+
+    // Sync room status to linggen.dev DB
+    let room_enabled_changed = was_enabled != config.room_enabled;
+    if room_enabled_changed {
+        let status = if config.room_enabled { "available" } else { "disabled" };
+        if let Some(remote) = crate::cli::login::load_remote_config() {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let _ = client
+                .patch(format!("{}/api/rooms", remote.relay_url))
+                .bearer_auth(&remote.api_token)
+                .json(&serde_json::json!({ "status": status }))
+                .send()
+                .await;
+        }
+    }
+
+    // If room was just disabled, kick all consumer peers and disconnect proxy rooms
+    if was_enabled && !config.room_enabled {
+        let _ = state.events_tx.send(crate::server::ServerEvent::RoomDisabled);
+        crate::server::rtc::proxy_room::disconnect_all_proxy_rooms(state).await;
+    }
+
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// POST /api/proxy/connect — connect to a proxy room as a linggen consumer.

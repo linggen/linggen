@@ -336,6 +336,8 @@ pub enum ServerEvent {
         avatar_url: Option<String>,
         text: String,
     },
+    /// Owner disabled the room — all consumer peers should disconnect.
+    RoomDisabled,
 }
 
 impl ServerEvent {
@@ -1041,6 +1043,8 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
                 "text": text,
             })),
         }),
+        // RoomDisabled is handled directly in peer.rs — no UI event needed.
+        ServerEvent::RoomDisabled => None,
     }
 }
 
