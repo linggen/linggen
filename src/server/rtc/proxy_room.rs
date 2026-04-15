@@ -173,6 +173,7 @@ pub async fn connect_proxy_room(
         &config.relay_url,
         instance_id,
         &config.api_token,
+        Some(state.events_tx.clone()),
     ).await?;
 
     info!("WebRTC connection established to proxy room");

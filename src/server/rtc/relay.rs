@@ -54,8 +54,17 @@ async fn relay_supervisor(state: Arc<ServerState>) {
             }
         }
 
-        let config = config.unwrap();
+        let mut config = config.unwrap();
         last_token = Some(config.api_token.clone());
+
+        // Backfill user profile if missing from old logins
+        if config.user_name.is_none() || config.avatar_url.is_none() || config.user_id.is_none() {
+            backfill_user_profile(&config).await;
+            // Reload config after backfill
+            if let Some(updated) = load_remote_config() {
+                config = updated;
+            }
+        }
 
         // Run heartbeat and offer polling until auth fails or config changes
         let cfg1 = config.clone();
@@ -74,6 +83,41 @@ async fn relay_supervisor(state: Arc<ServerState>) {
         // One of the tasks exited (likely 401). Wait a bit, then re-check config.
         info!("Relay tasks stopped — will re-check credentials in 30s");
         tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
+/// Fetch user profile from relay and update remote.toml if fields are missing.
+async fn backfill_user_profile(config: &RemoteConfig) {
+    let client = build_relay_client();
+    let url = format!("{}/api/instances", config.relay_url);
+    match client
+        .post(&url)
+        .bearer_auth(&config.api_token)
+        .json(&serde_json::json!({ "instance_id": config.instance_id, "name": config.instance_name }))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                let user_id = data.get("user_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let user_name = data.get("user_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let avatar_url = data.get("avatar_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                if user_name.is_some() || avatar_url.is_some() || user_id.is_some() {
+                    let mut updated = config.clone();
+                    if updated.user_id.is_none() { updated.user_id = user_id; }
+                    if updated.user_name.is_none() { updated.user_name = user_name; }
+                    if updated.avatar_url.is_none() { updated.avatar_url = avatar_url; }
+                    if let Ok(toml_str) = toml::to_string_pretty(&updated) {
+                        let path = crate::paths::linggen_home().join("remote.toml");
+                        if std::fs::write(&path, &toml_str).is_ok() {
+                            info!("Backfilled user profile in remote.toml");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(resp) => { debug!("Profile backfill skipped: {}", resp.status()); }
+        Err(e) => { debug!("Profile backfill error: {e}"); }
     }
 }
 

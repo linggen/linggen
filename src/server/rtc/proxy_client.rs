@@ -40,6 +40,7 @@ pub async fn connect_to_room(
     relay_url: &str,
     instance_id: &str,
     api_token: &str,
+    events_tx: Option<tokio::sync::broadcast::Sender<crate::server::ServerEvent>>,
 ) -> Result<ProxyConnection> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -128,10 +129,12 @@ pub async fn connect_to_room(
     let (request_tx, mut request_rx) = mpsc::channel::<String>(32);
     let (response_tx, response_rx) = mpsc::channel::<String>(256);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut events_rx = events_tx.as_ref().map(|tx| tx.subscribe());
+    let events_broadcast_tx = events_tx.clone();
 
     // Spawn the peer connection event loop
     tokio::spawn(async move {
-        run_proxy_client_loop(&mut rtc, &socket, &mut request_rx, &response_tx, Some(ready_tx)).await;
+        run_proxy_client_loop(&mut rtc, &socket, &mut request_rx, &response_tx, Some(ready_tx), &mut events_rx, events_broadcast_tx).await;
         info!("Proxy client peer connection closed");
     });
 
@@ -155,10 +158,18 @@ async fn run_proxy_client_loop(
     request_rx: &mut mpsc::Receiver<String>,
     response_tx: &mpsc::Sender<String>,
     ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    events_rx: &mut Option<tokio::sync::broadcast::Receiver<crate::server::ServerEvent>>,
+    events_broadcast_tx: Option<tokio::sync::broadcast::Sender<crate::server::ServerEvent>>,
 ) {
     let mut buf = vec![0u8; 65536];
     let mut inference_channel: Option<str0m::channel::ChannelId> = None;
     let mut ready_tx = ready_tx;
+    // Local user_id for filtering — only forward our own room_chat events
+    let local_user_id = crate::cli::login::load_remote_config()
+        .and_then(|c| c.user_id)
+        .unwrap_or_else(|| "__local__".to_string());
+    // Track sender_ids received from the owner to avoid echoing them back
+    let mut remote_sender_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
         // Drain str0m outputs (STUN, DTLS, SCTP packets)
@@ -185,6 +196,29 @@ async fn run_proxy_client_loop(
                     }
                     Event::ChannelData(data) => {
                         if let Ok(text) = std::str::from_utf8(&data.data) {
+                            // Check if this is a room_chat from the owner — broadcast locally
+                            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text) {
+                                if msg.get("type").and_then(|v| v.as_str()) == Some("room_chat") {
+                                    if let Some(chat_data) = msg.get("data") {
+                                        let sender_id = chat_data.get("sender_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        // Skip echoes — don't re-broadcast our own messages
+                                        if sender_id != local_user_id {
+                                            remote_sender_ids.insert(sender_id.clone());
+                                            let sender_name = chat_data.get("sender_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                            let avatar_url = chat_data.get("avatar_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            let chat_text = chat_data.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                            if !chat_text.is_empty() {
+                                                if let Some(ref etx) = events_broadcast_tx {
+                                                    let _ = etx.send(crate::server::ServerEvent::RoomChat {
+                                                        sender_id, sender_name, avatar_url, text: chat_text,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
                             let _ = response_tx.send(text.to_string()).await;
                         }
                     }
@@ -224,6 +258,33 @@ async fn run_proxy_client_loop(
                     }
                 } else {
                     tracing::warn!("Inference channel not open yet, dropping request");
+                }
+            }
+
+            // Forward local room_chat events to the owner via inference channel
+            result = async {
+                match events_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Ok(crate::server::ServerEvent::RoomChat { sender_id, sender_name, text, .. }) = result {
+                    // Only forward messages from the local user to the owner.
+                    // Skip: owner's messages (echoed back), other remote senders.
+                    if sender_id != local_user_id {
+                        continue;
+                    }
+                    if let Some(cid) = inference_channel {
+                        let msg = serde_json::json!({
+                            "type": "room_chat",
+                            "text": text,
+                            "sender_name": sender_name,
+                            "sender_id": sender_id,
+                        });
+                        if let Some(mut ch) = rtc.channel(cid) {
+                            let _ = ch.write(false, msg.to_string().as_bytes());
+                        }
+                    }
                 }
             }
 

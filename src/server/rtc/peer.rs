@@ -337,7 +337,7 @@ async fn run_peer(
                                 }
                             }
                         } else if Some(data.id) == inference_channel_id {
-                            // Inference channel: proxy client sends list_models / inference requests
+                            // Inference channel: proxy client sends list_models / inference / room_chat
                             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
                                 let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 let request_id = msg.get("request_id").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -356,6 +356,21 @@ async fn run_peer(
                                     tokio::spawn(async move {
                                         process_inference_request(&req, &st, &ctx_clone, &tok, &tx, cid).await;
                                     });
+                                } else if msg_type == "room_chat" {
+                                    // Room chat from proxy consumer — broadcast to all local peers
+                                    let chat_text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    if !chat_text.is_empty() && chat_text.len() <= 2000 {
+                                        let sender_name = user_ctx.user_name.as_deref()
+                                            .or_else(|| msg.get("sender_name").and_then(|v| v.as_str()))
+                                            .unwrap_or(&user_ctx.user_id)
+                                            .chars().take(64).collect();
+                                        let _ = state.events_tx.send(crate::server::ServerEvent::RoomChat {
+                                            sender_id: user_ctx.user_id.clone(),
+                                            sender_name,
+                                            avatar_url: user_ctx.avatar_url.clone(),
+                                            text: chat_text,
+                                        });
+                                    }
                                 } else {
                                     tracing::warn!("Unknown inference channel message type: {msg_type}");
                                 }
@@ -480,6 +495,7 @@ async fn run_peer(
                         };
                         forward_event_to_channels(
                             &event, &session_channels, control_channel_id,
+                            inference_channel_id,
                             &mut pending_events, &mut pending_dc_writes,
                             &state, &mut dirty_flags, &mut filter,
                         );
@@ -1103,6 +1119,7 @@ fn forward_event_to_channels(
     event: &crate::server::ServerEvent,
     session_channels: &HashMap<String, str0m::channel::ChannelId>,
     control_channel_id: Option<str0m::channel::ChannelId>,
+    inference_channel_id: Option<str0m::channel::ChannelId>,
     pending_events: &mut HashMap<String, (Instant, Vec<String>)>,
     pending_dc_writes: &mut std::collections::VecDeque<(str0m::channel::ChannelId, String)>,
     state: &Arc<ServerState>,
@@ -1172,7 +1189,7 @@ fn forward_event_to_channels(
         Some("global") | None => {
             if let Some(cid) = control_channel_id {
                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                    pending_dc_writes.push_back((cid, json));
+                    pending_dc_writes.push_back((cid, json.clone()));
                 }
             }
         }
@@ -1193,9 +1210,25 @@ fn forward_event_to_channels(
             if is_broadcast {
                 if let Some(cid) = control_channel_id {
                     if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                        pending_dc_writes.push_back((cid, json));
+                        pending_dc_writes.push_back((cid, json.clone()));
                     }
                 }
+            }
+        }
+    }
+
+    // Forward room_chat to inference channel — only on the OWNER side
+    // (owner → consumer direction). Consumer → owner is handled by proxy_client loop.
+    // We detect the owner side by checking: inference_channel_id is set (proxy peer)
+    // AND control_channel_id is NOT set (proxy peers don't have a control channel).
+    if ui_msg.kind == "room_chat" && inference_channel_id.is_some() && control_channel_id.is_none() {
+        if let Some(cid) = inference_channel_id {
+            let chat_msg = serde_json::json!({
+                "type": "room_chat",
+                "data": ui_msg.data,
+            });
+            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                pending_dc_writes.push_back((cid, chat_msg.to_string()));
             }
         }
     }
