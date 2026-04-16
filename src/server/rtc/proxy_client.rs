@@ -97,10 +97,10 @@ pub async fn connect_to_room(
         .to_string();
     info!("Offer posted, nonce: {nonce}");
 
-    // Poll for answer (up to 30 seconds)
+    // Poll for answer (up to 60 seconds)
     let answer_url = format!("{relay_url}/api/signaling/{instance_id}/answer?nonce={nonce}");
     let mut answer_sdp = String::new();
-    for _ in 0..60 {
+    for _ in 0..120 {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let resp = client
             .get(&answer_url)
@@ -117,7 +117,7 @@ pub async fn connect_to_room(
         }
     }
     if answer_sdp.is_empty() {
-        anyhow::bail!("Timed out waiting for SDP answer from owner");
+        anyhow::bail!("Timed out waiting for SDP answer from owner (60s)");
     }
 
     // Accept the answer
