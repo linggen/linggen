@@ -201,9 +201,15 @@ impl Tools {
                         args.skill, args.skill
                     );
                 }
+                // Replace $SKILL_DIR in content so the model sees the actual path.
+                let resolved_content = if let Some(ref dir) = skill.skill_dir {
+                    skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())
+                } else {
+                    skill.content.clone()
+                };
                 let mut content = format!(
                     "<skill-name>{}</skill-name>\n\n{}\n\n{}",
-                    skill.name, skill.description, skill.content
+                    skill.name, skill.description, resolved_content
                 );
                 if let Some(ref extra_args) = args.args {
                     content.push_str(&format!("\n\nSkill arguments: {}", extra_args));

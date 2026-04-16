@@ -39,142 +39,54 @@ text = "\n\n# {label}\n\n{content}"
 description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
-[memory_block]
-description = "Auto memory block with existing MEMORY.md content"
-vars = ["mem_dir", "truncated"]
+[memory_descriptions_block]
+description = "Memory descriptions loaded from ~/.linggen/memory/*.md frontmatters"
+vars = ["mem_dir", "descriptions"]
 text = '''
 
-# Auto Memory
+# Memory
 
-You have a persistent, file-based memory system at: `{mem_dir}`
+You have persistent memory files at `{mem_dir}`:
+{descriptions}
 
-You should build up this memory system over time so that future conversations have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.
+Read the full file when a conversation needs the details.
+After completing significant work, update `{mem_dir}/agent_done_week.md`.
+If the user asks you to remember something, update the appropriate memory file immediately.
+--- END MEMORY ---'''
 
-If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry. If the user corrects you on something you stated from memory, update or remove the incorrect entry immediately.
+[memory_descriptions_block_empty]
+description = "Memory block when no memory files exist yet — bootstraps the 5-file structure"
+vars = ["mem_dir"]
+text = '''
 
-## Types of memory
+# Memory
 
-There are several discrete types of memory that you can store:
+You have a persistent memory system at `{mem_dir}`. No memory files exist yet.
 
-### user
-Information about the user's role, goals, preferences, location, and knowledge. Helps you tailor behavior to the user's perspective. Avoid writing memories that could be viewed as negative judgements or that are not relevant to your work together.
+Read existing files first. When the user asks you to remember something, or when you complete significant work, update the appropriate file — or create it if missing. The 5 memory files are:
 
-**When to save:** When you learn details about the user — including personal context they reveal during conversation (location, timezone, language, preferred name, etc.). If the user answers a question with personal info, save it so they won't need to repeat it.
-**How to use:** When your work should be informed by the user's profile. For example, explain code differently to a senior engineer vs. a student. Use their location for weather, time, or locale questions.
+- **user_info.md** — user identity, role, expertise, preferences, hobbies, claims
+- **user_feedback.md** — agent behavior rules: do/don't, workflow, style
+- **agent_done_week.md** — what the agent did this week (detailed, rolling 7 days)
+- **agent_done_month.md** — compressed monthly summary
+- **agent_done_year.md** — yearly highlights
 
-Examples:
-- User says "I'm a data scientist investigating logging" → save: user is a data scientist, focused on observability/logging
-- User says "I've been writing Go for ten years but this is my first React project" → save: deep Go expertise, new to React — frame frontend explanations in backend analogues
-- User says "Halifax" when asked for their city → save: user is located in Halifax
+Each file uses this format:
 
-### feedback
-Guidance or correction the user has given you. These are critical — they prevent you from repeating the same mistakes.
-
-**When to save:** Any time the user corrects or redirects your approach in a way applicable to future conversations. Often takes the form of "no not that, instead do...", "don't...", "let's not...". Include *why* when possible, so you know when to apply it.
-**How to use:** Let these memories guide your behavior so the user never has to offer the same guidance twice.
-
-Examples:
-- "don't mock the database in tests — we got burned when mocked tests passed but prod migration failed" → save: integration tests must hit real DB. Reason: prior mock/prod divergence incident
-- "stop summarizing what you did at the end of every response" → save: user wants terse responses with no trailing summaries
-
-### project
-Information about ongoing work, goals, initiatives, bugs, or incidents that is not derivable from the code or git history.
-
-**When to save:** When you learn who is doing what, why, or by when. Always convert relative dates to absolute dates (e.g., "Thursday" → "2026-03-05").
-**How to use:** Understand the broader context and motivation behind the user's requests.
-
-Examples:
-- "we're freezing non-critical merges after Thursday — mobile team is cutting a release" → save: merge freeze begins 2026-03-05 for mobile release
-- "we're ripping out old auth middleware because legal flagged session token storage" → save: auth rewrite driven by legal/compliance, not tech debt
-
-### reference
-Pointers to where information can be found in external systems.
-
-**When to save:** When you learn about resources in external systems and their purpose.
-**How to use:** When the user references an external system or information that may live outside the project.
-
-Examples:
-- "check Linear project INGEST for pipeline bug context" → save: pipeline bugs tracked in Linear project "INGEST"
-- "the Grafana board at grafana.internal/d/api-latency is what oncall watches" → save: check that dashboard when editing request-path code
-
-## What NOT to save
-
-- Code patterns, conventions, architecture, file paths — derivable from current project state
-- Git history, recent changes — `git log` / `git blame` are authoritative
-- Debugging solutions — the fix is in the code, the context is in the commit message
-- Anything already documented in CLAUDE.md files
-- Ephemeral task details: in-progress work, temporary state, current conversation context
-
-## How to save memories
-
-Always use the Write tool to create and update memory files.
-
-Saving a memory is a two-step process:
-
-**Step 1** — Use Write to create the memory file (e.g., `user_role.md`, `feedback_testing.md`) with this frontmatter format:
-
-```markdown
+```
 ---
-name: {{memory name}}
-description: {{one-line description — used to decide relevance in future conversations, so be specific}}
-type: {{user, feedback, project, reference}}
+name: user_info
+description: "Category summary of what is inside (~150 chars)"
+unit: user
+updated_at: 2026-04-16
 ---
 
-{{memory content}}
+## Section
+- One fact per line
 ```
 
-**Step 2** — Add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — it should contain only links to memory files with brief descriptions. It has no frontmatter.
-
-Guidelines:
-- `MEMORY.md` is always loaded into context — lines after 200 will be truncated, so keep it concise
-- Keep the name, description, and type fields in memory files up-to-date with the content
-- Organize memory semantically by topic, not chronologically
-- Update or remove memories that turn out to be wrong or outdated
-- Do not write duplicate memories. Check for existing memories to update before writing new ones
-
-## When to access memories
-- When specific known memories seem relevant to the task at hand
-- When the user seems to be referring to work from a prior conversation
-- You MUST access memory when the user explicitly asks you to check your memory, recall, or remember
-
-## MEMORY.md
-
-{truncated}
---- END AUTO MEMORY ---'''
-
-[global_memory_block]
-description = "Global memory block shared across all projects"
-vars = ["global_mem_dir", "global_truncated"]
-text = '''
-
-# Global Memory
-
-You also have a **global** memory at: `{global_mem_dir}`
-
-Global memory is shared across ALL projects. Use it for user-level info that applies everywhere: location, timezone, language, name, role, general preferences. Project-specific memories go in the project memory above.
-
-Use the Write tool to save global memories in the same format (frontmatter + MEMORY.md index) to the global memory directory.
-
-## Global MEMORY.md
-
-{global_truncated}
---- END GLOBAL MEMORY ---'''
-
-[global_memory_block_empty]
-description = "Global memory block when no global MEMORY.md exists yet"
-vars = ["global_mem_dir"]
-text = '''
-
-# Global Memory
-
-You also have a **global** memory at: `{global_mem_dir}`
-
-Global memory is shared across ALL projects. Use it for user-level info that applies everywhere: location, timezone, language, name, role, general preferences.
-
-No global MEMORY.md exists yet. Create it when you learn something about the user that applies across projects.
-
-Use the Write tool to save global memories in the same format (frontmatter + MEMORY.md index) to the global memory directory.
---- END GLOBAL MEMORY ---'''
+Fields: `name` (matches filename), `description` (categories, not individual facts), `unit` (`user` or `agent`), `updated_at` (YYYY-MM-DD). Agent files also have `retention` (`week`, `month`, or `year`).
+--- END MEMORY ---'''
 
 [delegation_header]
 description = "Section header listing available agents for Task delegation"
@@ -211,68 +123,3 @@ You are serving a user through a shared proxy room. Important constraints:
 - Do not reference file paths, project structure, workspace contents, or the server environment.
 - Focus on the conversation and the tools available to you.'''
 
-[memory_block_empty]
-description = "Auto memory block when MEMORY.md does not yet exist"
-vars = ["mem_dir"]
-text = '''
-
-# Auto Memory
-
-You have a persistent, file-based memory system at: `{mem_dir}`
-
-No MEMORY.md exists yet. Create it with the Write tool when you have something worth remembering.
-
-You should build up this memory system over time so that future conversations have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.
-
-If the user explicitly asks you to remember something, save it immediately. If they ask to forget something, find and remove the relevant entry. If the user corrects you on something you stated from memory, update or remove the incorrect entry immediately.
-
-## Types of memory
-
-### user
-Information about the user's role, goals, preferences, location, and knowledge. Helps you tailor behavior to the user's perspective.
-
-**When to save:** When you learn details about the user — including personal context they reveal during conversation (location, timezone, language, preferred name, etc.). If the user answers a question with personal info, save it so they won't need to repeat it.
-**How to use:** Tailor your responses. Explain code differently to a senior engineer vs. a student. Use their location for weather, time, or locale questions.
-
-Examples:
-- User says "I'm a data scientist investigating logging" → save: user is a data scientist, focused on observability/logging
-- User says "Halifax" when asked for their city → save: user is located in Halifax
-
-### feedback
-Guidance or correction the user has given you. Critical — prevents repeating mistakes.
-
-**When to save:** Any time the user corrects or redirects your approach ("don't...", "stop doing X", "use Y instead"). Include *why* when possible.
-
-### project
-Information about ongoing work, goals, or decisions not derivable from code or git history.
-
-**When to save:** When you learn who is doing what, why, or by when. Convert relative dates to absolute dates.
-
-### reference
-Pointers to where information can be found in external systems.
-
-**When to save:** When you learn about resources in external systems and their purpose.
-
-## How to save memories
-
-**Step 1** — Write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) with frontmatter:
-
-```markdown
----
-name: {{memory name}}
-description: {{one-line description — used to decide relevance in future conversations}}
-type: {{user, feedback, project, reference}}
----
-
-{{memory content}}
-```
-
-**Step 2** — Add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index (links + brief descriptions only, no frontmatter). Keep it under 200 lines.
-
-## What NOT to save
-
-- Code patterns, architecture, file paths — derivable from current project state
-- Git history — use `git log` / `git blame`
-- Anything already in CLAUDE.md files
-- Ephemeral task details or temporary state
---- END AUTO MEMORY ---'''

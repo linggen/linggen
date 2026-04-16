@@ -14,15 +14,15 @@ Persistent knowledge extracted from conversations. The agent remembers who the u
 
 - `session-spec.md`: system prompt assembly (layer 7 = memory).
 - `storage-spec.md`: filesystem layout (`~/.linggen/memory/`).
-- `skill-spec.md`: skill format, progressive disclosure pattern.
+- `skill-spec.md`: skill format, install hooks, app skills.
 - `mission-spec.md`: missions trigger the memory skill nightly.
 
 ## Core concept
 
 Memory has two parts:
 
-1. **Loading** (built-in) — the engine reads memory file frontmatters at server start and injects descriptions into the system prompt. Same pattern as skill discovery.
-2. **Writing** (skill + mission) — a nightly mission runs the `memory` skill, which reads the day's session files, sends them to the model, and the model updates the memory files directly.
+1. **Loading** (built-in) — the engine reads memory file frontmatters at startup and injects descriptions into the system prompt. Same pattern as skill discovery.
+2. **Writing** (skill) — a nightly mission runs the `memory` skill, which collects the day's sessions, sends them to the model one at a time, and the model updates the memory files.
 
 All memory is **global** (`~/.linggen/memory/`). No project-scoped memory. If a user says "I prefer Rust over Java" in one project, every future session should know that.
 
@@ -34,36 +34,20 @@ The split follows the same pattern as skills: **engine loads metadata, skill doe
 
 | Concern | Who | How |
 |:--------|:----|:----|
-| Read frontmatter descriptions at server start | **Engine (built-in)** | Scan `~/.linggen/memory/*.md`, parse YAML frontmatter |
+| Read frontmatter descriptions at startup | **Engine (built-in)** | Scan `~/.linggen/memory/*.md`, parse YAML frontmatter |
 | Inject descriptions into system prompt | **Engine (built-in)** | Layer 7, same as skill descriptions in layer 3 |
-| Tell agent where memory files live | **Engine (built-in)** | One line in prompt with path hint |
-| Extract facts from conversations | **Skill + Mission** | Nightly cron, model reads sessions and updates memory files |
-| Compress week → month → year | **Skill + Mission** | Same nightly run handles compression |
-| Real-time "remember this" writes | **Agent** | Uses `Write` tool directly, no special support |
-| Update frontmatter descriptions after writes | **Skill / Agent** | Writer updates `description` field after any change |
+| Bootstrap empty state | **Engine (built-in)** | If no files exist, inject template with file format so model can create them |
+| Create memory files from templates | **Skill install script** | `install.sh` copies templates from `assets/` to `~/.linggen/memory/` |
+| Create nightly mission | **Skill install script** | `install.sh` copies `assets/mission.md` to `~/.linggen/missions/memory/` |
+| Extract facts from conversations | **Skill (web app or mission)** | App collects sessions, sends each to model, model extracts and updates |
+| Compress week → month → year | **Skill** | Same extraction run handles compression |
+| Real-time "remember this" writes | **Agent** | Uses `Edit` tool directly, body only — never touches frontmatter |
 
-The engine's built-in part is minimal: read files' frontmatter, inject descriptions into prompt. All extraction intelligence lives in the skill.
+The engine's built-in part is minimal: read frontmatter, inject descriptions, handle empty state. All extraction intelligence lives in the skill.
 
-### Comparison with skill loading
+### Frontmatter is fixed
 
-| Aspect | Skills | Memory |
-|:-------|:-------|:-------|
-| Discovery path | `~/.linggen/skills/*/SKILL.md` | `~/.linggen/memory/*.md` |
-| Metadata loaded at startup | `name` + `description` | `name` + `description` |
-| Injected into system prompt | Layer 3 (available skills) | Layer 7 (memory summaries) |
-| Full content loaded | On skill invocation | On agent `Read` (on demand) |
-| Who writes the files | Skill author (human) | Memory skill (agent) |
-
-### What the engine replaces
-
-The current built-in memory system (`system-prompt.toml` memory blocks, `MEMORY.md` index, project-scoped memory, "how to save" instructions in prompt) is replaced by:
-
-- **Delete**: `memory_block`, `memory_block_empty`, `global_memory_block`, `global_memory_block_empty` templates
-- **Delete**: `MEMORY.md` index file pattern
-- **Delete**: project-scoped memory (`~/.linggen/projects/{encoded}/memory/`)
-- **Delete**: `memory_dir` per-project wiring in `agent_manager`
-- **Add**: simple frontmatter scanner for `~/.linggen/memory/*.md`
-- **Add**: one prompt template that lists memory descriptions + path hint
+Memory file frontmatter (`name`, `description`, `unit`, `updated_at`, `retention`) is defined by the templates in `skills/memory/assets/`. The model **never edits frontmatter** — only the body content below the `---` delimiter. This prevents description drift and format corruption.
 
 ## Fixed memory files (v1)
 
@@ -89,14 +73,7 @@ Past months        → agent_done_month.md  (summarized: features built, bugs fi
 Past years         → agent_done_year.md   (highlights: major milestones, architecture changes)
 ```
 
-The memory skill handles compression:
-- **Nightly**: append today's actions to `agent_done_week.md`.
-- **Weekly** (Sunday night): compress entries older than 7 days from `week` into `month`. Clear old week entries.
-- **Monthly** (1st of month): compress entries older than 30 days from `month` into `year`. Clear old month entries.
-
 ### Size guidelines
-
-Keep memory files concise — the model extracts what matters, not a raw dump.
 
 | File | Target size | Guideline |
 |:-----|:------------|:----------|
@@ -120,7 +97,7 @@ Each memory file is markdown with YAML frontmatter.
 | `updated_at` | yes | Last modified date (YYYY-MM-DD) |
 | `retention` | no | `week`, `month`, or `year` — for agent_done files, controls the compression tier |
 
-The `description` field should describe **categories**, not enumerate facts. The model uses it to decide which file to open:
+The `description` field should describe **categories**, not enumerate facts:
 
 ```yaml
 # Good — categories tell the model what's inside
@@ -128,104 +105,6 @@ description: "User personal info — identity, role, preferences, hobbies, pets,
 
 # Bad — tries to list facts, misses most of them
 description: "Liang: developer, February birthday, dark mode, hiking"
-```
-
-### Example: `user_info.md`
-
-```markdown
----
-name: user_info
-description: "User personal info — identity, role, expertise, preferences, hobbies, pets, health, claims"
-unit: user
-updated_at: 2026-04-15
----
-
-## Identity
-- Name: Liang
-- Role: sole founder and developer of Linggen
-- Expertise: Rust, React, TypeScript, distributed systems
-- Birthday: February (year unknown)
-
-## Preferences
-- Prefers concise responses, no trailing summaries
-- Dark mode everywhere
-- Rust over Java, always
-- Tabs over spaces (in personal projects)
-
-## Hobbies & interests
-- Hiking, especially mountain trails
-- Chinese fantasy novels (currently reading Fanren Xiuxian Zhuan)
-- Mechanical keyboards
-
-## Claims (user-stated, not verified)
-- Says he can fly
-- Says he once debugged a production issue in his sleep
-```
-
-### Example: `user_feedback.md`
-
-```markdown
----
-name: user_feedback
-description: "Agent behavior rules — workflow, style, communication, coding conventions, do/don't"
-unit: user
-updated_at: 2026-04-15
----
-
-## Do
-- Always run `npm run build` after changing web UI code
-- Fix root causes — trace bugs end-to-end, never hide with UI workarounds
-- Bundle refactors into single PRs — splitting is churn
-- Align features with Claude Code as reference implementation
-
-## Don't
-- No trailing summaries after responses — user reads the diff
-- Don't run `npm run build` when only Rust code changed
-- Don't add unsolicited improvements beyond what was asked
-```
-
-### Example: `agent_done_week.md`
-
-```markdown
----
-name: agent_done_week
-description: "Agent actions this week — files changed, features built, bugs fixed, deploys, decisions"
-unit: agent
-updated_at: 2026-04-15
-retention: week
----
-
-## 2026-04-15 (Tuesday)
-- Created `doc/memory-spec.md` — designed memory system as skill + mission
-- Updated CLAUDE.md doc index to include memory-spec
-
-## 2026-04-14 (Monday)
-- Refactored WebRTC signaling — extracted relay client into separate module
-- Fixed mission scheduler double-fire bug — dedup was comparing wrong timestamp
-- Deployed linggensite to CF Pages (pushed to main)
-
-## 2026-04-12 (Saturday)
-- Removed TUI transport code — WebRTC is now the only transport
-- Updated all specs to reflect WebRTC-only design
-```
-
-### Example: `agent_done_month.md`
-
-```markdown
----
-name: agent_done_month
-description: "Agent actions past months — features shipped, major fixes, architecture changes, deploys"
-unit: agent
-updated_at: 2026-04-01
-retention: month
----
-
-## March 2026
-- Shipped WebRTC Phase 2 — P2P remote access working end-to-end
-- Built mission system — cron scheduler, mission agent, run history UI
-- Redesigned permission model — session-scoped, path-aware, four modes
-- Wrote proxy-spec for decentralized AI proxy network
-- Removed SSE transport — fully replaced by WebRTC data channels
 ```
 
 ## Storage layout
@@ -245,12 +124,12 @@ Flat. Five files. No index file — the engine scans the directory and reads eac
 
 Same progressive disclosure pattern as skills.
 
-### Descriptions (loaded at server start)
+### Descriptions (loaded at startup)
 
 The engine scans `~/.linggen/memory/*.md`, parses each file's YAML frontmatter, and holds `name` + `description` in memory. On each session's system prompt assembly (layer 7), descriptions are injected:
 
 ```
-You have the following memories at ~/.linggen/memory/:
+You have persistent memory files at ~/.linggen/memory/:
 - user_info: "User personal info — identity, role, expertise, preferences, hobbies, pets, health, claims"
 - user_feedback: "Agent behavior rules — workflow, style, communication, coding conventions, do/don't"
 - agent_done_week: "Agent actions this week — files changed, features built, bugs fixed, deploys, decisions"
@@ -261,91 +140,105 @@ Read the full file when a conversation needs the details.
 After completing significant work, update agent_done_week.md.
 ```
 
-~300 tokens. Refreshed when files change on disk (same file-watch mechanism as skills).
+~300 tokens. Refreshed when files change on disk (staleness detection hashes all memory files).
 
-The description tells the model **what categories** are in each file, not individual facts. When the user asks "what's my dog's name?", the model sees "pets" in user_info's description and knows to open it.
+### Empty state
+
+If no memory files exist (first run before install), the engine injects a bootstrap template that describes the 5-file format so the model can create them on demand. Once the skill's install script runs, the templates are in place and the normal description block is used.
 
 ### Full content (loaded on demand)
 
 The agent uses `Read` to open the full memory file when the conversation needs it. No special tool — just the standard `Read` tool pointing at `~/.linggen/memory/*.md`.
 
-## Extraction: the memory skill
+## The memory skill
 
-The `memory` skill is a model-only skill (no UI, no app). It runs as a nightly mission. The extraction is simple: **send session files to the model, ask it to update the memory files.**
+The memory skill is a **web app skill** — like sys-doctor, it has a JS dashboard that orchestrates extraction and visualizes results in real-time.
 
-### Flow
+### Skill structure
 
 ```
-Mission fires at 11pm
-  → Script collects today's Claude Code sessions (~/.claude/projects/*/*.jsonl)
-  → Script outputs clean text feed of user/assistant messages
-  → Model reads the feed + current memory files
-  → Model updates the 5 memory files
-  → Model compresses week→month→year if entries are old enough
-  → Model updates frontmatter descriptions
+skills/memory/
+├── SKILL.md                    # Model instructions for extraction
+├── assets/                     # Templates — source of truth for frontmatter
+│   ├── user_info.md
+│   ├── user_feedback.md
+│   ├── agent_done_week.md
+│   ├── agent_done_month.md
+│   ├── agent_done_year.md
+│   └── mission.md              # Nightly mission definition
+└── scripts/
+    ├── install.sh              # Copies templates + mission on install
+    ├── collect_sessions.sh     # Scans CC + Linggen sessions
+    └── index.html              # Web app dashboard (future)
 ```
 
-Script does the grunt work (filesystem scanning, date filtering, JSON parsing). Model does the smart work (understanding conversations, extracting facts, writing memory).
+### Install
 
-### Cross-tool memory
+The skill declares `install: scripts/install.sh` in its frontmatter. On install, the script:
 
-The memory skill extracts from **Claude Code sessions**, not just Linggen. Linggen sessions don't need nightly extraction — the agent is present during those conversations and can write to memory in real-time. The nightly mission's value is mining CC sessions, where the user worked all day with a different tool.
+1. Creates `~/.linggen/memory/` and copies the 5 template files (skip if exist)
+2. Creates `~/.linggen/missions/memory/` and copies `mission.md` (skip if exists)
 
-Claude Code stores sessions as JSONL at `~/.claude/projects/{encoded}/*.jsonl`. The collection script (`scripts/collect_sessions.sh`) filters to today's messages and outputs a clean text feed.
+Idempotent — safe to run multiple times. Templates are the source of truth for frontmatter; existing files are never overwritten.
 
-### Context window management
+### Cross-tool session collection
 
-On a busy day, a single session's `messages.jsonl` could be large. The skill handles this naturally:
-- Process sessions **one at a time** — each session is a separate read-then-update cycle
-- If a single session is too large, the model reads it in chunks (the `Read` tool supports offset/limit)
-- The 5 memory files are small (< 200 lines each), so they always fit alongside a session
+The collection script (`scripts/collect_sessions.sh`) auto-discovers sessions from:
 
-### Extraction rules (in skill prompt)
+- **Claude Code** — `~/.claude/projects/*/*.jsonl` (ISO timestamps, content blocks)
+- **Linggen** — `~/.linggen/sessions/*/messages.jsonl` (epoch timestamps, flat strings)
 
-**For `user_info.md`** — record everything the user says about themselves:
-- Facts: name, role, birthday, location, expertise
-- Preferences: tools, languages, editors, themes
-- Hobbies, interests, opinions
-- Claims — even if implausible, record under "Claims (user-stated, not verified)"
-- Never judge, filter, or fact-check. If the user said it, record it.
+Safety guards:
+- **Self-ingestion prevention** — skips Linggen sessions with `creator: mission` to prevent the memory extraction mission from re-processing its own output.
+- **Deduplication** — Linggen sessions may already be reflected in memory (the agent was present and could have written in real-time). The model checks existing memory before adding.
 
-**For `user_feedback.md`** — record how the user wants the agent to behave:
-- Corrections ("don't do X")
-- Confirmations ("yes, keep doing that")
-- Style preferences ("be concise", "no emojis")
-- Workflow rules ("always build after UI changes")
+### Extraction flow
 
-**For `agent_done_week.md`** — record what the agent did:
-- Features designed, built, shipped
-- Bugs found and fixed
-- Files created, modified, deleted
-- Deployments
-- Decisions made and why
-- Keep it curated — significant actions only, not every tool call
+The web app (or mission runner) orchestrates extraction:
 
-### Compression rules
-
-1. **Weekly** (when week entries > 7 days old) — summarize old entries into `agent_done_month.md`. Remove detailed entries from week file.
-2. **Monthly** (when month entries > 30 days old) — summarize old entries into `agent_done_year.md`. Remove from month file.
-
-### Mission configuration
-
-The memory skill declares a mission in its frontmatter (see `skill-spec.md` → Skill missions):
-
-```yaml
-name: memory
-mission:
-  schedule: '0 23 * * *'
+```
+1. Run collect_sessions.sh → individual session files
+2. Create a skill-bound session
+3. For each session file:
+     Send session content to model
+     Model extracts facts, updates memory files via Edit
+     Dashboard shows live progress: found/skipped/merged
+4. Model runs compression (week → month → year)
+5. Dashboard shows report: changes by file, conflicts resolved, stale entries removed
 ```
 
-On `ling init` → creates `~/.linggen/missions/memory/mission.md` with prompt `/memory` → scheduler picks it up → runs nightly at 11pm. Users can edit the schedule or disable it like any other mission.
+The model receives **one session at a time** — small enough for any model size. The orchestrator (JS app or Python runner) controls the loop.
+
+### Mission modes
+
+The nightly mission supports two modes:
+
+| Mode | How it runs | Use case |
+|:-----|:-----------|:---------|
+| **agent** | Scheduler creates session, model self-orchestrates | Simple, works with capable models |
+| **script** | Scheduler runs a runner script, script calls APIs | Reliable, works with any model size |
+
+In agent mode (current), the model reads SKILL.md and follows the extraction steps using tools. In script mode (future), a Python/Node runner drives the loop — same pattern as the JS dashboard, but headless.
+
+### Web app dashboard
+
+The memory dashboard follows the same pattern as sys-doctor:
+
+- **Left panel**: dashboard widgets (profile card, behavior rules, weekly timeline, extraction progress)
+- **Right panel**: chat with the memory agent
+- **Page protocol**: model emits `<!--page {...} -->` JSON blocks, app renders widgets
+
+Dashboard views:
+- **Overview** — memory cards showing user profile, behavior rules, this week's actions, file sizes
+- **Extraction** — live progress: sessions being scanned, facts found/skipped/merged, conflicts
+- **Report** — post-extraction summary: changes by file, compression results, stale entries removed
 
 ## Real-time writes
 
-The agent can also write to memory files during a conversation — not just during nightly extraction. Two cases:
+The agent can also write to memory files during any conversation — not just during nightly extraction. Two cases:
 
-1. **User explicitly asks** — "remember that I prefer dark mode" → agent updates `user_info.md` immediately.
-2. **Agent completes significant work** — after a major feature or deploy, the agent should append to `agent_done_week.md`.
+1. **User explicitly asks** — "remember that I prefer dark mode" → agent reads existing file, edits body via `Edit` tool.
+2. **Agent completes significant work** — after a major feature or deploy, appends to `agent_done_week.md`.
 
 The nightly mission is the safety net — it catches what the agent missed in real-time.
 
@@ -354,11 +247,13 @@ The nightly mission is the safety net — it catches what the agent missed in re
 | Guard | Rationale |
 |:------|:----------|
 | No secrets | Never store credentials, API keys, tokens, passwords |
+| Frontmatter is fixed | Templates are source of truth — model only edits body, never frontmatter |
 | Record user claims as-is | No fact-checking — but label unverified claims |
 | Human-readable | User can inspect, edit, or delete any memory file |
 | Fixed file set | No file proliferation — exactly 5 files in v1 |
 | Size guidelines | Curated facts, not raw dumps — keeps files useful |
 | Time-decay | Old details are compressed, not accumulated forever |
+| Self-ingestion guard | Mission sessions excluded from extraction to prevent feedback loops |
 | Description = categories | Descriptions list categories of facts, not individual facts — stays stable as content grows |
 
 ## Future (v2+)
@@ -368,5 +263,5 @@ The nightly mission is the safety net — it catches what the agent missed in re
 - Semantic search (embeddings + SQLite) when memory outgrows what fits in context
 - Memory health scoring — detect and auto-recover degraded memories (inspired by OpenClaw)
 - Temporal tracking — record how facts change over time (inspired by Zep)
-- Memory UI — view and edit memories in the web interface
 - Export/import — backup memories, share across machines
+- Script mode runner (Python) for headless mission extraction with small models

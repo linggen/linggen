@@ -119,13 +119,12 @@ pub(crate) fn has_write_path_conflicts(
     false
 }
 
-/// Check if context files (CLAUDE.md, MEMORY.md, etc.) have changed
+/// Check if context files (CLAUDE.md, ~/.linggen/memory/*.md, etc.) have changed
 /// by comparing a content hash against the previous hash.
 /// Runs on a background thread during tool execution.
 pub(crate) fn check_context_staleness(
     prev_hash: Option<u64>,
     ws_root: &Path,
-    memory_dir: Option<&Path>,
 ) -> bool {
     let Some(prev_hash) = prev_hash else { return false };
     use std::collections::hash_map::DefaultHasher;
@@ -136,14 +135,18 @@ pub(crate) fn check_context_staleness(
             content.hash(&mut hasher);
         }
     }
-    if let Some(mem_dir) = memory_dir {
-        if let Ok(content) = std::fs::read_to_string(mem_dir.join("MEMORY.md")) {
-            content.hash(&mut hasher);
+    // Hash global memory file frontmatters for staleness detection
+    let mem_dir = crate::paths::global_memory_dir();
+    if let Ok(entries) = std::fs::read_dir(&mem_dir) {
+        let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort(); // stable ordering
+        for path in paths {
+            if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    content.hash(&mut hasher);
+                }
+            }
         }
-    }
-    // Also check global memory
-    if let Ok(content) = std::fs::read_to_string(crate::paths::global_memory_dir().join("MEMORY.md")) {
-        content.hash(&mut hasher);
     }
     hasher.finish() != prev_hash
 }

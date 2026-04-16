@@ -28,8 +28,8 @@ pub async fn run(_global: bool, _root: Option<PathBuf>) -> Result<()> {
     // 4. Download default skills (best-effort)
     install_default_skills().await;
 
-    // 5. Create missions for skills that declare one
-    create_skill_missions();
+    // 5. Run install scripts for skills that declare one
+    run_skill_install_scripts();
 
     // 6. Summary
     println!();
@@ -108,20 +108,40 @@ fn ensure_default_config() -> Result<()> {
     Ok(())
 }
 
-/// Create missions for any installed skills that declare a `mission` field in frontmatter.
-fn create_skill_missions() {
-    let mission_store = crate::project_store::missions::MissionStore::new();
-    let created = crate::skills::create_missions_for_all_skills(&mission_store);
-    if created.is_empty() {
-        return;
+/// Run install scripts for any installed skills that declare an `install` field.
+fn run_skill_install_scripts() {
+    let skills_dir = crate::paths::global_skills_dir();
+    let entries = match std::fs::read_dir(&skills_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut ran = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            match crate::skills::run_install_script(&path) {
+                Ok(Some(_)) => {
+                    ran.push(path.file_name().unwrap_or_default().to_string_lossy().to_string());
+                }
+                Ok(None) => {} // no install script
+                Err(e) => {
+                    println!(
+                        "  {}[WARN]{} Install script failed for {}: {}",
+                        YELLOW, RESET,
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        e
+                    );
+                }
+            }
+        }
     }
-    println!(
-        "  {}[OK]{} Created {} skill missions: {}",
-        GREEN,
-        RESET,
-        created.len(),
-        created.join(", ")
-    );
+    if !ran.is_empty() {
+        println!(
+            "  {}[OK]{} Ran install scripts for: {}",
+            GREEN, RESET,
+            ran.join(", ")
+        );
+    }
 }
 
 /// Download skills from the linggen/skills GitHub repo (best-effort).

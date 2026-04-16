@@ -340,11 +340,17 @@ pub async fn install_skill(
     let _ = fs::remove_file(&temp_zip);
 
     match result {
-        Ok(_) => Ok(format!(
-            "Skill '{}' installed to {}",
-            name,
-            target_dir.display()
-        )),
+        Ok(_) => {
+            // Run install script if declared in frontmatter.
+            if let Err(e) = super::run_install_script(target_dir) {
+                tracing::warn!(skill = %name, err = %e, "Install script failed");
+            }
+            Ok(format!(
+                "Skill '{}' installed to {}",
+                name,
+                target_dir.display()
+            ))
+        }
         Err(e) => {
             // If not found in default repo, try skills.sh fallback
             if e.to_string().contains("Could not find skill") && is_default_repo(&normalized) {
@@ -390,6 +396,10 @@ async fn install_skill_inner(
     let _ = fs::remove_file(&temp_zip);
 
     result?;
+    // Run install script if declared in frontmatter.
+    if let Err(e) = super::run_install_script(target_dir) {
+        tracing::warn!(skill = %name, err = %e, "Install script failed");
+    }
     Ok(format!(
         "Skill '{}' installed to {}",
         name,
@@ -448,6 +458,10 @@ pub async fn install_from_clawhub(
     // Move contents from extracted dir to target_dir
     copy_dir_all(&extracted_dir, target_dir)?;
 
+    // Run install script if declared in frontmatter.
+    if let Err(e) = super::run_install_script(target_dir) {
+        tracing::warn!(skill = %slug, err = %e, "Install script failed");
+    }
     Ok(format!(
         "Skill '{}' installed from ClawHub to {}",
         slug,

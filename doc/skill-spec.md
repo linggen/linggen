@@ -83,7 +83,65 @@ These fields are Linggen-specific extensions.
 | `trigger` | Custom trigger prefix (e.g. `"!!"`, `"%%"`) |
 | `app` | App config — makes the skill a directly-runnable app (see below) |
 | `permission` | Permission request — user is prompted to approve before skill runs (see below) |
-| `mission` | Default mission config — auto-creates a cron mission on install (see below) |
+| `install` | Install script — runs once when the skill is installed (see below) |
+
+## Skill install
+
+Skills can declare an `install` field pointing to a script that runs once on installation. The script handles any setup the skill needs — creating directories, copying templates, registering missions.
+
+```yaml
+install: scripts/install.sh
+```
+
+The script runs with `$SKILL_DIR` set to the skill's directory. It should be **idempotent** — safe to run multiple times (skip files that already exist).
+
+### What install scripts do
+
+- Create directories (e.g. `~/.linggen/memory/`)
+- Copy template files from the skill's `assets/` directory
+- Copy mission files to `~/.linggen/missions/{name}/` (replaces the old `mission:` frontmatter field)
+- Any other one-time setup
+
+### When install scripts run
+
+| Entry point | Trigger |
+|:-----------|:--------|
+| `ling init` | Runs install scripts for all installed skills |
+| WebUI "Install" button | Runs after skill files are copied |
+| `ling skills install` | Runs after download and extraction |
+| Auto-install on first startup | Runs after built-in skills are downloaded |
+
+All paths converge on the same `run_install_script()` function.
+
+### Example: memory skill
+
+```yaml
+name: memory
+install: scripts/install.sh
+```
+
+```bash
+#!/usr/bin/env bash
+# install.sh — Bootstrap memory files and mission
+MEMORY_DIR="$HOME/.linggen/memory"
+mkdir -p "$MEMORY_DIR"
+for f in "$SKILL_DIR/assets/"*.md; do
+  target="$MEMORY_DIR/$(basename "$f")"
+  [ -f "$target" ] || cp "$f" "$target"
+done
+
+MISSION_DIR="$HOME/.linggen/missions/memory"
+if [ ! -d "$MISSION_DIR" ]; then
+  mkdir -p "$MISSION_DIR"
+  cp "$SKILL_DIR/assets/mission.md" "$MISSION_DIR/mission.md"
+fi
+```
+
+### Mission as an asset
+
+Skills that need a cron mission ship a `mission.md` file in their `assets/` directory. The install script copies it to `~/.linggen/missions/{name}/`. The mission scheduler picks it up automatically (missions are cached in memory and reloaded after skill install).
+
+This replaces the old `mission:` frontmatter field — the mission definition is a file, not a config property.
 
 ## Skill permissions
 
@@ -173,47 +231,6 @@ Skills are discovered at startup and on file change (live reload).
 | 3 | `.linggen/skills/<name>/SKILL.md` | Project (highest priority) |
 
 All skill metadata (name + description + full body) is loaded at startup. Descriptions are included in agent context so the model knows what's available.
-
-## Skill missions
-
-A skill can declare a default **mission** in its frontmatter. When the skill is installed, the mission is automatically created.
-
-### `mission` frontmatter field
-
-```yaml
-mission:
-  schedule: '0 23 * * *'
-```
-
-| Field | Required | Description |
-|:------|:---------|:------------|
-| `schedule` | yes | Cron expression (5-field standard) |
-| `model` | no | Model override for this mission |
-
-The mission prompt is automatically set to `/skill-name` (e.g., `/memory`). No need to specify it.
-
-### Auto-creation on install
-
-During `ling init` or `ling skills install`, after downloading/copying skills:
-
-1. Scan each installed skill's frontmatter for the `mission` field.
-2. If found, check if `~/.linggen/missions/{skill-name}/` already exists.
-3. If not, create the mission using the existing `MissionStore::create_mission()` logic.
-4. If the mission already exists, **skip** — the user may have customized the schedule.
-
-This is idempotent: re-running `ling init` won't duplicate or overwrite existing missions. Users can edit, disable, or delete auto-created missions like any other mission.
-
-### Example
-
-The `memory` skill declares a nightly mission in its frontmatter:
-
-```yaml
-name: memory
-mission:
-  schedule: '0 23 * * *'
-```
-
-On install → creates `~/.linggen/missions/memory/mission.md` with prompt `/memory` → scheduler picks it up → runs nightly.
 
 ## Invocation
 

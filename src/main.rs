@@ -356,6 +356,7 @@ async fn main() -> Result<()> {
             if skill_manager.list_skills().await.is_empty() {
                 let sm = skill_manager.clone();
                 let ws = ws_root.clone();
+                let missions = manager.missions.clone();
                 tokio::spawn(async move {
                     tracing::info!("No skills found, auto-installing built-in skills...");
                     if let Err(e) = auto_install_builtin_skills().await {
@@ -363,6 +364,7 @@ async fn main() -> Result<()> {
                         return;
                     }
                     let _ = sm.load_all(Some(&ws)).await;
+                    missions.reload();
                     tracing::info!("Built-in skills installed");
                 });
             }
@@ -435,6 +437,17 @@ async fn auto_install_builtin_skills() -> Result<()> {
     let result = skills::marketplace::extract_all_skills_from_zip(&temp_zip, &target);
     let _ = std::fs::remove_file(&temp_zip);
     result?;
+    // Run install scripts for all newly installed skills.
+    if let Ok(entries) = std::fs::read_dir(&target) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Err(e) = skills::run_install_script(&path) {
+                    tracing::warn!(skill = %path.display(), err = %e, "Install script failed");
+                }
+            }
+        }
+    }
     Ok(())
 }
 

@@ -85,8 +85,8 @@ pub(crate) async fn marketplace_install(
         Ok(msg) => {
             let _ = state.skill_manager.load_all(project_root_path).await;
             state.manager.session_engines.lock().await.clear();
-            // Create mission if the skill declares one
-            crate::skills::create_mission_for_skill(&target_dir, &*state.manager.missions);
+            // Reload missions in case install script created one.
+            state.manager.missions.reload();
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
@@ -203,8 +203,7 @@ pub(crate) async fn builtin_skills_install(
     {
         Ok(msg) => {
             let _ = state.skill_manager.load_all(None).await;
-            // Create mission if the skill declares one
-            crate::skills::create_mission_for_skill(&target_dir, &*state.manager.missions);
+            state.manager.missions.reload();
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }

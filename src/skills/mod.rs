@@ -122,80 +122,63 @@ async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInSkillInfo>> {
     Ok(skills)
 }
 
-/// Check a single skill directory for a `mission` frontmatter field.
-/// If found and no mission with that name exists yet, create it.
-/// Returns the skill name if a mission was created.
-pub fn create_mission_for_skill(
-    skill_dir: &Path,
-    mission_store: &crate::project_store::missions::MissionStore,
-) -> Option<String> {
+/// Run a skill's install script if declared in frontmatter.
+/// The script runs with `$SKILL_DIR` set to the skill directory.
+/// Returns Ok(Some(output)) if a script ran, Ok(None) if no script declared.
+pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
     let skill_md = skill_dir.join("SKILL.md");
-    let text = std::fs::read_to_string(&skill_md).ok()?;
+    let text = std::fs::read_to_string(&skill_md)?;
 
-    // Quick frontmatter parse for name + mission fields only
     if !text.starts_with("---") {
-        return None;
+        return Ok(None);
     }
     let parts: Vec<&str> = text.splitn(3, "---").collect();
     if parts.len() < 3 {
-        return None;
+        return Ok(None);
     }
 
     #[derive(Deserialize)]
-    struct MissionMeta {
-        name: String,
+    struct InstallMeta {
         #[serde(default)]
-        mission: Option<SkillMission>,
+        install: Option<String>,
     }
 
-    let meta: MissionMeta = serde_yml::from_str(parts[1]).ok()?;
-    let mission_cfg = meta.mission?;
+    let meta: InstallMeta = match serde_yml::from_str(parts[1]) {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
 
-    // Check if mission already exists
-    let missions_dir = crate::paths::global_missions_dir();
-    let mission_dir = missions_dir.join(&meta.name);
-    if mission_dir.exists() {
-        return None;
+    let script_path = match meta.install {
+        Some(ref p) => skill_dir.join(p),
+        None => return Ok(None),
+    };
+
+    if !script_path.exists() {
+        anyhow::bail!(
+            "Install script not found: {}",
+            script_path.display()
+        );
     }
 
-    // Create the mission with prompt = /skill-name
-    let prompt = format!("/{}", meta.name);
-    match mission_store.create_mission(
-        Some(meta.name.clone()),
-        &mission_cfg.schedule,
-        &prompt,
-        mission_cfg.model,
-        None,  // no project
-        None,  // default permission tier
-    ) {
-        Ok(_) => Some(meta.name),
-        Err(e) => {
-            tracing::warn!(skill = %meta.name, err = %e, "Failed to create mission for skill");
-            None
-        }
-    }
-}
+    tracing::info!(skill_dir = %skill_dir.display(), script = %script_path.display(), "Running skill install script");
 
-/// Scan all installed skills and create missions for any that declare one.
-/// Returns the number of missions created.
-pub fn create_missions_for_all_skills(
-    mission_store: &crate::project_store::missions::MissionStore,
-) -> Vec<String> {
-    let skills_dir = crate::paths::global_skills_dir();
-    let mut created = Vec::new();
+    let output = std::process::Command::new("bash")
+        .arg(&script_path)
+        .env("SKILL_DIR", skill_dir)
+        .current_dir(skill_dir)
+        .output()?;
 
-    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = create_mission_for_skill(&path, mission_store) {
-                    created.push(name);
-                }
-            }
-        }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Install script failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
     }
 
-    created
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(Some(stdout))
 }
 
 /// Extract `name` and `description` from YAML frontmatter in a SKILL.md file.
@@ -232,15 +215,6 @@ pub struct AppConfig {
     pub height: Option<u32>,
 }
 
-/// Mission config declared by a skill. See skill-spec.md → Skill missions.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SkillMission {
-    /// Cron expression (5-field standard).
-    pub schedule: String,
-    /// Model override for this mission.
-    #[serde(default)]
-    pub model: Option<String>,
-}
 
 /// Permission request declared by a skill. See permission-spec.md → Skill invocation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -284,9 +258,9 @@ pub struct Skill {
     /// Permission request — if set, user is prompted to approve before skill runs.
     #[serde(default)]
     pub permission: Option<SkillPermission>,
-    /// Mission config — if set, a cron mission is auto-created on install.
+    /// Install script path relative to skill directory. Run once on install.
     #[serde(default)]
-    pub mission: Option<SkillMission>,
+    pub install: Option<String>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<std::path::PathBuf>,
@@ -350,7 +324,7 @@ struct SkillFrontmatter {
     #[serde(default)]
     permission: Option<SkillPermission>,
     #[serde(default)]
-    mission: Option<SkillMission>,
+    install: Option<String>,
 }
 
 pub struct SkillManager {
@@ -489,7 +463,7 @@ impl SkillManager {
             trigger: frontmatter.trigger,
             app: frontmatter.app,
             permission: frontmatter.permission,
-            mission: frontmatter.mission,
+            install: frontmatter.install,
             skill_dir: None,
         })
     }

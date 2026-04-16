@@ -6,6 +6,50 @@ use std::sync::OnceLock;
 
 
 
+/// Scan `~/.linggen/memory/*.md` files and extract `name` + `description` from YAML frontmatter.
+/// Returns a formatted string of memory descriptions for injection into the system prompt.
+fn load_memory_descriptions() -> Option<String> {
+    let mem_dir = crate::paths::global_memory_dir();
+    if !mem_dir.is_dir() {
+        return None;
+    }
+
+    #[derive(serde::Deserialize)]
+    struct MemoryMeta {
+        name: String,
+        description: String,
+    }
+
+    let mut entries = Vec::new();
+    if let Ok(dir) = std::fs::read_dir(&mem_dir) {
+        for entry in dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if !text.starts_with("---") {
+                    continue;
+                }
+                let parts: Vec<&str> = text.splitn(3, "---").collect();
+                if parts.len() < 3 {
+                    continue;
+                }
+                if let Ok(meta) = serde_yml::from_str::<MemoryMeta>(parts[1]) {
+                    entries.push(format!("- {}: \"{}\"", meta.name, meta.description));
+                }
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    entries.sort(); // stable ordering
+    Some(entries.join("\n"))
+}
+
 fn get_os_version() -> String {
     static OS_VERSION: OnceLock<String> = OnceLock::new();
     OS_VERSION
@@ -128,12 +172,18 @@ impl AgentEngine {
         }
 
         if let Some(skill) = &self.active_skill {
+            // Replace $SKILL_DIR so the model sees the actual filesystem path.
+            let resolved_content = if let Some(ref dir) = skill.skill_dir {
+                skill.content.replace("$SKILL_DIR", &dir.to_string_lossy())
+            } else {
+                skill.content.clone()
+            };
             prompt.push_str(&self.prompt_store.render_or_fallback(
                 keys::SYSTEM_ACTIVE_SKILL_FRAME,
                 &[
                     ("name", skill.name.as_str()),
                     ("description", skill.description.as_str()),
-                    ("content", skill.content.as_str()),
+                    ("content", &resolved_content),
                 ],
             ));
         }
@@ -216,54 +266,22 @@ impl AgentEngine {
             }
         }
 
-        // --- Auto Memory (owner only) ---
-        if self.prompt_profile.include_memory && self.tools.memory_dir().is_some() {
-            let memory_dir = self.tools.memory_dir().unwrap();
-            let memory_path = memory_dir.join("MEMORY.md");
-            let mem_dir_display = memory_dir.display().to_string();
-            let mut memory_appended = false;
-            if let Ok(content) = std::fs::read_to_string(&memory_path) {
-                let content = content.trim();
-                if !content.is_empty() {
-                    let truncated: String =
-                        content.lines().take(200).collect::<Vec<_>>().join("\n");
-                    stable.push_str(&self.prompt_store.render_or_fallback(
-                        keys::SYSTEM_MEMORY_BLOCK,
-                        &[("mem_dir", &mem_dir_display), ("truncated", &truncated)],
-                    ));
-                    memory_appended = true;
-                }
-            }
-            if !memory_appended {
-                stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_MEMORY_BLOCK_EMPTY,
-                    &[("mem_dir", &mem_dir_display)],
-                ));
-            }
-        }
-
-        // --- Global Memory (owner only) ---
+        // --- Memory (owner only) ---
+        // Scan ~/.linggen/memory/*.md frontmatters and inject descriptions.
+        // If no memory files exist, inject the bootstrap template so the model
+        // knows how to create them on first use.
         if self.prompt_profile.include_memory {
-            let global_mem_dir = crate::paths::global_memory_dir();
-            let global_mem_path = global_mem_dir.join("MEMORY.md");
-            let global_dir_display = global_mem_dir.display().to_string();
-            let mut global_appended = false;
-            if let Ok(content) = std::fs::read_to_string(&global_mem_path) {
-                let content = content.trim();
-                if !content.is_empty() {
-                    let truncated: String =
-                        content.lines().take(200).collect::<Vec<_>>().join("\n");
-                    stable.push_str(&self.prompt_store.render_or_fallback(
-                        keys::GLOBAL_MEMORY_BLOCK,
-                        &[("global_mem_dir", &global_dir_display), ("global_truncated", &truncated)],
-                    ));
-                    global_appended = true;
-                }
-            }
-            if !global_appended {
+            let mem_dir = crate::paths::global_memory_dir();
+            let mem_dir_display = mem_dir.display().to_string();
+            if let Some(descriptions) = load_memory_descriptions() {
                 stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::GLOBAL_MEMORY_BLOCK_EMPTY,
-                    &[("global_mem_dir", &global_dir_display)],
+                    keys::MEMORY_DESCRIPTIONS_BLOCK,
+                    &[("mem_dir", &mem_dir_display), ("descriptions", &descriptions)],
+                ));
+            } else {
+                stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::MEMORY_DESCRIPTIONS_BLOCK_EMPTY,
+                    &[("mem_dir", &mem_dir_display)],
                 ));
             }
         }
@@ -524,11 +542,12 @@ impl AgentEngine {
                 }
                 // Skill tool is always allowed so the model can discover/invoke skills.
                 allowed.insert("Skill".to_string());
-                // Read/Write are always allowed when memory is enabled,
-                // so the model can save user info to memory during any skill.
-                if self.tools.memory_dir().is_some() {
+                // Read/Write/Edit are always allowed when memory exists,
+                // so the model can read and update memory files during any skill.
+                if crate::paths::global_memory_dir().is_dir() {
                     allowed.insert("Read".to_string());
                     allowed.insert("Write".to_string());
+                    allowed.insert("Edit".to_string());
                 }
                 return Some(allowed);
             }

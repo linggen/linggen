@@ -257,18 +257,33 @@ fn name_to_filename(name: &str) -> String {
 
 pub struct MissionStore {
     dir: PathBuf,
+    cache: std::sync::Mutex<Vec<Mission>>,
 }
 
 impl MissionStore {
     pub fn new() -> Self {
-        Self {
+        let store = Self {
             dir: crate::paths::global_missions_dir(),
-        }
+            cache: std::sync::Mutex::new(Vec::new()),
+        };
+        store.reload();
+        store
     }
 
     #[cfg(test)]
     pub fn with_dir(dir: PathBuf) -> Self {
-        Self { dir }
+        let store = Self {
+            dir,
+            cache: std::sync::Mutex::new(Vec::new()),
+        };
+        store.reload();
+        store
+    }
+
+    /// Reload missions from disk into the in-memory cache.
+    pub fn reload(&self) {
+        let missions = self.scan_disk().unwrap_or_default();
+        *self.cache.lock().unwrap() = missions;
     }
 
     fn ensure_dir(&self) -> Result<()> {
@@ -336,6 +351,7 @@ impl MissionStore {
         fs::create_dir_all(self.mission_dir(&id))?;
         let content = mission_to_md(&mission);
         fs::write(self.mission_path(&id), content)?;
+        self.reload();
 
         Ok(mission)
     }
@@ -390,6 +406,7 @@ impl MissionStore {
 
         let content = mission_to_md(&mission);
         fs::write(self.mission_path(mission_id), content)?;
+        self.reload();
 
         Ok(mission)
     }
@@ -399,10 +416,27 @@ impl MissionStore {
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }
+        self.reload();
         Ok(())
     }
 
     pub fn list_all_missions(&self) -> Result<Vec<Mission>> {
+        Ok(self.cache.lock().unwrap().clone())
+    }
+
+    pub fn list_enabled_missions(&self) -> Result<Vec<Mission>> {
+        Ok(self
+            .cache
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|m| m.enabled)
+            .cloned()
+            .collect())
+    }
+
+    /// Scan disk for all missions. Used by reload().
+    fn scan_disk(&self) -> Result<Vec<Mission>> {
         if !self.dir.exists() {
             return Ok(Vec::new());
         }
@@ -432,14 +466,6 @@ impl MissionStore {
         }
         missions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(missions)
-    }
-
-    pub fn list_enabled_missions(&self) -> Result<Vec<Mission>> {
-        Ok(self
-            .list_all_missions()?
-            .into_iter()
-            .filter(|m| m.enabled)
-            .collect())
     }
 
     pub fn append_mission_run(
