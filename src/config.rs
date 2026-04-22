@@ -133,6 +133,14 @@ pub struct AgentConfig {
     /// See `permission-spec.md` → Session policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_policy: Option<String>,
+    /// Every N user messages, inject a hidden memory self-review nudge into
+    /// the turn. `0` disables. Default 6. See `memory-spec.md`.
+    #[serde(default = "default_memory_nudge_interval")]
+    pub memory_nudge_interval: usize,
+}
+
+fn default_memory_nudge_interval() -> usize {
+    6
 }
 
 impl AgentConfig {
@@ -390,6 +398,7 @@ impl Default for Config {
                 prompt_loop_breaker: None,
                 max_delegation_depth: default_max_delegation_depth(),
                 default_policy: None,
+                memory_nudge_interval: default_memory_nudge_interval(),
             },
             logging: LoggingConfig {
                 level: None,

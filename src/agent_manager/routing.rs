@@ -120,6 +120,7 @@ mod tests {
             supports_tools: None,
             auth_mode: None,
             reasoning_effort: None,
+            provided_by: None,
         }
     }
 
@@ -136,6 +137,7 @@ mod tests {
             supports_tools: None,
             auth_mode: None,
             reasoning_effort: None,
+            provided_by: None,
         }
     }
 

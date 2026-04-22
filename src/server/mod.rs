@@ -1,6 +1,5 @@
 mod agent_api;
 mod chat_api;
-mod memory_api;
 pub(crate) mod chat_helpers;
 mod config_api;
 pub(crate) mod mission_scheduler;
@@ -1413,8 +1412,6 @@ async fn prepare_server(
         .route("/api/chat/clear", post(clear_chat_history_api))
         .route("/api/chat/compact", post(compact_chat_api))
         .route("/api/chat/system-prompt", get(get_system_prompt_api))
-        // Memory file direct edits (bypass the agent for trivial line edits).
-        .route("/api/memory/fact", axum::routing::delete(memory_api::delete_fact_api).patch(memory_api::edit_fact_api))
         .route("/api/plan/approve", post(approve_plan_handler))
         .route("/api/plan/edit", post(edit_plan_handler))
         .route("/api/plan/reject", post(reject_plan_handler))

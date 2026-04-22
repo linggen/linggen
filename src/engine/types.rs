@@ -109,6 +109,9 @@ pub struct EngineConfig {
     /// `strict` / `trusted` / `sandbox`). Set from `[agent] default_policy`
     /// in linggen.toml. When unset, sessions default to `interactive`.
     pub default_policy: Option<String>,
+    /// Every N user messages, inject a hidden memory self-review nudge into
+    /// the turn's message list. `0` disables. Default 6.
+    pub memory_nudge_interval: usize,
 }
 
 impl EngineConfig {

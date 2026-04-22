@@ -135,16 +135,18 @@ pub(crate) fn check_context_staleness(
             content.hash(&mut hasher);
         }
     }
-    // Hash global memory file frontmatters for staleness detection
-    let mem_dir = crate::paths::global_memory_dir();
-    if let Ok(entries) = std::fs::read_dir(&mem_dir) {
+    // Hash core memory (identity.md + style.md) so user edits invalidate
+    // the cached stable system prompt on the next turn.
+    let core_dir = crate::paths::core_dir();
+    if let Ok(entries) = std::fs::read_dir(&core_dir) {
         let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort(); // stable ordering
+        paths.sort();
         for path in paths {
-            if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    content.hash(&mut hasher);
-                }
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                content.hash(&mut hasher);
             }
         }
     }

@@ -1,5 +1,7 @@
 pub mod actions;
 mod context;
+pub(crate) mod core_memory;
+pub mod memory;
 pub mod patch;
 pub mod permission;
 mod plan;

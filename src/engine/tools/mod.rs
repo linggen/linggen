@@ -8,7 +8,7 @@ mod tool_helpers;
 pub use tool_helpers::canonical_tool_name;
 pub use search_exec::find_git_root as search_exec_find_git_root;
 pub(crate) use tool_helpers::full_tool_schema_entries;
-pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
+pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args, MEMORY_TOOL_NAMES};
 pub(crate) use delegation::{run_delegation, TaskArgs};
 
 use crate::agent_manager::AgentManager;
@@ -490,6 +490,20 @@ impl Tools {
                         self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
                     )),
                 }
+            }
+            other if other.starts_with("Memory.") => {
+                let method = other.strip_prefix("Memory.").unwrap();
+                let manager = self.manager.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Memory tools require a running AgentManager context. \
+                         This is an internal error — tool context was not set."
+                    )
+                })?;
+                let skills = manager.skill_manager.clone();
+                let value = block_on_async(
+                    super::memory::dispatch(&skills, method, normalized_args),
+                )?;
+                Ok(ToolResult::Success(value.to_string()))
             }
             _ => anyhow::bail!("unknown tool: {}", call.tool),
         }

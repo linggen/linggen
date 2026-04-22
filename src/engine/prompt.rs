@@ -1,54 +1,10 @@
+use super::core_memory;
+use super::memory;
 use super::types::*;
 use crate::engine::tools;
 use crate::ollama::ChatMessage;
 use std::collections::HashSet;
 use std::sync::OnceLock;
-
-
-
-/// Scan `~/.linggen/memory/*.md` files and extract `name` + `description` from YAML frontmatter.
-/// Returns a formatted string of memory descriptions for injection into the system prompt.
-fn load_memory_descriptions() -> Option<String> {
-    let mem_dir = crate::paths::global_memory_dir();
-    if !mem_dir.is_dir() {
-        return None;
-    }
-
-    #[derive(serde::Deserialize)]
-    struct MemoryMeta {
-        name: String,
-        description: String,
-    }
-
-    let mut entries = Vec::new();
-    if let Ok(dir) = std::fs::read_dir(&mem_dir) {
-        for entry in dir.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if !text.starts_with("---") {
-                    continue;
-                }
-                let parts: Vec<&str> = text.splitn(3, "---").collect();
-                if parts.len() < 3 {
-                    continue;
-                }
-                if let Ok(meta) = serde_yml::from_str::<MemoryMeta>(parts[1]) {
-                    entries.push(format!("- {}: \"{}\"", meta.name, meta.description));
-                }
-            }
-        }
-    }
-
-    if entries.is_empty() {
-        return None;
-    }
-
-    entries.sort(); // stable ordering
-    Some(entries.join("\n"))
-}
 
 fn get_os_version() -> String {
     static OS_VERSION: OnceLock<String> = OnceLock::new();
@@ -277,23 +233,28 @@ impl AgentEngine {
             }
         }
 
-        // --- Memory (owner only) ---
-        // Scan ~/.linggen/memory/*.md frontmatters and inject descriptions.
-        // If no memory files exist, inject the bootstrap template so the model
-        // knows how to create them on first use.
+        // --- Core memory (owner only) ---
+        // Layer 1: ~/.linggen/core/identity.md + style.md — universals
+        // inlined into the stable prompt. When files are still unedited
+        // scaffolding, emit the bootstrap hint instead so the model knows
+        // how to initialize memory. Layer 2 (facts / activity / semantic
+        // retrieval) reaches the model through Memory.* tools registered
+        // when a `provides: [memory]` skill is active — not through here.
         if self.prompt_profile.include_memory {
-            let mem_dir = crate::paths::global_memory_dir();
-            let mem_dir_display = mem_dir.display().to_string();
-            if let Some(descriptions) = load_memory_descriptions() {
-                stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::MEMORY_DESCRIPTIONS_BLOCK,
-                    &[("mem_dir", &mem_dir_display), ("descriptions", &descriptions)],
-                ));
-            } else {
-                stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::MEMORY_DESCRIPTIONS_BLOCK_EMPTY,
-                    &[("mem_dir", &mem_dir_display)],
-                ));
+            let core_dir_display = crate::paths::core_dir().display().to_string();
+            match core_memory::load_core() {
+                Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::CORE_MEMORY_BLOCK,
+                    &[
+                        ("core_dir", &core_dir_display),
+                        ("identity", &c.identity),
+                        ("style", &c.style),
+                    ],
+                )),
+                None => stable.push_str(&self.prompt_store.render_or_fallback(
+                    keys::CORE_MEMORY_BLOCK_EMPTY,
+                    &[("core_dir", &core_dir_display)],
+                )),
             }
         }
 
@@ -480,6 +441,16 @@ impl AgentEngine {
         // Include chat history so the model has context of the current conversation.
         messages.extend(self.chat_history.clone());
 
+        // Memory self-review nudge — every N user messages, remind the model
+        // to check whether the recent exchange produced anything worth saving
+        // or updating in memory. Only fires when memory is enabled for the
+        // session (owner chats); never in consumer/mission sessions.
+        if self.prompt_profile.include_memory
+            && memory::should_fire_nudge(&self.chat_history, self.cfg.memory_nudge_interval)
+        {
+            messages.push(memory::nudge_message());
+        }
+
         for obs in &self.observations {
             messages.push(ChatMessage::new("user", self.observation_for_model(obs)));
         }
@@ -598,13 +569,17 @@ impl AgentEngine {
                 }
                 // Skill tool is always allowed so the model can discover/invoke skills.
                 allowed.insert("Skill".to_string());
-                // Read/Write/Edit are always allowed when memory exists,
-                // so the model can read and update memory files during any skill.
-                if crate::paths::global_memory_dir().is_dir() {
+                // Read/Write/Edit are always allowed when core memory exists,
+                // so the model can read and update identity.md / style.md
+                // during any skill (honoring an explicit "remember this"
+                // request from the user without needing a tool-permission
+                // escalation).
+                if crate::paths::core_dir().is_dir() {
                     allowed.insert("Read".to_string());
                     allowed.insert("Write".to_string());
                     allowed.insert("Edit".to_string());
                 }
+                self.inject_memory_tools(&mut allowed);
                 return Some(allowed);
             }
         }
@@ -636,8 +611,24 @@ impl AgentEngine {
 
         // Skill tool is always allowed so the model can discover/invoke skills.
         allowed.insert("Skill".to_string());
+        self.inject_memory_tools(&mut allowed);
 
         Some(allowed)
+    }
+
+    /// Memory.* tools are cross-cutting — they live outside any single
+    /// agent or skill's declared tool list. Inject them into `allowed` when
+    /// the session's prompt profile opts in to memory (owner sessions do;
+    /// consumer / mission sessions don't). Dispatch then routes each call
+    /// to the active `provides: [memory]` skill, or returns a clear error
+    /// when no provider is installed.
+    fn inject_memory_tools(&self, allowed: &mut HashSet<String>) {
+        if !self.prompt_profile.include_memory {
+            return;
+        }
+        for name in tools::MEMORY_TOOL_NAMES {
+            allowed.insert((*name).to_string());
+        }
     }
 
     pub(crate) fn is_tool_allowed(&self, allowed: &HashSet<String>, requested_tool: &str) -> bool {

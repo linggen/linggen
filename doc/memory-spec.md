@@ -8,260 +8,170 @@ guide: |
 
 # Memory
 
-Persistent knowledge extracted from conversations. The agent remembers who the user is and what it has done — across all sessions, all projects.
+Persistent knowledge across sessions — about the user, their work, and what the agent has done. Memory must help Linggen work better for every kind of user (software engineer, musician, language learner, cook), not just coders.
 
 ## Related docs
 
-- `session-spec.md`: system prompt assembly (layer 7 = memory).
-- `storage-spec.md`: filesystem layout (`~/.linggen/memory/`).
-- `skill-spec.md`: skill format, install hooks, app skills.
-- `mission-spec.md`: missions trigger the memory skill nightly.
+- `skill-spec.md`: `provides:` capability, skill discovery, install hooks.
+- `session-spec.md`: system prompt assembly, memory injection layer.
+- `storage-spec.md`: filesystem layout under `~/.linggen/`.
+- `tool-spec.md`: built-in tools (including `Memory.*`).
 
-## Core concept
+## Core principle
 
-Memory has two parts:
+Memory has two layers:
 
-1. **Loading** (built-in) — the engine reads memory file frontmatters at startup and injects descriptions into the system prompt. Same pattern as skill discovery.
-2. **Writing** (skill) — a nightly mission runs the `memory` skill, which collects the day's sessions, sends them to the model one at a time, and the model updates the memory files.
+1. **Core** (built into Linggen) — a small set of markdown files capturing universals about the user. Read and injected on every session.
+2. **Skill memory** (pluggable) — a skill that advertises `provides: [memory]` and implements the `Memory.*` tool family. Default skill: `linggen-memory` (Rust binary backed by LanceDB). Handles facts, activity, semantic retrieval, edit UI.
 
-All memory is **global** (`~/.linggen/memory/`). No project-scoped memory. If a user says "I prefer Rust over Java" in one project, every future session should know that.
+The core layer is stable and minimal. Skill memory is where the work happens — and users can swap providers without touching Linggen itself.
 
-Two units are tracked: **user** (what the user said, claims, prefers) and **agent** (what the agent did, decided, observed).
+## Layer 1 — Core (built-in)
 
-## Built-in vs skill
+### Files
 
-The split follows the same pattern as skills: **engine loads metadata, skill does the work.**
+Two markdown files under `~/.linggen/core/`:
 
-| Concern | Who | How |
-|:--------|:----|:----|
-| Read frontmatter descriptions at startup | **Engine (built-in)** | Scan `~/.linggen/memory/*.md`, parse YAML frontmatter |
-| Inject descriptions into system prompt | **Engine (built-in)** | Layer 7, same as skill descriptions in layer 3 |
-| Bootstrap empty state | **Engine (built-in)** | If no files exist, inject template with file format so model can create them |
-| Create memory files from templates | **Skill install script** | `install.sh` copies templates from `assets/` to `~/.linggen/memory/` |
-| Create nightly mission | **Skill install script** | `install.sh` copies `assets/mission.md` to `~/.linggen/missions/memory/` |
-| Extract facts from conversations | **Skill (web app or mission)** | App collects sessions, sends each to model, model extracts and updates |
-| Compress week → month → year | **Skill** | Same extraction run handles compression |
-| Real-time "remember this" writes | **Agent** | Uses `Edit` tool directly, body only — never touches frontmatter |
+| File | Purpose | Contents |
+|:-----|:--------|:---------|
+| `identity.md` | Who the user is | Name, role, location, timezone, language, core preferences |
+| `style.md` | How they want to be assisted | Tone, format, pacing, universal do/don't rules |
 
-The engine's built-in part is minimal: read frontmatter, inject descriptions, handle empty state. All extraction intelligence lives in the skill.
+Both must be **universal** — true in any context, any project, any domain. If a fact wouldn't still matter in a totally different project six months from now, it doesn't go in core.
 
-### Frontmatter is fixed
+### Loading
 
-Memory file frontmatter (`name`, `description`, `unit`, `updated_at`, `retention`) is defined by the templates in `skills/memory/assets/`. The model **never edits frontmatter** — only the body content below the `---` delimiter. This prevents description drift and format corruption.
+Linggen reads both files on startup and inlines their content into the stable system prompt (the cacheable prefix). They re-hash only when the files change on disk, so turn-by-turn caching is preserved.
 
-## Fixed memory files (v1)
+### Writing
 
-Five well-known files. The memory skill only writes to these — no ad-hoc file creation in v1.
+- The user can `vim` either file directly.
+- The agent can Edit them in-session when the user explicitly asks to remember something durable.
+- A daily consolidation pass (run by the active memory skill) can propose additions for user review.
 
-| File | Unit | Purpose |
-|:-----|:-----|:--------|
-| `user_info.md` | user | Identity, preferences, hobbies, claims — everything the user has ever told the agent |
-| `user_feedback.md` | user | How the user wants the agent to behave — corrections, confirmed approaches, style rules |
-| `agent_done_week.md` | agent | What the agent did this week — detailed, rolling 7 days |
-| `agent_done_month.md` | agent | Compressed monthly summary — key actions and outcomes |
-| `agent_done_year.md` | agent | High-level yearly summary — major milestones only |
+Core is deliberately tiny (~30–50 lines combined). High bar for entry — no activity logs, no project-specific rules, no meta-feedback about how memory should work.
 
-### Time-decay model
+## Layer 2 — Memory skill (pluggable)
 
-Like human memory: recent events are vivid, older ones fade to what mattered.
+### The `provides: [memory]` contract
 
-```
-This week          → agent_done_week.md   (detailed: files changed, commands run, decisions made)
-  ↓ compress
-Past months        → agent_done_month.md  (summarized: features built, bugs fixed, deploys)
-  ↓ compress
-Past years         → agent_done_year.md   (highlights: major milestones, architecture changes)
-```
+A skill becomes the active memory provider by declaring this in its `SKILL.md` frontmatter. Linggen core detects the capability on skill load and routes `Memory.*` tool calls to that skill's handler.
 
-### Size guidelines
+Only one memory provider is active per session. If multiple are installed, the user selects (or Linggen picks one by install order — see skill-spec.md for resolution rules).
 
-| File | Target size | Guideline |
-|:-----|:------------|:----------|
-| `user_info.md` | < 200 lines | Factoids grouped by section. One line per fact. |
-| `user_feedback.md` | < 100 lines | Do/don't rules. One line per rule. |
-| `agent_done_week.md` | < 150 lines | ~10-20 bullet points per day, curated not exhaustive |
-| `agent_done_month.md` | < 200 lines | ~10-15 bullets per month |
-| `agent_done_year.md` | < 100 lines | ~10-20 bullets per year |
+### The `Memory.*` tool family
 
-## Memory file format
+Linggen registers these tools automatically when a memory provider is active:
 
-Each memory file is markdown with YAML frontmatter.
+| Tool | Purpose |
+|:-----|:--------|
+| `Memory.add` | Insert a fact. Args: `content`, `contexts[]`, `type`, optional metadata. |
+| `Memory.search` | Semantic search. Args: `query`, optional `contexts`, `type`, `limit`. |
+| `Memory.list` | Browse/filter without semantic ranking. Args: filters, sort, pagination. |
+| `Memory.get` | Fetch by id. |
+| `Memory.update` | Edit an existing fact. |
+| `Memory.archive` | Soft-forget — hidden from default search but recoverable. |
+| `Memory.delete` | Hard-forget with tombstone. |
+| `Memory.forget` | Bulk-delete by filter. Used for "forget everything about the trip." |
 
-### Frontmatter fields
+These tools are gated behind the session's `include_memory` profile flag. Consumer and mission sessions do not see them.
 
-| Field | Required | Purpose |
-|:------|:---------|:--------|
-| `name` | yes | File identifier, matches filename without `.md` |
-| `description` | yes | **Category summary** of what's inside (~150 chars). Describes the *kinds* of facts, not individual facts. Loaded into every session's system prompt. |
-| `unit` | yes | `user` or `agent` — who this memory is about |
-| `updated_at` | yes | Last modified date (YYYY-MM-DD) |
-| `retention` | no | `week`, `month`, or `year` — for agent_done files, controls the compression tier |
+If no memory skill is installed, the tools return a clear error ("No memory provider active; install one from the marketplace").
 
-The `description` field should describe **categories**, not enumerate facts:
+### Default skill: `linggen-memory`
 
-```yaml
-# Good — categories tell the model what's inside
-description: "User personal info — identity, role, preferences, hobbies, pets, health, claims"
+Shipped as Linggen's default memory implementation. Lives in its own repo (`linggen-memory/`), built as a platform-specific binary released on GitHub. The skill in `skills/memory/` is a thin wrapper: `SKILL.md` + `install.sh` that downloads the binary.
 
-# Bad — tries to list facts, misses most of them
-description: "Liang: developer, February birthday, dark mode, hiking"
-```
+- **Storage:** LanceDB — markdown-free, vector + metadata, semantic search.
+- **Retrieval:** Hybrid BM25 + vector similarity, filterable by context/type.
+- **Edit UI:** embedded webpage served by the binary in daemon mode. Markdown-like editor per row, filter/sort, batch archive/forget.
+- **CLI:** `linggen-memory add|search|list|update|archive|delete|forget|collect|extract|serve`.
+- **Install:** platform-aware `install.sh` — `uname` detection, download matching release asset, fallback to `cargo install` for unknown platforms.
 
-## Storage layout
+Users who prefer a different memory strategy can write their own skill that conforms to `provides: [memory]` and implements the `Memory.*` handler contract. Linggen is neutral about the implementation.
 
-```
-~/.linggen/memory/
-  user_info.md
-  user_feedback.md
-  agent_done_week.md
-  agent_done_month.md
-  agent_done_year.md
-```
+### Binary-invocation contract (locked)
 
-Flat. Five files. No index file — the engine scans the directory and reads each file's frontmatter directly.
+When `Memory.*` is called, Linggen core locates and invokes the provider binary as follows. The contract here matches the `linggen-memory` v0.1 CLI locked in its `doc/tech-spec.md`.
 
-## Loading
+1. **Locate the binary:**
+   - First: `$SKILL_DIR/bin/ling-mem` — the skill's `install.sh` places the binary there.
+   - Fallback: bare `ling-mem` on `$PATH` (for `cargo install` / dev setups).
+   - If neither resolves at spawn time, dispatch surfaces a "binary not found" error pointing the user at the skill's install script.
 
-Same progressive disclosure pattern as skills.
+2. **Invoke:** `ling-mem <method> [positional] [flags]`
+   - `<method>` is the lowercase trailing component of the tool name — `Memory.search` → `search`.
+   - Args from the JSON payload are translated into the CLI's positional + flag shape per method (e.g. `contexts: ["a","b"]` → `--context a --context b`). The translation table lives in `engine::memory::translate_args`.
+   - `LINGGEN_DATA_DIR` is exported to the subprocess (per-user data root). The binary opens its LanceDB store underneath.
+   - `delete` and `forget` are invoked with `--yes`; Linggen's permission layer already captured the user's consent.
 
-### Descriptions (loaded at startup)
+3. **Response format:**
+   - Exit 0 + JSON on stdout. A single object, a single array, or NDJSON (one object per line) all work — Linggen parses each shape into one `Value` returned to the tool caller.
+   - Non-zero exit + stderr: structured JSON `{"error":"...","code":"..."}` is preferred and surfaced as `provider error [CODE]: MSG`. Raw text on stderr falls back to `provider error: <text>`.
 
-The engine scans `~/.linggen/memory/*.md`, parses each file's YAML frontmatter, and holds `name` + `description` in memory. On each session's system prompt assembly (layer 7), descriptions are injected:
+4. **Timeouts:** 5-second default per call; the dispatcher kills the subprocess on timeout. Long-running ops belong in the provider's `serve` daemon mode, not in the sync CLI path.
 
-```
-You have persistent memory files at ~/.linggen/memory/:
-- user_info: "User personal info — identity, role, expertise, preferences, hobbies, pets, health, claims"
-- user_feedback: "Agent behavior rules — workflow, style, communication, coding conventions, do/don't"
-- agent_done_week: "Agent actions this week — files changed, features built, bugs fixed, deploys, decisions"
-- agent_done_month: "Agent actions past months — features shipped, major fixes, architecture changes, deploys"
-- agent_done_year: "Agent actions past years — major milestones, launches, architecture shifts"
+## Data model (default skill)
 
-Read the full file when a conversation needs the details.
-After completing significant work, update agent_done_week.md.
-```
+The LanceDB schema is owned by the `linggen-memory` skill. The locked v0.1 shape lives in [linggen-memory/DESIGN.md](../../linggen-memory/DESIGN.md) — single source of truth. This spec does not duplicate it.
 
-~300 tokens. Refreshed when files change on disk (staleness detection hashes all memory files).
+Key points a Linggen-core integrator needs to know:
 
-### Empty state
+- **Row identity is a UUID**, not a path or filename. Nothing in Linggen core constructs or parses row ids.
+- **Scoping is via free-form `contexts[]`** (e.g. `code/linggen`, `music/piano`, `trip-japan-2026`). Contexts are N:M tags, not directory paths — one fact can span multiple contexts. Linggen core never assumes a 1:1 between context and project.
+- **`type` is a closed enum** with seven canonical values. Linggen core validates nothing about types — it passes whatever the model chose through to `Memory.add` and lets the skill reject or coerce.
+- **Embedding and ranking are skill-internal.** Linggen core never computes vectors or scores; it just forwards queries and reads results.
 
-If no memory files exist (first run before install), the engine injects a bootstrap template that describes the 5-file format so the model can create them on demand. Once the skill's install script runs, the templates are in place and the normal description block is used.
+Any schema drift between this document and `linggen-memory/DESIGN.md` is a bug in this document; `DESIGN.md` wins.
 
-### Full content (loaded on demand)
+## Retrieval patterns
 
-The agent uses `Read` to open the full memory file when the conversation needs it. No special tool — just the standard `Read` tool pointing at `~/.linggen/memory/*.md`.
+Three access modes, all backed by the active memory skill:
 
-## The memory skill
+1. **Push (active injection).** Linggen calls `Memory.search` with the user's message at turn start and prefixes matched snippets to the user message. Runs per turn. Cache-safe (does not invalidate the stable system prompt).
+2. **Pull (tool).** The model calls `Memory.search`, `Memory.list`, etc. when it decides memory would help. Standard tool dispatch.
+3. **Browse (UI).** The user opens the memory app to review, edit, archive, forget rows directly.
 
-The memory skill is a **web app skill** — like sys-doctor, it has a JS dashboard that orchestrates extraction and visualizes results in real-time.
+Core files are always injected — they're so small it's cheaper to inline than to query.
 
-### Skill structure
+## Extraction
 
-```
-skills/memory/
-├── SKILL.md                    # Model instructions for extraction
-├── assets/                     # Templates — source of truth for frontmatter
-│   ├── user_info.md
-│   ├── user_feedback.md
-│   ├── agent_done_week.md
-│   ├── agent_done_month.md
-│   ├── agent_done_year.md
-│   └── mission.md              # Nightly mission definition
-└── scripts/
-    ├── install.sh              # Copies templates + mission on install
-    ├── collect_sessions.sh     # Scans CC + Linggen sessions
-    └── index.html              # Web app dashboard (future)
-```
+Extraction — turning session transcripts into `Memory.add` calls — is a skill-internal concern. Linggen core contributes only session transcripts on disk (`~/.linggen/sessions/*`) and the `Memory.*` tool family. The provider decides how, when, and what to extract.
 
-### Install
+For the default provider, see `linggen-memory/DESIGN.md` (Phase 3 adds `collect` + `extract` subcommands to `ling-mem`). The `project_root` available in each session transcript is the natural seed for the `contexts[]` tag — a session run under the Linggen repo becomes `contexts: [code/linggen]` — but nothing in this spec mandates that mapping.
 
-The skill declares `install: scripts/install.sh` in its frontmatter. On install, the script:
+## Forgetting
 
-1. Creates `~/.linggen/memory/` and copies the 5 template files (skip if exist)
-2. Creates `~/.linggen/missions/memory/` and copies `mission.md` (skip if exists)
+Forgetting is a skill-internal concern — Linggen core provides the `Memory.forget` tool for bulk-delete-by-filter, but decay policy (time-based, access-based), durability filters at write time, and any compaction passes are all owned by the active memory provider. See `linggen-memory/DESIGN.md` for that provider's approach.
 
-Idempotent — safe to run multiple times. Templates are the source of truth for frontmatter; existing files are never overwritten.
+Linggen core's only contract: when the user explicitly says "forget everything about X," the model calls `Memory.forget` with the matching filter and trusts the result.
 
-### Cross-tool session collection
+## Mid-session self-review
 
-The collection script (`scripts/collect_sessions.sh`) auto-discovers sessions from:
+Linggen core fires a hidden nudge every N user messages (configurable via `[agent] memory_nudge_interval`, default 6, 0 disables). The nudge asks the model whether the recent exchange produced anything worth saving — either an Edit to `identity.md` / `style.md` for universals, or a `Memory.add` call for scoped facts (when a provider is installed). Gated behind `include_memory` like the rest of memory.
 
-- **Claude Code** — `~/.claude/projects/*/*.jsonl` (ISO timestamps, content blocks)
-- **Linggen** — `~/.linggen/sessions/*/messages.jsonl` (epoch timestamps, flat strings)
+## Fresh build — no migration
 
-Safety guards:
-- **Self-ingestion prevention** — skips Linggen sessions with `creator: mission` to prevent the memory extraction mission from re-processing its own output.
-- **Deduplication** — Linggen sessions may already be reflected in memory (the agent was present and could have written in real-time). The model checks existing memory before adding.
+The v1 5-markdown-file system (`user_info.md`, `user_feedback.md`, `agent_done_{week,month,year}.md`) is retired without migration. Users start core empty and populate `identity.md` / `style.md` on demand. Anything from the old files that matters can be re-added by the user (or prompted via the self-review nudge) — we are not trying to reconstruct history.
 
-### Extraction flow
-
-The web app (or mission runner) orchestrates extraction:
-
-```
-1. Run collect_sessions.sh → individual session files
-2. Create a skill-bound session
-3. For each session file:
-     Send session content to model
-     Model extracts facts, updates memory files via Edit
-     Dashboard shows live progress: found/skipped/merged
-4. Model runs compression (week → month → year)
-5. Dashboard shows report: changes by file, conflicts resolved, stale entries removed
-```
-
-The model receives **one session at a time** — small enough for any model size. The orchestrator (JS app or Python runner) controls the loop.
-
-### Mission modes
-
-The nightly mission supports two modes:
-
-| Mode | How it runs | Use case |
-|:-----|:-----------|:---------|
-| **agent** | Scheduler creates session, model self-orchestrates | Simple, works with capable models |
-| **script** | Scheduler runs a runner script, script calls APIs | Reliable, works with any model size |
-
-In agent mode (current), the model reads SKILL.md and follows the extraction steps using tools. In script mode (future), a Python/Node runner drives the loop — same pattern as the JS dashboard, but headless.
-
-### Web app dashboard
-
-The memory dashboard follows the same pattern as sys-doctor:
-
-- **Left panel**: dashboard widgets (profile card, behavior rules, weekly timeline, extraction progress)
-- **Right panel**: chat with the memory agent
-- **Page protocol**: model emits `<!--page {...} -->` JSON blocks, app renders widgets
-
-Dashboard views:
-- **Overview** — memory cards showing user profile, behavior rules, this week's actions, file sizes
-- **Extraction** — live progress: sessions being scanned, facts found/skipped/merged, conflicts
-- **Report** — post-extraction summary: changes by file, compression results, stale entries removed
-
-## Real-time writes
-
-The agent can also write to memory files during any conversation — not just during nightly extraction. Two cases:
-
-1. **User explicitly asks** — "remember that I prefer dark mode" → agent reads existing file, edits body via `Edit` tool.
-2. **Agent completes significant work** — after a major feature or deploy, appends to `agent_done_week.md`.
-
-The nightly mission is the safety net — it catches what the agent missed in real-time.
+Any existing files under `~/.linggen/memory/` are ignored by the Linggen core as of this version. They remain on disk until the user removes them. The memory skill's future `migrate` subcommand may offer an opt-in import, but that is a skill-owned concern, not a core behavior.
 
 ## Safety
 
 | Guard | Rationale |
 |:------|:----------|
-| No secrets | Never store credentials, API keys, tokens, passwords |
-| Frontmatter is fixed | Templates are source of truth — model only edits body, never frontmatter |
-| Record user claims as-is | No fact-checking — but label unverified claims |
-| Human-readable | User can inspect, edit, or delete any memory file |
-| Fixed file set | No file proliferation — exactly 5 files in v1 |
-| Size guidelines | Curated facts, not raw dumps — keeps files useful |
-| Time-decay | Old details are compressed, not accumulated forever |
-| Self-ingestion guard | Mission sessions excluded from extraction to prevent feedback loops |
-| Description = categories | Descriptions list categories of facts, not individual facts — stays stable as content grows |
+| No secrets | Never store credentials, API keys, tokens, passwords — at any layer |
+| Core is read-first | Agent writes to core only on explicit user request |
+| Schema-versioned data | Every LanceDB row has a schema version; migrations are explicit |
+| Human-readable surface | Core is markdown. LanceDB rows are browsable via the app. Nothing is opaque. |
+| Export to markdown | Default skill nightly-exports LanceDB to markdown for backup/git-sync |
+| Durability filter | The active memory skill decides what's durable before calling `Memory.add` — not Linggen core |
+| Per-user isolation | All paths under `~/.linggen/memory/<user_id>/` when multi-tenant is active |
+| Capability-routed dispatch | Swapping memory skills is one setting, no data loss (new provider starts empty; export/import moves data between) |
 
-## Future (v2+)
+## Future
 
-- More memory files if 5 proves insufficient (e.g., `references.md` for external links)
-- `agent_done_decade.md` for multi-year history
-- Semantic search (embeddings + SQLite) when memory outgrows what fits in context
-- Memory health scoring — detect and auto-recover degraded memories (inspired by OpenClaw)
-- Temporal tracking — record how facts change over time (inspired by Zep)
-- Export/import — backup memories, share across machines
-- Script mode runner (Python) for headless mission extraction with small models
+- **Cross-device sync** — LanceDB exports + git is v1; real sync is P2P via Linggen's WebRTC transport.
+- **Temporal tracking** — record how facts change over time (inspired by Zep). `supersedes` links already support this structurally.
+- **Multi-provider** — use a local fast skill + a cloud/persistent skill simultaneously, with merged results. Design TBD.
+- **Memory health scoring** — auto-detect and propose cleanup for degraded memories (inspired by OpenClaw).

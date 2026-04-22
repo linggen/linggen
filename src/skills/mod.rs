@@ -330,6 +330,12 @@ pub struct Skill {
     /// Install script path relative to skill directory. Run once on install.
     #[serde(default)]
     pub install: Option<String>,
+    /// Capabilities this skill implements (e.g. `["memory"]`). Linggen core
+    /// routes built-in tool families (e.g. `Memory.*`) to whichever installed
+    /// skill provides the capability. See `doc/skill-spec.md` and
+    /// `doc/memory-spec.md`.
+    #[serde(default)]
+    pub provides: Option<Vec<String>>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<std::path::PathBuf>,
@@ -394,6 +400,8 @@ struct SkillFrontmatter {
     permission: Option<SkillPermission>,
     #[serde(default)]
     install: Option<String>,
+    #[serde(default)]
+    provides: Option<Vec<String>>,
 }
 
 pub struct SkillManager {
@@ -541,6 +549,7 @@ impl SkillManager {
             app: frontmatter.app,
             permission: frontmatter.permission,
             install: frontmatter.install,
+            provides: frontmatter.provides,
             skill_dir: None,
         })
     }
@@ -574,6 +583,35 @@ impl SkillManager {
     pub async fn list_skills(&self) -> Vec<Skill> {
         let skills = self.skills.lock().await;
         skills.values().cloned().collect()
+    }
+
+    /// Test helper: seed the internal skill map so integration tests in
+    /// other modules (e.g. `engine::memory::dispatch`) can exercise paths
+    /// that require an installed skill without going through the full
+    /// `load_all` directory-scan flow.
+    #[cfg(test)]
+    pub(crate) async fn insert_for_test(&self, skill: Skill) {
+        self.skills.lock().await.insert(skill.name.clone(), skill);
+    }
+
+    /// Resolve a capability name (e.g. `"memory"`) to the single skill that
+    /// advertises `provides: [<capability>]`. Returns the skill whose
+    /// insertion order puts it at the active slot — today that means the
+    /// first match seen during iteration (projects override globals because
+    /// of load order). Multi-provider disambiguation lands with the
+    /// marketplace UI; for now, installing two providers for the same
+    /// capability is a user error.
+    pub async fn active_provider(&self, capability: &str) -> Option<Skill> {
+        let skills = self.skills.lock().await;
+        skills
+            .values()
+            .find(|s| {
+                s.provides
+                    .as_ref()
+                    .map(|list| list.iter().any(|c| c == capability))
+                    .unwrap_or(false)
+            })
+            .cloned()
     }
 }
 
@@ -616,6 +654,37 @@ This is the skill content."#;
             .parse_skill("---\nname: x\ndescription: y\n", SkillSource::Global)
             .unwrap_err();
         assert!(err.to_string().contains("closing frontmatter"));
+    }
+
+    #[test]
+    fn test_parse_skill_with_provides() {
+        let mgr = make_manager();
+        let text = r#"---
+name: linggen-memory
+description: Semantic memory
+provides: [memory]
+---
+Body."#;
+        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        assert_eq!(skill.provides.as_deref(), Some(&["memory".to_string()][..]));
+    }
+
+    #[tokio::test]
+    async fn test_active_provider_returns_matching_skill() {
+        let mgr = make_manager();
+        let text = r#"---
+name: mem-impl
+description: impl
+provides: [memory]
+---
+Body."#;
+        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        mgr.skills.lock().await.insert(skill.name.clone(), skill);
+        assert_eq!(
+            mgr.active_provider("memory").await.map(|s| s.name),
+            Some("mem-impl".to_string())
+        );
+        assert!(mgr.active_provider("search").await.is_none());
     }
 
     #[test]

@@ -27,9 +27,8 @@ pub mod keys {
     pub const SYSTEM_ENVIRONMENT_BLOCK: &str = "system-prompt.environment_block";
     pub const SYSTEM_DELEGATION_HEADER: &str = "system-prompt.delegation_header";
     pub const SYSTEM_DELEGATION_ENTRY: &str = "system-prompt.delegation_entry";
-    pub const MEMORY_DESCRIPTIONS_BLOCK: &str = "system-prompt.memory_descriptions_block";
-    pub const MEMORY_DESCRIPTIONS_BLOCK_EMPTY: &str =
-        "system-prompt.memory_descriptions_block_empty";
+    pub const CORE_MEMORY_BLOCK: &str = "system-prompt.core_memory_block";
+    pub const CORE_MEMORY_BLOCK_EMPTY: &str = "system-prompt.core_memory_block_empty";
     pub const SYSTEM_CONSUMER_FRAME: &str = "system-prompt.consumer_frame";
 
     // -- system-reminder.* ------------------------------------------------
@@ -326,8 +325,8 @@ mod tests {
             keys::SYSTEM_ENVIRONMENT_BLOCK,
             keys::SYSTEM_DELEGATION_HEADER,
             keys::SYSTEM_DELEGATION_ENTRY,
-            keys::MEMORY_DESCRIPTIONS_BLOCK,
-            keys::MEMORY_DESCRIPTIONS_BLOCK_EMPTY,
+            keys::CORE_MEMORY_BLOCK,
+            keys::CORE_MEMORY_BLOCK_EMPTY,
             keys::NUDGE_INVALID_JSON,
             keys::NUDGE_REPETITION,
             keys::NUDGE_REDUNDANT_TOOL,

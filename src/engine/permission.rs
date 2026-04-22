@@ -207,7 +207,58 @@ pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Pat
                 }
             })
             .unwrap_or_else(|| "<unknown query>".to_string()),
+        "Memory.search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|q| truncate_for_prompt(q, 120))
+            .unwrap_or_else(|| "<no query>".to_string()),
+        "Memory.add" => args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|c| truncate_for_prompt(c, 120))
+            .unwrap_or_else(|| "<no content>".to_string()),
+        "Memory.get" | "Memory.update" | "Memory.delete" => args
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "<no id>".to_string()),
+        "Memory.forget" => {
+            let contexts = args
+                .get("contexts")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .filter(|s| !s.is_empty());
+            let ty = args.get("type").and_then(|v| v.as_str());
+            let older_than = args.get("older_than").and_then(|v| v.as_str());
+            let parts: Vec<String> = [
+                contexts.map(|c| format!("contexts={c}")),
+                ty.map(|t| format!("type={t}")),
+                older_than.map(|t| format!("older_than={t}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if parts.is_empty() {
+                "<no filter — would delete everything>".to_string()
+            } else {
+                parts.join(" ")
+            }
+        }
+        "Memory.list" => tool.to_string(),
         _ => tool.to_string(),
+    }
+}
+
+fn truncate_for_prompt(s: &str, max: usize) -> String {
+    if s.len() > max {
+        format!("{}...", &s[..max.saturating_sub(3)])
+    } else {
+        s.to_string()
     }
 }
 
@@ -827,6 +878,11 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
         "Read" | "Glob" | "Grep" | "WebSearch" | "capture_screenshot"
         | "EnterPlanMode" | "ExitPlanMode" | "UpdatePlan" | "AskUser" => PermissionMode::Read,
         "Write" | "Edit" => PermissionMode::Edit,
+        // Memory.* family: reads are Read tier; targeted mutations are Edit;
+        // only bulk-forget is Admin since it destroys many rows at once.
+        "Memory.search" | "Memory.get" | "Memory.list" => PermissionMode::Read,
+        "Memory.add" | "Memory.update" | "Memory.delete" => PermissionMode::Edit,
+        "Memory.forget" => PermissionMode::Admin,
         // Everything else: Bash, WebFetch, RunApp, Task, Skill, lock_paths, unlock_paths
         _ => PermissionMode::Admin,
     }
@@ -1675,6 +1731,46 @@ mod tests {
         assert_eq!(tool_action_tier("Skill"), PermissionMode::Admin);
     }
 
+    #[test]
+    fn test_memory_tool_action_tier() {
+        // Reads don't prompt at read-mode or higher.
+        assert_eq!(tool_action_tier("Memory.search"), PermissionMode::Read);
+        assert_eq!(tool_action_tier("Memory.get"), PermissionMode::Read);
+        assert_eq!(tool_action_tier("Memory.list"), PermissionMode::Read);
+        // Targeted mutations need edit-mode.
+        assert_eq!(tool_action_tier("Memory.add"), PermissionMode::Edit);
+        assert_eq!(tool_action_tier("Memory.update"), PermissionMode::Edit);
+        assert_eq!(tool_action_tier("Memory.delete"), PermissionMode::Edit);
+        // Bulk forget is destructive — always prompt below admin-mode.
+        assert_eq!(tool_action_tier("Memory.forget"), PermissionMode::Admin);
+    }
+
+    #[test]
+    fn test_memory_forget_summary_flags_empty_filter() {
+        let cwd = std::env::current_dir().unwrap();
+        let summary = permission_target_summary(
+            "Memory.forget",
+            &serde_json::json!({}),
+            &cwd,
+        );
+        assert!(
+            summary.contains("delete everything"),
+            "empty-filter forget must warn loudly, got: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_memory_forget_summary_shows_filter() {
+        let cwd = std::env::current_dir().unwrap();
+        let summary = permission_target_summary(
+            "Memory.forget",
+            &serde_json::json!({"contexts": ["trip-japan-2026"], "older_than": "2026-01-01"}),
+            &cwd,
+        );
+        assert!(summary.contains("contexts=trip-japan-2026"));
+        assert!(summary.contains("older_than=2026-01-01"));
+    }
+
     // -----------------------------------------------------------------------
     // Check flow tests
     // -----------------------------------------------------------------------
@@ -1793,17 +1889,25 @@ mod tests {
     }
 
     #[test]
-    fn test_check_permission_locked_blocks() {
+    fn test_check_permission_strict_policy_blocks() {
+        // Strict policy silently denies anything out of scope (no prompts,
+        // no back-door Allow). This is what locked-down autonomous sessions
+        // (e.g. strict missions) should look like. Legacy `locked=true` on
+        // disk migrates to the `trusted` policy instead — see the migration
+        // in SessionPermissions::load.
         let mut sp = SessionPermissions::default();
-        sp.locked = true;
+        sp.set_policy(PermissionPolicy::strict());
 
         let deny: Vec<String> = vec![];
         let ask: Vec<String> = vec![];
         let cwd = dirs::home_dir().unwrap_or_default();
 
-        // Write to system zone while locked → blocked
+        // Write to system zone under strict policy → blocked (no prompt).
         let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
-        assert!(matches!(result, PermissionCheckResult::Blocked(_)));
+        assert!(
+            matches!(result, PermissionCheckResult::Blocked(_)),
+            "strict policy must hard-block system-zone writes, got {result:?}"
+        );
     }
 
     #[test]

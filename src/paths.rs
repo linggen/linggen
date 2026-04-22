@@ -64,8 +64,9 @@ pub fn projects_dir() -> PathBuf {
     linggen_home().join("projects")
 }
 
-/// `~/.linggen/memory/` — global memory shared across all projects
-pub fn global_memory_dir() -> PathBuf {
-    linggen_home().join("memory")
+/// `~/.linggen/core/` — built-in core memory (identity + style), always
+/// injected into the stable system prompt. Tiny, universal, user-owned.
+pub fn core_dir() -> PathBuf {
+    linggen_home().join("core")
 }
 

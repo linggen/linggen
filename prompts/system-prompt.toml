@@ -58,54 +58,54 @@ text = "\n\n# {label}\n\n{content}"
 description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
-[memory_descriptions_block]
-description = "Memory descriptions loaded from ~/.linggen/memory/*.md frontmatters"
-vars = ["mem_dir", "descriptions"]
+[core_memory_block]
+description = "Built-in core memory — identity + working style, always inlined."
+vars = ["core_dir", "identity", "style"]
 text = '''
 
-# Memory
+# Core memory
 
-You have persistent memory files at `{mem_dir}`:
-{descriptions}
+Universal facts about the user and how they want to work, inlined from
+`{core_dir}`. Trust these as current truth without re-reading the files.
 
-Read the full file when a conversation needs the details.
-After completing significant work, update `{mem_dir}/agent_done_week.md`.
-If the user asks you to remember something, update the appropriate memory file immediately.
---- END MEMORY ---'''
+## Identity (from identity.md)
 
-[memory_descriptions_block_empty]
-description = "Memory block when no memory files exist yet — bootstraps the 5-file structure"
-vars = ["mem_dir"]
+{identity}
+
+## Working style (from style.md)
+
+{style}
+
+## Usage rules
+
+- Apply these without re-reading the files.
+- If the user expresses a durable identity fact or cross-project preference,
+  or contradicts something above, Edit the matching file immediately.
+- Keep core tiny. Project-specific rules belong in that project's CLAUDE.md
+  or AGENTS.md — not here. Scoped facts, activity logs, and semantic
+  retrieval belong in the memory skill (`Memory.*` tools) — not here.
+--- END CORE MEMORY ---'''
+
+[core_memory_block_empty]
+description = "Bootstrap hint when core memory files exist but are still unedited scaffolding."
+vars = ["core_dir"]
 text = '''
 
-# Memory
+# Core memory
 
-You have a persistent memory system at `{mem_dir}`. No memory files exist yet.
+Core memory at `{core_dir}` has not been populated yet.
 
-Read existing files first. When the user asks you to remember something, or when you complete significant work, update the appropriate file — or create it if missing. The 5 memory files are:
+- `identity.md` — who the user is (name, role, timezone, languages, core
+  preferences). Keep entries universal: true across every project.
+- `style.md` — how the user wants the agent to work (tone, format, pacing,
+  universal do/don't).
 
-- **user_info.md** — user identity, role, expertise, preferences, hobbies, claims
-- **user_feedback.md** — agent behavior rules: do/don't, workflow, style
-- **agent_done_week.md** — what the agent did this week (detailed, rolling 7 days)
-- **agent_done_month.md** — compressed monthly summary
-- **agent_done_year.md** — yearly highlights
-
-Each file uses this format:
-
-```
----
-name: user_info
-description: "Category summary of what is inside (~150 chars)"
-unit: user
-updated_at: 2026-04-16
----
-
-## Section
-- One fact per line
-```
-
-Fields: `name` (matches filename), `description` (categories, not individual facts), `unit` (`user` or `agent`), `updated_at` (YYYY-MM-DD). Agent files also have `retention` (`week`, `month`, or `year`).
---- END MEMORY ---'''
+If the user expresses a durable identity fact or cross-project preference,
+or explicitly asks you to remember something universal, Edit the matching
+file immediately (one short bullet). Project-specific rules go in that
+project's CLAUDE.md or AGENTS.md; scoped facts and activity go through
+`Memory.*` tools when a memory skill is installed.
+--- END CORE MEMORY ---'''
 
 [delegation_header]
 description = "Section header listing available agents for Task delegation"
