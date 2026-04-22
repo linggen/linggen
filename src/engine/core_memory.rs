@@ -1,7 +1,7 @@
-//! Core memory — built-in identity + working-style files.
+//! Built-in memory — identity + working-style files.
 //!
 //! Layer 1 of the two-layer memory system (see `doc/memory-spec.md`).
-//! Two markdown files under `~/.linggen/core/`:
+//! Two markdown files under `~/.linggen/memory/`:
 //!
 //! - `identity.md` — who the user is (name, role, timezone, language,
 //!   universal preferences).
@@ -62,20 +62,21 @@ not here.
 ## Universal rules
 "#;
 
-/// Loaded content for the core memory block. Bodies exclude the YAML
+/// Loaded content for the built-in memory block. Bodies exclude the YAML
 /// frontmatter — only the markdown body the user authored.
 pub(crate) struct CoreContent {
     pub identity: String,
     pub style: String,
 }
 
-/// Read `identity.md` and `style.md` from the core directory. Returns
+/// Read `identity.md` and `style.md` from the memory directory. Returns
 /// `Some` only when at least one file has substantive user content beyond
 /// headings and template comments. Creates the templates on first access
-/// so the user always has a file to edit, but treats unedited templates
-/// as absent (callers can then fall back to legacy inlining).
+/// so the user always has a file to edit, and treats unedited templates
+/// as absent so the caller emits the "populate me" bootstrap hint instead
+/// of injecting empty scaffolding.
 pub(crate) fn load_core() -> Option<CoreContent> {
-    let dir = crate::paths::core_dir();
+    let dir = crate::paths::memory_dir();
     let _ = ensure_templates(&dir);
 
     let identity = read_body(&dir.join(IDENTITY_FILE)).unwrap_or_default();
@@ -121,8 +122,8 @@ fn strip_frontmatter(text: &str) -> &str {
 }
 
 /// Treat a body as "populated" only when it has at least one line that
-/// isn't a heading, blank, or HTML template comment. Stops unedited
-/// scaffolding from suppressing the legacy fallback.
+/// isn't a heading, blank, or HTML template comment. Used to decide
+/// between inlining the file content and emitting the bootstrap hint.
 fn has_user_content(body: &str) -> bool {
     let mut in_comment = false;
     for raw in body.lines() {

@@ -35,9 +35,9 @@ Session mode controls which tools are available. No tool permissions in agent sp
 | Mode | What's available |
 |:-----|:-----------------|
 | **chat** | No tools |
-| **read** | `Read`, `Glob`, `Grep`, `WebSearch`, `capture_screenshot`, plan tools, `AskUser`, read-class Bash, `Memory.{search,get,list}` |
-| **edit** | Everything in read + `Write`, `Edit`, write-class Bash, `Memory.{add,update,delete}` |
-| **admin** | Everything, including `Memory.forget` (bulk-delete) |
+| **read** | `Read`, `Glob`, `Grep`, `WebSearch`, `capture_screenshot`, plan tools, `AskUser`, read-class Bash, `Memory_{search,get,list}` |
+| **edit** | Everything in read + `Write`, `Edit`, write-class Bash, `Memory_{add,update,delete}` |
+| **admin** | Everything, including `Memory_forget` (bulk-delete) |
 
 ### Bash classification
 

@@ -83,7 +83,7 @@ Universal facts about the user and how they want to work, inlined from
   or contradicts something above, Edit the matching file immediately.
 - Keep core tiny. Project-specific rules belong in that project's CLAUDE.md
   or AGENTS.md — not here. Scoped facts, activity logs, and semantic
-  retrieval belong in the memory skill (`Memory.*` tools) — not here.
+  retrieval belong in the memory skill (`Memory_*` tools) — not here.
 --- END CORE MEMORY ---'''
 
 [core_memory_block_empty]
@@ -104,7 +104,7 @@ If the user expresses a durable identity fact or cross-project preference,
 or explicitly asks you to remember something universal, Edit the matching
 file immediately (one short bullet). Project-specific rules go in that
 project's CLAUDE.md or AGENTS.md; scoped facts and activity go through
-`Memory.*` tools when a memory skill is installed.
+`Memory_*` tools when a memory skill is installed.
 --- END CORE MEMORY ---'''
 
 [delegation_header]

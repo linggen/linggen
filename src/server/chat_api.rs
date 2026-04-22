@@ -1072,7 +1072,7 @@ async fn run_structured_loop(
     engine.task = Some(task_for_loop);
     // Add user message to chat history so subsequent turns have conversational context.
     // Per-turn semantic retrieval against skill memory will hook in here once
-    // a `provides: [memory]` skill is active and its `Memory.search` handler
+    // a `provides: [memory]` skill is active and its `Memory_search` handler
     // is reachable via the memory dispatch layer (see memory-spec.md).
     engine.chat_history.push(crate::ollama::ChatMessage::new("user", ctx.clean_msg.clone()));
     engine.truncate_chat_history();

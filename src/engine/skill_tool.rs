@@ -31,24 +31,70 @@ pub struct SkillParamDef {
     pub items: Option<Value>,
 }
 
+/// How a skill-declared tool is dispatched. Determined by which frontmatter
+/// fields are populated:
+///
+/// - `cmd: "..."`   → `Shell` (shell execution, the classic skill tool)
+/// - `endpoint: ...` → `Http` (POST to the skill's daemon; requires the
+///   skill to declare a `daemon:` block)
+/// - neither        → `Data` (no side effect; args surface as a
+///   `content_block` event for app skill UIs)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillToolKind {
+    Shell,
+    Http,
+    Data,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillToolDef {
     pub name: String,
     pub description: String,
-    /// Shell command to execute. If empty, the tool is a **data tool** —
-    /// it returns the args as JSON without running anything. Used by app
-    /// skills to pass structured data to their UI via content_block events.
+    /// Shell command to execute. If empty *and* `endpoint` is also empty,
+    /// the tool is a **data tool** — args surface as a `content_block`
+    /// event for app skill UIs without running anything.
     #[serde(default)]
     pub cmd: String,
+    /// HTTP endpoint path on the skill's daemon, e.g. `/api/memory/search`.
+    /// Present makes this an **HTTP tool** — Linggen POSTs the args as JSON
+    /// to `http://127.0.0.1:<daemon.port>{endpoint}`. The owning skill
+    /// must declare a `daemon:` block (see `doc/skill-spec.md`).
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// Permission mode required to invoke this tool: `"read"` | `"edit"` |
+    /// `"admin"`. Applies to HTTP and shell tools. Data tools ignore it
+    /// (no side effect to gate). Absent → defaults to `"admin"` so
+    /// unclassified writes get the strict default.
+    #[serde(default)]
+    pub tier: Option<String>,
     #[serde(default)]
     pub args: HashMap<String, SkillParamDef>,
     #[serde(default)]
     pub returns: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    /// Name of the skill that declared this tool. Set at skill-load time so
+    /// dispatch can resolve the daemon (via `SkillManager`) without another
+    /// lookup. Not serialized — populated from the containing skill's name.
+    #[serde(skip)]
+    pub skill_name: Option<String>,
     /// Directory containing the skill file; set at load time.
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,
+}
+
+impl SkillToolDef {
+    /// Classify how this tool should be dispatched based on which fields
+    /// the skill author filled in.
+    pub fn kind(&self) -> SkillToolKind {
+        if self.endpoint.is_some() {
+            SkillToolKind::Http
+        } else if !self.cmd.is_empty() {
+            SkillToolKind::Shell
+        } else {
+            SkillToolKind::Data
+        }
+    }
 }
 
 impl SkillToolDef {
@@ -288,6 +334,8 @@ mod tests {
             name: "test_tool".to_string(),
             description: "A test tool".to_string(),
             cmd: "echo {{query}}".to_string(),
+            endpoint: None,
+            tier: None,
             args: HashMap::from([(
                 "query".to_string(),
                 SkillParamDef {
@@ -300,6 +348,7 @@ mod tests {
             )]),
             returns: Some("stdout text".to_string()),
             timeout_ms: 30000,
+            skill_name: None,
             skill_dir: None,
         };
 

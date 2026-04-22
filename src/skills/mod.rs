@@ -64,9 +64,12 @@ fn page_update_tool_def() -> SkillToolDef {
              and non-empty. See the skill's SKILL.md for widget shapes."
                 .to_string(),
         cmd: String::new(),
+        endpoint: None,
+        tier: None,
         args,
         returns: Some("ok".to_string()),
         timeout_ms: 1000,
+        skill_name: None,
         skill_dir: None,
     }
 }
@@ -278,6 +281,53 @@ pub struct AppConfig {
 }
 
 
+/// A skill's binding for a capability it claims to `provide`. The
+/// engine owns the capability's tool names / schemas / tiers (see
+/// `engine::capabilities`); this struct tells the engine *where* on the
+/// skill's daemon each tool is served, how to autostart it, and where
+/// to probe for health.
+///
+/// One `CapabilityImpl` per capability in the skill's `implements:`
+/// block. Example (`skills/memory/SKILL.md`):
+///
+/// ```yaml
+/// provides: [memory]
+/// implements:
+///   memory:
+///     base_url: http://127.0.0.1:9888
+///     autostart: "ling-mem start"
+///     healthcheck: /api/health
+///     tools:
+///       Memory_add:    /api/memory/add
+///       Memory_search: /api/memory/search
+///       ...
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CapabilityImpl {
+    /// Root of the skill's HTTP surface. Engine concatenates this with
+    /// the tool's path to form the dispatch URL. Include the scheme,
+    /// host, and port (e.g. `http://127.0.0.1:9888`).
+    pub base_url: String,
+    /// Command the engine runs when the daemon isn't reachable on the
+    /// first call. Parsed with shell-split semantics. The first token
+    /// is resolved against `$SKILL_DIR/bin/` first, then `$PATH`.
+    #[serde(default)]
+    pub autostart: Option<String>,
+    /// Path that returns 200 when the daemon is healthy. Reserved for
+    /// the engine's future liveness probe; not consumed today.
+    #[serde(default = "default_capability_healthcheck")]
+    pub healthcheck: String,
+    /// Map from capability tool name (as defined by the engine's
+    /// capability contract) → path on the daemon. E.g.
+    /// `Memory_search: /api/memory/search`.
+    #[serde(default)]
+    pub tools: std::collections::HashMap<String, String>,
+}
+
+fn default_capability_healthcheck() -> String {
+    "/api/health".to_string()
+}
+
 /// Permission request declared by a skill. See permission-spec.md → Skill invocation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillPermission {
@@ -336,6 +386,14 @@ pub struct Skill {
     /// `doc/memory-spec.md`.
     #[serde(default)]
     pub provides: Option<Vec<String>>,
+    /// Bindings for capabilities the skill `provides:`. Keyed by the
+    /// capability's name (`"memory"`). One entry per capability this
+    /// skill implements. The engine owns each capability's canonical tool
+    /// contract (names, schemas, tiers — see `engine::capabilities`); this
+    /// map tells the engine *where* on the skill's daemon each tool is
+    /// served. Absent on skills that don't implement any capability.
+    #[serde(default)]
+    pub implements: Option<std::collections::HashMap<String, CapabilityImpl>>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<std::path::PathBuf>,
@@ -402,6 +460,8 @@ struct SkillFrontmatter {
     install: Option<String>,
     #[serde(default)]
     provides: Option<Vec<String>>,
+    #[serde(default)]
+    implements: Option<std::collections::HashMap<String, CapabilityImpl>>,
 }
 
 pub struct SkillManager {
@@ -550,6 +610,7 @@ impl SkillManager {
             permission: frontmatter.permission,
             install: frontmatter.install,
             provides: frontmatter.provides,
+            implements: frontmatter.implements,
             skill_dir: None,
         })
     }
@@ -595,23 +656,35 @@ impl SkillManager {
     }
 
     /// Resolve a capability name (e.g. `"memory"`) to the single skill that
-    /// advertises `provides: [<capability>]`. Returns the skill whose
-    /// insertion order puts it at the active slot — today that means the
-    /// first match seen during iteration (projects override globals because
-    /// of load order). Multi-provider disambiguation lands with the
-    /// marketplace UI; for now, installing two providers for the same
-    /// capability is a user error.
+    /// advertises `provides: [<capability>]`. Resolution is deterministic:
+    /// among skills claiming the capability, a Project-sourced skill beats
+    /// Compat, which beats Global; ties break alphabetically by name.
+    /// This way, a user's per-project override always wins over a globally
+    /// installed default, regardless of HashMap iteration order. Multi-
+    /// provider disambiguation (e.g. user-selected active slot) lands with
+    /// the marketplace UI; for now, installing two providers of the same
+    /// tier is resolved by name.
     pub async fn active_provider(&self, capability: &str) -> Option<Skill> {
         let skills = self.skills.lock().await;
         skills
             .values()
-            .find(|s| {
+            .filter(|s| {
                 s.provides
                     .as_ref()
                     .map(|list| list.iter().any(|c| c == capability))
                     .unwrap_or(false)
             })
+            .min_by_key(|s| (source_priority(&s.source), s.name.clone()))
             .cloned()
+    }
+}
+
+/// Priority for deterministic capability resolution. Lower wins.
+fn source_priority(src: &SkillSource) -> u8 {
+    match src {
+        SkillSource::Project => 0,
+        SkillSource::Compat { .. } => 1,
+        SkillSource::Global => 2,
     }
 }
 
@@ -667,6 +740,50 @@ provides: [memory]
 Body."#;
         let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
         assert_eq!(skill.provides.as_deref(), Some(&["memory".to_string()][..]));
+    }
+
+    #[test]
+    fn test_parse_skill_with_implements() {
+        let mgr = make_manager();
+        let text = r#"---
+name: memory
+description: Semantic memory
+provides: [memory]
+implements:
+  memory:
+    base_url: http://127.0.0.1:9888
+    autostart: "ling-mem start"
+    healthcheck: /api/health
+    tools:
+      Memory_add:    /api/memory/add
+      Memory_search: /api/memory/search
+---
+Body."#;
+        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let impls = skill.implements.as_ref().expect("implements block parsed");
+        let mem = impls.get("memory").expect("memory binding present");
+        assert_eq!(mem.base_url, "http://127.0.0.1:9888");
+        assert_eq!(mem.autostart.as_deref(), Some("ling-mem start"));
+        assert_eq!(mem.healthcheck, "/api/health");
+        assert_eq!(mem.tools.get("Memory_add").map(String::as_str), Some("/api/memory/add"));
+        assert_eq!(mem.tools.get("Memory_search").map(String::as_str), Some("/api/memory/search"));
+    }
+
+    #[test]
+    fn test_parse_skill_implements_healthcheck_defaults() {
+        let mgr = make_manager();
+        let text = r#"---
+name: mem-min
+description: Minimal implements block
+provides: [memory]
+implements:
+  memory:
+    base_url: http://127.0.0.1:9999
+---
+Body."#;
+        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let mem = skill.implements.unwrap().remove("memory").unwrap();
+        assert_eq!(mem.healthcheck, "/api/health");
     }
 
     #[tokio::test]

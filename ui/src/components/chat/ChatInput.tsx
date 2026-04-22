@@ -691,7 +691,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={mobile ? "Message..." : "Message... (/ for skills, @ for files, @@ for agents, Shift+Enter for newline)"}
+            placeholder={mobile ? "Message..." : "Message... (/ for skills, @ for files, Shift+Enter for newline)"}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5",

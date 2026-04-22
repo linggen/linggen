@@ -207,51 +207,26 @@ pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Pat
                 }
             })
             .unwrap_or_else(|| "<unknown query>".to_string()),
-        "Memory.search" => args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .map(|q| truncate_for_prompt(q, 120))
-            .unwrap_or_else(|| "<no query>".to_string()),
-        "Memory.add" => args
-            .get("content")
-            .and_then(|v| v.as_str())
-            .map(|c| truncate_for_prompt(c, 120))
-            .unwrap_or_else(|| "<no content>".to_string()),
-        "Memory.get" | "Memory.update" | "Memory.delete" => args
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "<no id>".to_string()),
-        "Memory.forget" => {
-            let contexts = args
-                .get("contexts")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                })
-                .filter(|s| !s.is_empty());
-            let ty = args.get("type").and_then(|v| v.as_str());
-            let older_than = args.get("older_than").and_then(|v| v.as_str());
-            let parts: Vec<String> = [
-                contexts.map(|c| format!("contexts={c}")),
-                ty.map(|t| format!("type={t}")),
-                older_than.map(|t| format!("older_than={t}")),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            if parts.is_empty() {
-                "<no filter — would delete everything>".to_string()
-            } else {
-                parts.join(" ")
+        // Skill-declared tools (including Memory_*) fall through to a
+        // generic best-effort summary: show the first user-relevant string
+        // arg we can find (query / content / id / endpoint). The UI prompt
+        // includes the tool name too so the user still has context.
+        _ => skill_tool_summary(&args).unwrap_or_else(|| tool.to_string()),
+    }
+}
+
+/// Best-effort single-line summary for a skill-declared tool. Looks at
+/// common arg names in priority order. Returns `None` if nothing looks
+/// display-worthy, so the caller can fall back to just the tool name.
+fn skill_tool_summary(args: &serde_json::Value) -> Option<String> {
+    for key in &["query", "content", "id", "endpoint", "path", "url"] {
+        if let Some(v) = args.get(*key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return Some(truncate_for_prompt(v, 120));
             }
         }
-        "Memory.list" => tool.to_string(),
-        _ => tool.to_string(),
     }
+    None
 }
 
 fn truncate_for_prompt(s: &str, max: usize) -> String {
@@ -872,19 +847,44 @@ pub fn effective_mode_for_path(path_modes: &[PathMode], target: &Path) -> Option
 // ---------------------------------------------------------------------------
 
 /// Map a tool name to its permission mode requirement.
-/// For Bash, use `classify_bash_command` instead.
+///
+/// For Bash, use `classify_bash_command` instead. Resolution order:
+/// 1. Built-in engine tools — matched here by literal name.
+/// 2. Capability tools — tier comes from `engine::capabilities` (so
+///    `Memory_forget` is Admin, `Memory_search` is Read, etc.).
+/// 3. Skill-unique tools — caller should resolve the tier from the
+///    SkillToolDef's manifest `tier:` field via `parse_skill_tier`
+///    before consulting this function.
+/// 4. Anything unrecognized → Admin (strict default).
 pub fn tool_action_tier(tool: &str) -> PermissionMode {
     match tool {
         "Read" | "Glob" | "Grep" | "WebSearch" | "capture_screenshot"
         | "EnterPlanMode" | "ExitPlanMode" | "UpdatePlan" | "AskUser" => PermissionMode::Read,
         "Write" | "Edit" => PermissionMode::Edit,
-        // Memory.* family: reads are Read tier; targeted mutations are Edit;
-        // only bulk-forget is Admin since it destroys many rows at once.
-        "Memory.search" | "Memory.get" | "Memory.list" => PermissionMode::Read,
-        "Memory.add" | "Memory.update" | "Memory.delete" => PermissionMode::Edit,
-        "Memory.forget" => PermissionMode::Admin,
-        // Everything else: Bash, WebFetch, RunApp, Task, Skill, lock_paths, unlock_paths
-        _ => PermissionMode::Admin,
+        _ => {
+            // Capability tools carry their tier in the engine's
+            // capability registry — consult that before falling back
+            // to the strict default.
+            if let Some(tier) = crate::engine::capabilities::tool_tier(tool) {
+                return tier;
+            }
+            // Everything else: Bash, WebFetch, RunApp, Task, Skill,
+            // lock_paths, unlock_paths, plus any skill-unique tool
+            // whose manifest didn't declare a tier.
+            PermissionMode::Admin
+        }
+    }
+}
+
+/// Parse the `tier:` string from a skill tool's manifest into a
+/// `PermissionMode`. Returns `None` for unrecognized strings so the
+/// caller can fall back to `tool_action_tier`.
+pub fn parse_skill_tier(tier: &str) -> Option<PermissionMode> {
+    match tier {
+        "read" => Some(PermissionMode::Read),
+        "edit" => Some(PermissionMode::Edit),
+        "admin" => Some(PermissionMode::Admin),
+        _ => None,
     }
 }
 
@@ -981,6 +981,7 @@ pub fn check_permission(
     session_perms: &SessionPermissions,
     deny_rules: &[String],
     ask_rules: &[String],
+    action_tier_override: Option<PermissionMode>,
 ) -> PermissionCheckResult {
     // 0. Chat mode = no tools at all, hard-block everything
     let target_path_for_chat = file_path
@@ -990,8 +991,12 @@ pub fn check_permission(
         return PermissionCheckResult::Blocked("Chat mode: no tools available".to_string());
     }
 
-    // 1. Classify action tier
-    let action_tier = if tool == "Bash" {
+    // 1. Classify action tier. An explicit override (from a skill-declared
+    // `tier:` on the tool) wins over the built-in table — skills know their
+    // own operation's risk profile better than the hardcoded defaults.
+    let action_tier = if let Some(override_tier) = action_tier_override {
+        override_tier
+    } else if tool == "Bash" {
         match bash_command {
             Some(cmd) => match classify_bash_command(cmd) {
                 BashClass::Read => PermissionMode::Read,
@@ -1659,7 +1664,7 @@ mod tests {
             let result = check_permission(
                 "Read", None,
                 Some(home.join("workspace/file.txt").to_str().unwrap()),
-                &cwd, &sp, &[], &[],
+                &cwd, &sp, &[], &[], None,
             );
             assert!(matches!(result, PermissionCheckResult::Blocked(_)));
         }
@@ -1732,43 +1737,51 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_tool_action_tier() {
-        // Reads don't prompt at read-mode or higher.
-        assert_eq!(tool_action_tier("Memory.search"), PermissionMode::Read);
-        assert_eq!(tool_action_tier("Memory.get"), PermissionMode::Read);
-        assert_eq!(tool_action_tier("Memory.list"), PermissionMode::Read);
-        // Targeted mutations need edit-mode.
-        assert_eq!(tool_action_tier("Memory.add"), PermissionMode::Edit);
-        assert_eq!(tool_action_tier("Memory.update"), PermissionMode::Edit);
-        assert_eq!(tool_action_tier("Memory.delete"), PermissionMode::Edit);
-        // Bulk forget is destructive — always prompt below admin-mode.
-        assert_eq!(tool_action_tier("Memory.forget"), PermissionMode::Admin);
+    fn test_parse_skill_tier_covers_all_modes() {
+        assert_eq!(parse_skill_tier("read"), Some(PermissionMode::Read));
+        assert_eq!(parse_skill_tier("edit"), Some(PermissionMode::Edit));
+        assert_eq!(parse_skill_tier("admin"), Some(PermissionMode::Admin));
+        assert_eq!(parse_skill_tier("nonsense"), None);
+        assert_eq!(parse_skill_tier(""), None);
     }
 
     #[test]
-    fn test_memory_forget_summary_flags_empty_filter() {
+    fn test_unrecognized_tool_defaults_to_admin() {
+        // Truly unknown tools fall through to the strict Admin default.
+        // (Capability tools — Memory_* etc. — are handled via the
+        // engine's capability registry; see the next test.)
+        assert_eq!(tool_action_tier("SomeNovelTool"), PermissionMode::Admin);
+    }
+
+    #[test]
+    fn test_capability_tool_tier_comes_from_registry() {
+        // `Memory_*` tools route to tiers declared in
+        // `engine::capabilities` — not the Admin default.
+        assert_eq!(tool_action_tier("Memory_search"), PermissionMode::Read);
+        assert_eq!(tool_action_tier("Memory_add"),    PermissionMode::Edit);
+        assert_eq!(tool_action_tier("Memory_forget"), PermissionMode::Admin);
+    }
+
+    #[test]
+    fn test_skill_tool_summary_picks_first_useful_arg() {
         let cwd = std::env::current_dir().unwrap();
         let summary = permission_target_summary(
-            "Memory.forget",
+            "SomeTool",
+            &serde_json::json!({"query": "dock calibration"}),
+            &cwd,
+        );
+        assert!(summary.contains("dock calibration"), "got: {summary}");
+    }
+
+    #[test]
+    fn test_skill_tool_summary_falls_back_to_tool_name() {
+        let cwd = std::env::current_dir().unwrap();
+        let summary = permission_target_summary(
+            "SomeTool",
             &serde_json::json!({}),
             &cwd,
         );
-        assert!(
-            summary.contains("delete everything"),
-            "empty-filter forget must warn loudly, got: {summary}"
-        );
-    }
-
-    #[test]
-    fn test_memory_forget_summary_shows_filter() {
-        let cwd = std::env::current_dir().unwrap();
-        let summary = permission_target_summary(
-            "Memory.forget",
-            &serde_json::json!({"contexts": ["trip-japan-2026"], "older_than": "2026-01-01"}),
-            &cwd,
-        );
-        assert!(summary.contains("contexts=trip-japan-2026"));
-        assert!(summary.contains("older_than=2026-01-01"));
+        assert_eq!(summary, "SomeTool");
     }
 
     // -----------------------------------------------------------------------
@@ -1800,11 +1813,11 @@ mod tests {
         let ask: Vec<String> = vec![];
         let cwd = dirs::home_dir().unwrap_or_default();
 
-        let result = check_permission("Bash", Some("sudo apt install foo"), None, &cwd, &sp, &deny, &ask);
+        let result = check_permission("Bash", Some("sudo apt install foo"), None, &cwd, &sp, &deny, &ask, None);
         assert!(matches!(result, PermissionCheckResult::Blocked(_)));
 
         // Non-matching command should not be blocked by deny
-        let result = check_permission("Bash", Some("ls -la"), None, &cwd, &sp, &deny, &ask);
+        let result = check_permission("Bash", Some("ls -la"), None, &cwd, &sp, &deny, &ask, None);
         assert!(!matches!(result, PermissionCheckResult::Blocked(_)));
     }
 
@@ -1816,16 +1829,16 @@ mod tests {
 
         let cwd = dirs::home_dir().unwrap_or_default();
 
-        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp, &deny, &ask);
+        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp, &deny, &ask, None);
         assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
 
         // After user allows for session (stores the rule pattern), should not prompt again
         let mut sp2 = SessionPermissions::default();
         sp2.allows.insert("Bash(git push *)".to_string()); // stores the rule, not the exact command
-        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp2, &deny, &ask);
+        let result = check_permission("Bash", Some("git push origin main"), None, &cwd, &sp2, &deny, &ask, None);
         assert!(!matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
         // Different command matching same rule pattern — also suppressed
-        let result = check_permission("Bash", Some("git push origin feature"), None, &cwd, &sp2, &deny, &ask);
+        let result = check_permission("Bash", Some("git push origin feature"), None, &cwd, &sp2, &deny, &ask, None);
         assert!(!matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::AskRuleOverride { .. })));
     }
 
@@ -1843,14 +1856,14 @@ mod tests {
             // Read within edit ceiling → allowed
             let result = check_permission(
                 "Read", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask, None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
 
             // Write within edit ceiling → allowed
             let result = check_permission(
                 "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask, None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
         }
@@ -1870,7 +1883,7 @@ mod tests {
             // Write exceeds read ceiling → prompt
             let result = check_permission(
                 "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, &deny, &ask,
+                &cwd, &sp, &deny, &ask, None,
             );
             assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })));
         }
@@ -1884,7 +1897,7 @@ mod tests {
         let cwd = dirs::home_dir().unwrap_or_default();
 
         // Write to /etc → system zone prompt
-        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
+        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask, None);
         assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::SystemZoneWrite { .. })));
     }
 
@@ -1903,7 +1916,7 @@ mod tests {
         let cwd = dirs::home_dir().unwrap_or_default();
 
         // Write to system zone under strict policy → blocked (no prompt).
-        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
+        let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask, None);
         assert!(
             matches!(result, PermissionCheckResult::Blocked(_)),
             "strict policy must hard-block system-zone writes, got {result:?}"
@@ -1923,11 +1936,11 @@ mod tests {
             let cwd = dirs::home_dir().unwrap_or_default();
 
             // Read in system zone with grant → allowed
-            let result = check_permission("Read", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
+            let result = check_permission("Read", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask, None);
             assert!(matches!(result, PermissionCheckResult::Allowed));
 
             // Write in system zone → still per-action
-            let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask);
+            let result = check_permission("Write", None, Some("/etc/hosts"), &cwd, &sp, &deny, &ask, None);
             assert!(matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::SystemZoneWrite { .. })));
         }
     }

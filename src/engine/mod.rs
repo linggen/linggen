@@ -1,4 +1,6 @@
 pub mod actions;
+pub(crate) mod capabilities;
+pub(crate) mod capability_tools;
 mod context;
 pub(crate) mod core_memory;
 pub mod memory;

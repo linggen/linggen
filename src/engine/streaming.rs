@@ -135,10 +135,12 @@ pub(crate) fn check_context_staleness(
             content.hash(&mut hasher);
         }
     }
-    // Hash core memory (identity.md + style.md) so user edits invalidate
-    // the cached stable system prompt on the next turn.
-    let core_dir = crate::paths::core_dir();
-    if let Ok(entries) = std::fs::read_dir(&core_dir) {
+    // Hash the built-in memory files (identity.md + style.md) so user edits
+    // invalidate the cached stable system prompt on the next turn. Only .md
+    // files at the top level are hashed — per-skill data subdirectories are
+    // skipped (their mtime changes on every daemon write).
+    let memory_dir = crate::paths::memory_dir();
+    if let Ok(entries) = std::fs::read_dir(&memory_dir) {
         let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
         paths.sort();
         for path in paths {

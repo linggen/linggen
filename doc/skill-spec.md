@@ -85,54 +85,89 @@ These fields are Linggen-specific extensions.
 | `permission` | Permission request — user is prompted to approve before skill runs (see below) |
 | `install` | Install script — runs once when the skill is installed (see below) |
 | `provides` | Capabilities this skill implements — makes it discoverable by Linggen core as a service provider (see below) |
+| `implements` | Per-capability bindings — where on the skill's daemon each engine-defined tool is served (see below) |
 | `requires` | External dependencies (other skills, binaries, versions) install.sh should resolve |
 
-## Service skills and the `provides:` field
+## Service skills, capabilities, and `implements:`
 
-A skill can advertise that it implements a **capability** — a named service that Linggen core and other skills can call. This turns a skill from "instructions + optional tools" into a **pluggable service implementation**.
+A skill can advertise that it implements a **capability** — a named service the engine defines and any installable skill can provide. Capabilities turn a skill from "instructions + optional tools" into a **pluggable service implementation**.
 
 The first capability defined is `memory` (see `memory-spec.md`). Others will follow (`search`, `vcs`, `notifications`).
 
-### Declaring a capability
+### The split: engine-owned contract, skill-owned backend
+
+Capability tool **names, argument schemas, and permission tiers** live in the engine (`engine::capabilities`). Skills **do not re-declare** these in their manifest — the engine is the single source of truth. A skill just says:
+
+1. Which capabilities it implements (`provides:`).
+2. Where on its daemon each tool is served (`implements:`).
+
+This is what makes providers swappable: two different memory skills expose identical tools to the model because both conform to the same engine-defined contract. Only the dispatch target differs.
+
+### Declaring a capability implementation
 
 ```yaml
 ---
 name: linggen-memory
 description: Semantic memory — facts, activity, semantic retrieval
 provides: [memory]
-requires:
-  - linggen-memory-bin@0.1.*
+implements:
+  memory:
+    base_url: http://127.0.0.1:9888
+    autostart: "ling-mem start"
+    healthcheck: /api/health
+    tools:
+      Memory_add:    /api/memory/add
+      Memory_get:    /api/memory/get
+      Memory_search: /api/memory/search
+      Memory_list:   /api/memory/list
+      Memory_update: /api/memory/update
+      Memory_delete: /api/memory/delete
+      Memory_forget: /api/memory/forget
 install: install.sh
 ---
 ```
 
-`provides` is a list (a skill can implement more than one capability). Linggen core scans all installed skills on load and builds a `capability → active-skill` map.
+`provides:` is a list (a skill can implement more than one capability). `implements:` is a map keyed by capability name; one entry per capability claimed. The engine scans all installed skills on load and builds a `capability → active-skill` map plus a per-skill binding table.
+
+### `implements.<capability>` fields
+
+| Field | Purpose |
+|:------|:--------|
+| `base_url` | Root of the skill's HTTP surface. Include scheme + host + port. The engine concatenates this with each tool's path to form the dispatch URL. |
+| `autostart` | Command the engine runs when the daemon isn't reachable on the first call. Whitespace-split. First token resolved as `$SKILL_DIR/bin/<name>` first, else bare name on `$PATH`. Default: `ling-mem start`. |
+| `healthcheck` | Path returning 200 when the daemon is healthy. Default: `/api/health`. Reserved for the engine's future liveness probe. |
+| `tools` | Map from capability tool name (engine-defined) → path on the daemon. Must cover every tool in the capability's contract. |
 
 ### How dispatch works
 
-Each capability has a built-in tool family registered by Linggen core (e.g. `Memory.add`, `Memory.search`, `Memory.list`, ...). When the model calls one of those tools, Linggen routes the call to whichever skill is the active provider for that capability.
+When the model calls a capability tool (e.g. `Memory_search`):
 
 ```
-Model calls Memory.search("dock calibration")
-  → Linggen looks up active memory provider → linggen-memory
-  → Dispatches via CLI shell-out or HTTP to the skill's binary
-  → Returns results to the model
+Model calls Memory_search({query: "dock calibration"})
+  → Engine capability registry:  Memory_search ∈ capability "memory"
+  → Active provider for memory:  linggen-memory
+  → Read implements.memory.tools[Memory_search]:  /api/memory/search
+  → URL = base_url + path:       http://127.0.0.1:9888/api/memory/search
+  → POST JSON args, parse {ok, data} envelope
+  → Return data to the model
 ```
 
-If no skill is registered for a capability, the tool returns a clear error ("No `memory` provider active; install one from the marketplace").
+On connection refuse / timeout, the engine spawns `implements.memory.autostart` and retries once. The daemon outlives the Linggen process — the engine never auto-stops it.
+
+If no skill is registered for a capability, the tool is filtered out of the model's tool list entirely — the model doesn't see it.
+
+Resolution is deterministic when multiple skills claim the same capability: Project-sourced skills beat Compat, which beat Global; ties break by name. Only one provider per capability is active at a time in v1; multi-provider merging is deferred.
 
 ### Swapping providers
 
-Because tool names are capability-namespaced (`Memory.*` instead of `linggen_memory_search`), users can swap providers without retraining the model or rewriting downstream code. The marketplace lists skills by capability; users pick one per capability.
+Because tool names / schemas / tiers are engine-owned and capability-namespaced (`Memory_*` instead of provider-specific), users can swap providers without the model seeing any change. A new provider implements the same contract; the model continues to call `Memory_search` with the same arg shape.
 
-Only one provider per capability is active at a time in v1. Multi-provider merging is a future design.
+### When to use `provides:` + `implements:` vs plain `tools:`
 
-### When to use `provides:` vs plain tool registration
+- **Use `provides:` + `implements:`** when the skill implements a Linggen-defined capability contract (memory, search, …). Tool names, schemas, and tiers are engine-owned; this skill is one of possibly many interchangeable backends.
+- **Use plain `tools:` registration** when the skill ships a tool unique to itself (e.g. `run_lint` on a linter skill, `DashboardUpdate` on an app skill). The skill owns the name, schema, and tier; nothing else can implement it.
 
-- **Use `provides:`** when the skill implements a Linggen-defined service contract (memory, search, etc.). Tool names are fixed by the contract.
-- **Use plain `tools:` registration** when the skill ships a specific tool unique to itself (e.g. a `run_lint` command tied to one linter). No contract to conform to.
-
-Capability dispatch is strictly for skills that fit a well-known service slot.
+Capability dispatch is strictly for skills that fit a well-known service slot. A skill can declare both — canonical contract coverage via `implements:` plus its own unique tools via `tools:`.
 
 ## Skill install
 

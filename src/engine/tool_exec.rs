@@ -328,6 +328,18 @@ impl AgentEngine {
             }
         }
 
+        // Skill-declared tier wins over the built-in table. For HTTP and
+        // shell skill tools that declare `tier: read|edit|admin` in their
+        // manifest, parse it into a PermissionMode and pass to
+        // check_permission as an override. Unknown / missing tier falls
+        // back to the built-in classification.
+        let skill_tier_override = self
+            .tools
+            .skill_tools
+            .get(canonical_tool.as_str())
+            .and_then(|def| def.tier.as_deref())
+            .and_then(permission::parse_skill_tier);
+
         // Run the new permission check (skipped for skill data tools, which
         // don't touch the filesystem or run anything).
         let check_result = if skip_permission_gate {
@@ -341,6 +353,7 @@ impl AgentEngine {
                 &self.session_permissions,
                 &self.cfg.deny_rules,
                 &self.cfg.ask_rules,
+                skill_tier_override,
             )
         };
 

@@ -231,31 +231,9 @@ pub fn canonical_tool_name(tool: &str) -> Option<&'static str> {
         "ExitPlanMode" | "exit_plan_mode" => "ExitPlanMode",
         "EnterPlanMode" | "enter_plan_mode" => "EnterPlanMode",
         "UpdatePlan" | "update_plan" => "UpdatePlan",
-        "Memory.add" => "Memory.add",
-        "Memory.get" => "Memory.get",
-        "Memory.search" => "Memory.search",
-        "Memory.list" => "Memory.list",
-        "Memory.update" => "Memory.update",
-        "Memory.delete" => "Memory.delete",
-        "Memory.forget" => "Memory.forget",
         _ => return None,
     })
 }
-
-/// The canonical names for the Memory.* tool family. Kept in sync with
-/// `engine::memory::MEMORY_METHODS` and with linggen-memory's v0.1 CLI
-/// subcommands (see linggen-memory/doc/tech-spec.md). `Memory.archive`
-/// is intentionally absent — deferred in v0.1; re-add when the provider
-/// ships it.
-pub(crate) const MEMORY_TOOL_NAMES: &[&str] = &[
-    "Memory.add",
-    "Memory.get",
-    "Memory.search",
-    "Memory.list",
-    "Memory.update",
-    "Memory.delete",
-    "Memory.forget",
-];
 
 pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
     vec![
@@ -356,51 +334,10 @@ pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
             "returns": "success",
             "notes": "Track execution progress during plan execution (after approval). Update item status: pending → in_progress → completed. Do NOT call this during planning — use ExitPlanMode instead."
         }),
-        // --- Memory.* family ------------------------------------------------
-        // Routed to whichever skill advertises `provides: [memory]`. When no
-        // memory skill is installed every call returns a clear error
-        // directing the user to install one. See doc/memory-spec.md.
-        serde_json::json!({
-            "name": "Memory.add",
-            "args": {"content": "string", "contexts": "string[]?", "type": "string?", "outcome": "string?"},
-            "returns": "{id}",
-            "notes": "Store a new fact. type ∈ fact|preference|decision|tried|fixed|learned|built."
-        }),
-        serde_json::json!({
-            "name": "Memory.get",
-            "args": {"id": "string"},
-            "returns": "{fact}",
-            "notes": "Fetch a single fact by id."
-        }),
-        serde_json::json!({
-            "name": "Memory.search",
-            "args": {"query": "string", "contexts": "string[]?", "type": "string?", "limit": "number?"},
-            "returns": "{facts:[...]}",
-            "notes": "Semantic search across stored facts. Prefer this over Memory.list when the query is fuzzy."
-        }),
-        serde_json::json!({
-            "name": "Memory.list",
-            "args": {"contexts": "string[]?", "type": "string?", "since": "string?", "limit": "number?", "sort": "string?"},
-            "returns": "{facts:[...]}",
-            "notes": "Browse facts without semantic ranking. Use for deterministic filters (exact context, date range)."
-        }),
-        serde_json::json!({
-            "name": "Memory.update",
-            "args": {"id": "string", "content": "string?", "contexts": "string[]?", "type": "string?", "outcome": "string?"},
-            "returns": "success"
-        }),
-        serde_json::json!({
-            "name": "Memory.delete",
-            "args": {"id": "string"},
-            "returns": "success",
-            "notes": "Hard-forget a single fact with a tombstone."
-        }),
-        serde_json::json!({
-            "name": "Memory.forget",
-            "args": {"contexts": "string[]?", "type": "string?", "older_than": "string?"},
-            "returns": "{deleted:number}",
-            "notes": "Bulk delete by filter — e.g. forget everything tagged trip-japan-2026."
-        }),
+        // Memory_* and any other skill-declared HTTP tools come from their
+        // skill's SKILL.md `tools:` block, not from this hardcoded table.
+        // They're rendered via `SkillToolDef::to_schema_json()` when the
+        // registry composes the model-facing schema.
     ]
 }
 

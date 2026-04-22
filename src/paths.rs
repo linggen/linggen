@@ -64,9 +64,13 @@ pub fn projects_dir() -> PathBuf {
     linggen_home().join("projects")
 }
 
-/// `~/.linggen/core/` — built-in core memory (identity + style), always
-/// injected into the stable system prompt. Tiny, universal, user-owned.
-pub fn core_dir() -> PathBuf {
-    linggen_home().join("core")
+/// `~/.linggen/memory/` — root of the memory tree.
+///
+/// Holds the two built-in files (`identity.md`, `style.md`) inlined into
+/// the stable system prompt, plus per-skill data under
+/// `~/.linggen/memory/<skill-name>/` for installed memory providers.
+/// See `doc/memory-spec.md`.
+pub fn memory_dir() -> PathBuf {
+    linggen_home().join("memory")
 }
 

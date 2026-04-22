@@ -349,114 +349,12 @@ fn builtin_tool_schemas() -> Vec<Value> {
                 "required": []
             }),
         ),
-        // ── Memory.* family ─────────────────────────────────────────────
-        // Routed to the active `provides: [memory]` skill via
-        // engine::memory::dispatch. When no provider is installed, every
-        // call returns a clear install-hint error. Argument shapes track
-        // linggen-memory/DESIGN.md; drift is a bug to be reconciled there.
-        tool_def(
-            MEMORY_ADD,
-            "Store a new fact in memory. Use for durable, scoped info worth recalling in future unrelated sessions — identity, preferences, decisions with reasoning, failed attempts, symptom-indexed fixes. Not for activity logs or conversation micro-details.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string", "description": "The fact text. Self-contained; include scoping conditions inline if they matter."},
-                    "contexts": {"type": "array", "items": {"type": "string"}, "description": "Scope tags (e.g. [\"code/linggen\", \"trip-japan-2026\"]). Free-form; N:M with facts."},
-                    "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "Canonical fact type. See linggen-memory/DESIGN.md."},
-                    "outcome": {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "Only meaningful for action-flavored types (tried, fixed)."}
-                },
-                "required": ["content"]
-            }),
-        ),
-        tool_def(
-            MEMORY_GET,
-            "Fetch a single fact by id.",
-            json!({
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-                "required": ["id"]
-            }),
-        ),
-        tool_def(
-            MEMORY_SEARCH,
-            "Semantic search across stored facts. Use when the query is fuzzy or you want relevance ranking; prefer Memory.list for exact-filter browsing.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "contexts": {"type": "array", "items": {"type": "string"}, "description": "Restrict to these scope tags."},
-                    "type": {"type": "string"},
-                    "limit": {"type": "integer"}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            MEMORY_LIST,
-            "Browse facts without semantic ranking. Use for deterministic filters: exact context, date range, sort by created_at or occurred_at.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "contexts": {"type": "array", "items": {"type": "string"}},
-                    "type": {"type": "string"},
-                    "since": {"type": "string", "description": "ISO timestamp — inclusive lower bound."},
-                    "limit": {"type": "integer"},
-                    "sort": {"type": "string", "enum": ["created_at", "occurred_at"]}
-                },
-                "required": []
-            }),
-        ),
-        tool_def(
-            MEMORY_UPDATE,
-            "Edit an existing fact by id. Any omitted field is left untouched.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "content": {"type": "string"},
-                    "contexts": {"type": "array", "items": {"type": "string"}},
-                    "type": {"type": "string"},
-                    "outcome": {"type": "string"}
-                },
-                "required": ["id"]
-            }),
-        ),
-        tool_def(
-            MEMORY_DELETE,
-            "Hard-delete a single fact with a tombstone. Irreversible.",
-            json!({
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-                "required": ["id"]
-            }),
-        ),
-        tool_def(
-            MEMORY_FORGET,
-            "Bulk-delete facts by filter. Use when the user says 'forget everything about X' — contexts + type + older_than narrow the target.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "contexts": {"type": "array", "items": {"type": "string"}},
-                    "type": {"type": "string"},
-                    "older_than": {"type": "string", "description": "ISO timestamp — delete facts older than this."}
-                },
-                "required": []
-            }),
-        ),
+        // Memory_* and any other skill-declared HTTP tools come from their
+        // skill's SKILL.md `tools:` block, not from this hardcoded table.
+        // The ToolRegistry renders them via `SkillToolDef::to_oai_schema()`
+        // when building the native tool list for the model.
     ]
 }
-
-// Memory.* tool names — mirrored from `tool_helpers::MEMORY_TOOL_NAMES` so
-// the native-schema module stays independent of the legacy-schema module
-// while staying in sync. Violations of this mirroring are caught by
-// `tests::memory_tools_match_canonical_names`.
-const MEMORY_ADD: &str = "Memory.add";
-const MEMORY_GET: &str = "Memory.get";
-const MEMORY_SEARCH: &str = "Memory.search";
-const MEMORY_LIST: &str = "Memory.list";
-const MEMORY_UPDATE: &str = "Memory.update";
-const MEMORY_DELETE: &str = "Memory.delete";
-const MEMORY_FORGET: &str = "Memory.forget";
 
 fn tool_def(name: &str, description: &str, parameters: Value) -> Value {
     json!({
@@ -521,31 +419,7 @@ mod tests {
         assert!(required.iter().any(|v| v == "path"));
     }
 
-    #[test]
-    fn test_all_memory_tools_have_native_schemas() {
-        let defs = oai_tool_definitions(None);
-        let names: std::collections::HashSet<&str> = defs
-            .iter()
-            .filter_map(|d| d["function"]["name"].as_str())
-            .collect();
-        for expected in super::super::tool_helpers::MEMORY_TOOL_NAMES {
-            assert!(
-                names.contains(expected),
-                "Memory tool '{expected}' missing from OAI definitions — \
-                 native-function-calling models won't see it. Keep \
-                 MEMORY_TOOL_NAMES and builtin_tool_schemas in sync.",
-            );
-        }
-    }
-
-    #[test]
-    fn test_memory_add_schema_requires_content() {
-        let defs = oai_tool_definitions(None);
-        let add = defs
-            .iter()
-            .find(|d| d["function"]["name"] == "Memory.add")
-            .expect("Memory.add present");
-        let required = add["function"]["parameters"]["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v == "content"));
-    }
+    // Memory tool schemas are now declared in skills/memory/SKILL.md
+    // and rendered via SkillToolDef::to_oai_schema. Schema integrity is
+    // exercised by skill-parsing tests in the skills module.
 }
