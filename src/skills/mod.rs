@@ -87,7 +87,17 @@ const GITHUB_RAW_URL: &str = "https://raw.githubusercontent.com/linggen/skills/m
 const CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 const SKIP_DIRS: &[&str] = &[".claude", ".cursor", ".linggen", ".git"];
 
-type BuiltInCache = Mutex<Option<(Instant, Vec<BuiltInSkillInfo>)>>;
+/// GitHub-derived metadata for a single built-in skill. Cached for `CACHE_TTL`
+/// because GitHub responses are stable; the `installed` flag (which depends on
+/// local filesystem state) is recomputed per request from this metadata.
+#[derive(Debug, Clone)]
+struct BuiltInRemote {
+    dir_name: String,
+    name: String,
+    description: String,
+}
+
+type BuiltInCache = Mutex<Option<(Instant, Vec<BuiltInRemote>)>>;
 
 fn builtin_cache() -> &'static BuiltInCache {
     static CACHE: OnceLock<BuiltInCache> = OnceLock::new();
@@ -100,32 +110,46 @@ pub async fn clear_builtin_cache() {
     *cache = None;
 }
 
+fn project_installed(remotes: &[BuiltInRemote]) -> Vec<BuiltInSkillInfo> {
+    let global_skills_dir = crate::paths::global_skills_dir();
+    remotes
+        .iter()
+        .map(|r| BuiltInSkillInfo {
+            name: r.name.clone(),
+            description: r.description.clone(),
+            installed: global_skills_dir.join(&r.dir_name).join("SKILL.md").exists(),
+        })
+        .collect()
+}
+
 /// Fetches the list of built-in skills from the linggen/skills GitHub repo.
-/// Results are cached for 10 minutes. On error, returns cached data or empty vec.
+/// GitHub metadata is cached for 10 minutes; the `installed` flag is recomputed
+/// from the local filesystem on each call so install/uninstall reflects
+/// immediately. On GitHub fetch error, returns stale cache or empty vec.
 pub async fn fetch_builtin_skills() -> Vec<BuiltInSkillInfo> {
-    // Check cache
+    // Check cache for the GitHub metadata.
     {
         let cache = builtin_cache().lock().await;
-        if let Some((ts, ref skills)) = *cache {
+        if let Some((ts, ref remotes)) = *cache {
             if ts.elapsed() < CACHE_TTL {
-                return skills.clone();
+                return project_installed(remotes);
             }
         }
     }
 
     // Fetch from GitHub
     match fetch_builtin_skills_inner().await {
-        Ok(skills) => {
+        Ok(remotes) => {
             let mut cache = builtin_cache().lock().await;
-            *cache = Some((Instant::now(), skills.clone()));
-            skills
+            *cache = Some((Instant::now(), remotes.clone()));
+            project_installed(&remotes)
         }
         Err(e) => {
             tracing::warn!(err = %e, "Failed to fetch built-in skills from GitHub");
-            // Return stale cache if available
+            // Return stale cache if available, with installed flag refreshed.
             let cache = builtin_cache().lock().await;
-            if let Some((_, ref skills)) = *cache {
-                return skills.clone();
+            if let Some((_, ref remotes)) = *cache {
+                return project_installed(remotes);
             }
             vec![]
         }
@@ -139,7 +163,7 @@ struct GitHubContentEntry {
     entry_type: String,
 }
 
-async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInSkillInfo>> {
+async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInRemote>> {
     let client = crate::skills::marketplace::http_client()?;
 
     // List repo contents
@@ -151,8 +175,6 @@ async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInSkillInfo>> {
         .error_for_status()?
         .json()
         .await?;
-
-    let global_skills_dir = crate::paths::global_skills_dir();
 
     let dirs: Vec<&GitHubContentEntry> = entries
         .iter()
@@ -170,21 +192,12 @@ async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInSkillInfo>> {
             }
             let text = resp.text().await.ok()?;
             let (name, description) = parse_frontmatter_meta(&text)?;
-            Some((entry.name.clone(), name, description))
+            Some(BuiltInRemote { dir_name: entry.name.clone(), name, description })
         }
     });
     let results = futures_util::future::join_all(fetches).await;
 
-    let skills = results
-        .into_iter()
-        .flatten()
-        .map(|(dir_name, name, description)| {
-            let installed = global_skills_dir.join(&dir_name).join("SKILL.md").exists();
-            BuiltInSkillInfo { name, description, installed }
-        })
-        .collect();
-
-    Ok(skills)
+    Ok(results.into_iter().flatten().collect())
 }
 
 /// Run a skill's install script if declared in frontmatter.
