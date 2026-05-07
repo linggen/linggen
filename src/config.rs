@@ -356,10 +356,10 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             models: vec![ModelConfig {
-                id: "gpt-5.4".to_string(),
+                id: "gpt-5.5".to_string(),
                 provider: "chatgpt".to_string(),
                 url: "https://chatgpt.com/backend-api/codex".to_string(),
-                model: "gpt-5.4".to_string(),
+                model: "gpt-5.5".to_string(),
                 api_key: None,
                 keep_alive: None,
                 context_window: None,

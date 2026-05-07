@@ -169,6 +169,52 @@ impl ModelManager {
         Self::new_with_credentials(configs, &creds)
     }
 
+    /// Verify the model's auth is usable right now. Errors carry an
+    /// `AUTH_REQUIRED:` prefix so the chat layer can route them to a
+    /// settings/sign-in CTA instead of treating them as generic failures.
+    /// Tokens are checked live (not at startup) so we catch both "never
+    /// signed in" (file absent) and "expired" the same way.
+    fn check_provider_auth(cfg: &ModelConfig) -> Result<()> {
+        match cfg.auth_mode.as_deref() {
+            Some("chatgpt_oauth") => {
+                let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+                if !tokens.is_valid() {
+                    let reason = if tokens.access_token.is_none() {
+                        "not signed in"
+                    } else {
+                        "session expired"
+                    };
+                    anyhow::bail!(
+                        "AUTH_REQUIRED: ChatGPT {} for model '{}'. Open Settings → Models → Sign in with ChatGPT.",
+                        reason, cfg.id
+                    );
+                }
+            }
+            Some("claude_oauth") => {
+                let tokens = crate::claude_auth::load().map_err(|_| {
+                    anyhow::anyhow!(
+                        "AUTH_REQUIRED: Claude not signed in for model '{}'. Run `claude` once to sign in, then retry.",
+                        cfg.id
+                    )
+                })?;
+                if !tokens.can_do_inference() {
+                    anyhow::bail!(
+                        "AUTH_REQUIRED: Claude token for model '{}' is missing the `user:inference` scope. Sign in with `claude` again.",
+                        cfg.id
+                    );
+                }
+                if tokens.is_expired() {
+                    anyhow::bail!(
+                        "AUTH_REQUIRED: Claude session expired for model '{}'. Run `claude` once to refresh.",
+                        cfg.id
+                    );
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub fn new_with_credentials(configs: Vec<ModelConfig>, creds: &Credentials) -> Self {
         let mut models = HashMap::new();
 
@@ -282,6 +328,8 @@ impl ModelManager {
             .models
             .get(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
+
+        Self::check_provider_auth(&instance.config)?;
 
         // Note: permit is held for the duration of the stream
         let _permit = instance.semaphore.clone().acquire_owned().await?;
@@ -415,6 +463,8 @@ impl ModelManager {
             .models
             .get(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
+
+        Self::check_provider_auth(&instance.config)?;
 
         let _permit = instance.semaphore.clone().acquire_owned().await?;
 
@@ -583,6 +633,14 @@ impl ModelManager {
         // Config override takes priority (useful for cloud/remote models).
         if let Some(cw) = instance.config.context_window {
             return Ok(Some(cw));
+        }
+
+        // Don't probe a remote /models endpoint without working auth — it
+        // would 401 and look like a network hang. Prefer the name-based
+        // guess in that case so engine startup keeps moving.
+        if Self::check_provider_auth(&instance.config).is_err() {
+            let guess = Self::guess_context_window(&instance.config.model);
+            return Ok(Some(guess));
         }
 
         match &instance.client {

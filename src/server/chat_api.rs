@@ -144,12 +144,34 @@ async fn run_loop_with_tracking(
                     crate::project_store::AgentRunStatus::Failed
                 };
                 let _ = manager.finish_agent_run(&run_id, status, Some(msg.clone())).await;
-                // Emit error to chat so the user sees it in the UI.
+                // Emit error to chat so the user sees it in the UI. AUTH_REQUIRED
+                // errors are surfaced with an explicit "open Settings" hint —
+                // the engine's helper already includes a Settings → Models
+                // pointer in the message body, so the user sees it inline.
+                let display = if msg.starts_with("AUTH_REQUIRED:") {
+                    msg.trim_start_matches("AUTH_REQUIRED:").trim().to_string()
+                } else {
+                    format!("Error: {}", msg)
+                };
                 let _ = events_tx.send(crate::server::ServerEvent::Message {
                     from: agent_id.to_string(),
                     to: "user".to_string(),
-                    content: format!("Error: {}", msg),
+                    content: display,
                     session_id: session_id.map(|s| s.to_string()),
+                });
+                // Reset the agent status so the UI's "Model Loading…" spinner
+                // stops. Without this, the failed run leaves the chat panel
+                // pinned to a working/thinking status forever.
+                let _ = events_tx.send(crate::server::ServerEvent::AgentStatus {
+                    agent_id: agent_id.to_string(),
+                    status: "idle".to_string(),
+                    detail: None,
+                    status_id: None,
+                    lifecycle: Some("done".to_string()),
+                    parent_agent_id: None,
+                    session_id: session_id.map(|s| s.to_string()),
+                    run_id: None,
+                    parent_run_id: None,
                 });
             }
         }
