@@ -128,12 +128,17 @@ impl AgentEngine {
         let ask_bridge = self.tools.ask_user_bridge().cloned();
 
         // Each delegation runs in its own multi-thread tokio runtime
-        // inside a blocking-pool thread. The fresh runtime is required
-        // because the future from `run_delegation` -> `engine.run_agent_loop`
-        // contains non-Send pieces (held across awaits), so it can't be
-        // spawned on the parent runtime via `tokio::spawn`. Each delegation
-        // thus pays for one runtime construction per call; that cost is
-        // dominated by the model latency anyway.
+        // inside a blocking-pool thread, rather than `tokio::spawn` on
+        // the parent runtime. Reason: the future from `run_delegation` ->
+        // `engine.run_agent_loop` is not `Send` — somewhere in that chain
+        // a non-`Send` temporary is held across an `.await`. Rustc's
+        // diagnostic reports the failure at the spawn boundary but
+        // doesn't drill into the offending await; identifying it requires
+        // a manual bisection of every `.await` site reachable from
+        // run_agent_loop. Until that audit happens, the per-call runtime
+        // is the workaround. Cost is one tokio runtime construction per
+        // delegation, dominated by model latency. Tracked under the
+        // tail of #8 (sync/async boundary).
         let mut join_set = tokio::task::JoinSet::new();
         for spawn in spawns.into_iter() {
             let ws = ws_root.clone();
