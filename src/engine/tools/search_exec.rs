@@ -66,7 +66,21 @@ fn kill_process_group(child: &std::process::Child) {
 }
 
 impl Tools {
-    pub(super) fn search_rg(&self, args: SearchArgs) -> Result<ToolResult> {
+    pub(super) async fn search_rg(&self, args: SearchArgs) -> Result<ToolResult> {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || tools.search_rg_inner(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("search_rg panic: {e}"))?
+    }
+
+    pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || tools.run_command_inner(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("run_command panic: {e}"))?
+    }
+
+    fn search_rg_inner(&self, args: SearchArgs) -> Result<ToolResult> {
         let globset = build_globset(args.globs.as_deref())?;
         let max_results = args.max_results.unwrap_or(200);
 
@@ -127,7 +141,7 @@ impl Tools {
         Ok(ToolResult::SearchMatches(matches))
     }
 
-    pub(super) fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
+    fn run_command_inner(&self, args: RunCommandArgs) -> Result<ToolResult> {
         use std::io::BufRead;
 
         const CWD_SENTINEL: &str = "__LINGGEN_CWD__";

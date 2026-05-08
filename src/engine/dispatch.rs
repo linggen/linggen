@@ -127,7 +127,13 @@ impl AgentEngine {
         let ws_root = self.cfg.ws_root.clone();
         let ask_bridge = self.tools.ask_user_bridge().cloned();
 
-        // Spawn each delegation on a blocking thread with its own tokio runtime.
+        // Each delegation runs in its own multi-thread tokio runtime
+        // inside a blocking-pool thread. The fresh runtime is required
+        // because the future from `run_delegation` -> `engine.run_agent_loop`
+        // contains non-Send pieces (held across awaits), so it can't be
+        // spawned on the parent runtime via `tokio::spawn`. Each delegation
+        // thus pays for one runtime construction per call; that cost is
+        // dominated by the model latency anyway.
         let mut join_set = tokio::task::JoinSet::new();
         for spawn in spawns.into_iter() {
             let ws = ws_root.clone();

@@ -1,10 +1,8 @@
-use super::block_on_async;
 use super::tool_helpers::{expand_tilde, sanitize_rel_path};
 use super::{ToolResult, Tools};
 use anyhow::Result;
 use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -50,14 +48,10 @@ pub(super) struct UnlockPathsArgs {
 }
 
 impl Tools {
-    pub(super) fn enforce_write_access(&self, rel: &str) -> Result<()> {
+    pub(super) async fn enforce_write_access(&self, rel: &str) -> Result<()> {
         if let (Some(manager), Some(agent_id)) = (&self.manager, &self.agent_id) {
             // 1. Check path access
-            let allowed = block_on_async(async {
-                manager.is_path_allowed(&self.cwd(), agent_id, rel).await
-            });
-
-            if !allowed {
+            if !manager.is_path_allowed(&self.cwd(), agent_id, rel).await {
                 anyhow::bail!(
                     "Path {} is outside the allowed WorkScope for agent {}",
                     rel, agent_id
@@ -65,31 +59,28 @@ impl Tools {
             }
 
             // 2. Check locks
-            let locked_by_other = block_on_async(async {
-                manager.locks.lock().await.is_locked_by_other(agent_id, &rel)
-            });
-
+            let locked_by_other =
+                manager.locks.lock().await.is_locked_by_other(agent_id, &rel);
             if locked_by_other {
                 anyhow::bail!("Path {} is locked by another agent", rel);
             }
 
             // Live working-place map for active-path UI (in-memory source of truth).
             if self.run_id.is_some() {
-                let repo_path = self.root.to_string_lossy().to_string();
-                let run_id = self.run_id.clone();
-                let rel_for_map = rel.to_string();
-                let agent_for_map = agent_id.clone();
-                block_on_async(async {
-                    manager
-                        .upsert_working_place(&repo_path, &agent_for_map, &rel_for_map, run_id)
-                        .await;
-                });
+                manager
+                    .upsert_working_place(
+                        &self.root.to_string_lossy(),
+                        agent_id,
+                        rel,
+                        self.run_id.clone(),
+                    )
+                    .await;
             }
         }
         Ok(())
     }
 
-    pub(super) fn write_file(&self, args: WriteFileArgs) -> Result<ToolResult> {
+    pub(super) async fn write_file(&self, args: WriteFileArgs) -> Result<ToolResult> {
         let expanded = expand_tilde(&args.path);
         let abs_path = Path::new(&expanded);
 
@@ -99,17 +90,17 @@ impl Tools {
             (abs_path.to_path_buf(), args.path.clone())
         } else {
             let rel = sanitize_rel_path(&self.cwd(), &args.path)?;
-            self.enforce_write_access(&rel)?;
+            self.enforce_write_access(&rel).await?;
             let p = self.cwd().join(&rel);
             (p, rel)
         };
 
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         if target.exists() {
-            match fs::read_to_string(&target) {
+            match tokio::fs::read_to_string(&target).await {
                 Ok(existing) if existing == args.content => {
                     return Ok(ToolResult::Success(format!(
                         "File unchanged (content identical): {}",
@@ -122,14 +113,14 @@ impl Tools {
         }
 
         let bytes = args.content.len();
-        fs::write(&target, &args.content)?;
+        tokio::fs::write(&target, &args.content).await?;
         Ok(ToolResult::Success(format!(
             "File written: {} ({} bytes)",
             display, bytes
         )))
     }
 
-    pub(super) fn edit_file(&self, args: EditFileArgs) -> Result<ToolResult> {
+    pub(super) async fn edit_file(&self, args: EditFileArgs) -> Result<ToolResult> {
         if args.old_string.is_empty() {
             anyhow::bail!("old_string must not be empty");
         }
@@ -143,7 +134,7 @@ impl Tools {
             (abs_path.to_path_buf(), args.path.clone())
         } else {
             let rel = sanitize_rel_path(&self.cwd(), &args.path)?;
-            self.enforce_write_access(&rel)?;
+            self.enforce_write_access(&rel).await?;
             let p = self.cwd().join(&rel);
             (p, rel)
         };
@@ -158,7 +149,7 @@ impl Tools {
             );
         }
 
-        let existing = fs::read_to_string(&target)?;
+        let existing = tokio::fs::read_to_string(&target).await?;
         let match_count = existing.matches(&args.old_string).count();
         if match_count == 0 {
             anyhow::bail!("old_string was not found in file: {}", display);
@@ -186,7 +177,7 @@ impl Tools {
             )));
         }
 
-        fs::write(&target, updated)?;
+        tokio::fs::write(&target, updated).await?;
         let replaced = if replace_all { match_count } else { 1 };
         Ok(ToolResult::Success(format!(
             "Edited file: {} ({} replacement{})",
@@ -196,16 +187,14 @@ impl Tools {
         )))
     }
 
-    pub(super) fn lock_paths(&self, args: LockPathsArgs) -> Result<ToolResult> {
+    pub(super) async fn lock_paths(&self, args: LockPathsArgs) -> Result<ToolResult> {
         let (manager, agent_id) = match (&self.manager, &self.agent_id) {
             (Some(m), Some(id)) => (m, id),
             _ => anyhow::bail!("Locking requires AgentManager context"),
         };
 
-        let ttl = Duration::from_millis(args.ttl_ms.unwrap_or(300000)); // Default 5 min
-        let res = block_on_async(async {
-            manager.locks.lock().await.acquire(agent_id, args.globs, ttl)
-        });
+        let ttl = Duration::from_millis(args.ttl_ms.unwrap_or(300_000)); // Default 5 min
+        let res = manager.locks.lock().await.acquire(agent_id, args.globs, ttl);
 
         Ok(ToolResult::LockResult {
             acquired: res.acquired,
@@ -213,16 +202,13 @@ impl Tools {
         })
     }
 
-    pub(super) fn unlock_paths(&self, args: UnlockPathsArgs) -> Result<ToolResult> {
+    pub(super) async fn unlock_paths(&self, args: UnlockPathsArgs) -> Result<ToolResult> {
         let (manager, agent_id) = match (&self.manager, &self.agent_id) {
             (Some(m), Some(id)) => (m, id),
             _ => anyhow::bail!("Locking requires AgentManager context"),
         };
 
-        block_on_async(async {
-            manager.locks.lock().await.release(agent_id, args.tokens)
-        });
-
+        manager.locks.lock().await.release(agent_id, args.tokens);
         Ok(ToolResult::Success("Locks released".to_string()))
     }
 }

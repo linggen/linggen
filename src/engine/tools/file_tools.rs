@@ -55,7 +55,28 @@ pub(super) struct CaptureScreenshotArgs {
 }
 
 impl Tools {
-    pub(super) fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
+    pub(super) async fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || tools.list_files_inner(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("list_files panic: {e}"))?
+    }
+
+    pub(super) async fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || tools.read_file_inner(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("read_file panic: {e}"))?
+    }
+
+    pub(super) async fn capture_screenshot(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || tools.capture_screenshot_inner(args))
+            .await
+            .map_err(|e| anyhow::anyhow!("capture_screenshot panic: {e}"))?
+    }
+
+    fn list_files_inner(&self, args: ListFilesArgs) -> Result<ToolResult> {
         let max_results = args.max_results.unwrap_or(200);
         let mut out = Vec::new();
 
@@ -150,7 +171,7 @@ impl Tools {
         Ok(ToolResult::FileList(out))
     }
 
-    pub(super) fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
+    fn read_file_inner(&self, args: ReadFileArgs) -> Result<ToolResult> {
         // Expand ~/ to home directory before processing.
         let expanded = expand_tilde(&args.path);
         let abs_path = Path::new(&expanded);
@@ -238,7 +259,7 @@ impl Tools {
         // 1) Exact basename matches anywhere in the repo.
         if !filename.is_empty() {
             let glob_pattern = format!("**/{}", filename);
-            if let Ok(ToolResult::FileList(matches)) = self.list_files(ListFilesArgs {
+            if let Ok(ToolResult::FileList(matches)) = self.list_files_inner(ListFilesArgs {
                 globs: Some(vec![glob_pattern]),
                 max_results: Some(limit),
             }) {
@@ -385,7 +406,7 @@ impl Tools {
         }
     }
 
-    pub(super) fn capture_screenshot(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
+    fn capture_screenshot_inner(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
         use headless_chrome::Browser;
 
         // Validate URL to prevent SSRF: only allow http/https and block private IPs.

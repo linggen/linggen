@@ -1,4 +1,3 @@
-use super::block_on_async;
 use super::{AskUserBridge, ToolResult, Tools};
 use crate::agent_manager::AgentManager;
 use anyhow::Result;
@@ -65,42 +64,39 @@ impl Tools {
         Ok((manager.clone(), caller_id))
     }
 
-    pub(super) fn task(&self, args: TaskArgs) -> Result<ToolResult> {
+    pub(super) async fn task(&self, args: TaskArgs) -> Result<ToolResult> {
         let (manager, caller_id) = self.validate_delegation(&args)?;
-        let delegation_depth = self.delegation_depth;
-        let max_delegation_depth = self.max_delegation_depth;
-        let ws_root = self.root.clone();
-        let parent_run_id = self.run_id.clone();
-        let session_id = self.session_id.clone();
-
-        let ask_bridge = self.ask_user_bridge.clone();
-        let policy = self.session_policy.clone();
-        let parent_path_modes = self.parent_path_modes.clone();
-        let parent_interactive = self.parent_interactive;
-        block_on_async(run_delegation(
+        // Box::pin breaks the async-fn type cycle:
+        // Tools::execute -> Tools::task -> run_delegation -> engine.run_agent_loop
+        // -> ToolRegistry::execute -> Tools::execute. The recursion is real
+        // (delegated agents run their own tool loops) but it goes through
+        // a fresh engine, so the boxing only costs one heap allocation per
+        // delegation.
+        Box::pin(run_delegation(
             manager,
-            ws_root,
+            self.root.clone(),
             caller_id,
             args.target_agent_id,
             args.task,
-            parent_run_id,
-            delegation_depth,
-            max_delegation_depth,
-            ask_bridge,
-            session_id,
-            policy,
-            parent_path_modes,
-            parent_interactive,
+            self.run_id.clone(),
+            self.delegation_depth,
+            self.max_delegation_depth,
+            self.ask_user_bridge.clone(),
+            self.session_id.clone(),
+            self.session_policy.clone(),
+            self.parent_path_modes.clone(),
+            self.parent_interactive,
         ))
+        .await
     }
 
-    pub(super) fn run_app(&self, args: RunAppArgs) -> Result<ToolResult> {
+    pub(super) async fn run_app(&self, args: RunAppArgs) -> Result<ToolResult> {
         let manager = self
             .manager
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("RunApp requires AgentManager context"))?;
 
-        let skill = block_on_async(manager.skill_manager.get_skill(&args.skill));
+        let skill = manager.skill_manager.get_skill(&args.skill).await;
 
         match skill {
             Some(skill) => {
@@ -189,13 +185,13 @@ impl Tools {
         }
     }
 
-    pub(super) fn invoke_skill(&self, args: SkillArgs) -> Result<ToolResult> {
+    pub(super) async fn invoke_skill(&self, args: SkillArgs) -> Result<ToolResult> {
         let manager = self
             .manager
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Skill tool requires AgentManager context"))?;
 
-        let skill = block_on_async(manager.skill_manager.get_skill(&args.skill));
+        let skill = manager.skill_manager.get_skill(&args.skill).await;
 
         match skill {
             Some(skill) => {
@@ -221,7 +217,7 @@ impl Tools {
                 Ok(ToolResult::Success(content))
             }
             None => {
-                let available = block_on_async(manager.skill_manager.list_skills());
+                let available = manager.skill_manager.list_skills().await;
                 let names: Vec<String> = available
                     .iter()
                     .filter(|s| !s.disable_model_invocation)
