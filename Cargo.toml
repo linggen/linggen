@@ -6,6 +6,14 @@ license = "Apache-2.0"
 description = "Linggen — the root system for AI agents. A local-first runtime for AI apps."
 repository = "https://github.com/linggen/linggen"
 
+[features]
+# Anonymous usage telemetry (install + command events sent to
+# linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
+# Disable at runtime: env LINGGEN_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
+# Disable at compile time: cargo build --no-default-features.
+default = ["telemetry"]
+telemetry = []
+
 [[bin]]
 name = "ling"
 path = "src/main.rs"

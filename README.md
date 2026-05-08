@@ -134,6 +134,25 @@ your machine; no VPN, no port forwarding.
 
 ---
 
+## Telemetry
+
+Linggen sends a small amount of anonymous usage data to `https://linggen.dev/api/track` so we can see whether the project is being used and where to invest. Specifically:
+
+- **`install`** — once on first launch on a machine, and once after each upgrade. Includes the install source (`wrapper`, `brew`, `cargo`, `sys-doctor`, `unknown`) and the previous + current versions.
+- **`command`** — one event per meaningful action: `engine.start` (each daemon start), `session.start`, `skill.<name>.open`, etc. The verb is a short stable identifier; no chat content, no file paths, no model output.
+- **`system_state`** — included in `engine.start` payload: which sibling Linggen products (Sys Doctor, ling-mem) are detected on this machine via marker files in `~/.linggen/`. Lets us track adoption of those products without each needing its own phone-home.
+
+What's **never** sent: chat messages, prompts, model responses, file contents, paths, embeddings, your IP (the receiver doesn't store it), or any user-identifying string. The `installation_id` is a random UUIDv4 generated on first run and stored at `~/.linggen/installation_id`.
+
+**Disabling telemetry:**
+
+- Runtime: set `LINGGEN_NO_TELEMETRY=1`, or `touch ~/.linggen/no-telemetry`.
+- Compile time: build with `cargo build --release --no-default-features` (no telemetry code is even linked in).
+
+Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), receiver at [`linggensite/functions/api/_lib/analytics.ts`](https://github.com/linggen/linggensite/blob/main/functions/api/_lib/analytics.ts). No third-party analytics — only `linggen.dev/api/track`.
+
+---
+
 ## License
 
 Apache 2.0 — engine and bundled skills. Branded apps shipped from [linggen-releases](https://github.com/linggen/linggen-releases) ship under their own terms.
