@@ -220,12 +220,26 @@ Skills can declare a `permission` request to ask for elevated access at activati
 ```yaml
 permission:
   paths:
-    - { path: ~/.linggen/skills/pulse, mode: write }
+    - { path: ~/.linggen/skills/pulse, mode: edit }
     - { path: /tmp,                    mode: read }
   warning: "Pulse writes session JSON inside its own data dir; reads /tmp."
 ```
 
 `mode` is `read`, `edit` (alias `write`), or `admin`. On approval, each `(path, mode)` pair is added to the session's grants — the cwd is not silently broadened. See `permission-spec.md`.
+
+### Runtime grants and prompt extensions
+
+For paths or context the user configures **after install** (e.g., a workspace dir set in the skill's settings page), the skill can extend the running session via two engine APIs — without mutating `SKILL.md`:
+
+```
+POST /api/sessions/{id}/permission/grant
+  { "path": "/abs/path", "mode": "read" }
+
+POST /api/sessions/{id}/system_prompt/append
+  { "content": "<text>", "label": "<dedup-key>" }
+```
+
+Both apply to the live session; the engine performs no persistence. **Skills own persistence** — store runtime config in the skill's own data dir and re-push on iframe load. See `permission-spec.md` for the full contract, auth model, and the v1 iframe-loaded-first caveat.
 
 ## Skill tools
 

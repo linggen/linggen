@@ -273,8 +273,46 @@ tool_permission_mode = "read"    # Default mode for new user sessions
 
 That is the only permission-related config. No `[permissions]` block. No deny/ask rule tables. The engine's hardcoded deny floor is fixed and not user-configurable.
 
+## Runtime extensions (programmatic grants + prompt append)
+
+Skills declare their static grants in `SKILL.md` frontmatter. That covers everything the skill needs at install time. **Anything the user configures at runtime** — workspace path, additional repos, project-specific context — would otherwise require either editing `SKILL.md` (clobbered on upgrade) or prompting the user every session (annoying).
+
+The engine exposes two **session-scoped** APIs that any session-bearing entity (skill iframe today, mission code or other future callers later) can use to extend the running session:
+
+```
+POST /api/sessions/{id}/permission/grant
+  body: { "path": "/abs/path", "mode": "read|edit|admin" }
+
+POST /api/sessions/{id}/system_prompt/append
+  body: { "content": "<text>", "label": "<dedup-key>" }
+```
+
+Both are **stateless from the engine's point of view**. They mutate the live session only — no file is read, no persistence is performed, no merge logic. The engine's source of truth for static grants stays exactly what it is today: `SKILL.md` frontmatter.
+
+**Skills own persistence.** A skill that wants its runtime grants to survive across sessions stores them in its own data dir (e.g., `~/.linggen/skills/pulse/runtime-grants.json`) in whatever shape it chooses. On iframe load (or other init point), the skill reads its persisted state and pushes it via these APIs. Engine only sees the API call; everything else is the skill's concern.
+
+### Effect on the live session
+
+- `permission/grant` appends to the session's `path_modes[]` exactly as a "Switch this folder to {mode}" consent click would. Same precedence rules apply (most-specific match wins). The deny floor still overrides — runtime grants cannot pierce hardcoded denies.
+- `system_prompt/append` registers an entry the engine prepends to the agent's system prompt on the next turn. `label` is the dedup/replace key — calling again with the same label updates instead of appending. Per-skill cap on cumulative size enforced at the engine boundary (default 4 KB per skill; refusal returns 413).
+
+Both are picked up at the next agent turn. No restart required.
+
+### Auth
+
+Same iframe-to-session scoping that protects `/api/bash`. Engine identifies the calling iframe's skill context, looks up the session's origin, and rejects if the iframe doesn't own the session. A skill can only mutate its own session — pulse cannot grant permissions to a Sys Doctor session.
+
+### Content mode only for system prompts
+
+The append API takes `content: string`, never `path: <file>`. Engine stays ignorant of skill filesystem layouts; skill resolves files itself and sends the content. Cost is one read per session start in the skill iframe — negligible.
+
+### v1 caveat: iframe-loaded-first
+
+If a session is created without the skill's iframe loading (chat-routed agent invocation, mission fire), the skill's runtime extensions don't apply — the agent runs with `SKILL.md` grants only. For pulse v1 this is acceptable because the natural flow is *open pulse → see dashboard → chat*, which loads the iframe first. Generalizing to chat-only or mission entry points needs an **init hook** — a `SKILL.md` frontmatter entry naming a script the engine runs before agent dispatch, which calls the same APIs. Deferred until a real consumer needs it.
+
 ## Future
 
+- **Init hooks** (above): `init: scripts/init.sh` in `SKILL.md` frontmatter, run before agent dispatch on every session of that skill. Generalizes runtime extensions to chat-only and mission entry points.
 - **Safety classifier**: model-based Bash classification for smarter auto-decisions.
 - **OS sandbox**: Seatbelt (macOS) / bubblewrap (Linux) for defense-in-depth.
 - **Hooks**: pre/post-tool-use hooks for programmatic permission decisions.
