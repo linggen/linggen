@@ -1,7 +1,7 @@
 use super::capabilities;
 use super::capability_tools;
 use super::skill_tool::{SkillToolDef, SkillToolKind};
-use super::tools::{self, block_on_async, ToolCall, ToolResult, Tools};
+use super::tools::{self, ToolCall, ToolResult, Tools};
 use crate::agent_manager::AgentManager;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
@@ -29,10 +29,10 @@ impl ToolRegistry {
         }
     }
 
-    pub fn execute(&self, call: ToolCall) -> Result<ToolResult> {
+    pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
         // 1. Built-in engine tools (Read, Edit, Bash, ...).
         if tools::canonical_tool_name(&call.tool).is_some() {
-            return self.builtins.execute(call);
+            return self.builtins.execute(call).await;
         }
 
         // 2. Capability tools (engine-defined contract — schema + tier
@@ -44,7 +44,7 @@ impl ToolRegistry {
                 call.tool,
                 tools::summarize_tool_args(&call.tool, &call.args)
             );
-            return self.dispatch_capability_tool(&call.tool, &call.args);
+            return self.dispatch_capability_tool(&call.tool, &call.args).await;
         }
 
         // 3. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
@@ -56,7 +56,7 @@ impl ToolRegistry {
                 tools::summarize_tool_args(&call.tool, &call.args)
             );
             if skill_tool.kind() == SkillToolKind::Http {
-                return self.dispatch_http_skill_tool(skill_tool, &call.args);
+                return self.dispatch_http_skill_tool(skill_tool, &call.args).await;
             }
             return skill_tool.execute(&call.args, &self.builtins.cwd());
         }
@@ -67,7 +67,7 @@ impl ToolRegistry {
     /// Route a capability tool call through the HTTP dispatcher. The
     /// tool's schema + tier are engine-owned; the dispatcher resolves
     /// the URL from the active provider's `implements:` block.
-    fn dispatch_capability_tool(&self, name: &str, args: &Value) -> Result<ToolResult> {
+    async fn dispatch_capability_tool(&self, name: &str, args: &Value) -> Result<ToolResult> {
         let manager = self.builtins.get_manager().ok_or_else(|| {
             anyhow!(
                 "Capability tool '{name}' requires a running AgentManager context \
@@ -75,14 +75,14 @@ impl ToolRegistry {
             )
         })?;
         let skills = manager.skill_manager.clone();
-        let value = block_on_async(capability_tools::dispatch(&skills, name, args.clone()))?;
+        let value = capability_tools::dispatch(&skills, name, args.clone()).await?;
         Ok(ToolResult::Success(value.to_string()))
     }
 
     /// POST the tool args to the owning skill's daemon and return the
     /// response as a `ToolResult::Success(json_string)`. Autostart +
     /// retry-once is handled inside `capability_tools::dispatch`.
-    fn dispatch_http_skill_tool(
+    async fn dispatch_http_skill_tool(
         &self,
         def: &SkillToolDef,
         args: &Value,
@@ -96,7 +96,7 @@ impl ToolRegistry {
         })?;
         let skills = manager.skill_manager.clone();
         let value =
-            block_on_async(capability_tools::dispatch(&skills, &def.name, args.clone()))?;
+            capability_tools::dispatch(&skills, &def.name, args.clone()).await?;
         Ok(ToolResult::Success(value.to_string()))
     }
 

@@ -310,21 +310,71 @@ impl Tools {
 
     // ── Execute dispatcher ──────────────────────────────────────────────
 
-    pub fn execute(&self, call: ToolCall) -> Result<ToolResult> {
+    /// Run a tool call. Sync tool bodies (file I/O, shell exec, regex
+    /// search, etc.) are dispatched to [`Self::execute_sync`] on the
+    /// blocking pool via `spawn_blocking`. Native-async tools (WebSearch,
+    /// WebFetch, AskUser) are awaited directly so they don't park a
+    /// blocking thread for their whole I/O wait.
+    pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
         let normalized_args = normalize_tool_args(&call.tool, call.args);
         debug!(
             "Executing tool: {} args={}",
             call.tool,
             summarize_tool_args(&call.tool, &normalized_args)
         );
+
+        match call.tool.as_str() {
+            "WebSearch" => {
+                let args: delegation::WebSearchArgs = serde_json::from_value(normalized_args)
+                    .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
+                let max = args.max_results.unwrap_or(5).min(10);
+                let results = super::web_search::web_search(&args.query, max).await?;
+                Ok(ToolResult::WebSearchResults {
+                    query: args.query,
+                    results,
+                })
+            }
+            "WebFetch" => {
+                let args: delegation::WebFetchArgs = serde_json::from_value(normalized_args)
+                    .map_err(|e| anyhow::anyhow!("invalid args for WebFetch: {}", e))?;
+                let result =
+                    super::web_fetch::fetch_url(&args.url, args.max_bytes).await?;
+                Ok(ToolResult::WebFetchContent {
+                    url: result.url,
+                    content: result.content,
+                    content_type: result.content_type,
+                    truncated: result.truncated,
+                })
+            }
+            "AskUser" => self.ask_user(normalized_args).await,
+            // Sync tool bodies — dispatched on the blocking pool.
+            _ => {
+                let normalized = ToolCall {
+                    tool: call.tool,
+                    args: normalized_args,
+                    block_id: call.block_id,
+                };
+                let tools = self.clone();
+                tokio::task::spawn_blocking(move || tools.execute_sync(normalized))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("tool spawn_blocking join: {e}"))?
+            }
+        }
+    }
+
+    /// Synchronous tool dispatcher — call from a blocking context (i.e.
+    /// inside [`Self::execute`]'s `spawn_blocking` arm). Native-async tools
+    /// (WebSearch / WebFetch / AskUser) are NOT routed here; they live in
+    /// `execute` and run directly on the runtime.
+    fn execute_sync(&self, call: ToolCall) -> Result<ToolResult> {
         match call.tool.as_str() {
             "Glob" => {
-                let args: file_tools::ListFilesArgs = serde_json::from_value(normalized_args)
+                let args: file_tools::ListFilesArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for Glob: {}", e))?;
                 self.list_files(args)
             }
             "Read" => {
-                let args: file_tools::ReadFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
+                let args: file_tools::ReadFileArgs = serde_json::from_value(call.args).map_err(|e| {
                     anyhow::anyhow!(
                         "invalid args for Read: {}. Expected keys: path|max_bytes|line_range",
                         e
@@ -333,13 +383,13 @@ impl Tools {
                 self.read_file(args)
             }
             "Grep" => {
-                let args: search_exec::SearchArgs = serde_json::from_value(normalized_args)
+                let args: search_exec::SearchArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for Grep: {}", e))?;
                 self.search_rg(args)
             }
             "Bash" => {
                 let mut args: search_exec::RunCommandArgs =
-                    serde_json::from_value(normalized_args).map_err(|e| {
+                    serde_json::from_value(call.args).map_err(|e| {
                         anyhow::anyhow!(
                             "invalid args for Bash: {}. Expected keys: cmd|timeout_ms",
                             e
@@ -355,18 +405,18 @@ impl Tools {
                 result
             }
             "capture_screenshot" => {
-                let args: file_tools::CaptureScreenshotArgs = serde_json::from_value(normalized_args)
+                let args: file_tools::CaptureScreenshotArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for capture_screenshot: {}", e))?;
                 self.capture_screenshot(args)
             }
             "Write" => {
-                let args: write_tools::WriteFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
+                let args: write_tools::WriteFileArgs = serde_json::from_value(call.args).map_err(|e| {
                     anyhow::anyhow!("invalid args for Write: {}. Expected keys: path|content", e)
                 })?;
                 self.write_file(args)
             }
             "Edit" => {
-                let args: write_tools::EditFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
+                let args: write_tools::EditFileArgs = serde_json::from_value(call.args).map_err(|e| {
                     anyhow::anyhow!(
                         "invalid args for Edit: {}. Expected keys: path|old_string|new_string|replace_all?",
                         e
@@ -375,134 +425,110 @@ impl Tools {
                 self.edit_file(args)
             }
             "lock_paths" => {
-                let args: write_tools::LockPathsArgs = serde_json::from_value(normalized_args)
+                let args: write_tools::LockPathsArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for lock_paths: {}", e))?;
                 self.lock_paths(args)
             }
             "unlock_paths" => {
-                let args: write_tools::UnlockPathsArgs = serde_json::from_value(normalized_args)
+                let args: write_tools::UnlockPathsArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for unlock_paths: {}", e))?;
                 self.unlock_paths(args)
             }
             "Task" => {
-                let args: delegation::TaskArgs = serde_json::from_value(normalized_args)
+                let args: delegation::TaskArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for Task: {}", e))?;
                 self.task(args)
             }
-            "WebSearch" => {
-                let args: delegation::WebSearchArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
-                let max = args.max_results.unwrap_or(5).min(10);
-                let results =
-                    block_on_async(super::web_search::web_search(&args.query, max))?;
-                Ok(ToolResult::WebSearchResults {
-                    query: args.query,
-                    results,
-                })
-            }
-            "WebFetch" => {
-                let args: delegation::WebFetchArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for WebFetch: {}", e))?;
-                let result =
-                    block_on_async(super::web_fetch::fetch_url(&args.url, args.max_bytes))?;
-                Ok(ToolResult::WebFetchContent {
-                    url: result.url,
-                    content: result.content,
-                    content_type: result.content_type,
-                    truncated: result.truncated,
-                })
-            }
             "Skill" => {
-                let args: delegation::SkillArgs = serde_json::from_value(normalized_args)
+                let args: delegation::SkillArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for Skill: {}", e))?;
                 self.invoke_skill(args)
             }
             "RunApp" => {
-                let args: delegation::RunAppArgs = serde_json::from_value(normalized_args)
+                let args: delegation::RunAppArgs = serde_json::from_value(call.args)
                     .map_err(|e| anyhow::anyhow!("invalid args for RunApp: {}", e))?;
                 self.run_app(args)
             }
-            "AskUser" => {
-                let args: AskUserArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for AskUser: {}", e))?;
-
-                // Validate question count.
-                if args.questions.is_empty() || args.questions.len() > 4 {
-                    anyhow::bail!("AskUser requires 1-4 questions, got {}", args.questions.len());
-                }
-                for (i, q) in args.questions.iter().enumerate() {
-                    if q.options.len() < 2 || q.options.len() > 6 {
-                        anyhow::bail!(
-                            "AskUser question {} requires 2-6 options, got {}",
-                            i, q.options.len()
-                        );
-                    }
-                }
-
-                // Sub-agents cannot use AskUser.
-                if self.delegation_depth > 0 {
-                    return Ok(ToolResult::Success(
-                        self.prompt(crate::prompts::keys::ASKUSER_SUBAGENT_BLOCKED, &[])
-                    ));
-                }
-
-                let bridge = match &self.ask_user_bridge {
-                    Some(b) => Arc::clone(b),
-                    None => {
-                        return Ok(ToolResult::Success(
-                            self.prompt(crate::prompts::keys::ASKUSER_CLI_BLOCKED, &[])
-                        ));
-                    }
-                };
-
-                let question_id = uuid::Uuid::new_v4().to_string();
-                let agent_id = self.agent_id.clone().unwrap_or_default();
-
-                // Emit event to push the question to the UI.
-                let questions_clone = args.questions.clone();
-                let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
-                    agent_id: agent_id.clone(),
-                    question_id: question_id.clone(),
-                    questions: args.questions,
-                    session_id: bridge.session_id.clone(),
-                });
-
-                // Create a oneshot channel and register it for the response endpoint.
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                block_on_async(async {
-                    bridge.pending.lock().await.insert(
-                        question_id.clone(),
-                        PendingAskUser { agent_id, questions: questions_clone, sender: tx, session_id: bridge.session_id.clone() },
-                    );
-                });
-
-                // Block until the user responds or timeout (5 minutes).
-                let response = block_on_async(async {
-                    tokio::time::timeout(Duration::from_secs(300), rx).await
-                });
-
-                // Cleanup: remove from pending map regardless of outcome.
-                block_on_async(async {
-                    bridge.pending.lock().await.remove(&question_id);
-                });
-
-                match response {
-                    Ok(Ok(answers)) => Ok(ToolResult::AskUserResponse { answers }),
-                    Ok(Err(_)) => Ok(ToolResult::Success(
-                        self.prompt(crate::prompts::keys::ASKUSER_CANCELLED, &[]),
-                    )),
-                    Err(_) => Ok(ToolResult::Success(
-                        self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
-                    )),
-                }
-            }
             // Memory_* and other skill-declared HTTP tools are registered
-            // through SkillManager and dispatched by `ToolRegistry::execute`
-            // (which routes HTTP-kind skill tools to
-            // `engine::capability_tools::dispatch`). If we reach this match,
-            // the tool is either a typo or a skill tool that didn't get
-            // loaded — either way, surface a clean "unknown tool" error.
+            // through SkillManager and dispatched by `ToolRegistry::execute`.
+            // Unknown name = typo or unloaded skill tool — surface cleanly.
             _ => anyhow::bail!("unknown tool: {}", call.tool),
+        }
+    }
+
+    /// AskUser is async-native — it uses tokio oneshot + timeout + Mutex
+    /// internally and was previously bridged through `block_on_async`.
+    async fn ask_user(&self, args: serde_json::Value) -> Result<ToolResult> {
+        let args: AskUserArgs = serde_json::from_value(args)
+            .map_err(|e| anyhow::anyhow!("invalid args for AskUser: {}", e))?;
+
+        // Validate question count.
+        if args.questions.is_empty() || args.questions.len() > 4 {
+            anyhow::bail!("AskUser requires 1-4 questions, got {}", args.questions.len());
+        }
+        for (i, q) in args.questions.iter().enumerate() {
+            if q.options.len() < 2 || q.options.len() > 6 {
+                anyhow::bail!(
+                    "AskUser question {} requires 2-6 options, got {}",
+                    i, q.options.len()
+                );
+            }
+        }
+
+        // Sub-agents cannot use AskUser.
+        if self.delegation_depth > 0 {
+            return Ok(ToolResult::Success(
+                self.prompt(crate::prompts::keys::ASKUSER_SUBAGENT_BLOCKED, &[]),
+            ));
+        }
+
+        let bridge = match &self.ask_user_bridge {
+            Some(b) => Arc::clone(b),
+            None => {
+                return Ok(ToolResult::Success(
+                    self.prompt(crate::prompts::keys::ASKUSER_CLI_BLOCKED, &[]),
+                ));
+            }
+        };
+
+        let question_id = uuid::Uuid::new_v4().to_string();
+        let agent_id = self.agent_id.clone().unwrap_or_default();
+        let questions_clone = args.questions.clone();
+
+        // Emit event to push the question to the UI.
+        let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
+            agent_id: agent_id.clone(),
+            question_id: question_id.clone(),
+            questions: args.questions,
+            session_id: bridge.session_id.clone(),
+        });
+
+        // Register a oneshot channel for the response endpoint to deliver into.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.pending.lock().await.insert(
+            question_id.clone(),
+            PendingAskUser {
+                agent_id,
+                questions: questions_clone,
+                sender: tx,
+                session_id: bridge.session_id.clone(),
+            },
+        );
+
+        // Wait up to 5 minutes for a response.
+        let response = tokio::time::timeout(Duration::from_secs(300), rx).await;
+
+        // Cleanup: remove from pending map regardless of outcome.
+        bridge.pending.lock().await.remove(&question_id);
+
+        match response {
+            Ok(Ok(answers)) => Ok(ToolResult::AskUserResponse { answers }),
+            Ok(Err(_)) => Ok(ToolResult::Success(
+                self.prompt(crate::prompts::keys::ASKUSER_CANCELLED, &[]),
+            )),
+            Err(_) => Ok(ToolResult::Success(
+                self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
+            )),
         }
     }
 }

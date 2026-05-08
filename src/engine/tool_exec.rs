@@ -909,12 +909,10 @@ impl AgentEngine {
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
                 let tools_clone = self.tools.clone();
-                let mut handle = tokio::task::spawn_blocking(move || tools_clone.execute(call));
+                let mut exec_fut = std::pin::pin!(tools_clone.execute(call));
                 let result = loop {
                     tokio::select! {
-                        res = &mut handle => {
-                            break res.unwrap_or_else(|e| Err(anyhow::anyhow!("spawn_blocking join: {e}")));
-                        }
+                        res = &mut exec_fut => break res,
                         _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
                             self.drain_tool_progress(progress_rx).await;
                         }

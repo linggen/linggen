@@ -254,41 +254,29 @@ impl AgentEngine {
             return None;
         }
 
-        // Phase 2: execute tools in parallel via std::thread::scope.
-        let tools_ref = &self.tools;
+        // Phase 2: execute tools in parallel.
+        // Each `tools.execute(call)` future internally `spawn_blocking`s its
+        // sync tool body, so awaiting many in parallel naturally fans them
+        // out across the blocking pool. WebSearch/WebFetch/AskUser run on
+        // the runtime directly. The staleness check is CPU-bound — moved
+        // off the runtime via `spawn_blocking`.
         let cached_hash = self.cached_system_prompt.as_ref().map(|c| c.input_hash);
-        let staleness_ws_root = &self.cfg.ws_root;
-        let (results, prompt_stale): (Vec<(usize, ReadyExec, anyhow::Result<tools::ToolResult>)>, bool) =
-            tokio::task::block_in_place(|| {
-                std::thread::scope(|scope| {
-                    let staleness_handle = scope.spawn(|| {
-                        check_context_staleness(cached_hash, staleness_ws_root)
-                    });
-                    let handles: Vec<_> = ready
-                        .into_iter()
-                        .map(|(idx, call, exec)| {
-                            let handle = scope.spawn(move || {
-                                // No runtime is set up here — sync tools (Read, Glob, Grep)
-                                // don't need one, and async tools (WebFetch, WebSearch, etc.)
-                                // create their own via block_on_async().
-                                tools_ref.execute(call)
-                            });
-                            (idx, exec, handle)
-                        })
-                        .collect();
-                    let tool_results: Vec<_> = handles
-                        .into_iter()
-                        .map(|(idx, exec, handle)| {
-                            let result = handle.join().unwrap_or_else(|_| {
-                                Err(anyhow::anyhow!("tool execution panicked"))
-                            });
-                            (idx, exec, result)
-                        })
-                        .collect();
-                    let stale = staleness_handle.join().unwrap_or(false);
-                    (tool_results, stale)
-                })
-            });
+        let staleness_ws_root = self.cfg.ws_root.clone();
+        let staleness_task = tokio::task::spawn_blocking(move || {
+            check_context_staleness(cached_hash, &staleness_ws_root)
+        });
+
+        let tools_clone = self.tools.clone();
+        let tool_futures = ready.into_iter().map(|(idx, call, exec)| {
+            let tools = tools_clone.clone();
+            async move {
+                let result = tools.execute(call).await;
+                (idx, exec, result)
+            }
+        });
+        let results: Vec<(usize, ReadyExec, anyhow::Result<tools::ToolResult>)> =
+            futures_util::future::join_all(tool_futures).await;
+        let prompt_stale = staleness_task.await.unwrap_or(false);
 
         // If context files changed, rebuild the system prompt cache.
         if prompt_stale {
