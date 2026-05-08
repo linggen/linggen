@@ -8,7 +8,7 @@ use axum::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::skill_dispatch::apply_skill_app_scope;
+use crate::engine::ActivationMode;
 use super::types::{
     AskUserResponseRequest, ClearChatRequest, CompactChatRequest, SystemPromptQuery,
 };
@@ -103,8 +103,7 @@ pub(crate) async fn get_system_prompt_api(
     if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
         if let Some(ref skill_name) = meta.skill {
             if let Some(skill) = state.manager.skill_manager.get_skill(skill_name).await {
-                apply_skill_app_scope(&mut engine, &skill);
-                engine.active_skill = Some(skill);
+                engine.activate_skill(skill, ActivationMode::Export).await;
             }
         }
         if let Some(ref mission_id) = meta.mission_id {

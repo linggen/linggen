@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::skill_dispatch::{apply_skill_app_scope, run_skill_dispatch, run_trigger_dispatch};
+use super::skill_dispatch::{run_skill_dispatch, run_trigger_dispatch};
 use super::structured::run_structured_loop;
 use super::types::ChatRequest;
 use super::ChatRunCtx;
@@ -393,51 +393,11 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
         engine.session_dir = Some(crate::paths::global_sessions_dir().join(sid));
     }
 
-    apply_skill_grants_if_interactive(engine, &skill, &ctx.events_tx);
-    apply_skill_app_scope(engine, &skill);
-    engine.active_skill = Some(skill);
-}
-
-/// Apply the skill's declared `permission.paths` grants when the session
-/// is interactive. Launching a skill is implicit approval of its declared
-/// permissions; without this the skill runs at the session's default mode
-/// and its SKILL.md `permission:` block has no effect.
-///
-/// Intentionally does NOT broaden to cwd: the skill gets exactly what its
-/// SKILL.md declared in `permission.paths` and nothing more. Auto-
-/// broadening to cwd was previously done so the badge reflected the
-/// skill's tier, but it silently inflated grants when cwd was a parent of
-/// declared paths (e.g. cwd=~ + paths=[~/.linggen] → admin on whole
-/// home). The badge will read "chat" outside declared paths; that is
-/// honest — the agent has no permission there.
-fn apply_skill_grants_if_interactive(
-    engine: &mut crate::engine::AgentEngine,
-    skill: &crate::skills::Skill,
-    events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
-) {
-    if !engine.session_permissions.interactive {
-        return;
+    if let crate::engine::ActivationOutcome::Activated { grants_changed: true } =
+        engine.activate_skill(skill, crate::engine::ActivationMode::SessionBound).await
+    {
+        let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
-    let Some(perm) = skill.permission.as_ref() else { return };
-
-    let mut changed = false;
-    for (path, mode) in perm.iter_grants() {
-        let current = crate::engine::permission::effective_mode_for_path(
-            &engine.session_permissions.path_modes,
-            std::path::Path::new(path),
-        );
-        if current != Some(mode) {
-            engine.session_permissions.set_path_mode(path, mode);
-            changed = true;
-        }
-    }
-    if !changed {
-        return;
-    }
-    if let Some(ref sdir) = engine.session_dir {
-        engine.session_permissions.save(sdir);
-    }
-    let _ = events_tx.send(ServerEvent::StateUpdated);
 }
 
 /// Route the turn to one of three flows in order: slash-command skill

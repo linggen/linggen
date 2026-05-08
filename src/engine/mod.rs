@@ -11,6 +11,7 @@ mod prompt;
 pub mod prompt_profile;
 pub mod render;
 pub mod session_policy;
+pub mod skill_activation;
 pub mod skill_tool;
 mod streaming;
 pub mod tool_registry;
@@ -32,6 +33,8 @@ pub use actions::{
     looks_like_final_answer, model_message_log_parts, parse_all_actions, text_before_first_json,
     ModelAction,
 };
+
+pub use skill_activation::{ActivationMode, ActivationOutcome};
 
 // Internal imports used by run_agent_loop
 use streaming::{can_parallel_tool, has_write_path_conflicts};

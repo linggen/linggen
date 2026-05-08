@@ -1,0 +1,212 @@
+//! Skill activation: the single entry point for entering a skill context.
+//!
+//! Replaces the four ad-hoc `engine.active_skill = Some(...)` write sites
+//! that used to live in `server/chat/{handler, skill_dispatch, admin}` and
+//! consolidates the four different "should I prompt? should I apply
+//! grants?" rules into one place ([`ActivationMode`]).
+
+use crate::engine::permission::{effective_mode_for_path, PermissionAction};
+use crate::engine::tools::{AskUserOption, AskUserQuestion};
+use crate::engine::AgentEngine;
+use crate::skills::Skill;
+use std::collections::HashSet;
+use std::path::Path;
+
+/// What kind of activation event is happening — controls whether to prompt
+/// the user, whether to apply declared grants, and whether the engine
+/// should treat this as a real session change vs. a read-only export.
+#[derive(Debug, Clone, Copy)]
+pub enum ActivationMode {
+    /// Session was created bound to this skill (skill-embed sessions, the
+    /// ling-mem dashboard, etc.). Implicit approval — apply grants
+    /// silently when the session is interactive; non-interactive sessions
+    /// (mission/consumer) keep their existing tier.
+    SessionBound,
+    /// User typed `/skill-name`. Prompt the user to approve grants on
+    /// interactive sessions; non-interactive sessions activate without
+    /// prompting (skill runs at the session's existing tier).
+    SlashCommand,
+    /// User input matched a registered trigger prefix (e.g. `/commit ...`
+    /// when a skill claims `trigger: "/commit"`). Implicit approval — the
+    /// prefix opt-in stands in for the prompt.
+    Trigger,
+    /// Read-only — for `get_system_prompt_api`. Sets `active_skill` on a
+    /// throwaway engine so prompt export reflects the skill, but never
+    /// writes session_permissions, never saves to disk, never emits events.
+    Export,
+}
+
+#[derive(Debug)]
+pub enum ActivationOutcome {
+    /// Skill is now active. `grants_changed` indicates whether
+    /// `session_permissions` was modified — the caller should emit
+    /// `ServerEvent::StateUpdated` so the UI's permission badge refreshes.
+    Activated { grants_changed: bool },
+    /// User cancelled the permission prompt (only possible for
+    /// `SlashCommand` on interactive sessions). Caller should abort
+    /// dispatch and surface a "skill cancelled" message.
+    Cancelled,
+}
+
+impl AgentEngine {
+    /// Enter a skill context. See [`ActivationMode`] for the per-mode rules.
+    ///
+    /// Sets:
+    /// - `consumer_allowed_skills` (via [`apply_skill_app_scope`]) — scope
+    ///   the agent's reachable skill list to what this skill declared.
+    /// - `session_permissions` (when grants apply per the mode + interactive
+    ///   gating) — stamp each `permission.paths` entry into `path_modes`,
+    ///   skipping entries that already cover the path at the same tier.
+    /// - `active_skill` — committed last so a `Cancelled` outcome leaves
+    ///   the engine unchanged.
+    pub async fn activate_skill(
+        &mut self,
+        skill: Skill,
+        mode: ActivationMode,
+    ) -> ActivationOutcome {
+        // Export: throwaway engine — set active_skill + scope, no grant side
+        // effects, no save, no prompt. Used by the Copy-System-Prompt button.
+        if matches!(mode, ActivationMode::Export) {
+            apply_skill_app_scope(self, &skill);
+            self.active_skill = Some(skill);
+            return ActivationOutcome::Activated { grants_changed: false };
+        }
+
+        // SlashCommand on an interactive session: prompt the user before
+        // committing. Cancel returns without touching engine state.
+        if matches!(mode, ActivationMode::SlashCommand)
+            && self.session_permissions.interactive
+            && skill.permission.is_some()
+        {
+            match prompt_for_grants(self, &skill).await {
+                PromptOutcome::Approve => {
+                    let grants_changed = write_skill_grants(self, &skill);
+                    apply_skill_app_scope(self, &skill);
+                    self.active_skill = Some(skill);
+                    return ActivationOutcome::Activated { grants_changed };
+                }
+                PromptOutcome::RunInCurrentMode => {
+                    apply_skill_app_scope(self, &skill);
+                    self.active_skill = Some(skill);
+                    return ActivationOutcome::Activated { grants_changed: false };
+                }
+                PromptOutcome::Cancel => {
+                    return ActivationOutcome::Cancelled;
+                }
+            }
+        }
+
+        // Implicit-approval modes (SessionBound, Trigger, and SlashCommand
+        // on non-interactive sessions): apply grants silently when
+        // interactive, then commit.
+        let grants_changed = if self.session_permissions.interactive {
+            write_skill_grants(self, &skill)
+        } else {
+            false
+        };
+        apply_skill_app_scope(self, &skill);
+        self.active_skill = Some(skill);
+        ActivationOutcome::Activated { grants_changed }
+    }
+}
+
+/// Scope the agent's reachable-skill list to the active skill's
+/// `allow-skills` declaration. Mirrors the mission scoping path so skill
+/// app sessions don't see every installed skill in the daemon — important
+/// in the shared-daemon model where one ling serves many branded apps.
+///
+/// Default when `allow-skills` is unset: only the active skill itself.
+/// `["*"]` opts out of scoping.
+fn apply_skill_app_scope(engine: &mut AgentEngine, skill: &Skill) {
+    let allow = skill.allow_skills.as_deref().unwrap_or(&[]);
+    if allow.iter().any(|s| s == "*") {
+        return;
+    }
+    let mut scoped: HashSet<String> = allow.iter().cloned().collect();
+    scoped.insert(skill.name.clone());
+    engine.cfg.consumer_allowed_skills = Some(scoped);
+}
+
+/// Stamp a skill's declared `permission.paths` grants into the engine's
+/// `session_permissions`, saving to disk if `session_dir` is set.
+///
+/// Returns `true` when at least one grant changed the existing tier (UI
+/// should refresh its permission badge). Returns `false` if the skill has
+/// no permission block or every declared path is already covered at the
+/// requested tier.
+///
+/// Intentionally does NOT broaden to cwd: the skill gets exactly what its
+/// SKILL.md declared in `permission.paths` and nothing more. Auto-
+/// broadening to cwd was previously done so the badge reflected the
+/// skill's tier, but it silently inflated grants when cwd was a parent of
+/// declared paths (e.g. cwd=~ + paths=[~/.linggen] → admin on whole
+/// home).
+fn write_skill_grants(engine: &mut AgentEngine, skill: &Skill) -> bool {
+    let Some(perm) = skill.permission.as_ref() else { return false };
+    let mut changed = false;
+    for (path, mode) in perm.iter_grants() {
+        let current = effective_mode_for_path(
+            &engine.session_permissions.path_modes,
+            Path::new(path),
+        );
+        if current != Some(mode) {
+            engine.session_permissions.set_path_mode(path, mode);
+            changed = true;
+        }
+    }
+    if changed {
+        if let Some(ref sdir) = engine.session_dir {
+            engine.session_permissions.save(sdir);
+        }
+    }
+    changed
+}
+
+enum PromptOutcome {
+    /// User picked "Approve" — write the declared grants.
+    Approve,
+    /// User picked "Run in current mode" — proceed without writing grants.
+    RunInCurrentMode,
+    /// User picked "Cancel" or the prompt timed out.
+    Cancel,
+}
+
+async fn prompt_for_grants(engine: &mut AgentEngine, skill: &Skill) -> PromptOutcome {
+    let Some(perm) = skill.permission.as_ref() else {
+        return PromptOutcome::RunInCurrentMode;
+    };
+    let paths_str = perm.display_paths();
+    let mut question_text = format!("Skill \"{}\" requests grants on: {}", skill.name, paths_str);
+    if let Some(ref warning) = perm.warning {
+        question_text.push_str(&format!("\n⚠️ {}", warning));
+    }
+
+    let question = AskUserQuestion {
+        question: question_text,
+        header: "Permission".to_string(),
+        options: vec![
+            AskUserOption {
+                label: "Approve".to_string(),
+                description: Some(format!("Grant: {}", paths_str)),
+                preview: None,
+            },
+            AskUserOption {
+                label: "Run in current mode".to_string(),
+                description: Some("Skill runs with existing permissions (may fail)".to_string()),
+                preview: None,
+            },
+            AskUserOption {
+                label: "Cancel".to_string(),
+                description: Some("Don't run this skill".to_string()),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+    };
+
+    match engine.ask_permission_raw(&skill.name, question).await {
+        Some(PermissionAction::AllowOnce) => PromptOutcome::Approve,
+        Some(PermissionAction::AllowSession) => PromptOutcome::RunInCurrentMode,
+        _ => PromptOutcome::Cancel,
+    }
+}
