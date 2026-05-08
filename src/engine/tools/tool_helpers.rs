@@ -230,110 +230,33 @@ pub fn canonical_tool_name(tool: &str) -> Option<&'static str> {
     })
 }
 
+/// Full short-form schema list for the system-prompt JSON-action embedding.
+///
+/// Combines built-in tools (sourced from the [`super::builtin`] registry —
+/// each `Tool::legacy_schema_entry()` contributes one entry) with the
+/// plan-mode tools, which are parsed as `ModelAction`s rather than real
+/// `Tool` impls.
 pub(crate) fn full_tool_schema_entries() -> Vec<Value> {
-    vec![
-        serde_json::json!({
-            "name": "Glob",
-            "args": {"globs": "string[]?", "max_results": "number?"},
-            "returns": "string[]",
-            "notes": "Glob pattern aliases accepted: globs, pattern, glob."
-        }),
-        serde_json::json!({
-            "name": "Read",
-            "args": {"path": "string", "max_bytes": "number?", "line_range": "[number,number]?"},
-            "returns": "{path,content,truncated}",
-            "notes": "Path aliases accepted: path, file, filepath."
-        }),
-        serde_json::json!({
-            "name": "Grep",
-            "args": {"query": "string", "globs": "string[]?", "max_results": "number?"},
-            "returns": "{matches:[{path,line,snippet}]}",
-            "notes": "Query aliases accepted: query, path, file, filepath."
-        }),
-        serde_json::json!({
-            "name": "Write",
-            "args": {"path": "string", "content": "string"},
-            "returns": "success",
-            "notes": "Path aliases accepted: path, file, filepath."
-        }),
-        serde_json::json!({
-            "name": "Edit",
-            "args": {"path": "string", "old_string": "string", "new_string": "string", "replace_all": "boolean?"},
-            "returns": "success",
-            "notes": "Applies an exact string replacement. Path aliases accepted: path, file, filepath."
-        }),
-        serde_json::json!({
-            "name": "Bash",
-            "args": {"cmd": "string", "timeout_ms": "number?"},
-            "returns": "{exit_code,stdout,stderr}",
-            "notes": "Runs shell commands via sh -c. Permission required in ask mode. Command alias accepted: command."
-        }),
-        serde_json::json!({
-            "name": "capture_screenshot",
-            "args": {"url": "string", "delay_ms": "number?"},
-            "returns": "{url,base64}"
-        }),
-        serde_json::json!({
-            "name": "Task",
-            "args": {"target_agent_id": "string", "task": "string"},
-            "returns": "{agent_outcome}",
-            "notes": "Delegates a task to another agent. Subject to max delegation depth."
-        }),
-        serde_json::json!({
-            "name": "WebSearch",
-            "args": {"query": "string", "max_results": "number?"},
-            "returns": "{results:[{title,url,snippet}]}",
-            "notes": "Search the web via DuckDuckGo. Default 5 results, max 10."
-        }),
-        serde_json::json!({
-            "name": "WebFetch",
-            "args": {"url": "string", "max_bytes": "number?"},
-            "returns": "{url,content,content_type,truncated}",
-            "notes": "Fetch a URL and return its content as text. HTML is stripped of tags. Default max 100KB."
-        }),
-        serde_json::json!({
-            "name": "Skill",
-            "args": {"skill": "string", "args": "string?"},
-            "returns": "string",
-            "notes": "Invoke a skill by name. Returns the skill's full instructions. Pass optional args for the skill."
-        }),
-        serde_json::json!({
-            "name": "AskUser",
-            "args": {
-                "questions": "[{question: string, header: string, options: [{label: string, description?: string, preview?: string}], multi_select?: boolean}]"
-            },
-            "returns": "{answers: [{question_index: number, selected: string[], custom_text?: string}]}",
-            "notes": "Ask user 1-4 structured questions with 2-6 options each. User can always type custom text via 'Other'. Blocks until response (5 min timeout). Not available in sub-agents."
-        }),
-        serde_json::json!({
-            "name": "RunApp",
-            "args": {"skill": "string", "args": "string?"},
-            "returns": "{skill,launcher,url}",
-            "notes": "Launch an app-enabled skill. The skill must have an 'app' config with a launcher (web/bash/url). For web apps, returns the URL to open."
-        }),
-        serde_json::json!({
-            "name": "ExitPlanMode",
-            "args": {"plan_text": "string", "items": "[{id: string, title: string, status: string}]?"},
-            "returns": "success",
-            "notes": "Submit your plan for user approval. Include the full detailed plan in plan_text. Optionally include items as a structured task list for progress tracking (all pending). If items is omitted, the system auto-extracts steps from your plan text."
-        }),
-        serde_json::json!({
-            "name": "EnterPlanMode",
-            "args": {"reason": "string?"},
-            "returns": "success",
-            "notes": "Enter plan mode to research and produce a detailed implementation plan. Restricts you to read-only tools until you call ExitPlanMode."
-        }),
-        serde_json::json!({
-            "name": "UpdatePlan",
-            "args": {"plan_text": "string?", "items": "[{id: string, title: string, status: string}]?"},
-            "returns": "success",
-            "notes": "Track execution progress during plan execution (after approval). Update item status: pending → in_progress → completed. Do NOT call this during planning — use ExitPlanMode instead."
-        }),
-        // Memory_* and any other skill-declared HTTP tools come from their
-        // skill's SKILL.md `tools:` block, not from this hardcoded table.
-        // They're rendered via `SkillToolDef::to_schema_json()` when the
-        // registry composes the model-facing schema.
-    ]
+    let mut out = super::builtin::model_facing_legacy_entries();
+    out.push(serde_json::json!({
+        "name": "ExitPlanMode",
+        "args": {"plan_text": "string", "items": "[{id: string, title: string, status: string}]?"},
+        "returns": "success",
+        "notes": "Submit your plan for user approval. Include the full detailed plan in plan_text. Optionally include items as a structured task list for progress tracking (all pending). If items is omitted, the system auto-extracts steps from your plan text."
+    }));
+    out.push(serde_json::json!({
+        "name": "EnterPlanMode",
+        "args": {"reason": "string?"},
+        "returns": "success",
+        "notes": "Enter plan mode to research and produce a detailed implementation plan. Restricts you to read-only tools until you call ExitPlanMode."
+    }));
+    out.push(serde_json::json!({
+        "name": "UpdatePlan",
+        "args": {"plan_text": "string?", "items": "[{id: string, title: string, status: string}]?"},
+        "returns": "success",
+        "notes": "Track execution progress during plan execution (after approval). Update item status: pending → in_progress → completed. Do NOT call this during planning — use ExitPlanMode instead."
+    }));
+    out
 }
 
 #[cfg(test)]

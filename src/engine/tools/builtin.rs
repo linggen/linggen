@@ -1,13 +1,14 @@
 //! `Tool` trait + built-in tool registry.
 //!
 //! Each built-in tool is a unit struct that implements [`Tool`] — name,
-//! aliases, and an async `execute` body that parses its args and delegates
-//! to the matching method on [`Tools`]. The registry ([`builtin_tools`])
-//! is a `Vec<Arc<dyn Tool>>` constructed once at startup.
+//! aliases, tier, description, schema, and an async execute body. The
+//! registry ([`registry`]) is a `Vec<Arc<dyn Tool>>` constructed once on
+//! first access.
 //!
-//! This replaces the 12-arm match in `Tools::execute`. Adding a new
-//! built-in tool = one more `impl Tool` and one more `Arc::new(...)` in
-//! the registry.
+//! Adding a new built-in tool: write one `impl Tool` block (name +
+//! description + tier + schemas + execute) and append `Arc::new(YourTool)`
+//! to the registry constructor. No edits to dispatcher/tier-table/
+//! schema-table required.
 
 use super::delegation::{RunAppArgs, SkillArgs, TaskArgs, WebFetchArgs, WebSearchArgs};
 use super::file_tools::{CaptureScreenshotArgs, ListFilesArgs, ReadFileArgs};
@@ -17,6 +18,7 @@ use super::{ToolCall, ToolResult, Tools};
 use crate::engine::permission::PermissionMode;
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::{json, Value};
 use std::sync::{Arc, LazyLock};
 
 #[async_trait]
@@ -29,13 +31,29 @@ pub trait Tool: Send + Sync {
         &[]
     }
 
+    /// Description shown to the model.
+    fn description(&self) -> &'static str;
+
     /// Permission tier the agent must hold on the target path before this
-    /// tool can run. Drives the prompt-on-exceed behavior in
-    /// `engine::permission::check_permission`.
+    /// tool can run.
     fn tier(&self) -> PermissionMode;
 
-    /// Run the tool. The implementor parses `call.args` into its typed
-    /// form and dispatches to the matching method on `tools`.
+    /// JSON Schema for the tool's arguments — for the native
+    /// function-calling `tools` API parameter.
+    fn args_schema(&self) -> Value;
+
+    /// Legacy short-form schema for the system-prompt JSON-action
+    /// embedding. Shape: `{"name", "args":{k: "type"}, "returns", "notes"?}`.
+    fn legacy_schema_entry(&self) -> Value;
+
+    /// True when this tool should appear in the model's advertised tool
+    /// list. Internal tools (lock_paths, unlock_paths) are dispatched
+    /// when called but never listed to the model.
+    fn model_facing(&self) -> bool {
+        true
+    }
+
+    /// Run the tool.
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult>;
 }
 
@@ -70,8 +88,28 @@ pub(super) fn lookup(name: &str) -> Option<&'static Arc<dyn Tool>> {
 }
 
 /// Public tier lookup used by `engine::permission::tool_action_tier`.
-pub fn builtin_tier(name: &str) -> Option<crate::engine::permission::PermissionMode> {
+pub fn builtin_tier(name: &str) -> Option<PermissionMode> {
     lookup(name).map(|t| t.tier())
+}
+
+/// JSON-Schema entries for the model-facing built-in tools. Used by
+/// `engine::tools::json_schema::oai_tool_definitions`.
+pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
+    registry()
+        .iter()
+        .filter(|t| t.model_facing())
+        .map(|t| (t.name().to_string(), t.description().to_string(), t.args_schema()))
+        .collect()
+}
+
+/// Legacy short-form schema entries for the system-prompt JSON-action
+/// embedding. Used by `engine::tools::tool_helpers::full_tool_schema_entries`.
+pub(super) fn model_facing_legacy_entries() -> Vec<Value> {
+    registry()
+        .iter()
+        .filter(|t| t.model_facing())
+        .map(|t| t.legacy_schema_entry())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +120,35 @@ pub struct GlobTool;
 #[async_trait]
 impl Tool for GlobTool {
     fn name(&self) -> &'static str { "Glob" }
+    fn description(&self) -> &'static str {
+        "Find files by glob pattern. Returns matching file paths sorted by modification time."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Glob patterns to match (e.g. [\"**/*.rs\", \"src/**/*.ts\"])"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return"
+                }
+            },
+            "required": ["globs"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Glob",
+            "args": {"globs": "string[]?", "max_results": "number?"},
+            "returns": "string[]",
+            "notes": "Glob pattern aliases accepted: globs, pattern, glob."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: ListFilesArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Glob: {}", e))?;
@@ -94,7 +160,41 @@ pub struct ReadTool;
 #[async_trait]
 impl Tool for ReadTool {
     fn name(&self) -> &'static str { "Read" }
+    fn description(&self) -> &'static str {
+        "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path to read (relative to workspace root, or absolute)"
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Maximum bytes to read (default: entire file)"
+                },
+                "line_range": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "Line range [start, end] (1-based, inclusive)"
+                }
+            },
+            "required": ["path"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Read",
+            "args": {"path": "string", "max_bytes": "number?", "line_range": "[number,number]?"},
+            "returns": "{path,content,truncated}",
+            "notes": "Path aliases accepted: path, file, filepath."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: ReadFileArgs = serde_json::from_value(call.args).map_err(|e| {
             anyhow::anyhow!(
@@ -110,7 +210,39 @@ pub struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
     fn name(&self) -> &'static str { "Grep" }
+    fn description(&self) -> &'static str {
+        "Search file contents using regex. Returns matching lines with file path, line number, and snippet."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Regex pattern to search for"
+                },
+                "globs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File glob patterns to search within (e.g. [\"**/*.rs\"])"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of matches to return"
+                }
+            },
+            "required": ["query"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Grep",
+            "args": {"query": "string", "globs": "string[]?", "max_results": "number?"},
+            "returns": "{matches:[{path,line,snippet}]}",
+            "notes": "Query aliases accepted: query, path, file, filepath."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: SearchArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Grep: {}", e))?;
@@ -122,7 +254,25 @@ pub struct CaptureScreenshotTool;
 #[async_trait]
 impl Tool for CaptureScreenshotTool {
     fn name(&self) -> &'static str { "capture_screenshot" }
+    fn description(&self) -> &'static str { "Capture a screenshot of a URL." }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL to capture"},
+                "delay_ms": {"type": "integer", "description": "Delay before capture in milliseconds"}
+            },
+            "required": ["url"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "capture_screenshot",
+            "args": {"url": "string", "delay_ms": "number?"},
+            "returns": "{url,base64}"
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: CaptureScreenshotArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for capture_screenshot: {}", e))?;
@@ -138,7 +288,28 @@ pub struct BashTool;
 #[async_trait]
 impl Tool for BashTool {
     fn name(&self) -> &'static str { "Bash" }
+    fn description(&self) -> &'static str {
+        "Run a shell command via sh -c. Working directory persists across calls (cd is remembered). Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "cmd": {"type": "string", "description": "Shell command to execute"},
+                "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default: 30000)"}
+            },
+            "required": ["cmd"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Bash",
+            "args": {"cmd": "string", "timeout_ms": "number?"},
+            "returns": "{exit_code,stdout,stderr}",
+            "notes": "Runs shell commands via sh -c. Permission required in ask mode. Command alias accepted: command."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let mut args: RunCommandArgs = serde_json::from_value(call.args).map_err(|e| {
             anyhow::anyhow!(
@@ -168,7 +339,28 @@ pub struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
     fn name(&self) -> &'static str { "Write" }
+    fn description(&self) -> &'static str {
+        "Write content to a file (creates or overwrites). Prefer Edit for existing files. Path is relative to workspace root."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Edit }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to write (relative to workspace root)"},
+                "content": {"type": "string", "description": "Content to write to the file"}
+            },
+            "required": ["path", "content"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Write",
+            "args": {"path": "string", "content": "string"},
+            "returns": "success",
+            "notes": "Path aliases accepted: path, file, filepath."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: WriteFileArgs = serde_json::from_value(call.args).map_err(|e| {
             anyhow::anyhow!("invalid args for Write: {}. Expected keys: path|content", e)
@@ -181,7 +373,30 @@ pub struct EditTool;
 #[async_trait]
 impl Tool for EditTool {
     fn name(&self) -> &'static str { "Edit" }
+    fn description(&self) -> &'static str {
+        "Apply an exact string replacement in a file. Prefer this over Write for existing files. Read the file first."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Edit }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to edit (relative to workspace root)"},
+                "old_string": {"type": "string", "description": "Exact string to find and replace"},
+                "new_string": {"type": "string", "description": "Replacement string"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: false, replaces first only)"}
+            },
+            "required": ["path", "old_string", "new_string"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Edit",
+            "args": {"path": "string", "old_string": "string", "new_string": "string", "replace_all": "boolean?"},
+            "returns": "success",
+            "notes": "Applies an exact string replacement. Path aliases accepted: path, file, filepath."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: EditFileArgs = serde_json::from_value(call.args).map_err(|e| {
             anyhow::anyhow!(
@@ -197,7 +412,13 @@ pub struct LockPathsTool;
 #[async_trait]
 impl Tool for LockPathsTool {
     fn name(&self) -> &'static str { "lock_paths" }
+    fn description(&self) -> &'static str {
+        "Acquire exclusive write locks on a set of glob patterns to prevent races with sibling agents."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value { json!({"type": "object"}) }
+    fn legacy_schema_entry(&self) -> Value { json!({"name": "lock_paths"}) }
+    fn model_facing(&self) -> bool { false }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: LockPathsArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for lock_paths: {}", e))?;
@@ -209,7 +430,11 @@ pub struct UnlockPathsTool;
 #[async_trait]
 impl Tool for UnlockPathsTool {
     fn name(&self) -> &'static str { "unlock_paths" }
+    fn description(&self) -> &'static str { "Release locks acquired via lock_paths." }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value { json!({"type": "object"}) }
+    fn legacy_schema_entry(&self) -> Value { json!({"name": "unlock_paths"}) }
+    fn model_facing(&self) -> bool { false }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: UnlockPathsArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for unlock_paths: {}", e))?;
@@ -226,7 +451,28 @@ pub struct TaskTool;
 impl Tool for TaskTool {
     fn name(&self) -> &'static str { "Task" }
     fn aliases(&self) -> &'static [&'static str] { &["delegate_to_agent"] }
+    fn description(&self) -> &'static str {
+        "Delegate a task to another agent. Send a specific task description with clear scope and expected output."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target_agent_id": {"type": "string", "description": "ID of the agent to delegate to"},
+                "task": {"type": "string", "description": "Task description for the target agent"}
+            },
+            "required": ["target_agent_id", "task"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Task",
+            "args": {"target_agent_id": "string", "task": "string"},
+            "returns": "{agent_outcome}",
+            "notes": "Delegates a task to another agent. Subject to max delegation depth."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: TaskArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Task: {}", e))?;
@@ -239,7 +485,28 @@ pub struct SkillTool;
 impl Tool for SkillTool {
     fn name(&self) -> &'static str { "Skill" }
     fn aliases(&self) -> &'static [&'static str] { &["skill"] }
+    fn description(&self) -> &'static str {
+        "Invoke a skill by name. Returns the skill's full instructions. Use to discover and run installed skills."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "skill": {"type": "string", "description": "Skill name to invoke"},
+                "args": {"type": "string", "description": "Optional arguments for the skill"}
+            },
+            "required": ["skill"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Skill",
+            "args": {"skill": "string", "args": "string?"},
+            "returns": "string",
+            "notes": "Invoke a skill by name. Returns the skill's full instructions. Pass optional args for the skill."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: SkillArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Skill: {}", e))?;
@@ -252,7 +519,28 @@ pub struct RunAppTool;
 impl Tool for RunAppTool {
     fn name(&self) -> &'static str { "RunApp" }
     fn aliases(&self) -> &'static [&'static str] { &["run_app"] }
+    fn description(&self) -> &'static str {
+        "Launch an app-enabled skill. The skill must have an 'app' config with a launcher (web/bash/url). For web apps, returns the URL to open in the UI."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "skill": {"type": "string", "description": "Name of the skill to launch"},
+                "args": {"type": "string", "description": "Optional arguments for the skill"}
+            },
+            "required": ["skill"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "RunApp",
+            "args": {"skill": "string", "args": "string?"},
+            "returns": "{skill,launcher,url}",
+            "notes": "Launch an app-enabled skill. The skill must have an 'app' config with a launcher (web/bash/url). For web apps, returns the URL to open."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: RunAppArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for RunApp: {}", e))?;
@@ -269,7 +557,28 @@ pub struct WebSearchTool;
 impl Tool for WebSearchTool {
     fn name(&self) -> &'static str { "WebSearch" }
     fn aliases(&self) -> &'static [&'static str] { &["web_search"] }
+    fn description(&self) -> &'static str {
+        "Search the web via DuckDuckGo. Returns titles, URLs, and snippets."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "max_results": {"type": "integer", "description": "Maximum results (default: 5, max: 10)"}
+            },
+            "required": ["query"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "WebSearch",
+            "args": {"query": "string", "max_results": "number?"},
+            "returns": "{results:[{title,url,snippet}]}",
+            "notes": "Search the web via DuckDuckGo. Default 5 results, max 10."
+        })
+    }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: WebSearchArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
@@ -287,7 +596,28 @@ pub struct WebFetchTool;
 impl Tool for WebFetchTool {
     fn name(&self) -> &'static str { "WebFetch" }
     fn aliases(&self) -> &'static [&'static str] { &["web_fetch"] }
+    fn description(&self) -> &'static str {
+        "Fetch a URL and return its content as text. HTML tags are stripped. Default max 100KB."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL to fetch"},
+                "max_bytes": {"type": "integer", "description": "Maximum bytes to return (default: 100000)"}
+            },
+            "required": ["url"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "WebFetch",
+            "args": {"url": "string", "max_bytes": "number?"},
+            "returns": "{url,content,content_type,truncated}",
+            "notes": "Fetch a URL and return its content as text. HTML is stripped of tags. Default max 100KB."
+        })
+    }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: WebFetchArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for WebFetch: {}", e))?;
@@ -310,7 +640,51 @@ pub struct AskUserTool;
 impl Tool for AskUserTool {
     fn name(&self) -> &'static str { "AskUser" }
     fn aliases(&self) -> &'static [&'static str] { &["ask_user"] }
+    fn description(&self) -> &'static str {
+        "Ask the user 1-4 structured questions with 2-6 options each. User can always type custom text. Blocks until response (5 min timeout)."
+    }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string"},
+                            "header": {"type": "string"},
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string"},
+                                        "description": {"type": "string"}
+                                    },
+                                    "required": ["label"]
+                                }
+                            },
+                            "multi_select": {"type": "boolean"}
+                        },
+                        "required": ["question", "header", "options"]
+                    }
+                }
+            },
+            "required": ["questions"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "AskUser",
+            "args": {
+                "questions": "[{question: string, header: string, options: [{label: string, description?: string, preview?: string}], multi_select?: boolean}]"
+            },
+            "returns": "{answers: [{question_index: number, selected: string[], custom_text?: string}]}",
+            "notes": "Ask user 1-4 structured questions with 2-6 options each. User can always type custom text via 'Other'. Blocks until response (5 min timeout). Not available in sub-agents."
+        })
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         tools.ask_user(call.args).await
     }
