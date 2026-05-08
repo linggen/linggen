@@ -273,52 +273,42 @@ tool_permission_mode = "read"    # Default mode for new user sessions
 
 That is the only permission-related config. No `[permissions]` block. No deny/ask rule tables. The engine's hardcoded deny floor is fixed and not user-configurable.
 
-## Runtime extensions (programmatic grants + prompt append)
+## Runtime grants for skill-configured paths
 
-Skills declare their static grants in `SKILL.md` frontmatter. That covers everything the skill needs at install time. **Anything the user configures at runtime** — workspace path, additional repos, project-specific context — would otherwise require either editing `SKILL.md` (clobbered on upgrade) or prompting the user every session (annoying).
+Skills declare their static grants in `SKILL.md` frontmatter. That covers everything the skill needs at install time. **Anything the user configures at runtime** — workspace path, additional repos, project-specific context — is handled by the existing permission endpoint, no new engine surface needed.
 
-Two engine surfaces, used together, solve this:
-
-### Permission grants — already exists
-
-`PATCH /api/sessions/permission` is the existing endpoint the consent prompt widget calls when the user clicks "Switch this folder to {mode}". Body:
+`PATCH /api/sessions/permission` is the endpoint the consent prompt widget already calls when the user clicks "Switch this folder to {mode}". Body:
 
 ```json
 { "session_id": "...", "path": "/abs/path", "mode": "read|edit|admin" }
 ```
 
-It calls `SessionPermissions::set_path_mode(...)` and persists to the session's `permission.json`. Same plumbing a skill should reuse. The endpoint has been there since the simplification; **no new permission API is needed**.
+It calls `SessionPermissions::set_path_mode(...)` and persists to the session's `permission.json`. Skills that need runtime grants reuse it. `GET /api/sessions/permission?session_id=...&cwd=...` reads back current grants plus effective mode — useful for a settings UI listing the grants in place.
 
-`GET /api/sessions/permission?session_id=...&cwd=...` reads back the current grants plus the effective mode for a given cwd — useful for skills that want to render their own grant list in a settings UI.
+### Skills own cross-session persistence
 
-### System prompt extensions — new
-
-```
-POST /api/sessions/{id}/system_prompt/append
-  body: { "content": "<text>", "label": "<dedup-key>" }
-```
-
-Registers an entry the engine prepends to the agent's system prompt on the next turn. `label` is the dedup/replace key — calling again with the same label updates instead of appending. Per-skill cumulative size cap enforced at the engine boundary (default 4 KB; refusal returns 413). Stateless from the engine's point of view: applies to the live session, no persistence, no file reads.
-
-`content`-mode only — never `path: <file>`. Engine stays ignorant of skill filesystem layouts; skill resolves files itself and sends the content. Cost is one file read per session start in the skill iframe.
-
-### Skills own persistence
-
-The two APIs above mutate the live session only. New sessions start fresh from `SKILL.md` grants. **Skills that want runtime extensions to survive across sessions store them in their own data dir** (e.g., `~/.linggen/skills/pulse/runtime-grants.json`) in whatever format the skill chooses. On iframe load — or other init point — the skill reads its persisted state and pushes it via these APIs. Engine only sees the API calls; persistence format and lifecycle are the skill's concern. This decouples skill upgrades from runtime config and lets each skill pick its own grant model (TTLs, project-scoping, etc.).
+Both endpoints operate on the **session's** `permission.json`. New sessions start fresh from `SKILL.md`. **Skills that want runtime grants to survive across sessions store them in their own data dir** (e.g., `~/.linggen/skills/pulse/runtime-grants.json`) in whatever format the skill chooses. On iframe load, the skill reads its persisted state and replays the PATCH calls against the new session. Engine sees only the PATCH calls; persistence format and lifecycle are the skill's concern. This decouples skill upgrades from runtime config and lets each skill pick its own grant model (TTLs, project-scoping, etc.).
 
 ### Auth
 
-The existing `PATCH /api/sessions/permission` endpoint takes `session_id` from the body and does **not** verify the caller owns that session — current behavior relies on the broader "user actions are never gated" posture (skill iframes are user-actuated, so they have the same trust as the user typing in chat). This is consistent with `/api/bash` being iframe-ungated.
-
-The new `system_prompt/append` should match: trust the caller; rely on iframe-as-user-action. If we later want stricter cross-skill isolation (preventing skill A from mutating skill B's session), it'd apply to both endpoints together — out of scope here.
+`PATCH /api/sessions/permission` takes `session_id` from the body and does **not** verify the caller owns that session — current behavior relies on the broader "user actions are never gated" posture (skill iframes are user-actuated, so they have the same trust as the user typing in chat). This matches `/api/bash` being iframe-ungated.
 
 ### Deny floor
 
 Runtime grants cannot pierce the hardcoded deny floor. A path on the deny floor stays denied even if `PATCH /api/sessions/permission` is called with `mode: admin`. The deny check fires after grant resolution, before tool dispatch.
 
+### Persistent reference context (briefs, identity, voice)
+
+Two existing patterns cover this; no new API needed:
+
+1. **Engine-injected memory cores** — `~/.linggen/memory/identity.md` and `style.md` are auto-included in every agent system prompt. Used for user-global context that applies to every session.
+2. **`SKILL.md` "Read these files first"** — the skill's instructions tell the agent to `Read` reference files (e.g., `references/brief.md`) before any capability fires. Used for skill-scoped context. Pulse uses this for its brief and voice samples.
+
+For runtime-computed context that doesn't fit either pattern (rare), use a hidden chat turn — see `chat-spec.md`. The engine doesn't need a separate "system prompt extension" API.
+
 ### v1 caveat: iframe-loaded-first
 
-If a session is created without the skill's iframe loading (chat-routed agent invocation, mission fire), the skill's runtime extensions don't apply — the agent runs with `SKILL.md` grants only. For pulse v1 this is acceptable because the natural flow is *open pulse → see dashboard → chat*, which loads the iframe first. Generalizing to chat-only or mission entry points needs an **init hook** — a `SKILL.md` frontmatter entry naming a script the engine runs before agent dispatch, which calls the same APIs. Deferred until a real consumer needs it.
+If a session is created without the skill's iframe loading (chat-routed agent invocation, mission fire), the skill's runtime grants don't get replayed — the agent runs with `SKILL.md` grants only. For pulse v1 this is acceptable because the natural flow is *open pulse → see dashboard → chat*, which loads the iframe first. Generalizing to chat-only or mission entry points needs an **init hook** — a `SKILL.md` frontmatter entry naming a script the engine runs before agent dispatch, which replays the grants. Deferred until a real consumer needs it.
 
 ## Future
 

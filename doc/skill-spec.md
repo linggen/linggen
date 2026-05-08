@@ -227,14 +227,18 @@ permission:
 
 `mode` is `read`, `edit` (alias `write`), or `admin`. On approval, each `(path, mode)` pair is added to the session's grants — the cwd is not silently broadened. See `permission-spec.md`.
 
-### Runtime grants and prompt extensions
+### Runtime grants for user-configured paths
 
-For paths or context the user configures **after install** (e.g., a workspace dir set in the skill's settings page), the skill can extend the running session without mutating `SKILL.md`:
+For paths the user configures **after install** (e.g., a workspace dir set in the skill's settings page), the skill reuses the existing permission endpoint:
 
-- **Permission grants** — reuse the existing endpoint the consent prompt calls: `PATCH /api/sessions/permission` with `{ session_id, path, mode }`. No new endpoint needed.
-- **System prompt extensions** — `POST /api/sessions/{id}/system_prompt/append` with `{ content, label }`. New endpoint; content-mode only; per-skill cumulative cap (default 4 KB).
+```
+PATCH /api/sessions/permission
+  { "session_id": "...", "path": "/abs/path", "mode": "read|edit|admin" }
+```
 
-Both apply to the live session. **Skills own persistence** — store runtime config in the skill's own data dir and re-push on iframe load. See `permission-spec.md` for the full contract and the v1 iframe-loaded-first caveat.
+Same endpoint the consent prompt calls when the user clicks "Switch this folder to {mode}". No new engine surface needed. Effects are session-scoped — skills wanting cross-session persistence store grants in their own data dir and replay the PATCH on iframe load. See `permission-spec.md` for the full contract.
+
+For runtime context (briefs, voice samples, identity), the existing patterns suffice: engine auto-includes `~/.linggen/memory/{identity,style}.md` in system prompts; SKILL.md instructs the agent to `Read` skill-scoped reference files like `references/brief.md`. No separate "system prompt extension" API is needed.
 
 ## Skill tools
 
