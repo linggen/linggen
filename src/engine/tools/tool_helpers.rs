@@ -211,23 +211,18 @@ pub(crate) fn normalize_tool_args(tool: &str, args: Value) -> Value {
     normalized
 }
 
+/// Resolve a tool name (canonical or alias) to its canonical form.
+///
+/// Built-in tools delegate to the [`super::builtin::lookup`] registry —
+/// adding a tool there auto-registers its name and aliases here. Plan-mode
+/// tools (`EnterPlanMode`, `ExitPlanMode`, `UpdatePlan`) aren't real
+/// `Tool` impls (they're parsed as `ModelAction`s in `actions.rs`) so
+/// they keep an explicit branch.
 pub fn canonical_tool_name(tool: &str) -> Option<&'static str> {
+    if let Some(t) = super::builtin::lookup(tool) {
+        return Some(t.name());
+    }
     Some(match tool {
-        "Glob" => "Glob",
-        "Read" => "Read",
-        "Grep" => "Grep",
-        "Write" => "Write",
-        "Edit" => "Edit",
-        "Bash" => "Bash",
-        "capture_screenshot" => "capture_screenshot",
-        "lock_paths" => "lock_paths",
-        "unlock_paths" => "unlock_paths",
-        "Task" | "delegate_to_agent" => "Task",
-        "WebSearch" | "web_search" => "WebSearch",
-        "WebFetch" | "web_fetch" => "WebFetch",
-        "Skill" | "skill" => "Skill",
-        "AskUser" | "ask_user" => "AskUser",
-        "RunApp" | "run_app" => "RunApp",
         "ExitPlanMode" | "exit_plan_mode" => "ExitPlanMode",
         "EnterPlanMode" | "enter_plan_mode" => "EnterPlanMode",
         "UpdatePlan" | "update_plan" => "UpdatePlan",

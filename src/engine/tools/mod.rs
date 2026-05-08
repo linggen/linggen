@@ -1,3 +1,6 @@
+mod builtin;
+pub use builtin::builtin_tier;
+
 mod file_tools;
 pub(crate) mod json_schema;
 mod search_exec;
@@ -291,9 +294,10 @@ impl Tools {
 
     // ── Execute dispatcher ──────────────────────────────────────────────
 
-    /// Run a tool call. Tool bodies are async fns; CPU-bound work (regex
-    /// walking in Grep, file walking in Glob) is wrapped in
-    /// `spawn_blocking` per-method, not at the dispatcher level.
+    /// Run a tool call by looking up the tool in the [`builtin`] registry
+    /// and dispatching to its `execute` impl. Unknown tool names fall
+    /// through to `ToolRegistry::execute`, which handles capability tools
+    /// and skill tools.
     pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
         let normalized_args = normalize_tool_args(&call.tool, call.args);
         debug!(
@@ -302,121 +306,20 @@ impl Tools {
             summarize_tool_args(&call.tool, &normalized_args)
         );
 
-        match call.tool.as_str() {
-            "Glob" => {
-                let args: file_tools::ListFilesArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for Glob: {}", e))?;
-                self.list_files(args).await
-            }
-            "Read" => {
-                let args: file_tools::ReadFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
-                    anyhow::anyhow!(
-                        "invalid args for Read: {}. Expected keys: path|max_bytes|line_range",
-                        e
-                    )
-                })?;
-                self.read_file(args).await
-            }
-            "Grep" => {
-                let args: search_exec::SearchArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for Grep: {}", e))?;
-                self.search_rg(args).await
-            }
-            "Bash" => {
-                let mut args: search_exec::RunCommandArgs =
-                    serde_json::from_value(normalized_args).map_err(|e| {
-                        anyhow::anyhow!(
-                            "invalid args for Bash: {}. Expected keys: cmd|timeout_ms",
-                            e
-                        )
-                    })?;
-                if let (Some(bid), Some(mgr)) = (&call.block_id, &self.manager) {
-                    args.cancel_flag = Some(mgr.register_tool_cancel_flag(bid));
-                }
-                let result = self.run_command(args).await;
-                if let (Some(bid), Some(mgr)) = (&call.block_id, &self.manager) {
-                    mgr.clear_tool_cancel_flag(bid);
-                }
-                result
-            }
-            "capture_screenshot" => {
-                let args: file_tools::CaptureScreenshotArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for capture_screenshot: {}", e))?;
-                self.capture_screenshot(args).await
-            }
-            "Write" => {
-                let args: write_tools::WriteFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
-                    anyhow::anyhow!("invalid args for Write: {}. Expected keys: path|content", e)
-                })?;
-                self.write_file(args).await
-            }
-            "Edit" => {
-                let args: write_tools::EditFileArgs = serde_json::from_value(normalized_args).map_err(|e| {
-                    anyhow::anyhow!(
-                        "invalid args for Edit: {}. Expected keys: path|old_string|new_string|replace_all?",
-                        e
-                    )
-                })?;
-                self.edit_file(args).await
-            }
-            "lock_paths" => {
-                let args: write_tools::LockPathsArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for lock_paths: {}", e))?;
-                self.lock_paths(args).await
-            }
-            "unlock_paths" => {
-                let args: write_tools::UnlockPathsArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for unlock_paths: {}", e))?;
-                self.unlock_paths(args).await
-            }
-            "Task" => {
-                let args: delegation::TaskArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for Task: {}", e))?;
-                self.task(args).await
-            }
-            "WebSearch" => {
-                let args: delegation::WebSearchArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
-                let max = args.max_results.unwrap_or(5).min(10);
-                let results = super::web_search::web_search(&args.query, max).await?;
-                Ok(ToolResult::WebSearchResults {
-                    query: args.query,
-                    results,
-                })
-            }
-            "WebFetch" => {
-                let args: delegation::WebFetchArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for WebFetch: {}", e))?;
-                let result =
-                    super::web_fetch::fetch_url(&args.url, args.max_bytes).await?;
-                Ok(ToolResult::WebFetchContent {
-                    url: result.url,
-                    content: result.content,
-                    content_type: result.content_type,
-                    truncated: result.truncated,
-                })
-            }
-            "Skill" => {
-                let args: delegation::SkillArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for Skill: {}", e))?;
-                self.invoke_skill(args).await
-            }
-            "RunApp" => {
-                let args: delegation::RunAppArgs = serde_json::from_value(normalized_args)
-                    .map_err(|e| anyhow::anyhow!("invalid args for RunApp: {}", e))?;
-                self.run_app(args).await
-            }
-            "AskUser" => self.ask_user(normalized_args).await,
-            // Memory_* and other skill-declared HTTP tools are registered
-            // through SkillManager and dispatched by `ToolRegistry::execute`.
-            // Unknown name = typo or unloaded skill tool — surface cleanly.
-            _ => anyhow::bail!("unknown tool: {}", call.tool),
+        let normalized = ToolCall {
+            tool: call.tool,
+            args: normalized_args,
+            block_id: call.block_id,
+        };
+        match builtin::lookup(&normalized.tool) {
+            Some(tool) => tool.execute(self, normalized).await,
+            None => anyhow::bail!("unknown tool: {}", normalized.tool),
         }
     }
 
     /// AskUser is async-native — it uses tokio oneshot + timeout + Mutex
     /// internally and was previously bridged through `block_on_async`.
-    async fn ask_user(&self, args: serde_json::Value) -> Result<ToolResult> {
+    pub(super) async fn ask_user(&self, args: serde_json::Value) -> Result<ToolResult> {
         let args: AskUserArgs = serde_json::from_value(args)
             .map_err(|e| anyhow::anyhow!("invalid args for AskUser: {}", e))?;
 
