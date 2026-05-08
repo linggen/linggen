@@ -1,123 +1,15 @@
-use crate::agent_manager::AgentManager;
-use crate::engine::AgentOutcome;
-use crate::server::{ServerEvent, ServerState};
+//! Tool-result rendering for the chat UI.
+//!
+//! Two consumers:
+//! - [`tool_status_line`] — used by `tool_exec` to emit progress strings as
+//!   tool calls run (start/done/failed).
+//! - [`sanitize_message_for_ui`] — used by chat-history endpoints to strip
+//!   verbose tool payloads (Read bodies, Grep matches, Glob lists) and
+//!   replace them with compact one-line summaries.
+//!
+//! All helpers below are pure string formatters — no I/O, no engine state.
+
 use std::collections::BTreeSet;
-use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::broadcast;
-
-// ---------------------------------------------------------------------------
-// Message persistence
-// ---------------------------------------------------------------------------
-
-/// Emit a `ServerEvent::Message` **and** persist to session files.
-pub(crate) async fn persist_and_emit_message(
-    manager: &Arc<AgentManager>,
-    events_tx: &broadcast::Sender<ServerEvent>,
-    root: &Path,
-    agent_id: &str,
-    from: &str,
-    to: &str,
-    content: &str,
-    session_id: Option<&str>,
-    is_observation: bool,
-) {
-    let _ = events_tx.send(ServerEvent::Message {
-        from: from.to_string(),
-        to: to.to_string(),
-        content: content.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-    });
-    persist_message_only(manager, root, agent_id, from, to, content, session_id, is_observation)
-        .await;
-}
-
-/// Emit a `ServerEvent::Message` and persist directly to a `SessionStore`.
-/// Used for mission sessions that live outside any project.
-pub(crate) async fn persist_and_emit_to_store(
-    store: &crate::state_fs::SessionStore,
-    events_tx: &broadcast::Sender<ServerEvent>,
-    agent_id: &str,
-    from: &str,
-    to: &str,
-    content: &str,
-    session_id: Option<&str>,
-    is_observation: bool,
-) {
-    let _ = events_tx.send(ServerEvent::Message {
-        from: from.to_string(),
-        to: to.to_string(),
-        content: content.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-    });
-    let sid = session_id.unwrap_or("default");
-    let msg = crate::state_fs::sessions::ChatMsg {
-        agent_id: agent_id.to_string(),
-        from_id: from.to_string(),
-        to_id: to.to_string(),
-        content: content.to_string(),
-        timestamp: crate::util::now_ts_secs(),
-        is_observation,
-    };
-    if let Err(e) = store.add_chat_message(sid, &msg) {
-        tracing::warn!("Failed to persist chat message to mission store: {}", e);
-    }
-}
-
-/// Persist to the global flat-file session store without emitting an SSE event.
-pub(crate) async fn persist_message_only(
-    manager: &Arc<AgentManager>,
-    _root: &Path,
-    agent_id: &str,
-    from: &str,
-    to: &str,
-    content: &str,
-    session_id: Option<&str>,
-    is_observation: bool,
-) {
-    let sid = session_id.unwrap_or("default");
-    let msg = crate::state_fs::sessions::ChatMsg {
-        agent_id: agent_id.to_string(),
-        from_id: from.to_string(),
-        to_id: to.to_string(),
-        content: content.to_string(),
-        timestamp: crate::util::now_ts_secs(),
-        is_observation,
-    };
-    if let Err(e) = manager.global_sessions.add_chat_message(sid, &msg) {
-        tracing::warn!("Failed to persist chat message: {}", e);
-    }
-}
-
-
-// ---------------------------------------------------------------------------
-// Queue management
-// ---------------------------------------------------------------------------
-
-pub(crate) fn queue_key(project_root: &str, session_id: &str, agent_id: &str) -> String {
-    format!("{project_root}|{session_id}|{agent_id}")
-}
-
-pub(crate) fn queue_preview(message: &str) -> String {
-    const LIMIT: usize = 100;
-    let trimmed = message.trim();
-    if trimmed.len() <= LIMIT {
-        trimmed.to_string()
-    } else {
-        // Find a char boundary at or before LIMIT to avoid panic on multi-byte UTF-8.
-        let end = trimmed
-            .char_indices()
-            .map(|(i, _)| i)
-            .take_while(|&i| i <= LIMIT)
-            .last()
-            .unwrap_or(0);
-        format!("{}...", &trimmed[..end])
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tool status formatting
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct ToolCallForUi {
@@ -350,8 +242,7 @@ pub(crate) fn tool_status_line(
             }
         }
         "websearch" => {
-            let query =
-                first_string_arg(args, &["query", "q"]).map(|q| preview_value(&q, 140));
+            let query = first_string_arg(args, &["query", "q"]).map(|q| preview_value(&q, 140));
             match phase {
                 ToolStatusPhase::Start => query
                     .map(|q| format!("Searching web: {q}"))
@@ -388,13 +279,11 @@ pub(crate) fn tool_status_line(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Message sanitization for UI
-// ---------------------------------------------------------------------------
-
+/// Strip verbose tool payloads from a chat-history message and replace them
+/// with compact one-line summaries. Read bodies become "Used tool: Read ·
+/// target=…", Grep/Glob bodies become "Used tool: Grep · target=… (+N more)".
+/// Internal diagnostics ([HIDDEN], tool_not_allowed:) are dropped.
 pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<String> {
-    // Hide [HIDDEN] messages (system prompts from app skills).
-    // Check contains — system messages may have a prefix before [HIDDEN].
     if content.contains("[HIDDEN]") {
         return None;
     }
@@ -461,16 +350,13 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
         let line = raw_line.trim();
         let lower = line.to_lowercase();
 
-        // Suppress verbose tool result bodies after compact status lines.
         if let Some(mut mode) = suppressed_tool_body.take() {
             let is_boundary = line.starts_with('{')
                 || lower.starts_with("tool ")
                 || lower.starts_with("tool_error:")
                 || lower.starts_with("tool_not_allowed:");
             let should_suppress = match mode_kind(&mode) {
-                // Read payloads can contain blank lines; only explicit boundaries end suppression.
                 SuppressedToolBodyKind::Read => !is_boundary,
-                // Grep/Glob payloads are line-oriented; an empty line can also end suppression.
                 SuppressedToolBodyKind::Grep | SuppressedToolBodyKind::Glob => {
                     !is_boundary && !line.is_empty()
                 }
@@ -508,7 +394,6 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
             continue;
         }
 
-        // Tool call JSON — emit a compact status line instead of raw JSON.
         if let Some(tool_call) = parse_tool_call_from_json_line(line) {
             suppressed_tool_body = None;
             if !tool_call.name.is_empty() {
@@ -522,13 +407,15 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
         }
 
         // Suppress raw JSON objects/arrays that are internal structured data
-        // — not meant for display.
-        // Exception: plan JSON is rendered as a PlanBlock by the UI.
+        // — not meant for display. Plan JSON is rendered by the UI as a
+        // PlanBlock; pass it through.
         if (line.starts_with('{') && line.ends_with('}'))
             || (line.starts_with('[') && line.ends_with(']'))
         {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                let is_special_block = val.get("type").and_then(|t| t.as_str())
+                let is_special_block = val
+                    .get("type")
+                    .and_then(|t| t.as_str())
                     .map(|t| t == "plan")
                     .unwrap_or(false);
                 if !is_special_block {
@@ -537,11 +424,10 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
             }
         }
 
-        // Tool errors — keep as compact summaries. Permission denials — suppress
+        // Tool errors → keep as compact summaries. Permission denials → suppress
         // (internal diagnostics, not useful for the user).
         if lower.starts_with("tool_not_allowed:") {
             suppressed_tool_body = None;
-            // Skip — internal engine diagnostic, not user-facing.
             continue;
         }
         if lower.starts_with("tool_error:") {
@@ -550,8 +436,8 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
             continue;
         }
 
-        // Tool result header lines ("Tool Read: ...", "Tool Grep: ...", "Tool Bash: ...").
-        // Keep compact status lines and suppress verbose bodies for selected tools.
+        // Tool result header lines ("Tool Read: ...", "Tool Grep: ..."). Keep
+        // compact status lines and suppress verbose bodies for selected tools.
         if lower.starts_with("tool ") {
             if lower.starts_with("tool read:") {
                 let status = parse_read_result_path_from_tool_header(line)
@@ -583,7 +469,6 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
                     .filter(|s| !s.is_empty());
                 cleaned_lines.push(tool_target_line("WebSearch", query));
             } else if lower.contains("tool_not_allowed:") || lower.contains("tool_error:") {
-                // Internal diagnostics from observation persistence — suppress.
                 suppressed_tool_body = None;
             } else {
                 suppressed_tool_body = None;
@@ -592,7 +477,6 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
             continue;
         }
 
-        // Internal boilerplate — hide.
         if lower.starts_with("starting autonomous loop for task:") {
             continue;
         }
@@ -600,7 +484,6 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
             continue;
         }
 
-        // Everything else — keep (model text, delegation messages, errors, etc.)
         cleaned_lines.push(raw_line.to_string());
     }
 
@@ -617,81 +500,6 @@ pub(crate) fn sanitize_message_for_ui(from: &str, content: &str) -> Option<Strin
         return None;
     }
     Some(cleaned)
-}
-
-// ---------------------------------------------------------------------------
-// Queue event emission
-// ---------------------------------------------------------------------------
-
-pub(crate) async fn emit_queue_updated(
-    state: &Arc<ServerState>,
-    project_root: &str,
-    session_id: &str,
-    agent_id: &str,
-) {
-    let key = queue_key(project_root, session_id, agent_id);
-    let items = {
-        let guard = state.queued_chats.lock().await;
-        guard.get(&key).cloned().unwrap_or_default()
-    };
-    let _ = state.events_tx.send(ServerEvent::QueueUpdated {
-        project_root: project_root.to_string(),
-        session_id: session_id.to_string(),
-        agent_id: agent_id.to_string(),
-        items,
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Outcome events
-// ---------------------------------------------------------------------------
-
-pub(crate) fn emit_outcome_event(
-    outcome: &AgentOutcome,
-    events_tx: &broadcast::Sender<ServerEvent>,
-    from_id: &str,
-    session_id: Option<&str>,
-) {
-    let sid = session_id.map(|s| s.to_string());
-    match outcome {
-        AgentOutcome::Plan(plan) => {
-            let _ = events_tx.send(ServerEvent::Message {
-                from: from_id.to_string(),
-                to: "user".to_string(),
-                content: serde_json::json!({
-                    "type": "plan",
-                    "plan": plan
-                })
-                .to_string(),
-                session_id: sid.clone(),
-            });
-        }
-        AgentOutcome::PlanApproved(plan) => {
-            let _ = events_tx.send(ServerEvent::Message {
-                from: from_id.to_string(),
-                to: "user".to_string(),
-                content: serde_json::json!({
-                    "type": "plan",
-                    "plan": plan
-                })
-                .to_string(),
-                session_id: sid.clone(),
-            });
-            let _ = events_tx.send(ServerEvent::PlanUpdate {
-                agent_id: from_id.to_string(),
-                plan: plan.clone(),
-                session_id: sid.clone(),
-            });
-        }
-        _ => {}
-    }
-    // Always emit an Outcome event so the UI transitions the run from
-    // RUNNING to completed and resets status to idle.
-    let _ = events_tx.send(ServerEvent::Outcome {
-        agent_id: from_id.to_string(),
-        outcome: outcome.clone(),
-        session_id: sid.clone(),
-    });
 }
 
 #[cfg(test)]

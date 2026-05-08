@@ -126,7 +126,7 @@ pub(super) async fn process_inference_request(
             }
 
             // Parse messages
-            let messages: Vec<crate::ollama::ChatMessage> = match req.body.get("messages") {
+            let messages: Vec<crate::message::ChatMessage> = match req.body.get("messages") {
                 Some(m) => match serde_json::from_value(m.clone()) {
                     Ok(msgs) => msgs,
                     Err(e) => {

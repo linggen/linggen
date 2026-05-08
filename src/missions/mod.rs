@@ -1,3 +1,5 @@
+pub mod scheduler;
+
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -13,27 +15,45 @@ pub const MISSION_AGENT_ID: &str = "ling";
 
 /// Permission request declared in mission frontmatter.
 ///
-/// Mirrors the `permission:` block in SKILL.md so authors can reuse the shape.
-/// See `doc/mission-spec.md` → Permission model.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// Same shape as `SkillPermission`: each path declares its own mode. There
+/// is no implicit cwd grant — missions list every path they need (including
+/// cwd if they want it granted). See `doc/mission-spec.md` → Permission model.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct MissionPermission {
-    /// Path-mode ceiling: "read", "edit", or "admin".
-    pub mode: String,
-    /// Paths to grant the mode on (in addition to cwd). Empty means cwd only.
+    /// Per-path grants. Each entry has its own mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub paths: Vec<String>,
+    pub paths: Vec<crate::skills::PathGrant>,
     /// Human-readable warning surfaced in the UI before enabling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
 
-impl Default for MissionPermission {
-    fn default() -> Self {
-        Self {
-            mode: "admin".to_string(),
-            paths: Vec::new(),
-            warning: None,
-        }
+impl MissionPermission {
+    /// Walk `paths` and yield `(path, parsed_mode)` pairs — same shape as
+    /// `SkillPermission::iter_grants`. Defined locally to keep the parser
+    /// helper internal to the skills module.
+    pub fn iter_grants(
+        &self,
+    ) -> impl Iterator<Item = (&str, crate::engine::permission::PermissionMode)> + '_ {
+        use crate::engine::permission::PermissionMode;
+        self.paths.iter().map(|g| {
+            let mode = match g.mode.as_str() {
+                "edit" | "write" => PermissionMode::Edit,
+                "admin" => PermissionMode::Admin,
+                _ => PermissionMode::Read,
+            };
+            (g.path.as_str(), mode)
+        })
+    }
+
+    /// Human-readable summary used in mission approval prompts:
+    /// `"~/foo (write), /tmp (read)"`.
+    pub fn display_paths(&self) -> String {
+        self.paths
+            .iter()
+            .map(|g| format!("{} ({})", g.path, g.mode))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -396,11 +416,11 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         body
     };
 
-    let permission = fm.permission_tier.as_deref().map(|tier| MissionPermission {
-        mode: legacy_tier_to_mode(tier).to_string(),
-        paths: Vec::new(),
-        warning: None,
-    });
+    // Legacy `permission_tier` is no longer honored — missions now use
+    // the per-path `permission.paths` shape exclusively. Files in the
+    // legacy format will load with no permission grants; authors must
+    // migrate to `permission.paths`.
+    let permission = None::<MissionPermission>;
 
     Ok(Mission {
         id: id.to_string(),

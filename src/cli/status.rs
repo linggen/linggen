@@ -48,7 +48,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     }
 
     // 3. Workspace
-    match crate::workspace::resolve_workspace_root(None) {
+    match crate::paths::resolve_workspace_root(None) {
         Ok(ws) => println!("  Workspace:   {}", ws.display()),
         Err(_) => println!("  Workspace:   none"),
     }

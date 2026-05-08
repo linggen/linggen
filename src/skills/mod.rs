@@ -4,7 +4,7 @@ use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
 use anyhow::Result;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -366,17 +366,57 @@ fn default_capability_healthcheck() -> String {
     "/api/health".to_string()
 }
 
+/// One path grant in a permission block. Each path declares its own mode
+/// — there is no top-level default. `mode` is "read", "edit"/"write", or
+/// "admin" (case-sensitive). E.g. `{path: ~/.linggen, mode: write}`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PathGrant {
+    pub path: String,
+    pub mode: String,
+}
+
+/// Parse a SKILL.md mode string into the engine's PermissionMode. "write"
+/// is accepted as an alias for "edit" because users naturally write "write"
+/// in YAML even though the engine's internal vocabulary says "edit".
+fn parse_mode_str(m: &str) -> crate::engine::permission::PermissionMode {
+    use crate::engine::permission::PermissionMode;
+    match m {
+        "edit" | "write" => PermissionMode::Edit,
+        "admin" => PermissionMode::Admin,
+        _ => PermissionMode::Read,
+    }
+}
+
 /// Permission request declared by a skill. See permission-spec.md → Skill invocation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillPermission {
-    /// Required mode: "read", "edit", or "admin".
-    pub mode: String,
-    /// Paths to grant the mode on. E.g. ["/", "~/workspace"].
+    /// Per-path grants. Each entry has its own mode; the engine grants
+    /// each path its declared mode independently. Empty list = no grants.
     #[serde(default)]
-    pub paths: Vec<String>,
+    pub paths: Vec<PathGrant>,
     /// Warning message shown to user before approval.
     #[serde(default)]
     pub warning: Option<String>,
+}
+
+impl SkillPermission {
+    /// Walk `paths` and yield `(path, parsed_mode)` pairs.
+    pub fn iter_grants(
+        &self,
+    ) -> impl Iterator<Item = (&str, crate::engine::permission::PermissionMode)> + '_ {
+        self.paths
+            .iter()
+            .map(|g| (g.path.as_str(), parse_mode_str(&g.mode)))
+    }
+
+    /// Human-readable summary used in approval prompts: `~/foo (write), /tmp (read)`.
+    pub fn display_paths(&self) -> String {
+        self.paths
+            .iter()
+            .map(|g| format!("{} ({})", g.path, g.mode))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -585,6 +625,8 @@ impl SkillManager {
 
     /// Load skills from a directory, supporting both flat .md files and
     /// subdirectories containing SKILL.md (e.g. `skills/<name>/SKILL.md`).
+    /// Each entry is loaded through [`load_skill_from_path`], so the
+    /// file-vs-dir branching and `skill_dir` plumbing stay in one place.
     async fn load_from_dir_nested(
         &self,
         dir: &Path,
@@ -598,78 +640,17 @@ impl SkillManager {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
-                // Flat .md file
-                let text = std::fs::read_to_string(&path)?;
-                if let Ok(mut skill) = self.parse_skill(&text, source.clone()) {
-                    if let Some(parent) = path.parent() {
-                        skill.skill_dir = Some(parent.to_path_buf());
-                        for tool_def in &mut skill.tool_defs {
-                            tool_def.skill_dir = Some(parent.to_path_buf());
-                        }
-                    }
+            match load_skill_from_path(&path, source.clone()) {
+                Ok(Some(skill)) => {
                     skills.insert(skill.name.clone(), skill);
                 }
-            } else if path.is_dir() {
-                // Subdirectory: look for SKILL.md inside
-                let skill_md = path.join("SKILL.md");
-                if skill_md.exists() {
-                    let text = std::fs::read_to_string(&skill_md)?;
-                    if let Ok(mut skill) = self.parse_skill(&text, source.clone()) {
-                        skill.skill_dir = Some(path.clone());
-                        for tool_def in &mut skill.tool_defs {
-                            tool_def.skill_dir = Some(path.clone());
-                        }
-                        skills.insert(skill.name.clone(), skill);
-                    }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "Failed to load skill");
                 }
             }
         }
         Ok(())
-    }
-
-    fn parse_skill(&self, text: &str, source: SkillSource) -> Result<Skill> {
-        if !text.starts_with("---") {
-            anyhow::bail!("Skill must start with YAML frontmatter");
-        }
-        let parts: Vec<&str> = text.splitn(3, "---").collect();
-        if parts.len() < 3 {
-            anyhow::bail!("Skill missing closing frontmatter delimiter");
-        }
-        let frontmatter: SkillFrontmatter = serde_yml::from_str(parts[1])?;
-        let content = parts[2].trim().to_string();
-
-        // Skills with an `app` automatically receive the built-in PageUpdate
-        // data tool — the agent calls it to refresh the dashboard UI. Skills
-        // without an app don't get it (no UI to update).
-        let mut tool_defs = frontmatter.tools;
-        if frontmatter.app.is_some() {
-            tool_defs.push(page_update_tool_def());
-        }
-
-        Ok(Skill {
-            name: frontmatter.name,
-            description: frontmatter.description,
-            content,
-            source,
-            tool_defs,
-            argument_hint: frontmatter.argument_hint,
-            disable_model_invocation: frontmatter.disable_model_invocation,
-            user_invocable: frontmatter.user_invocable,
-            allowed_tools: frontmatter.allowed_tools,
-            allow_skills: frontmatter.allow_skills,
-            model: frontmatter.model,
-            context: frontmatter.context,
-            agent: frontmatter.agent,
-            trigger: frontmatter.trigger,
-            app: frontmatter.app,
-            permission: frontmatter.permission,
-            cwd: frontmatter.cwd,
-            install: frontmatter.install,
-            provides: frontmatter.provides,
-            implements: frontmatter.implements,
-            skill_dir: None,
-        })
     }
 
     /// Match a user message against registered triggers.
@@ -745,6 +726,92 @@ fn source_priority(src: &SkillSource) -> u8 {
     }
 }
 
+/// Parse a SKILL.md text into a [`Skill`]. Pure function — no I/O. Use
+/// [`load_skill_from_path`] when you have a filesystem path.
+pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
+    if !text.starts_with("---") {
+        anyhow::bail!("Skill must start with YAML frontmatter");
+    }
+    let parts: Vec<&str> = text.splitn(3, "---").collect();
+    if parts.len() < 3 {
+        anyhow::bail!("Skill missing closing frontmatter delimiter");
+    }
+    let frontmatter: SkillFrontmatter = serde_yml::from_str(parts[1])?;
+    let content = parts[2].trim().to_string();
+
+    // Skills with an `app` automatically receive the built-in PageUpdate
+    // data tool — the agent calls it to refresh the dashboard UI. Skills
+    // without an app don't get it (no UI to update).
+    let mut tool_defs = frontmatter.tools;
+    if frontmatter.app.is_some() {
+        tool_defs.push(page_update_tool_def());
+    }
+
+    Ok(Skill {
+        name: frontmatter.name,
+        description: frontmatter.description,
+        content,
+        source,
+        tool_defs,
+        argument_hint: frontmatter.argument_hint,
+        disable_model_invocation: frontmatter.disable_model_invocation,
+        user_invocable: frontmatter.user_invocable,
+        allowed_tools: frontmatter.allowed_tools,
+        allow_skills: frontmatter.allow_skills,
+        model: frontmatter.model,
+        context: frontmatter.context,
+        agent: frontmatter.agent,
+        trigger: frontmatter.trigger,
+        app: frontmatter.app,
+        permission: frontmatter.permission,
+        cwd: frontmatter.cwd,
+        install: frontmatter.install,
+        provides: frontmatter.provides,
+        implements: frontmatter.implements,
+        skill_dir: None,
+    })
+}
+
+/// Read a SKILL.md from `path` and parse it into a [`Skill`].
+///
+/// Accepts either:
+/// - a `.md` file (`skill_dir` set to its parent directory), or
+/// - a directory containing `SKILL.md` (`skill_dir` set to the directory).
+///
+/// Returns `Ok(None)` when the path doesn't look like a skill (no `.md`
+/// extension and no `SKILL.md` inside). Use this from any callsite that
+/// needs to load a skill from disk — keeps the file/dir branching and the
+/// `skill_dir` plumbing in one place.
+pub fn load_skill_from_path(path: &Path, source: SkillSource) -> Result<Option<Skill>> {
+    if path.is_file() && path.extension().map_or(false, |e| e == "md") {
+        let text = std::fs::read_to_string(path)?;
+        let mut skill = parse_skill_text(&text, source)?;
+        if let Some(parent) = path.parent() {
+            attach_skill_dir(&mut skill, parent.to_path_buf());
+        }
+        return Ok(Some(skill));
+    }
+    if path.is_dir() {
+        let skill_md = path.join("SKILL.md");
+        if skill_md.exists() {
+            let text = std::fs::read_to_string(&skill_md)?;
+            let mut skill = parse_skill_text(&text, source)?;
+            attach_skill_dir(&mut skill, path.to_path_buf());
+            return Ok(Some(skill));
+        }
+    }
+    Ok(None)
+}
+
+/// Stamp the resolved skill directory onto the skill *and* every tool def it
+/// declared, so dispatch can find the skill's daemon without a second lookup.
+fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
+    for tool_def in &mut skill.tool_defs {
+        tool_def.skill_dir = Some(dir.clone());
+    }
+    skill.skill_dir = Some(dir);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,13 +822,12 @@ mod tests {
 
     #[test]
     fn test_parse_skill_valid() {
-        let mgr = make_manager();
         let text = r#"---
 name: test-skill
 description: A test skill
 ---
 This is the skill content."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert_eq!(skill.name, "test-skill");
         assert_eq!(skill.description, "A test skill");
         assert_eq!(skill.content, "This is the skill content.");
@@ -770,38 +836,31 @@ This is the skill content."#;
 
     #[test]
     fn test_parse_skill_no_frontmatter() {
-        let mgr = make_manager();
-        let err = mgr
-            .parse_skill("no frontmatter here", SkillSource::Global)
-            .unwrap_err();
+        let err = parse_skill_text("no frontmatter here", SkillSource::Global).unwrap_err();
         assert!(err.to_string().contains("YAML frontmatter"));
     }
 
     #[test]
     fn test_parse_skill_missing_closing() {
-        let mgr = make_manager();
-        let err = mgr
-            .parse_skill("---\nname: x\ndescription: y\n", SkillSource::Global)
+        let err = parse_skill_text("---\nname: x\ndescription: y\n", SkillSource::Global)
             .unwrap_err();
         assert!(err.to_string().contains("closing frontmatter"));
     }
 
     #[test]
     fn test_parse_skill_with_provides() {
-        let mgr = make_manager();
         let text = r#"---
 name: linggen-memory
 description: Semantic memory
 provides: [memory]
 ---
 Body."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert_eq!(skill.provides.as_deref(), Some(&["memory".to_string()][..]));
     }
 
     #[test]
     fn test_parse_skill_with_implements() {
-        let mgr = make_manager();
         let text = r#"---
 name: memory
 description: Semantic memory
@@ -816,7 +875,7 @@ implements:
       Memory_write.add:    /api/memory/add
 ---
 Body."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         let impls = skill.implements.as_ref().expect("implements block parsed");
         let mem = impls.get("memory").expect("memory binding present");
         assert_eq!(mem.base_url, "http://127.0.0.1:9888");
@@ -828,7 +887,6 @@ Body."#;
 
     #[test]
     fn test_parse_skill_implements_healthcheck_defaults() {
-        let mgr = make_manager();
         let text = r#"---
 name: mem-min
 description: Minimal implements block
@@ -838,7 +896,7 @@ implements:
     base_url: http://127.0.0.1:9999
 ---
 Body."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         let mem = skill.implements.unwrap().remove("memory").unwrap();
         assert_eq!(mem.healthcheck, "/api/health");
     }
@@ -852,7 +910,7 @@ description: impl
 provides: [memory]
 ---
 Body."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         mgr.skills.lock().await.insert(skill.name.clone(), skill);
         assert_eq!(
             mgr.active_provider("memory").await.map(|s| s.name),
@@ -863,20 +921,18 @@ Body."#;
 
     #[test]
     fn test_parse_skill_with_trigger() {
-        let mgr = make_manager();
         let text = r#"---
 name: commit
 description: Commit helper
 trigger: "/commit"
 ---
 Help commit."#;
-        let skill = mgr.parse_skill(text, SkillSource::Project).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Project).unwrap();
         assert_eq!(skill.trigger.as_deref(), Some("/commit"));
     }
 
     #[test]
     fn test_parse_skill_with_all_optional_fields() {
-        let mgr = make_manager();
         let text = r#"---
 name: advanced
 description: Advanced skill
@@ -889,7 +945,7 @@ context: my-context
 agent: coder
 ---
 Content."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert!(!skill.user_invocable);
         assert!(skill.disable_model_invocation);
         assert_eq!(skill.argument_hint.as_deref(), Some("project name"));
@@ -945,6 +1001,7 @@ Content."#;
 
     #[tokio::test]
     async fn test_load_from_dir_nested() {
+        let mgr = make_manager();
         let dir = tempfile::tempdir().unwrap();
 
         // Create a flat .md skill
@@ -965,7 +1022,6 @@ description: Nested skill
 Nested content."#;
         std::fs::write(nested_dir.join("SKILL.md"), nested_skill).unwrap();
 
-        let mgr = make_manager();
         let mut skills = std::collections::HashMap::new();
         mgr.load_from_dir_nested(dir.path(), SkillSource::Global, &mut skills)
             .await
@@ -978,7 +1034,6 @@ Nested content."#;
 
     #[test]
     fn test_parse_skill_with_app_config() {
-        let mgr = make_manager();
         let text = r#"---
 name: arcade-game
 description: Retro arcade games
@@ -989,7 +1044,7 @@ app:
   height: 600
 ---
 Play games."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert_eq!(skill.name, "arcade-game");
         let app = skill.app.unwrap();
         assert_eq!(app.launcher, "web");
@@ -1000,13 +1055,12 @@ Play games."#;
 
     #[test]
     fn test_parse_skill_without_app_config() {
-        let mgr = make_manager();
         let text = r#"---
 name: normal-skill
 description: A normal skill
 ---
 No app."#;
-        let skill = mgr.parse_skill(text, SkillSource::Global).unwrap();
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert!(skill.app.is_none());
     }
 

@@ -62,7 +62,7 @@ pub fn save_transcript(
     task_name: &str,
     result: &EvalResult,
     context_records: &[crate::engine::ContextRecord],
-    chat_history: &[crate::ollama::ChatMessage],
+    chat_history: &[crate::message::ChatMessage],
 ) -> Option<std::path::PathBuf> {
     let results_dir = ws_root
         .join("evals")

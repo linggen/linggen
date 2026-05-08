@@ -78,8 +78,10 @@ allowed-tools:
   - Memory_query
   - Memory_write
 permission:
-  mode: admin                      # read | edit | admin — ceiling on cwd + paths
-  paths: ["~/.linggen/memory", "~/.claude/projects", "~/.linggen/sessions"]
+  paths:                           # per-path grants (same shape as SKILL.md)
+    - { path: ~/.linggen/memory,     mode: write }
+    - { path: ~/.linggen/sessions,   mode: write }
+    - { path: ~/.claude/projects,    mode: read }
   warning: "..."                   # surfaced in UI
 ---
 
@@ -373,15 +375,19 @@ Both subsystems are first-class — engine boot treats them symmetrically.
 
 ## Migration from old format
 
-Existing missions use the pre-redesign schema (flat `permission_tier`, `mode: agent|app|script`, top-level `prompt`). The store reads both; on next write, re-serializes to the new shape.
+Mission permission no longer has a single top-level `mode` — every path declares its own. Missions also no longer get an implicit cwd grant; authors list every path they want granted, including cwd. Same shape as `SkillPermission`.
 
 | Old field | New field |
 |:----------|:----------|
-| `permission_tier: readonly` | `permission.mode: read` |
-| `permission_tier: standard` | `permission.mode: edit` |
-| `permission_tier: full` | `permission.mode: admin` |
+| `permission.mode: admin` + `permission.paths: ["~/foo"]` | `permission.paths: [{path: ~/foo, mode: admin}]` |
+| `permission_tier: readonly` (legacy flat field) | drop the field; rewrite `permission.paths` per-entry with `mode: read` |
+| `permission_tier: standard` | per-entry `mode: edit` (alias `write`) |
+| `permission_tier: full` | per-entry `mode: admin` |
+| Implicit cwd grant (was applied at `permission.mode`) | list cwd explicitly in `permission.paths` if you need it |
 | `mode: agent` | *(removed — default)* |
 | `mode: script` | remove `mode`, move command to `entry:`, clear body |
 | `mode: app` | **dropped — no migration path**; authors convert to an external reminder |
 | top-level `prompt` | markdown body below frontmatter |
 | `agent_id` | *(removed — always `ling`)* |
+
+Note: the parser no longer auto-converts the old shape. Mission files still using the legacy `permission_tier` or single `permission.mode` will load with **no permission grants** and likely fail the first time they try to touch the filesystem. Rewrite them to the per-path shape.

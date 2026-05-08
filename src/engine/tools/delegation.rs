@@ -295,7 +295,7 @@ pub(crate) async fn run_delegation(
             let _ = manager
                 .finish_agent_run(
                     &run_id,
-                    crate::project_store::AgentRunStatus::Failed,
+                    crate::agent_manager::AgentRunStatus::Failed,
                     Some(err.to_string()),
                 )
                 .await;
@@ -340,13 +340,13 @@ pub(crate) async fn run_delegation(
     let last_text = engine.last_assistant_text.take();
 
     let (outcome, status, detail) = match run_result {
-        Ok(outcome) => (outcome, crate::project_store::AgentRunStatus::Completed, None),
+        Ok(outcome) => (outcome, crate::agent_manager::AgentRunStatus::Completed, None),
         Err(err) => {
             let msg = err.to_string();
             let status = if msg.to_lowercase().contains("cancel") {
-                crate::project_store::AgentRunStatus::Cancelled
+                crate::agent_manager::AgentRunStatus::Cancelled
             } else {
-                crate::project_store::AgentRunStatus::Failed
+                crate::agent_manager::AgentRunStatus::Failed
             };
             let _ = manager
                 .finish_agent_run(&run_id, status, Some(msg.clone()))

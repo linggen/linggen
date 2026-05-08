@@ -9,7 +9,7 @@
 //! What lives here: the periodic nudge that asks the model whether the
 //! recent exchange produced anything worth saving.
 
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 
 // ── Mid-session self-review nudge ────────────────────────────────────────────
 

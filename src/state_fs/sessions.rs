@@ -66,7 +66,7 @@ pub struct ChatMsg {
 }
 
 impl SessionStore {
-    /// Create a store with an explicit sessions directory (for ProjectStore).
+    /// Create a store rooted at the given sessions directory.
     pub fn with_sessions_dir(sessions_dir: PathBuf) -> Self {
         Self { sessions_dir, append_lock: Mutex::new(()) }
     }

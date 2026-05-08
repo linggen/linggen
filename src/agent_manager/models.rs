@@ -1,9 +1,10 @@
-use crate::anthropic::AnthropicClient;
-use crate::codex_auth;
+use crate::provider::anthropic::AnthropicClient;
+use crate::provider::codex_auth;
 use crate::config::ModelConfig;
 use crate::credentials::{self, Credentials};
-use crate::ollama::{ChatMessage, OllamaClient};
-use crate::openai::OpenAiClient;
+use crate::message::ChatMessage;
+use crate::provider::ollama::OllamaClient;
+use crate::provider::openai::OpenAiClient;
 use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -191,7 +192,7 @@ impl ModelManager {
                 }
             }
             Some("claude_oauth") => {
-                let tokens = crate::claude_auth::load().map_err(|_| {
+                let tokens = crate::provider::claude_auth::load().map_err(|_| {
                     anyhow::anyhow!(
                         "AUTH_REQUIRED: Claude not signed in for model '{}'. Run `claude` once to sign in, then retry.",
                         cfg.id

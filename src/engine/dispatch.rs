@@ -3,7 +3,7 @@ use crate::engine::actions::ModelAction;
 use crate::engine::render::render_tool_result;
 use crate::engine::streaming::check_context_staleness;
 use crate::engine::tools::{self, ToolCall};
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

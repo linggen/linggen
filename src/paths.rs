@@ -71,11 +71,6 @@ pub fn global_missions_dir() -> PathBuf {
 }
 
 
-/// `~/.linggen/projects/`
-pub fn projects_dir() -> PathBuf {
-    linggen_home().join("projects")
-}
-
 /// `~/.linggen/memory/` — root of the memory tree.
 ///
 /// Holds the two built-in files (`identity.md`, `style.md`) inlined into
@@ -86,3 +81,14 @@ pub fn memory_dir() -> PathBuf {
     linggen_home().join("memory")
 }
 
+
+/// Resolve the workspace root: the explicit `--root` argument when given,
+/// otherwise the cwd canonicalized to the nearest enclosing git root (or
+/// cwd itself when not in a repo).
+pub fn resolve_workspace_root(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p);
+    }
+    let cwd = std::env::current_dir()?;
+    Ok(crate::engine::tools::search_exec_find_git_root(&cwd).unwrap_or(cwd))
+}

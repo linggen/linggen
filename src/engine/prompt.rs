@@ -2,7 +2,7 @@ use super::core_memory;
 use super::memory;
 use super::types::*;
 use crate::engine::tools;
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 

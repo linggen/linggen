@@ -51,7 +51,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                 SkillScope::Project
             };
             let project_root = if !global {
-                Some(crate::workspace::resolve_workspace_root(None)?)
+                Some(crate::paths::resolve_workspace_root(None)?)
             } else {
                 None
             };
@@ -77,7 +77,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                 SkillScope::Project
             };
             let project_root = if !global {
-                Some(crate::workspace::resolve_workspace_root(None)?)
+                Some(crate::paths::resolve_workspace_root(None)?)
             } else {
                 None
             };
@@ -94,7 +94,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
 
             let dirs_to_scan: Vec<(PathBuf, &str)> = [
                 Some((crate::paths::global_skills_dir(), "global")),
-                crate::workspace::resolve_workspace_root(None)
+                crate::paths::resolve_workspace_root(None)
                     .ok()
                     .map(|ws| (ws.join(".linggen/skills"), "project")),
             ]

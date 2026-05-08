@@ -219,26 +219,26 @@ Three ways to create a session, each with different initial grants.
 
 ### Skill invocation (within a user session)
 
-Skills don't create sessions — they run inside the current user session. Skills that need elevated permissions declare it in frontmatter:
+Skills don't create sessions — they run inside the current user session. Skills that need elevated permissions declare it in frontmatter. **Each path carries its own mode** — there is no top-level default. A skill can ask for `read` on one path and `write` on another in the same block:
 
 ```yaml
 ---
-name: sys-doctor
+name: pulse
 permission:
-  mode: admin
-  paths: ["/"]
-  warning: "Sys Doctor runs diagnostic commands and may suggest cleanup."
+  paths:
+    - { path: ~/.linggen/skills/pulse, mode: write }
+    - { path: /tmp,                    mode: read }
+  warning: "Pulse writes session JSON inside its own data dir; reads /tmp."
 ---
 ```
 
-When the user invokes the skill:
+`mode` per entry is `read`, `edit` (alias `write`), or `admin`. When the user invokes the skill:
 
 ```
-Skill "sys-doctor" requests:
-  admin mode on /
-  ⚠️ Sys Doctor runs diagnostic commands and may suggest cleanup.
+Skill "pulse" requests grants on: ~/.linggen/skills/pulse (write), /tmp (read)
+  ⚠️ Pulse writes session JSON inside its own data dir; reads /tmp.
 
-  [Approve]              ← writes (/, admin) into session permission.json
+  [Approve]              ← writes each (path, mode) into session permission.json
   [Run in current mode]  ← skill runs with existing grants, may fail
   [Cancel]
 ```

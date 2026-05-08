@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use futures_util::StreamExt;
 
 /// Maximum number of messages to retain in chat_history across turns.

@@ -4,7 +4,7 @@ use crate::config::AgentSpec;
 use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use crate::skills::Skill;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,30 @@ pub struct EngineConfig {
 }
 
 impl EngineConfig {
+    /// Build an `EngineConfig` from the global app `Config` plus the per-engine
+    /// workspace root and interface mode. Centralizes the field mapping so the
+    /// three engine-construction sites in `agent_manager` stay in sync.
+    pub fn from_app_config(
+        config: &crate::config::Config,
+        ws_root: PathBuf,
+        interface_mode: InterfaceMode,
+    ) -> Self {
+        Self {
+            ws_root,
+            max_iters: config.agent.max_iters,
+            write_safety_mode: config.agent.write_safety_mode,
+            tool_permission_mode: config.agent.tool_permission_mode,
+            permission_mode: config.agent.effective_permission_mode(),
+            prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
+            interface_mode,
+            bash_allow_prefixes: None,
+            mission_allowed_tools: None,
+            consumer_allowed_tools: None,
+            consumer_allowed_skills: None,
+            memory_nudge_interval: config.agent.memory_nudge_interval,
+        }
+    }
+
     /// Compute the cascading intersection of mission + consumer tool restrictions.
     /// Returns None if no restrictions apply (all tools allowed from config perspective).
     pub fn effective_tool_restrictions(&self) -> Option<std::collections::HashSet<String>> {

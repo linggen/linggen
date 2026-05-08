@@ -5,7 +5,7 @@ use crate::engine::render::{
     sanitize_tool_args_for_display, tool_call_signature,
 };
 use crate::engine::tools::{self, ToolCall};
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -466,15 +466,15 @@ impl AgentEngine {
         }
 
         // --- status lines ---
-        let tool_done_status = crate::server::chat_helpers::tool_status_line(
+        let tool_done_status = crate::engine::tool_render::tool_status_line(
             &canonical_tool,
             Some(&args),
-            crate::server::chat_helpers::ToolStatusPhase::Done,
+            crate::engine::tool_render::ToolStatusPhase::Done,
         );
-        let tool_failed_status = crate::server::chat_helpers::tool_status_line(
+        let tool_failed_status = crate::engine::tool_render::tool_status_line(
             &canonical_tool,
             Some(&args),
-            crate::server::chat_helpers::ToolStatusPhase::Failed,
+            crate::engine::tool_render::ToolStatusPhase::Failed,
         );
 
         // Tell the UI what tool we're about to use.

@@ -1,26 +1,20 @@
 mod agent_manager;
-mod anthropic;
-#[allow(dead_code)]
-mod check;
-mod claude_auth;
 mod cli;
-mod codex_auth;
 mod config;
 mod credentials;
 mod engine;
 mod eval;
 mod logging;
-
-mod ollama;
-mod openai;
+mod message;
+mod missions;
 mod paths;
 mod prompts;
-mod project_store;
+mod provider;
 mod server;
 mod skills;
 mod state_fs;
+mod telemetry;
 mod util;
-mod workspace;
 
 use crate::config::Config;
 use anyhow::Result;
@@ -223,16 +217,16 @@ async fn main() -> Result<()> {
         Some(Command::Auth { action }) => {
             match action {
                 AuthAction::Login => {
-                    codex_auth::browser_login().await?;
+                    crate::provider::codex_auth::browser_login().await?;
                     println!("ChatGPT OAuth login successful.");
                 }
                 AuthAction::Logout => {
-                    let manager = codex_auth::CodexAuthManager::new();
+                    let manager = crate::provider::codex_auth::CodexAuthManager::new();
                     manager.logout().await?;
                     println!("ChatGPT OAuth tokens cleared.");
                 }
                 AuthAction::Status => {
-                    let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+                    let tokens = crate::provider::codex_auth::CodexAuthTokens::load(&crate::provider::codex_auth::codex_auth_file());
                     if tokens.is_valid() {
                         println!("Authenticated via ChatGPT OAuth.");
                         if let Some(ref account_id) = tokens.account_id {
@@ -330,7 +324,7 @@ async fn main() -> Result<()> {
             agent,
             verbose: _,
         }) => {
-            let ws_root = workspace::resolve_workspace_root(global_root)?;
+            let ws_root = crate::paths::resolve_workspace_root(global_root)?;
             let eval_cfg = eval::EvalConfig {
                 ws_root,
                 filter,
@@ -346,7 +340,7 @@ async fn main() -> Result<()> {
 
         // --web (foreground mode)
         None => {
-            let ws_root = workspace::resolve_workspace_root(global_root)?;
+            let ws_root = crate::paths::resolve_workspace_root(global_root)?;
             let port = global_port.unwrap_or(config.server.port);
             let host = global_host.clone().unwrap_or_else(|| config.server.host.clone());
 
@@ -355,7 +349,6 @@ async fn main() -> Result<()> {
                 tracing::warn!("Failed to install default agents: {e}");
             }
 
-            let store = Arc::new(project_store::ProjectStore::new());
             let skill_manager = Arc::new(skills::SkillManager::new());
             let config_dir = config_path
                 .as_ref()
@@ -363,7 +356,7 @@ async fn main() -> Result<()> {
             let interface_mode = engine::InterfaceMode::Web;
 
             let (manager, rx) =
-                agent_manager::AgentManager::new(config, config_dir, store, skill_manager.clone(), interface_mode);
+                agent_manager::AgentManager::new(config, config_dir, skill_manager.clone(), interface_mode);
 
             let _ = skill_manager.load_all(Some(&ws_root)).await;
 

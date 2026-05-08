@@ -2,7 +2,6 @@ use crate::agent_manager::locks::LockManager;
 use crate::agent_manager::models::ModelManager;
 use crate::config::{AgentSpec, Config};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
-use crate::project_store::ProjectStore;
 use crate::skills::SkillManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use anyhow::Result;
@@ -19,6 +18,9 @@ pub mod locks;
 pub mod models;
 pub mod proxy_provider;
 pub mod routing;
+pub mod runs;
+
+pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
 pub struct ProjectContext {
     pub agents: Mutex<HashMap<String, Arc<Mutex<AgentEngine>>>>,
@@ -31,8 +33,7 @@ pub struct AgentManager {
     pub projects: Mutex<HashMap<String, Arc<ProjectContext>>>,
     pub locks: Mutex<LockManager>,
     pub models: RwLock<Arc<ModelManager>>,
-    pub store: Arc<ProjectStore>,
-    pub missions: Arc<crate::project_store::MissionStore>,
+    pub missions: Arc<crate::missions::MissionStore>,
     pub skill_manager: Arc<SkillManager>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
@@ -46,7 +47,7 @@ pub struct AgentManager {
     /// Pending plans awaiting user approval, keyed by "{project_root}|{session_id}|{agent_id}".
     pending_plans: Mutex<HashMap<String, Plan>>,
     /// In-memory run store — replaces file-based RunStore. Shared across all operations.
-    pub run_store: Arc<crate::project_store::RunStore>,
+    pub run_store: Arc<crate::agent_manager::RunStore>,
     /// Last activity time per agent, keyed by "{project_root}|{agent_id}".
     last_activity: Mutex<HashMap<String, Instant>>,
     /// Interface mode passed into every EngineConfig.
@@ -412,10 +413,77 @@ impl AgentManager {
         format!("{}{:02}", agent_id, *seq)
     }
 
+    /// Build a fully-initialized `AgentEngine` for the given project + agent_id.
+    ///
+    /// Centralizes the construction sequence shared by `get_or_create_agent`,
+    /// `get_or_create_session_agent`, and `spawn_delegation_engine`:
+    ///
+    /// 1. Resolve the agent spec and effective model id.
+    /// 2. Build the engine with `EngineConfig::from_app_config(...)`.
+    /// 3. Apply routing/spec setters and load skill metadata.
+    ///
+    /// Caching is the caller's responsibility — this helper never inserts into
+    /// the project or session engine maps.
+    ///
+    /// `apply_delegation_depth=false` skips `set_delegation_depth(0, ...)` —
+    /// used by `spawn_delegation_engine` whose caller chooses the depth.
+    async fn build_engine_for_agent(
+        self: &Arc<Self>,
+        project_root: &PathBuf,
+        normalized_id: &str,
+        apply_delegation_depth: bool,
+    ) -> Result<AgentEngine> {
+        let agent_spec = self
+            .find_agent_spec_for_project(project_root, normalized_id)?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Agent '{}' not found in {}/agents",
+                    normalized_id,
+                    project_root.display()
+                )
+            })?;
+
+        let config = self.config.read().await.clone();
+        let models = self.models.read().await.clone();
+        let model_id = Self::resolve_model_id(
+            &config,
+            &models,
+            normalized_id,
+            agent_spec.spec.model.clone(),
+        )?;
+
+        let mut engine = AgentEngine::new(
+            EngineConfig::from_app_config(&config, project_root.clone(), self.interface_mode),
+            models,
+            model_id,
+            AgentRole::Lead,
+        )?;
+
+        engine.default_models = config.routing.default_models.clone();
+        engine.auto_fallback = config.routing.auto_fallback;
+        engine.set_spec(
+            normalized_id.to_string(),
+            agent_spec.spec,
+            agent_spec.system_prompt,
+        );
+        engine.set_manager_context(self.clone());
+        if apply_delegation_depth {
+            engine.set_delegation_depth(0, config.agent.max_delegation_depth);
+        }
+        engine.load_skill_tools(&self.skill_manager).await;
+        engine.load_available_skills_metadata(&self.skill_manager).await;
+        if let Ok(specs) = self.list_agent_specs(project_root).await {
+            engine.available_agents_metadata = specs
+                .iter()
+                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
+                .collect();
+        }
+        Ok(engine)
+    }
+
     pub fn new(
         config: Config,
         config_dir: Option<PathBuf>,
-        store: Arc<ProjectStore>,
         skill_manager: Arc<SkillManager>,
         interface_mode: InterfaceMode,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>) {
@@ -428,15 +496,14 @@ impl AgentManager {
                 projects: Mutex::new(HashMap::new()),
                 locks: Mutex::new(LockManager::new()),
                 models: RwLock::new(models),
-                store,
-                missions: Arc::new(crate::project_store::MissionStore::new()),
+                missions: Arc::new(crate::missions::MissionStore::new()),
                 skill_manager,
                 working_places: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
                 tool_cancel_flags: std::sync::Mutex::new(HashMap::new()),
                 events: tx,
                 pending_plans: Mutex::new(HashMap::new()),
-                run_store: Arc::new(crate::project_store::RunStore::new()),
+                run_store: Arc::new(crate::agent_manager::RunStore::new()),
                 last_activity: Mutex::new(HashMap::new()),
                 interface_mode,
                 global_sessions: SessionStore::with_sessions_dir(crate::paths::global_sessions_dir()),
@@ -485,15 +552,7 @@ impl AgentManager {
             state_fs,
         });
 
-        projects.insert(key.clone(), ctx.clone());
-
-        // Register in project store
-        let name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        let _ = self.store.add_project(key, name);
-
+        projects.insert(key, ctx.clone());
         Ok(ctx)
     }
 
@@ -511,68 +570,9 @@ impl AgentManager {
             return Ok(agent.clone());
         }
 
-        let agent_spec = self
-            .find_agent_spec_for_project(&project_root, &normalized_id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Agent '{}' not found in {}/agents",
-                    normalized_id,
-                    project_root.display()
-                )
-            })?;
-
-        let config = self.config.read().await.clone();
-        let models = self.models.read().await.clone();
-
-        let model_id = Self::resolve_model_id(
-            &config,
-            &models,
-            &normalized_id,
-            agent_spec.spec.model.clone(),
-        )?;
-
-        // All agents use Lead role (single-agent architecture).
-        let role = AgentRole::Lead;
-
-        let mut engine = AgentEngine::new(
-            EngineConfig {
-                ws_root: project_root.clone(),
-
-                max_iters: config.agent.max_iters,
-                write_safety_mode: config.agent.write_safety_mode,
-                tool_permission_mode: config.agent.tool_permission_mode,
-                permission_mode: config.agent.effective_permission_mode(),
-                prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
-                interface_mode: self.interface_mode,
-                bash_allow_prefixes: None,
-                mission_allowed_tools: None,
-                consumer_allowed_tools: None,
-                consumer_allowed_skills: None,
-                memory_nudge_interval: config.agent.memory_nudge_interval,
-            },
-            models,
-            model_id,
-            role,
-        )?;
-
-        engine.default_models = config.routing.default_models.clone();
-        engine.auto_fallback = config.routing.auto_fallback;
-        engine.set_spec(
-            normalized_id.clone(),
-            agent_spec.spec,
-            agent_spec.system_prompt,
-        );
-        engine.set_manager_context(self.clone());
-        engine.set_delegation_depth(0, config.agent.max_delegation_depth);
-        engine.load_skill_tools(&self.skill_manager).await;
-        engine.load_available_skills_metadata(&self.skill_manager).await;
-        if let Ok(specs) = self.list_agent_specs(&project_root).await {
-            engine.available_agents_metadata = specs
-                .iter()
-                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
-                .collect();
-        }
-
+        let engine = self
+            .build_engine_for_agent(&project_root, &normalized_id, true)
+            .await?;
         let agent = Arc::new(Mutex::new(engine));
         agents.insert(normalized_id, agent.clone());
         Ok(agent)
@@ -598,63 +598,9 @@ impl AgentManager {
 
         // Create a new engine for this session (reuse existing creation logic)
         let project_root = Self::canonical_project_root(project_root);
-        let agent_spec = self
-            .find_agent_spec_for_project(&project_root, &normalized_id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Agent '{}' not found in {}/agents",
-                    normalized_id,
-                    project_root.display()
-                )
-            })?;
-
-        let config = self.config.read().await.clone();
-        let models = self.models.read().await.clone();
-        let model_id = Self::resolve_model_id(
-            &config,
-            &models,
-            &normalized_id,
-            agent_spec.spec.model.clone(),
-        )?;
-
-        let role = AgentRole::Lead;
-        let mut engine = AgentEngine::new(
-            EngineConfig {
-                ws_root: project_root.clone(),
-                max_iters: config.agent.max_iters,
-                write_safety_mode: config.agent.write_safety_mode,
-                tool_permission_mode: config.agent.tool_permission_mode,
-                permission_mode: config.agent.effective_permission_mode(),
-                prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
-                interface_mode: self.interface_mode,
-                bash_allow_prefixes: None,
-                mission_allowed_tools: None,
-                consumer_allowed_tools: None,
-                consumer_allowed_skills: None,
-                memory_nudge_interval: config.agent.memory_nudge_interval,
-            },
-            models,
-            model_id,
-            role,
-        )?;
-
-        engine.default_models = config.routing.default_models.clone();
-        engine.auto_fallback = config.routing.auto_fallback;
-        engine.set_spec(
-            normalized_id.clone(),
-            agent_spec.spec,
-            agent_spec.system_prompt,
-        );
-        engine.set_manager_context(self.clone());
-        engine.set_delegation_depth(0, config.agent.max_delegation_depth);
-        engine.load_skill_tools(&self.skill_manager).await;
-        engine.load_available_skills_metadata(&self.skill_manager).await;
-        if let Ok(specs) = self.list_agent_specs(&project_root).await {
-            engine.available_agents_metadata = specs
-                .iter()
-                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
-                .collect();
-        }
+        let engine = self
+            .build_engine_for_agent(&project_root, &normalized_id, true)
+            .await?;
 
         let agent = Arc::new(Mutex::new(engine));
         // Re-check under lock to handle concurrent creation race.
@@ -685,69 +631,10 @@ impl AgentManager {
     ) -> Result<AgentEngine> {
         let project_root = Self::canonical_project_root(project_root);
         let normalized_id = Self::normalize_agent_id(agent_id);
-
-        let agent_spec = self
-            .find_agent_spec_for_project(&project_root, &normalized_id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Agent '{}' not found in {}/agents",
-                    normalized_id,
-                    project_root.display()
-                )
-            })?;
-
-        let config = self.config.read().await.clone();
-        let models = self.models.read().await.clone();
-
-        let model_id = Self::resolve_model_id(
-            &config,
-            &models,
-            &normalized_id,
-            agent_spec.spec.model.clone(),
-        )?;
-
-        // All agents use Lead role (single-agent architecture).
-        let role = AgentRole::Lead;
-
-        let mut engine = AgentEngine::new(
-            EngineConfig {
-                ws_root: project_root.clone(),
-
-                max_iters: config.agent.max_iters,
-                write_safety_mode: config.agent.write_safety_mode,
-                tool_permission_mode: config.agent.tool_permission_mode,
-                permission_mode: config.agent.effective_permission_mode(),
-                prompt_loop_breaker: config.agent.prompt_loop_breaker.clone(),
-                interface_mode: self.interface_mode,
-                bash_allow_prefixes: None,
-                mission_allowed_tools: None,
-                consumer_allowed_tools: None,
-                consumer_allowed_skills: None,
-                memory_nudge_interval: config.agent.memory_nudge_interval,
-            },
-            models,
-            model_id,
-            role,
-        )?;
-
-        engine.default_models = config.routing.default_models.clone();
-        engine.auto_fallback = config.routing.auto_fallback;
-        engine.set_spec(
-            normalized_id.clone(),
-            agent_spec.spec,
-            agent_spec.system_prompt,
-        );
-        engine.set_manager_context(self.clone());
-        engine.load_skill_tools(&self.skill_manager).await;
-        engine.load_available_skills_metadata(&self.skill_manager).await;
-        if let Ok(specs) = self.list_agent_specs(&project_root).await {
-            engine.available_agents_metadata = specs
-                .iter()
-                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
-                .collect();
-        }
-
-        Ok(engine)
+        // Skip set_delegation_depth — the caller (run_delegation) sets the
+        // depth + max_depth itself based on the parent engine's depth.
+        self.build_engine_for_agent(&project_root, &normalized_id, false)
+            .await
     }
 
     pub async fn is_path_allowed(
@@ -879,7 +766,7 @@ impl AgentManager {
         parent_run_id: Option<String>,
         detail: Option<String>,
     ) -> Result<String> {
-        use crate::project_store::{AgentRunRecord, AgentRunStatus};
+        use crate::agent_manager::{AgentRunRecord, AgentRunStatus};
 
         let project_root = project_root
             .canonicalize()
@@ -910,7 +797,7 @@ impl AgentManager {
     pub async fn finish_agent_run(
         &self,
         run_id: &str,
-        status: crate::project_store::AgentRunStatus,
+        status: crate::agent_manager::AgentRunStatus,
         detail: Option<String>,
     ) -> Result<()> {
         let ended_at = Some(crate::util::now_ts_secs());
@@ -930,7 +817,7 @@ impl AgentManager {
         &self,
         _project_root: &PathBuf,
         session_id: Option<&str>,
-    ) -> Result<Vec<crate::project_store::AgentRunRecord>> {
+    ) -> Result<Vec<crate::agent_manager::AgentRunRecord>> {
         Ok(self.run_store.list_runs(session_id))
     }
 
@@ -938,7 +825,7 @@ impl AgentManager {
         &self,
         run_id: &str,
         _project_root: Option<&str>,
-    ) -> Result<Option<crate::project_store::AgentRunRecord>> {
+    ) -> Result<Option<crate::agent_manager::AgentRunRecord>> {
         Ok(self.run_store.get_run(run_id))
     }
 
@@ -949,8 +836,8 @@ impl AgentManager {
     pub async fn cancel_run_tree(
         &self,
         run_id: &str,
-    ) -> Result<Vec<crate::project_store::AgentRunRecord>> {
-        use crate::project_store::AgentRunStatus;
+    ) -> Result<Vec<crate::agent_manager::AgentRunRecord>> {
+        use crate::agent_manager::AgentRunStatus;
 
         let mut stack = vec![run_id.to_string()];
         let mut seen = HashSet::new();
@@ -969,7 +856,7 @@ impl AgentManager {
             runs.push(run);
         }
 
-        let to_cancel: Vec<crate::project_store::AgentRunRecord> = runs
+        let to_cancel: Vec<crate::agent_manager::AgentRunRecord> = runs
             .into_iter()
             .filter(|run| run.status == AgentRunStatus::Running)
             .collect();
@@ -1082,24 +969,23 @@ impl AgentManager {
     }
 
     /// Edit the plan_text and summary of a pending plan in-place.
-    /// Returns `true` if the plan was found and updated, `false` otherwise.
+    /// Returns the updated plan, or `None` if the in-memory map has no entry
+    /// (e.g. after daemon restart — caller should fall back to session-history
+    /// recovery).
     pub async fn edit_pending_plan(
         &self,
         project_root: &str,
         agent_id: &str,
         session_id: Option<&str>,
         text: &str,
-    ) -> bool {
+    ) -> Option<Plan> {
         let sid = session_id.unwrap_or("default");
         let key = format!("{}|{}|{}", project_root, sid, agent_id);
         let mut plans = self.pending_plans.lock().await;
-        if let Some(plan) = plans.get_mut(&key) {
-            plan.plan_text = text.to_string();
-            plan.summary = crate::engine::AgentEngine::extract_plan_summary(text);
-            true
-        } else {
-            false
-        }
+        let plan = plans.get_mut(&key)?;
+        plan.plan_text = text.to_string();
+        plan.summary = crate::engine::AgentEngine::extract_plan_summary(text);
+        Some(plan.clone())
     }
 
     /// Record that an agent performed activity (finished run, received message, etc.)

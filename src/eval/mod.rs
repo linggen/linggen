@@ -119,8 +119,6 @@ pub async fn run_eval(eval_cfg: EvalConfig) -> Result<EvalSummary> {
 
     eprintln!("Found {} eval task(s)\n", tasks.len());
 
-    let store = Arc::new(crate::project_store::ProjectStore::new());
-
     let total_start = std::time::Instant::now();
     let mut results = Vec::new();
 
@@ -136,7 +134,6 @@ pub async fn run_eval(eval_cfg: EvalConfig) -> Result<EvalSummary> {
             &eval_cfg,
             &task_dir,
             &task_def,
-            store.clone(),
         )
         .await;
 

@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::agent_manager::models::{StreamChunk, ToolCallChunk, TokenUsage};
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 
 /// A proxy model client that sends inference requests over a WebRTC data channel.
 ///

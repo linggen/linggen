@@ -1,7 +1,7 @@
 use super::types::*;
 use crate::engine::actions;
 use crate::engine::render::normalize_tool_path_arg;
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;

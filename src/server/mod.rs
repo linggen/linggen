@@ -1,14 +1,14 @@
-mod agent_api;
-mod chat_api;
-pub(crate) mod chat_helpers;
-mod config_api;
-pub(crate) mod mission_scheduler;
-mod missions_api;
-mod marketplace_api;
-mod projects_api;
+mod api;
+mod chat;
+mod events;
 pub(crate) mod rtc;
-mod storage_api;
-mod workspace_api;
+mod state;
+
+pub use events::{AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent};
+pub use state::ServerState;
+pub(crate) use state::ActiveStatusRecord;
+
+use events::*;
 
 use crate::agent_manager::AgentManager;
 use axum::{
@@ -29,429 +29,63 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use agent_api::{
+use api::agents::{
     cancel_agent_run, cancel_tool_execution, clear_queued_messages,
-    run_agent, set_task,
+    delete_agent_file_api, get_agent_file_api,
+    list_agent_files_api, list_agent_runs_api, list_agents_api,
+    reload_agents, run_agent, set_task,
+    upsert_agent_file_api,
 };
-use chat_api::{approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api, compact_chat_api, edit_plan_handler, get_system_prompt_api, pending_ask_user_handler, reject_plan_handler};
-use config_api::{get_config_api, get_credentials_api, get_models_health, update_config_api, update_credentials_api, get_codex_auth_status, start_codex_auth_login, codex_auth_logout, get_claude_auth_status};
-use projects_api::{
-    create_session, delete_agent_file_api, delete_skill_file_api,
-    get_agent_file_api, get_skill_file_api,
-    get_status_api,
-    list_agent_files_api, list_agent_runs_api, list_agents_api, list_models_api,
-    delete_unified_session, get_skill_session_state, list_all_sessions, list_sessions, list_skill_files_api, list_skill_sessions, list_skills, reload_agents, reload_skills,
-    remove_session_api, remove_skill_session_api,
-    rename_session_api, resolve_session_api, upsert_agent_file_api, upsert_skill_file_api,
-    get_user_me, auth_login, auth_callback, auth_logout,
-    get_session_permission, update_session_permission,
-    proxy_rooms, connect_proxy_room_api, disconnect_proxy_room_api, proxy_status_api, token_usage_api,
-    get_room_config, update_room_config,
+use api::auth::{auth_callback, auth_login, auth_logout, get_user_me};
+use api::config::{
+    codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
+    get_credentials_api, get_models_health, start_codex_auth_login, update_config_api,
+    update_credentials_api,
 };
-use marketplace_api::{builtin_skills_install, builtin_skills_list, clawhub_scan, community_search, marketplace_install, marketplace_move_to_global, marketplace_uninstall};
-use missions_api::{
-    create_mission, delete_mission,
-    get_mission_run_output, get_mission_session_state,
-    list_mission_runs, list_missions,
-    trigger_mission, update_mission,
+use api::marketplace::{
+    builtin_skills_install, builtin_skills_list, clawhub_scan, community_search,
+    marketplace_install, marketplace_move_to_global, marketplace_uninstall,
 };
-use storage_api::{storage_roots, storage_tree, storage_read_file, storage_write_file, storage_delete_file};
-use workspace_api::{get_agent_tree, get_workspace_state, list_files, read_file_api, run_bash_api, search_files};
+use api::missions::{
+    create_mission, delete_mission, get_mission_run_output, get_mission_session_state,
+    list_mission_runs, list_missions, trigger_mission, update_mission,
+};
+use api::permissions::{get_session_permission, update_session_permission};
+use api::rooms::{
+    connect_proxy_room_api, disconnect_proxy_room_api, get_room_config, proxy_rooms,
+    proxy_status_api, token_usage_api, update_room_config,
+};
+use api::sessions::{
+    create_session, delete_unified_session, get_skill_session_state, list_all_sessions,
+    list_sessions, list_skill_sessions, remove_session_api, remove_skill_session_api,
+    rename_session_api, resolve_session_api,
+};
+use api::skills::{
+    delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills,
+    reload_skills, upsert_skill_file_api,
+};
+use api::status::{get_status_api, list_models_api};
+use api::storage::{
+    storage_delete_file, storage_read_file, storage_roots, storage_tree, storage_write_file,
+};
+use api::workspace::{
+    get_agent_tree, get_workspace_state, list_files, read_file_api, run_bash_api, search_files,
+};
+use chat::{
+    approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api,
+    compact_chat_api, edit_plan_handler, get_system_prompt_api, pending_ask_user_handler,
+    reject_plan_handler,
+};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
 
-pub struct ServerState {
-    pub manager: Arc<AgentManager>,
-    pub dev_mode: bool,
-    pub port: u16,
-    /// Connected WebRTC peer count. Drives the idle-shutdown watcher when
-    /// `idle_shutdown_secs` is set. Bumped in `rtc::peer::create_peer_inner`.
-    pub active_peer_count: Arc<std::sync::atomic::AtomicUsize>,
-    pub events_tx: broadcast::Sender<ServerEvent>,
-    pub skill_manager: Arc<crate::skills::SkillManager>,
-    pub prompt_store: Arc<crate::prompts::PromptStore>,
-    pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
-    /// Senders for interrupt messages keyed by queue_key. Used to inject user
-    /// messages into a running agent loop so the model can adapt mid-run.
-    pub interrupt_tx: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
-    /// Pending AskUser questions waiting for user responses.
-    /// Keyed by unique question_id. The oneshot sender delivers the user's answer.
-    pub pending_ask_user: Arc<Mutex<HashMap<String, crate::engine::tools::PendingAskUser>>>,
-    status_seq: AtomicU64,
-    pub(crate) active_statuses: Arc<Mutex<HashMap<String, ActiveStatusRecord>>>,
-    pub queue_seq: AtomicU64,
-    pub event_seq: AtomicU64,
-    /// Accumulated token usage per session (in-memory, resets on restart).
-    /// Key: "{project_root}:{session_id}", Value: (prompt_tokens, completion_tokens).
-    pub session_tokens: Arc<Mutex<HashMap<String, (usize, usize)>>>,
-    /// Random token required for WHIP endpoint authentication.
-    /// Generated at startup, passed to the UI via /api/status.
-    pub whip_token: String,
-    /// Per-session cwd for user `!` bash commands. Key = session_id.
-    /// Mirrors the agent's cwd_by_session but for direct user shell commands.
-    pub user_bash_cwd: Arc<Mutex<HashMap<String, std::path::PathBuf>>>,
-    /// Tracks active proxy room connections (per-room model tracking).
-    pub proxy_connections: Arc<rtc::proxy_room::ProxyRoomConnections>,
-    /// Persistent token usage for proxy room budget enforcement.
-    pub token_usage: Arc<tokio::sync::Mutex<rtc::token_store::TokenUsageStore>>,
-    /// In-flight ChatGPT OAuth login task. A new login attempt aborts the
-    /// prior one — without this, two `browser_login()` flows can run in
-    /// parallel after a failed attempt and the second one's callback hits
-    /// the first one's callback server (or vice versa), producing a
-    /// "State mismatch" error. Logout also aborts.
-    pub codex_login_task: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentStatusKind {
-    Idle,
-    ModelLoading,
-    Thinking,
-    CallingTool,
-    Working,
-}
 
-impl AgentStatusKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::ModelLoading => "model_loading",
-            Self::Thinking => "thinking",
-            Self::CallingTool => "calling_tool",
-            Self::Working => "working",
-        }
-    }
 
-    pub fn from_str_loose(s: &str) -> Self {
-        match s.to_ascii_lowercase().as_str() {
-            "idle" => Self::Idle,
-            "model_loading" => Self::ModelLoading,
-            "thinking" => Self::Thinking,
-            "calling_tool" => Self::CallingTool,
-            "working" => Self::Working,
-            _ => Self::Working,
-        }
-    }
-}
 
-#[derive(Debug, Clone)]
-pub(crate) struct ActiveStatusRecord {
-    status_id: String,
-    pub(crate) status: AgentStatusKind,
-    detail: Option<String>,
-}
 
-#[derive(Debug, Clone, Serialize)]
-pub struct QueuedChatItem {
-    pub id: String,
-    pub agent_id: String,
-    pub session_id: String,
-    pub preview: String,
-    pub timestamp: u64,
-}
-
-/// Discriminated payload for the Notification event.
-/// Add new variants here to introduce new notification types.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum NotificationPayload {
-    MissionCompleted {
-        mission_id: String,
-        mission_name: String,
-        status: String,
-        run_id: String,
-        session_id: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type")]
-pub enum ServerEvent {
-    StateUpdated,
-    Message {
-        from: String,
-        to: String,
-        content: String,
-        session_id: Option<String>,
-    },
-    SubagentSpawned {
-        parent_id: String,
-        subagent_id: String,
-        task: String,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        subagent_run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    SubagentResult {
-        parent_id: String,
-        subagent_id: String,
-        outcome: crate::engine::AgentOutcome,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        subagent_run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    AgentStatus {
-        agent_id: String,
-        status: String,
-        detail: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        status_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        lifecycle: Option<String>, // "doing" | "done"
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parent_agent_id: Option<String>,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    QueueUpdated {
-        project_root: String,
-        session_id: String,
-        agent_id: String,
-        items: Vec<QueuedChatItem>,
-    },
-    ContextUsage {
-        agent_id: String,
-        stage: String,
-        message_count: usize,
-        char_count: usize,
-        estimated_tokens: usize,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        token_limit: Option<usize>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        actual_prompt_tokens: Option<usize>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        actual_completion_tokens: Option<usize>,
-        compressed: bool,
-        summary_count: usize,
-        session_id: Option<String>,
-    },
-    Outcome {
-        agent_id: String,
-        outcome: crate::engine::AgentOutcome,
-        session_id: Option<String>,
-    },
-    Token {
-        agent_id: String,
-        token: String,
-        done: bool,
-        thinking: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
-    },
-    PlanUpdate {
-        agent_id: String,
-        plan: crate::engine::Plan,
-        session_id: Option<String>,
-    },
-    MissionTriggered {
-        mission_id: String,
-        agent_id: String,
-        project_root: String,
-        session_id: Option<String>,
-    },
-    Notification(NotificationPayload),
-    /// A new session was created — used to update the unified session list in real-time.
-    SessionCreated {
-        session_id: String,
-        title: String,
-        creator: String,
-        project: Option<String>,
-        project_name: Option<String>,
-        skill: Option<String>,
-        mission_id: Option<String>,
-    },
-    TextSegment {
-        agent_id: String,
-        text: String,
-        parent_id: Option<String>,
-        session_id: Option<String>,
-    },
-    AskUser {
-        agent_id: String,
-        question_id: String,
-        questions: Vec<crate::engine::tools::AskUserQuestion>,
-        session_id: Option<String>,
-    },
-    /// Generic "widget resolved" event — dismisses any interactive widget
-    /// (AskUser permission, plan approval, etc.) on all connected clients.
-    WidgetResolved {
-        widget_id: String,
-        session_id: Option<String>,
-    },
-    ModelFallback {
-        agent_id: String,
-        preferred_model: String,
-        actual_model: String,
-        reason: String,
-        session_id: Option<String>,
-    },
-    ToolProgress {
-        agent_id: String,
-        tool: String,
-        line: String,
-        stream: String, // "stdout" | "stderr"
-        session_id: Option<String>,
-    },
-    Resync {
-        reason: String,
-        lagged_count: Option<u64>,
-    },
-    /// An app-enabled skill was launched (web, bash, or url).
-    AppLaunched {
-        skill: String,
-        launcher: String,
-        url: String,
-        title: String,
-        width: Option<u32>,
-        height: Option<u32>,
-        session_id: Option<String>,
-    },
-    /// A new content block started within the current assistant turn.
-    ContentBlockStart {
-        agent_id: String,
-        block_id: String,
-        block_type: String,
-        tool: Option<String>,
-        args: Option<String>,
-        parent_id: Option<String>,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    /// Update an existing content block (status change, result summary).
-    ContentBlockUpdate {
-        agent_id: String,
-        block_id: String,
-        status: Option<String>,
-        summary: Option<String>,
-        is_error: Option<bool>,
-        parent_id: Option<String>,
-        /// Optional extra payload (e.g. diff data for Edit/Write tools).
-        extra: Option<serde_json::Value>,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    /// Signal that the assistant turn is complete (single finalizer).
-    TurnComplete {
-        agent_id: String,
-        duration_ms: Option<u64>,
-        context_tokens: Option<usize>,
-        parent_id: Option<String>,
-        session_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        run_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_run_id: Option<String>,
-    },
-    /// Working folder changed — agent cd'd to a new directory.
-    WorkingFolderChanged {
-        session_id: String,
-        cwd: String,
-        project: Option<String>,
-        project_name: Option<String>,
-    },
-    /// Room chat message — relayed between all peers in a proxy room.
-    RoomChat {
-        sender_id: String,
-        sender_name: String,
-        avatar_url: Option<String>,
-        text: String,
-    },
-    /// Owner disabled the room — all consumer peers should disconnect.
-    RoomDisabled,
-}
-
-impl ServerEvent {
-    /// Convert a 1:1 `AgentEvent` variant into the corresponding `ServerEvent`.
-    /// Returns `None` for variants that require special handling (AgentStatus, TaskUpdate).
-    fn from_agent_event(event: crate::agent_manager::AgentEvent, session_id: Option<String>) -> Option<Self> {
-        use crate::agent_manager::AgentEvent;
-        match event {
-            AgentEvent::StateUpdated => Some(Self::StateUpdated),
-            AgentEvent::Message { from, to, content } => {
-                Some(Self::Message { from, to, content, session_id })
-            }
-            AgentEvent::SubagentSpawned { parent_id, subagent_id, task, subagent_run_id, parent_run_id } => {
-                Some(Self::SubagentSpawned { parent_id, subagent_id, task, session_id, subagent_run_id, parent_run_id })
-            }
-            AgentEvent::SubagentResult { parent_id, subagent_id, outcome, subagent_run_id, parent_run_id } => {
-                Some(Self::SubagentResult { parent_id, subagent_id, outcome, session_id, subagent_run_id, parent_run_id })
-            }
-            AgentEvent::Outcome { agent_id, outcome } => {
-                Some(Self::Outcome { agent_id, outcome, session_id })
-            }
-            AgentEvent::ContextUsage {
-                agent_id, stage, message_count, char_count, estimated_tokens,
-                token_limit, actual_prompt_tokens, actual_completion_tokens,
-                compressed, summary_count,
-            } => Some(Self::ContextUsage {
-                agent_id, stage, message_count, char_count, estimated_tokens,
-                token_limit, actual_prompt_tokens, actual_completion_tokens,
-                compressed, summary_count, session_id,
-            }),
-            AgentEvent::PlanUpdate { agent_id, plan } => {
-                Some(Self::PlanUpdate { agent_id, plan, session_id })
-            }
-            AgentEvent::TextSegment { agent_id, text, parent_id } => {
-                Some(Self::TextSegment { agent_id, text, parent_id, session_id })
-            }
-            AgentEvent::ModelFallback { agent_id, preferred_model, actual_model, reason } => {
-                Some(Self::ModelFallback { agent_id, preferred_model, actual_model, reason, session_id })
-            }
-            AgentEvent::ToolProgress { agent_id, tool, line, stream } => {
-                Some(Self::ToolProgress { agent_id, tool, line, stream, session_id })
-            }
-            AgentEvent::ContentBlockStart { agent_id, block_id, block_type, tool, args, parent_id, run_id, parent_run_id } => {
-                tracing::debug!("ContentBlockStart: agent={} type={} tool={:?}", agent_id, block_type, tool);
-                Some(Self::ContentBlockStart { agent_id, block_id, block_type, tool, args, parent_id, session_id, run_id, parent_run_id })
-            }
-            AgentEvent::ContentBlockUpdate { agent_id, block_id, status, summary, is_error, parent_id, extra, run_id, parent_run_id } => {
-                Some(Self::ContentBlockUpdate { agent_id, block_id, status, summary, is_error, parent_id, extra, session_id, run_id, parent_run_id })
-            }
-            AgentEvent::TurnComplete { agent_id, duration_ms, context_tokens, parent_id, run_id, parent_run_id } => {
-                Some(Self::TurnComplete { agent_id, duration_ms, context_tokens, parent_id, session_id, run_id, parent_run_id })
-            }
-            // AgentStatus and TaskUpdate need special handling — return None.
-            AgentEvent::AgentStatus { .. } | AgentEvent::TaskUpdate { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiEvent {
-    pub id: String,
-    pub seq: u64,
-    pub rev: u64,
-    pub ts_ms: u64,
-    pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub phase: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-}
 
 // ---------------------------------------------------------------------------
 // UI event kind/phase constants
@@ -472,8 +106,8 @@ const UI_PHASE_CONTEXT_USAGE: &str = "context_usage";
 const UI_PHASE_SUBAGENT_SPAWNED: &str = "subagent_spawned";
 const UI_PHASE_SUBAGENT_RESULT: &str = "subagent_result";
 const UI_PHASE_PLAN_UPDATE: &str = "plan_update";
-const UI_PHASE_DOING: &str = "doing";
-const UI_PHASE_DONE: &str = "done";
+pub(crate) const UI_PHASE_DOING: &str = "doing";
+pub(crate) const UI_PHASE_DONE: &str = "done";
 const UI_PHASE_RESYNC: &str = "resync";
 
 fn default_status_text(status: AgentStatusKind) -> String {
@@ -490,7 +124,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
     let ts_ms = crate::util::now_ts_ms();
     match event {
         ServerEvent::Message { from, to, content, session_id } => {
-            let cleaned = crate::server::chat_helpers::sanitize_message_for_ui(&from, &content)?;
+            let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(UiEvent {
                 id: format!("msg-{seq}"),
                 seq,
@@ -1111,125 +745,6 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
     }
 }
 
-impl ServerState {
-    /// Back-compat shim — callers that don't yet thread run_id can keep using
-    /// this. Internally forwards to `send_agent_status_with_ids` with None.
-    pub async fn send_agent_status(
-        &self,
-        agent_id: String,
-        status: AgentStatusKind,
-        detail: Option<String>,
-        parent_agent_id: Option<String>,
-        session_id: Option<String>,
-    ) {
-        self.send_agent_status_with_ids(
-            agent_id, status, detail, parent_agent_id, session_id, None, None,
-        )
-        .await
-    }
-
-    /// Full variant that carries the emitting agent's run_id and its
-    /// parent's run_id so the UI can route status to the right subagent
-    /// even when multiple subagents share the same `agent_id`.
-    pub async fn send_agent_status_with_ids(
-        &self,
-        agent_id: String,
-        status: AgentStatusKind,
-        detail: Option<String>,
-        parent_agent_id: Option<String>,
-        session_id: Option<String>,
-        run_id: Option<String>,
-        parent_run_id: Option<String>,
-    ) {
-        let mut done_event: Option<ServerEvent> = None;
-        let mut status_id: Option<String> = None;
-        let mut lifecycle: Option<String> = None;
-
-        // Key by session_id|agent_id so concurrent sessions don't clobber each other.
-        let status_key = match &session_id {
-            Some(sid) => format!("{}|{}", sid, agent_id),
-            None => agent_id.clone(),
-        };
-
-        {
-            let mut active = self.active_statuses.lock().await;
-            if status == AgentStatusKind::Idle {
-                if let Some(prev) = active.remove(&status_key) {
-                    done_event = Some(ServerEvent::AgentStatus {
-                        agent_id: agent_id.clone(),
-                        status: prev.status.as_str().to_string(),
-                        detail: prev.detail,
-                        status_id: Some(prev.status_id),
-                        lifecycle: Some(UI_PHASE_DONE.to_string()),
-                        parent_agent_id: parent_agent_id.clone(),
-                        session_id: session_id.clone(),
-                        run_id: run_id.clone(),
-                        parent_run_id: parent_run_id.clone(),
-                    });
-                }
-            } else {
-                if let Some(prev) = active.get(&status_key).cloned() {
-                    if prev.status != status {
-                        done_event = Some(ServerEvent::AgentStatus {
-                            agent_id: agent_id.clone(),
-                            status: prev.status.as_str().to_string(),
-                            detail: prev.detail,
-                            status_id: Some(prev.status_id),
-                            lifecycle: Some(UI_PHASE_DONE.to_string()),
-                            parent_agent_id: parent_agent_id.clone(),
-                            session_id: session_id.clone(),
-                            run_id: run_id.clone(),
-                            parent_run_id: parent_run_id.clone(),
-                        });
-                        active.remove(&status_key);
-                    } else {
-                        status_id = Some(prev.status_id.clone());
-                        lifecycle = Some(UI_PHASE_DOING.to_string());
-                        active.insert(
-                            status_key.clone(),
-                            ActiveStatusRecord {
-                                status_id: prev.status_id,
-                                status,
-                                detail: detail.clone(),
-                            },
-                        );
-                    }
-                }
-
-                if status_id.is_none() {
-                    let next_id =
-                        format!("status-{}", self.status_seq.fetch_add(1, Ordering::Relaxed));
-                    status_id = Some(next_id.clone());
-                    lifecycle = Some(UI_PHASE_DOING.to_string());
-                    active.insert(
-                        status_key.clone(),
-                        ActiveStatusRecord {
-                            status_id: next_id,
-                            status,
-                            detail: detail.clone(),
-                        },
-                    );
-                }
-            }
-        }
-
-        if let Some(done) = done_event {
-            let _ = self.events_tx.send(done);
-        }
-
-        let _ = self.events_tx.send(ServerEvent::AgentStatus {
-            agent_id,
-            status: status.as_str().to_string(),
-            detail,
-            status_id,
-            parent_agent_id,
-            lifecycle,
-            session_id,
-            run_id,
-            parent_run_id,
-        });
-    }
-}
 
 struct ServerHandle {
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
@@ -1485,7 +1000,7 @@ async fn prepare_server(
     // Spawn the cron mission scheduler.
     {
         let scheduler_state = state.clone();
-        tokio::spawn(mission_scheduler::mission_scheduler_loop(scheduler_state));
+        tokio::spawn(crate::missions::scheduler::mission_scheduler_loop(scheduler_state));
     }
 
     // Spawn remote relay tasks (heartbeat + offer polling) if remote.toml exists.
@@ -1508,6 +1023,20 @@ async fn prepare_server(
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
     let actual_port = listener.local_addr()?.port();
     info!("Server running on http://{}:{}", host, actual_port);
+
+    // Anonymous usage telemetry. See src/telemetry/mod.rs for the field list
+    // and opt-out paths. Fired here (after listener binds, before serve loop)
+    // so a launch is only counted when the daemon is actually up.
+    {
+        let data_dir = crate::paths::linggen_home().clone();
+        let telemetry = crate::telemetry::Telemetry::new("linggen", &data_dir);
+        telemetry.launch();
+        let system_state = crate::telemetry::read_system_state(&data_dir);
+        telemetry.command_with_payload(
+            "engine.start",
+            serde_json::json!({ "system_state": system_state }),
+        );
+    }
 
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await?;

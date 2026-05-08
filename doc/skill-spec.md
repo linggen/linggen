@@ -215,16 +215,17 @@ Missions ship as files under the skill's `assets/` and are copied by the install
 
 ## Permissions
 
-Skills can declare a `permission` request to ask for elevated access at activation. The user is prompted before the skill runs.
+Skills can declare a `permission` request to ask for elevated access at activation. The user is prompted before the skill runs. **Each path declares its own mode** — there is no top-level default. A skill can ask for `read` on one path and `write` on another in a single block.
 
 ```yaml
 permission:
-  mode: admin
-  paths: ["/", "~"]
-  warning: "This skill runs system commands that modify files"
+  paths:
+    - { path: ~/.linggen/skills/pulse, mode: write }
+    - { path: /tmp,                    mode: read }
+  warning: "Pulse writes session JSON inside its own data dir; reads /tmp."
 ```
 
-`mode` is `read`, `edit`, or `admin`. On approval, exactly the listed paths are added to the session's grants at the requested mode — the cwd is not silently broadened. See `permission-spec.md`.
+`mode` is `read`, `edit` (alias `write`), or `admin`. On approval, each `(path, mode)` pair is added to the session's grants — the cwd is not silently broadened. See `permission-spec.md`.
 
 ## Skill tools
 

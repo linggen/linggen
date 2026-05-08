@@ -28,7 +28,6 @@ pub async fn run_single_task(
     eval_cfg: &EvalConfig,
     task_dir: &PathBuf,
     task_def: &EvalTaskDef,
-    store: Arc<crate::project_store::ProjectStore>,
 ) -> Result<EvalResult> {
     let start = std::time::Instant::now();
     eprint!("  {} ...", task_def.name);
@@ -116,7 +115,7 @@ pub async fn run_single_task(
     let (config, _config_path) =
         Config::load_with_path().unwrap_or_else(|_| (Config::default(), None));
     let skill_manager = Arc::new(SkillManager::new());
-    let (manager, _rx) = AgentManager::new(config.clone(), None, store.clone(), skill_manager.clone(), crate::engine::InterfaceMode::Web);
+    let (manager, _rx) = AgentManager::new(config.clone(), None, skill_manager.clone(), crate::engine::InterfaceMode::Web);
 
     // 6. Get or create agent
     let eval_session_id = format!("eval-{}", crate::util::now_ts_secs());
@@ -195,8 +194,7 @@ pub async fn run_single_task(
     let status_str = if grade_result.passed { "PASS" } else { "FAIL" };
     eprintln!(" {} ({:.1}s)", status_str, duration.as_secs_f64());
 
-    // 11. Cleanup tmpdir and remove ephemeral project from store
-    let _ = store.remove_project(&tmpdir.to_string_lossy());
+    // 11. Cleanup tmpdir
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     Ok(EvalResult {

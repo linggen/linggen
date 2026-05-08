@@ -16,6 +16,7 @@ mod streaming;
 pub mod tool_registry;
 mod dispatch;
 mod tool_exec;
+pub(crate) mod tool_render;
 pub mod tools;
 mod types;
 pub mod web_fetch;
@@ -36,7 +37,7 @@ pub use actions::{
 use streaming::{can_parallel_tool, has_write_path_conflicts};
 use types::{LoopControl, LoopState, MessageImportance, ParsedToolCall};
 
-use crate::ollama::ChatMessage;
+use crate::message::ChatMessage;
 use anyhow::Result;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -427,12 +428,12 @@ impl AgentEngine {
                 // Record the assistant message with tool_calls in chat history.
                 // Preserve id/call_type so OpenAI-compatible APIs (Gemini, etc.)
                 // can match tool results back to their calls.
-                let tool_call_msgs: Vec<crate::ollama::ToolCallMessage> = native_tool_calls
+                let tool_call_msgs: Vec<crate::message::ToolCallMessage> = native_tool_calls
                     .iter()
-                    .map(|tc| crate::ollama::ToolCallMessage {
+                    .map(|tc| crate::message::ToolCallMessage {
                         id: tc.id.clone(),
                         call_type: "function".to_string(),
-                        function: crate::ollama::ToolCallFunction {
+                        function: crate::message::ToolCallFunction {
                             name: tc.name.clone(),
                             arguments: tc.arguments.clone(),
                         },
