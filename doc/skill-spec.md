@@ -229,17 +229,12 @@ permission:
 
 ### Runtime grants and prompt extensions
 
-For paths or context the user configures **after install** (e.g., a workspace dir set in the skill's settings page), the skill can extend the running session via two engine APIs — without mutating `SKILL.md`:
+For paths or context the user configures **after install** (e.g., a workspace dir set in the skill's settings page), the skill can extend the running session without mutating `SKILL.md`:
 
-```
-POST /api/sessions/{id}/permission/grant
-  { "path": "/abs/path", "mode": "read" }
+- **Permission grants** — reuse the existing endpoint the consent prompt calls: `PATCH /api/sessions/permission` with `{ session_id, path, mode }`. No new endpoint needed.
+- **System prompt extensions** — `POST /api/sessions/{id}/system_prompt/append` with `{ content, label }`. New endpoint; content-mode only; per-skill cumulative cap (default 4 KB).
 
-POST /api/sessions/{id}/system_prompt/append
-  { "content": "<text>", "label": "<dedup-key>" }
-```
-
-Both apply to the live session; the engine performs no persistence. **Skills own persistence** — store runtime config in the skill's own data dir and re-push on iframe load. See `permission-spec.md` for the full contract, auth model, and the v1 iframe-loaded-first caveat.
+Both apply to the live session. **Skills own persistence** — store runtime config in the skill's own data dir and re-push on iframe load. See `permission-spec.md` for the full contract and the v1 iframe-loaded-first caveat.
 
 ## Skill tools
 
