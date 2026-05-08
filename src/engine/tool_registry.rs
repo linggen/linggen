@@ -35,16 +35,15 @@ impl ToolRegistry {
             return self.builtins.execute(call).await;
         }
 
-        // 2. Capability tools (engine-defined contract — schema + tier
-        //    live in `engine::capabilities`; backend lives in the active
-        //    `provides: [<cap>]` skill's `implements:` block).
+        // 2. Capability tools (engine-defined contract; backend lives in
+        //    the active `provides: [<cap>]` skill's `implements:` block).
         if capabilities::is_capability_tool(&call.tool) {
             debug!(
                 "Capability tool: {} args={}",
                 call.tool,
                 tools::summarize_tool_args(&call.tool, &call.args)
             );
-            return self.dispatch_capability_tool(&call.tool, &call.args).await;
+            return self.dispatch_via_skill_http(&call.tool, &call.args).await;
         }
 
         // 3. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
@@ -55,48 +54,31 @@ impl ToolRegistry {
                 call.tool,
                 tools::summarize_tool_args(&call.tool, &call.args)
             );
-            if skill_tool.kind() == SkillToolKind::Http {
-                return self.dispatch_http_skill_tool(skill_tool, &call.args).await;
-            }
-            return skill_tool.execute(&call.args, &self.builtins.cwd());
+            return match skill_tool.kind() {
+                SkillToolKind::Http => {
+                    self.dispatch_via_skill_http(&skill_tool.name, &call.args).await
+                }
+                _ => skill_tool.execute(&call.args, &self.builtins.cwd()),
+            };
         }
 
         anyhow::bail!("unknown tool: {}", call.tool)
     }
 
-    /// Route a capability tool call through the HTTP dispatcher. The
-    /// tool's schema + tier are engine-owned; the dispatcher resolves
-    /// the URL from the active provider's `implements:` block.
-    async fn dispatch_capability_tool(&self, name: &str, args: &Value) -> Result<ToolResult> {
+    /// POST the tool args to the owning skill's daemon and return the
+    /// response as a `ToolResult::Success(json_string)`. Used for both
+    /// engine-defined capability tools and skill-declared HTTP tools —
+    /// `capability_tools::dispatch` resolves the URL from the active
+    /// provider's `implements:` block and handles autostart + retry-once.
+    async fn dispatch_via_skill_http(&self, name: &str, args: &Value) -> Result<ToolResult> {
         let manager = self.builtins.get_manager().ok_or_else(|| {
             anyhow!(
-                "Capability tool '{name}' requires a running AgentManager context \
+                "Tool '{name}' requires a running AgentManager context \
                  — tool context was not set"
             )
         })?;
         let skills = manager.skill_manager.clone();
         let value = capability_tools::dispatch(&skills, name, args.clone()).await?;
-        Ok(ToolResult::Success(value.to_string()))
-    }
-
-    /// POST the tool args to the owning skill's daemon and return the
-    /// response as a `ToolResult::Success(json_string)`. Autostart +
-    /// retry-once is handled inside `capability_tools::dispatch`.
-    async fn dispatch_http_skill_tool(
-        &self,
-        def: &SkillToolDef,
-        args: &Value,
-    ) -> Result<ToolResult> {
-        let manager = self.builtins.get_manager().ok_or_else(|| {
-            anyhow!(
-                "HTTP skill tool '{}' requires a running AgentManager context \
-                 — tool context was not set",
-                def.name
-            )
-        })?;
-        let skills = manager.skill_manager.clone();
-        let value =
-            capability_tools::dispatch(&skills, &def.name, args.clone()).await?;
         Ok(ToolResult::Success(value.to_string()))
     }
 
