@@ -67,17 +67,11 @@ fn kill_process_group(child: &std::process::Child) {
 
 impl Tools {
     pub(super) async fn search_rg(&self, args: SearchArgs) -> Result<ToolResult> {
-        let tools = self.clone();
-        tokio::task::spawn_blocking(move || tools.search_rg_inner(args))
-            .await
-            .map_err(|e| anyhow::anyhow!("search_rg panic: {e}"))?
+        self.run_blocking("search_rg", move |tools| tools.search_rg_inner(args)).await
     }
 
     pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
-        let tools = self.clone();
-        tokio::task::spawn_blocking(move || tools.run_command_inner(args))
-            .await
-            .map_err(|e| anyhow::anyhow!("run_command panic: {e}"))?
+        self.run_blocking("run_command", move |tools| tools.run_command_inner(args)).await
     }
 
     fn search_rg_inner(&self, args: SearchArgs) -> Result<ToolResult> {

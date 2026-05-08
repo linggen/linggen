@@ -298,22 +298,31 @@ impl Tools {
     /// and dispatching to its `execute` impl. Unknown tool names fall
     /// through to `ToolRegistry::execute`, which handles capability tools
     /// and skill tools.
-    pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
-        let normalized_args = normalize_tool_args(&call.tool, call.args);
+    /// Run a synchronous, CPU-bound or filesystem-blocking closure on the
+    /// blocking pool. The closure receives a clone of `Tools` so it can call
+    /// `*_inner` methods that take `&self`. `label` is used in the panic
+    /// error message.
+    pub(super) async fn run_blocking<F, T>(&self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce(Tools) -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let tools = self.clone();
+        tokio::task::spawn_blocking(move || f(tools))
+            .await
+            .map_err(|e| anyhow::anyhow!("{label} panic: {e}"))?
+    }
+
+    pub async fn execute(&self, mut call: ToolCall) -> Result<ToolResult> {
+        call.args = normalize_tool_args(&call.tool, call.args);
         debug!(
             "Executing tool: {} args={}",
             call.tool,
-            summarize_tool_args(&call.tool, &normalized_args)
+            summarize_tool_args(&call.tool, &call.args)
         );
-
-        let normalized = ToolCall {
-            tool: call.tool,
-            args: normalized_args,
-            block_id: call.block_id,
-        };
-        match builtin::lookup(&normalized.tool) {
-            Some(tool) => tool.execute(self, normalized).await,
-            None => anyhow::bail!("unknown tool: {}", normalized.tool),
+        match builtin::lookup(&call.tool) {
+            Some(tool) => tool.execute(self, call).await,
+            None => anyhow::bail!("unknown tool: {}", call.tool),
         }
     }
 

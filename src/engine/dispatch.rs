@@ -127,27 +127,20 @@ impl AgentEngine {
         let ws_root = self.cfg.ws_root.clone();
         let ask_bridge = self.tools.ask_user_bridge().cloned();
 
-        // Each delegation runs in its own multi-thread tokio runtime
-        // inside a blocking-pool thread, rather than `tokio::spawn` on
-        // the parent runtime. Reason: the future from `run_delegation` ->
-        // `engine.run_agent_loop` is not `Send` — somewhere in that chain
-        // a non-`Send` temporary is held across an `.await`. Rustc's
-        // diagnostic reports the failure at the spawn boundary but
-        // doesn't drill into the offending await; identifying it requires
-        // a manual bisection of every `.await` site reachable from
-        // run_agent_loop. Until that audit happens, the per-call runtime
-        // is the workaround. Cost is one tokio runtime construction per
-        // delegation, dominated by model latency. Tracked under the
-        // tail of #8 (sync/async boundary).
+        // Each delegation runs in its own current-thread tokio runtime on a
+        // blocking-pool thread, not `tokio::spawn` on the parent runtime:
+        // the `run_delegation -> run_agent_loop` future holds a non-`Send`
+        // temporary across an `.await` somewhere, and identifying it would
+        // require bisecting every reachable await site. Until that audit
+        // (see deferred task #12), the per-call runtime is the workaround.
         let mut join_set = tokio::task::JoinSet::new();
         for spawn in spawns.into_iter() {
             let ws = ws_root.clone();
             let bridge = ask_bridge.clone();
             let action_idx = spawn.action_idx;
             join_set.spawn_blocking(move || {
-                let rt = match tokio::runtime::Builder::new_multi_thread()
+                let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
-                    .worker_threads(1)
                     .build()
                 {
                     Ok(rt) => rt,

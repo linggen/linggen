@@ -56,24 +56,15 @@ pub(super) struct CaptureScreenshotArgs {
 
 impl Tools {
     pub(super) async fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
-        let tools = self.clone();
-        tokio::task::spawn_blocking(move || tools.list_files_inner(args))
-            .await
-            .map_err(|e| anyhow::anyhow!("list_files panic: {e}"))?
+        self.run_blocking("list_files", move |tools| tools.list_files_inner(args)).await
     }
 
     pub(super) async fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
-        let tools = self.clone();
-        tokio::task::spawn_blocking(move || tools.read_file_inner(args))
-            .await
-            .map_err(|e| anyhow::anyhow!("read_file panic: {e}"))?
+        self.run_blocking("read_file", move |tools| tools.read_file_inner(args)).await
     }
 
     pub(super) async fn capture_screenshot(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
-        let tools = self.clone();
-        tokio::task::spawn_blocking(move || tools.capture_screenshot_inner(args))
-            .await
-            .map_err(|e| anyhow::anyhow!("capture_screenshot panic: {e}"))?
+        self.run_blocking("capture_screenshot", move |tools| tools.capture_screenshot_inner(args)).await
     }
 
     fn list_files_inner(&self, args: ListFilesArgs) -> Result<ToolResult> {

@@ -277,7 +277,6 @@ pub(super) async fn run_trigger_dispatch(
     };
 
     let mut skill_default_task: Option<String> = None;
-    let mut activated = false;
     if let Some(manager) = engine.tools.get_manager() {
         if let Some(skill) = manager.skill_manager.get_skill(skill_name).await {
             if !skill.user_invocable {
@@ -308,10 +307,8 @@ pub(super) async fn run_trigger_dispatch(
             // Trigger mode is implicit-approval: prefix opt-in stands in for
             // the prompt. activate_skill never returns Cancelled here.
             engine.activate_skill(skill, ActivationMode::Trigger).await;
-            activated = true;
         }
     }
-    let _ = activated;
 
     let task_for_loop = user_args
         .or(skill_default_task)

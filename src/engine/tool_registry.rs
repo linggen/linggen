@@ -117,45 +117,39 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
+    /// `true` if `name` passes the allowed-tools filter (or no filter set).
+    fn is_allowed(allowed: Option<&HashSet<String>>, name: &str) -> bool {
+        allowed.map_or(true, |set| set.contains(name))
+    }
+
     /// Merge built-in, capability, and skill tool schemas, filtered by the
     /// allowed set. Capability schemas come from `engine::capabilities`;
     /// only capabilities with an active provider are emitted.
     pub fn tool_schema_json(&self, allowed_tools: Option<&HashSet<String>>) -> String {
         let mut tools_arr = tools::full_tool_schema_entries();
+        tools_arr.retain(|entry| {
+            entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|name| Self::is_allowed(allowed_tools, name))
+                .unwrap_or(false)
+        });
 
-        // Filter built-ins by the allowed set.
-        if let Some(allowed) = allowed_tools {
-            tools_arr.retain(|entry| {
-                entry
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|name| allowed.contains(name))
-                    .unwrap_or(false)
-            });
-        }
-
-        // Append capability tool schemas (engine-defined; only active
-        // capabilities). Each capability's tools are emitted once, even
-        // if multiple providers are installed — only the active one
-        // dispatches.
+        // Capability tools: only those from active capabilities are emitted
+        // (each capability's tools dispatch through a single active provider).
         for (cap_name, tool) in capabilities::all_capability_tools() {
             if !self.active_capabilities.contains(cap_name) {
                 continue;
             }
-            if let Some(allowed) = allowed_tools {
-                if !allowed.contains(&tool.name) {
-                    continue;
-                }
+            if !Self::is_allowed(allowed_tools, &tool.name) {
+                continue;
             }
             tools_arr.push(capabilities::legacy_schema_entry(tool));
         }
 
-        // Append skill-unique tool schemas.
         for (name, def) in &self.skill_tools {
-            if let Some(allowed) = allowed_tools {
-                if !allowed.contains(name) {
-                    continue;
-                }
+            if !Self::is_allowed(allowed_tools, name) {
+                continue;
             }
             tools_arr.push(def.to_schema_json());
         }
@@ -169,25 +163,19 @@ impl ToolRegistry {
     pub fn oai_tool_definitions(&self, allowed: Option<&HashSet<String>>) -> Vec<serde_json::Value> {
         let mut defs = tools::json_schema::oai_tool_definitions(allowed);
 
-        // Capability tools from the engine's registry.
         for (cap_name, tool) in capabilities::all_capability_tools() {
             if !self.active_capabilities.contains(cap_name) {
                 continue;
             }
-            if let Some(set) = allowed {
-                if !set.contains(&tool.name) {
-                    continue;
-                }
+            if !Self::is_allowed(allowed, &tool.name) {
+                continue;
             }
             defs.push(capabilities::oai_schema_entry(tool));
         }
 
-        // Skill-unique tools.
         for (name, def) in &self.skill_tools {
-            if let Some(set) = allowed {
-                if !set.contains(name) {
-                    continue;
-                }
+            if !Self::is_allowed(allowed, name) {
+                continue;
             }
             defs.push(def.to_oai_schema());
         }
