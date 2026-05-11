@@ -167,7 +167,14 @@ impl AgentEngine {
             self.tools.builtins.delegation_depth(),
             task_summary,
         );
-        tracing::debug!("[{}] Full task: {}", log_run, task);
+        // Cap the DEBUG dump too — a 3KB hidden-init prompt blowing up
+        // every agent loop line in the log is just noise. Full task is
+        // persisted to context records below, query that when needed.
+        tracing::debug!(
+            "[{}] Task: {}",
+            log_run,
+            truncate_for_log(task.as_ref(), 800),
+        );
         self.push_context_record(
             ContextType::Status,
             Some("autonomous_loop_start".to_string()),
@@ -827,6 +834,23 @@ impl AgentEngine {
 /// full MEMORY_EXTRACT payload that embeds the dashboard schema) are
 /// truncated with an ellipsis and a byte/line count so the reader can tell
 /// there's more hidden at DEBUG.
+/// Trim a task string for log lines that want more than the INFO summary
+/// but not the full text. Caps at `max_chars` chars (char-safe, no
+/// multi-byte panics) and appends a "(NNNNB total — see context records)"
+/// suffix when truncated. Used by the DEBUG dump in `run_agent_loop`
+/// so a 3 KB hidden-init prompt doesn't flood the log every turn.
+fn truncate_for_log(task: &str, max_chars: usize) -> String {
+    let char_count = task.chars().count();
+    if char_count <= max_chars {
+        return task.to_string();
+    }
+    let head: String = task.chars().take(max_chars).collect();
+    format!(
+        "{head}… ({}B total — full in context records)",
+        task.len()
+    )
+}
+
 fn summarize_task_for_log(task: &str) -> String {
     const MAX: usize = 160;
     let stripped = task.trim_start_matches("[HIDDEN] ").trim_start();
