@@ -389,9 +389,19 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
     // Ensure session_dir is populated so skill-permission saves persist.
     // Otherwise run_agent_loop later loads permission.json from disk and
     // clobbers the in-memory grants we're about to apply.
+    let sdir = crate::paths::global_sessions_dir().join(sid);
     if engine.session_dir.is_none() {
-        engine.session_dir = Some(crate::paths::global_sessions_dir().join(sid));
+        engine.session_dir = Some(sdir.clone());
     }
+
+    // Hydrate session_permissions from disk BEFORE activate_skill —
+    // otherwise write_skill_grants merges SKILL.md grants on top of the
+    // empty in-memory default and saves, clobbering any runtime grants
+    // (e.g. pulse's workspace_path) that the skill iframe PATCHed onto
+    // permission.json before the first user turn. Mirrors the same
+    // preload the slash-command path does in skill_dispatch.rs.
+    engine.session_permissions =
+        crate::engine::permission::SessionPermissions::load(&sdir);
 
     if let crate::engine::ActivationOutcome::Activated { grants_changed: true } =
         engine.activate_skill(skill, crate::engine::ActivationMode::SessionBound).await

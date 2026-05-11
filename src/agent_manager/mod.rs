@@ -618,6 +618,30 @@ impl AgentManager {
         self.session_engines.lock().await.remove(session_id);
     }
 
+    /// Apply a runtime path-mode grant to the live engine for a session.
+    ///
+    /// Returns true if a live engine was found and mutated, false otherwise
+    /// (caller still owns the disk write — this only propagates the change
+    /// into the running engine so subsequent permission checks see it
+    /// without a reload). Mirrors the in-memory mutation the consent flow
+    /// performs at `tool_exec.rs:387` so out-of-band PATCHes from skill
+    /// iframes are observed by the same agent without a session restart.
+    pub async fn apply_runtime_grant(
+        &self,
+        session_id: &str,
+        path: &str,
+        mode: crate::engine::permission::PermissionMode,
+    ) -> bool {
+        let engine_arc = {
+            let engines = self.session_engines.lock().await;
+            engines.get(session_id).cloned()
+        };
+        let Some(engine_arc) = engine_arc else { return false };
+        let mut engine = engine_arc.lock().await;
+        engine.session_permissions.set_path_mode(path, mode);
+        true
+    }
+
     /// Create a fresh, uncached `AgentEngine` for a single delegation call.
     ///
     /// Unlike `get_or_create_agent`, the returned engine is **not** inserted into the project's
