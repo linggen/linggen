@@ -10,7 +10,7 @@ use crate::engine::tools::{AskUserOption, AskUserQuestion};
 use crate::engine::AgentEngine;
 use crate::skills::Skill;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What kind of activation event is happening — controls whether to prompt
 /// the user, whether to apply declared grants, and whether the engine
@@ -82,11 +82,13 @@ impl AgentEngine {
                 PromptOutcome::Approve => {
                     let grants_changed = write_skill_grants(self, &skill);
                     apply_skill_app_scope(self, &skill);
+                    seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
                     return ActivationOutcome::Activated { grants_changed };
                 }
                 PromptOutcome::RunInCurrentMode => {
                     apply_skill_app_scope(self, &skill);
+                    seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
                     return ActivationOutcome::Activated { grants_changed: false };
                 }
@@ -105,9 +107,34 @@ impl AgentEngine {
             false
         };
         apply_skill_app_scope(self, &skill);
+        seed_session_cwd_from_skill(self, &skill);
         self.active_skill = Some(skill);
         ActivationOutcome::Activated { grants_changed }
     }
+}
+
+/// Seed the engine's per-session cwd to the skill's declared `cwd:` when
+/// the session doesn't already have one. Without this, permission checks
+/// on skill tools (FetchReddit, etc.) resolve against the request's
+/// `project_root` — usually $HOME — and trip the ExceedsCeiling prompt
+/// asking for read access on the whole home directory, even though the
+/// skill's own SKILL.md grant already covers its actual workspace.
+fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
+    let Some(cwd_str) = skill.cwd.as_deref() else { return };
+    let trimmed = cwd_str.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let expanded: PathBuf = if trimmed == "~" {
+        let Some(home) = dirs::home_dir() else { return };
+        home
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        let Some(home) = dirs::home_dir() else { return };
+        home.join(rest)
+    } else {
+        PathBuf::from(trimmed)
+    };
+    engine.tools.builtins.seed_session_cwd_if_unset(expanded);
 }
 
 /// Scope the agent's reachable-skill list to the active skill's
