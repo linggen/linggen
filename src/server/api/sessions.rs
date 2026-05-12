@@ -188,7 +188,10 @@ pub(crate) async fn remove_session_api(
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
-        Ok(_) => StatusCode::OK,
+        Ok(_) => {
+            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            StatusCode::OK
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -294,7 +297,10 @@ pub(crate) async fn remove_skill_session_api(
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
-        Ok(_) => StatusCode::OK,
+        Ok(_) => {
+            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            StatusCode::OK
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -371,7 +377,10 @@ pub(crate) async fn delete_unified_session(
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
     match state.manager.global_sessions.remove_session(&req.session_id) {
-        Ok(_) => StatusCode::OK.into_response(),
+        Ok(_) => {
+            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            StatusCode::OK.into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
