@@ -120,7 +120,10 @@ impl AgentEngine {
 /// asking for read access on the whole home directory, even though the
 /// skill's own SKILL.md grant already covers its actual workspace.
 fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
-    let Some(cwd_str) = skill.cwd.as_deref() else { return };
+    let Some(cwd_str) = skill.cwd.as_deref() else {
+        tracing::debug!("[skill-activate] {} has no cwd declared — skipping seed", skill.name);
+        return;
+    };
     let trimmed = cwd_str.trim();
     if trimmed.is_empty() {
         return;
@@ -134,7 +137,17 @@ fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
     } else {
         PathBuf::from(trimmed)
     };
-    engine.tools.builtins.seed_session_cwd_if_unset(expanded);
+    let prev_cwd = engine.tools.builtins.cwd();
+    engine.tools.builtins.seed_session_cwd_if_unset(expanded.clone());
+    let post_cwd = engine.tools.builtins.cwd();
+    tracing::info!(
+        "[skill-activate] {} cwd seed: declared={} expanded={} prev={} post={}",
+        skill.name,
+        cwd_str,
+        expanded.display(),
+        prev_cwd.display(),
+        post_cwd.display(),
+    );
 }
 
 /// Scope the agent's reachable-skill list to the active skill's
