@@ -91,7 +91,7 @@ Status values: `pending`, `in_progress`, `completed`.
 - ALWAYS respond with valid JSON objects. Never plain text without a JSON action.
 - When delegating, use the Task tool with a concrete task description — do not just plan to delegate.
 - Keep going until the task is fully resolved. When the task is complete, stop calling tools.
-- **Summary:** Only summarize when you made code changes (list what changed) or completed a long multi-step run. Do NOT summarize after presenting a plan, answering a question, or completing a single simple action — the output speaks for itself.
+- **Summary:** Only summarize when there's something concrete to report — changed code/files, an artifact you produced, the result of a long multi-step run. Skip summaries for plans, questions, single actions, hidden context pushes, or anything already visible to the user (page artifacts, rendered cards, tool output the UI shows). NEVER narrate "Done — no code changes made", "no action needed", or similar acknowledgments when there was nothing to do; staying silent is the correct response.
 - If you encounter an obstacle, try alternative approaches before giving up. Do not retry the same failing approach repeatedly.'''
 
 [native]
