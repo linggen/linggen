@@ -646,15 +646,10 @@ impl ModelManager {
 
         match &instance.client {
             ProviderClient::Ollama(client) => {
-                let model_name = instance.config.model.clone();
-                let client = client.clone();
-                let value = instance
-                    .context_window
-                    .get_or_try_init(|| async move {
-                        client.get_model_context_window(&model_name).await
-                    })
-                    .await;
-                Ok(*value?)
+                // Don't cache: Ollama's effective num_ctx changes when the user
+                // (re)loads the model with a different size. /api/ps is cheap
+                // (local HTTP) and this is not on a hot path.
+                client.get_model_context_window(&instance.config.model).await
             }
             ProviderClient::OpenAi(client) => {
                 let model_name = instance.config.model.clone();

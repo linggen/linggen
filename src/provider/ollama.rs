@@ -382,13 +382,32 @@ impl OllamaClient {
         Ok(payload)
     }
 
-    /// Best-effort: fetch model context window (num_ctx) from Ollama.
+    /// Best-effort: fetch the *effective* context window for a model.
     ///
-    /// Ollama exposes model metadata at /api/show. We parse either:
-    /// - parameters.num_ctx (if present in object form),
-    /// - num_ctx/context_length lines from parameters/modelfile text, or
-    /// - model_info.*.context_length keys.
+    /// Prefers the live `context_length` from `/api/ps` (what Ollama actually
+    /// loaded the model with — this is what determines real-world overflow),
+    /// then falls back to `/api/show` metadata (the model's architectural max,
+    /// e.g. 262K for qwen3) when the model isn't currently loaded.
     pub async fn get_model_context_window(&self, model: &str) -> Result<Option<usize>> {
+        if let Ok(Some(running)) = self.get_running_context_length(model).await {
+            return Ok(Some(running));
+        }
+        self.get_model_max_context_window(model).await
+    }
+
+    /// Live `context_length` from `/api/ps` for the named model, if loaded.
+    pub async fn get_running_context_length(&self, model: &str) -> Result<Option<usize>> {
+        let ps = self.get_ps().await?;
+        let entry = ps
+            .models
+            .iter()
+            .find(|m| m.name == model || m.model == model);
+        Ok(entry.and_then(|m| m.context_length))
+    }
+
+    /// Metadata max context from /api/show — what the model architecture supports,
+    /// not necessarily what's loaded.
+    async fn get_model_max_context_window(&self, model: &str) -> Result<Option<usize>> {
         let url = format!("{}/api/show", self.base_url);
         let req = serde_json::json!({ "name": model });
         let mut rb = self.http.post(url).json(&req);
@@ -579,6 +598,10 @@ pub struct OllamaPsModel {
     pub size: u64,
     pub size_vram: u64,
     pub details: OllamaPsModelDetails,
+    /// Live context window Ollama loaded this model with (num_ctx).
+    /// Present on recent Ollama versions; absent on older ones.
+    #[serde(default)]
+    pub context_length: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
