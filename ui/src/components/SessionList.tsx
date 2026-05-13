@@ -96,12 +96,18 @@ export const SessionList: React.FC<{
   onOpenSettings?: (tab?: string) => void;
   /** When provided, overrides the sessions from the store (used by consumer mode to filter). */
   filterSessions?: SessionInfo[];
-}> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions }) => {
+  /** Hide the Missions section at the bottom (skill iframes don't need it). */
+  hideMissions?: boolean;
+  /** Hide the user/mission/skill/all filter tab row (skill iframes pin one creator). */
+  hideFilters?: boolean;
+}> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
   const storeSessions = useSessionStore((s) => s.allSessions);
   const allSessions = filterSessions ?? storeSessions;
   const agentStatus = useServerStore((s) => s.agentStatus);
   const openMissionEditor = useOpenMissionEditor();
-  const [filter, setFilter] = useState<CreatorFilter>('user');
+  // When filters are hidden the consumer is pre-filtering via filterSessions,
+  // so default to 'all' to avoid the 'user'-only default clipping the list.
+  const [filter, setFilter] = useState<CreatorFilter>(hideFilters ? 'all' : 'user');
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [missionsOpen, setMissionsOpen] = useState(false);
@@ -334,6 +340,7 @@ export const SessionList: React.FC<{
       )}
 
       {/* Filter tabs */}
+      {!hideFilters && (
       <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 dark:border-white/[0.03]">
         {(['user', 'mission', 'skill', 'all'] as const).map((f) => {
           const k = bumpKey[f];
@@ -359,6 +366,7 @@ export const SessionList: React.FC<{
           );
         })}
       </div>
+      )}
 
       {/* Select-mode action bar */}
       {selectMode && (
@@ -499,6 +507,7 @@ export const SessionList: React.FC<{
       </div>
 
       {/* ─── MISSIONS section ─── */}
+      {!hideMissions && (<>
       <SectionHeader title="Missions" open={missionsOpen} onToggle={() => setMissionsOpen(!missionsOpen)} action={
         <div className="flex items-center gap-0.5">
           {onOpenSettings && (
@@ -543,6 +552,7 @@ export const SessionList: React.FC<{
           ))}
         </div>
       )}
+      </>)}
     </div>
   );
 };
