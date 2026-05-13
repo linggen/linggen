@@ -264,46 +264,51 @@ impl Tools {
             "linggen: internal error reading command output\n".to_string()
         });
 
-        // Strip the cwd sentinel from stdout and update persistent cwd.
+        // Strip the cwd sentinel from stdout and update persistent cwd. Use
+        // substring match (not whole-line) so commands whose final line of
+        // output lacks a trailing newline — e.g. `cat file_without_final_nl`
+        // — still strip cleanly; otherwise the sentinel glues onto the user
+        // content (`}__LINGGEN_CWD__`) and leaks into the tool result.
         let stdout = {
-            let mut lines: Vec<&str> = stdout.lines().collect();
-            // Look for sentinel from the end (it's always the second-to-last line).
-            let sentinel_pos = lines.iter().rposition(|l| *l == CWD_SENTINEL);
-            if let Some(pos) = sentinel_pos {
-                // The line after the sentinel is the pwd output.
-                if pos + 1 < lines.len() {
-                    let new_cwd = PathBuf::from(lines[pos + 1]);
-                    if new_cwd.is_absolute() && new_cwd.exists() {
-                        if let Some(sid) = &self.session_id {
-                            let old_cwd = self.cwd_by_session.lock().unwrap()
-                                .get(sid).cloned();
-                            self.cwd_by_session.lock().unwrap().insert(sid.clone(), new_cwd.clone());
-                            // Emit working folder change if cwd actually changed
-                            if old_cwd.as_ref() != Some(&new_cwd) {
-                                if let Some(ref tx) = self.progress_tx {
-                                    let git_root = find_git_root(&new_cwd);
-                                    let project = git_root.as_ref()
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_default();
-                                    let project_name = git_root.as_ref()
-                                        .and_then(|p| p.file_name())
-                                        .map(|n| n.to_string_lossy().to_string())
-                                        .unwrap_or_default();
-                                    let _ = tx.send((
-                                        "__cwd_changed__".to_string(),
-                                        format!("{}|{}", project, project_name),
-                                        new_cwd.to_string_lossy().to_string(),
-                                    ));
-                                }
+            let mut s = stdout;
+            let sentinel_with_nl = format!("{}\n", CWD_SENTINEL);
+            if let Some(sent_pos) = s.rfind(&sentinel_with_nl) {
+                let after_sent = sent_pos + sentinel_with_nl.len();
+                let pwd_end = s[after_sent..]
+                    .find('\n')
+                    .map(|i| after_sent + i)
+                    .unwrap_or(s.len());
+                let new_cwd = PathBuf::from(s[after_sent..pwd_end].to_string());
+                if new_cwd.is_absolute() && new_cwd.exists() {
+                    if let Some(sid) = &self.session_id {
+                        let old_cwd = self.cwd_by_session.lock().unwrap()
+                            .get(sid).cloned();
+                        self.cwd_by_session.lock().unwrap().insert(sid.clone(), new_cwd.clone());
+                        // Emit working folder change if cwd actually changed
+                        if old_cwd.as_ref() != Some(&new_cwd) {
+                            if let Some(ref tx) = self.progress_tx {
+                                let git_root = find_git_root(&new_cwd);
+                                let project = git_root.as_ref()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                let project_name = git_root.as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                let _ = tx.send((
+                                    "__cwd_changed__".to_string(),
+                                    format!("{}|{}", project, project_name),
+                                    new_cwd.to_string_lossy().to_string(),
+                                ));
                             }
                         }
                     }
                 }
-                // Remove sentinel line and pwd line from output.
-                let drain_end = (pos + 2).min(lines.len());
-                lines.drain(pos..drain_end);
+                // Strip [sentinel, end-of-pwd-line] inclusive of trailing \n.
+                let strip_end = (pwd_end + 1).min(s.len());
+                s.replace_range(sent_pos..strip_end, "");
             }
-            let mut cleaned = lines.join("\n");
+            let mut cleaned = s;
             // Restore trailing newline if original had one.
             if !cleaned.is_empty() {
                 cleaned.push('\n');

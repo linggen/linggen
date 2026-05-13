@@ -412,56 +412,58 @@ pub(crate) async fn run_bash_api(
         Err(_) => (-1, String::new(), "Command timed out".to_string()),
     };
 
-    // Strip the cwd sentinel and update per-session cwd.
-    let lines: Vec<&str> = stdout.lines().collect();
-    if let Some(pos) = lines.iter().rposition(|l| *l == CWD_SENTINEL) {
-        if pos + 1 < lines.len() {
-            let new_cwd = PathBuf::from(lines[pos + 1]);
-            if new_cwd.is_absolute() && new_cwd.exists() {
-                if let Some(sid) = &req.session_id {
-                    let old_cwd: Option<PathBuf> = {
-                        let guard = state.user_bash_cwd.lock().await;
-                        guard.get(sid).cloned()
-                    };
-                    {
-                        let mut guard = state.user_bash_cwd.lock().await;
-                        guard.insert(sid.clone(), new_cwd.clone());
-                    }
+    // Strip the cwd sentinel and update per-session cwd. Use substring match
+    // (not whole-line) so commands whose last line of output has no trailing
+    // newline — e.g. `cat file_without_final_newline` — still strip cleanly;
+    // otherwise the sentinel glues onto the user content (`}__LINGGEN_CWD__`)
+    // and leaks into the caller.
+    let sentinel_with_nl = format!("{}\n", CWD_SENTINEL);
+    if let Some(sent_pos) = stdout.rfind(&sentinel_with_nl) {
+        let after_sent = sent_pos + sentinel_with_nl.len();
+        let pwd_end = stdout[after_sent..]
+            .find('\n')
+            .map(|i| after_sent + i)
+            .unwrap_or(stdout.len());
+        let new_cwd = PathBuf::from(stdout[after_sent..pwd_end].to_string());
+        if new_cwd.is_absolute() && new_cwd.exists() {
+            if let Some(sid) = &req.session_id {
+                let old_cwd: Option<PathBuf> = {
+                    let guard = state.user_bash_cwd.lock().await;
+                    guard.get(sid).cloned()
+                };
+                {
+                    let mut guard = state.user_bash_cwd.lock().await;
+                    guard.insert(sid.clone(), new_cwd.clone());
+                }
 
-                    // Emit WorkingFolderChanged if cwd actually changed.
-                    if old_cwd.as_ref() != Some(&new_cwd) {
-                        let git_root = search_exec_find_git_root(&new_cwd);
-                        let project = git_root.as_ref()
-                            .map(|p| p.to_string_lossy().to_string());
-                        let project_name = git_root.as_ref()
-                            .and_then(|p| p.file_name())
-                            .map(|n| n.to_string_lossy().to_string());
-                        // Update session metadata
-                        let cwd_str = new_cwd.to_string_lossy().to_string();
-                        if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid) {
-                            meta.cwd = Some(cwd_str.clone());
-                            meta.project = project.clone();
-                            meta.project_name = project_name.clone();
-                            let _ = state.manager.global_sessions.update_session_meta(&meta);
-                        }
-                        let _ = state.events_tx.send(ServerEvent::WorkingFolderChanged {
-                            session_id: sid.clone(),
-                            cwd: cwd_str,
-                            project,
-                            project_name,
-                        });
+                // Emit WorkingFolderChanged if cwd actually changed.
+                if old_cwd.as_ref() != Some(&new_cwd) {
+                    let git_root = search_exec_find_git_root(&new_cwd);
+                    let project = git_root.as_ref()
+                        .map(|p| p.to_string_lossy().to_string());
+                    let project_name = git_root.as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().to_string());
+                    // Update session metadata
+                    let cwd_str = new_cwd.to_string_lossy().to_string();
+                    if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid) {
+                        meta.cwd = Some(cwd_str.clone());
+                        meta.project = project.clone();
+                        meta.project_name = project_name.clone();
+                        let _ = state.manager.global_sessions.update_session_meta(&meta);
                     }
+                    let _ = state.events_tx.send(ServerEvent::WorkingFolderChanged {
+                        session_id: sid.clone(),
+                        cwd: cwd_str,
+                        project,
+                        project_name,
+                    });
                 }
             }
         }
-        // Remove sentinel + pwd lines from output.
-        let mut clean_lines: Vec<&str> = lines.clone();
-        let drain_end = (pos + 2).min(clean_lines.len());
-        clean_lines.drain(pos..drain_end);
-        stdout = clean_lines.join("\n");
-        if !stdout.is_empty() && !stdout.ends_with('\n') {
-            stdout.push('\n');
-        }
+        // Strip [sentinel, end-of-pwd-line] inclusive of the pwd's trailing \n.
+        let strip_end = (pwd_end + 1).min(stdout.len());
+        stdout.replace_range(sent_pos..strip_end, "");
     }
 
     Json(serde_json::json!({
