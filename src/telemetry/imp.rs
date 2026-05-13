@@ -61,9 +61,9 @@ impl Telemetry {
             return;
         }
         let state_path = state_path(&self.inner.data_dir, self.inner.product);
-        let prev = load_state(&state_path).unwrap_or_default();
+        let mut state = load_state(&state_path).unwrap_or_default();
 
-        let install_payload = if prev.last_version.is_empty() {
+        let install_payload = if state.last_version.is_empty() {
             // installation_id was either just created OR existed but this
             // product never wrote a state file before. Either way, treat
             // as install. `via` comes from the install-source marker
@@ -71,10 +71,10 @@ impl Telemetry {
             let mut p = read_install_source(&self.inner.data_dir, self.inner.product);
             p.insert("via".into(), p.get("via").cloned().unwrap_or_else(|| "unknown".into()));
             Some(p)
-        } else if prev.last_version != APP_VERSION {
+        } else if state.last_version != APP_VERSION {
             let mut p = std::collections::BTreeMap::new();
             p.insert("via".into(), "upgrade".into());
-            p.insert("from_version".into(), prev.last_version.clone());
+            p.insert("from_version".into(), state.last_version.clone());
             p.insert("to_version".into(), APP_VERSION.into());
             Some(p)
         } else {
@@ -85,16 +85,38 @@ impl Telemetry {
             self.spawn_post("install", Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)));
         }
 
-        let new_state = State { last_version: APP_VERSION.into() };
-        let _ = save_state(&state_path, &new_state);
+        // Read-modify-write: preserve last_command_day across launch.
+        state.last_version = APP_VERSION.into();
+        let _ = save_state(&state_path, &state);
+    }
+
+    /// Daily-dedup helper: returns true if we should fire a command event
+    /// now and updates state, false if today's slot is already filled.
+    fn should_fire_command_today(&self) -> bool {
+        let state_path = state_path(&self.inner.data_dir, self.inner.product);
+        let mut state = load_state(&state_path).unwrap_or_default();
+        let today = today_utc_day();
+        if state.last_command_day == today {
+            return false;
+        }
+        state.last_command_day = today;
+        let _ = save_state(&state_path, &state);
+        true
     }
 
     /// Record a meaningful action. `verb` is a dotted, stable identifier
     /// stored verbatim in payload.verb (e.g. "skill.ling-mem.open",
     /// "session.start", "tool.bash"). Non-blocking.
+    ///
+    /// Daily-deduped: fires at most once per UTC day per installation. DAU
+    /// is the only thing the server cares about right now, so we don't
+    /// flood D1 with one row per call.
     #[allow(dead_code)] // wired in by follow-up commits (skill.open, session.start, …)
     pub fn command(&self, verb: &str) {
         if !self.inner.enabled || self.inner.installation_id.is_empty() {
+            return;
+        }
+        if !self.should_fire_command_today() {
             return;
         }
         let payload = serde_json::json!({ "verb": verb });
@@ -103,8 +125,12 @@ impl Telemetry {
 
     /// Like `command`, but merges `extra` into the payload alongside `verb`.
     /// Use for engine.start where the payload also carries `system_state`.
+    /// Same daily-dedup contract as `command`.
     pub fn command_with_payload(&self, verb: &str, extra: serde_json::Value) {
         if !self.inner.enabled || self.inner.installation_id.is_empty() {
+            return;
+        }
+        if !self.should_fire_command_today() {
             return;
         }
         let mut payload = serde_json::json!({ "verb": verb });
@@ -177,6 +203,20 @@ fn is_opted_out(data_dir: &Path) -> bool {
 struct State {
     #[serde(default)]
     last_version: String,
+    /// UTC day-since-epoch of the most recent `command` event. Zero = never
+    /// fired. Compared against `today_utc_day()` to gate per-day dedup.
+    #[serde(default)]
+    last_command_day: i64,
+}
+
+/// Days since 1970-01-01 UTC. Used as the daily-dedup key for the
+/// `command` event — avoids pulling in chrono just for date comparison.
+fn today_utc_day() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| (d.as_secs() / 86_400) as i64)
+        .unwrap_or(0)
 }
 
 fn state_path(data_dir: &Path, product: &str) -> PathBuf {
