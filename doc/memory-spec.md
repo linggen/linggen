@@ -13,130 +13,132 @@ Persistent knowledge that travels with the user across sessions — about
 who they are, how they want to work, the decisions they've made, and the
 people and projects in their life. Memory must help every kind of user
 (software engineer, musician, language learner, cook), not just coders.
-It is **append-mostly**: the store grows when there's signal, and shrinks
-only when a fixed rule fires or the user agrees during a live session.
+
+> **Status: rebuild.** §1–§2 are the new architecture (hippocampus:
+> capture → consolidate → recall; two LanceDB tables, no markdown).
+> Decay and §3 rule 5 are resolved. Open items remain in "Open / next".
+> No back-compatibility with the prior append-mostly single-store design.
 
 ## 1. What is memory
 
 Memory is the **user's biography across sessions**, not the agent's
 notebook of what it did.
 
-**What it is:**
+**Is:** identity, role, life context; how the user wants the agent to
+work; decisions and their reasoning; cross-project gotchas they re-hit.
 
-- The user's identity, role, language, life context.
-- How the user wants the agent to work — preferences, commitments, do/don't rules.
-- Decisions the user made and the reasoning behind them.
-- Cross-project gotchas the user genuinely re-encounters.
+**Isn't:** an activity log (git records that), a codebase snapshot (files
+are truth), a transcript (the session store records that).
 
-**What it isn't:**
+Knowledge lives in one of three scopes, picked by *how the agent needs
+to see it*:
 
-- An activity log of what the agent worked on (git history records that).
-- A snapshot of the codebase (the files are the source of truth).
-- A conversation transcript (the session store records that).
+- **Core** — universals about the person (name, role, languages, hard
+  work rules). Rows tagged `tier=core` in the semantic table, injected
+  **unconditionally** into every system prompt (no similarity gate).
+  Tiny. No markdown files — one substrate, no two-places sync.
+- **Semantic** — everything else durable. Curated, deduplicated,
+  similarity-retrieved on demand. The live recall hot path.
+- **Episodic** — recent extracted experience, awaiting consolidation.
+  Decays. Not on the live query path; it is the consolidator's input.
 
-Two places knowledge can live, picked by how the agent needs to see it:
+If a candidate earns none of the three, **drop it.** Memory never writes
+to project files (`AGENTS.md`, `CLAUDE.md`, source, docs) — those are
+user-curated; the agent reads them directly when needed.
 
-- **Core memory** — universals about the person, always inlined into
-  every session's system prompt. Tiny by design.
-- **RAG memory** — everything else durable, queried on demand by the
-  agent or surfaced at turn start.
+## 2. Architecture — capture, consolidate, recall
 
-If a candidate doesn't earn a place in either layer, **drop it.**
-Memory does not write to project files (`<project>/AGENTS.md`,
-`CLAUDE.md`, source code, docs). Those are user-curated; the agent
-will read the file directly when it needs the content. Mixing
-auto-extracted facts into version-controlled files creates churn the
-user didn't author and conflates two distinct authorities.
+A two-engine pipeline over three stores. The model is the hippocampus:
+fast broad capture during waking, selective consolidation offline,
+forgetting of what didn't earn permanence.
 
-The split between the two layers matters because *how a fact is loaded*
-determines *whether the agent can use it*. Universals go in core
-(deterministic, every session). Things the agent needs sometimes go in
-RAG (probabilistic search). Anything that doesn't justify either is
-not memory — drop.
+### Stores — two LanceDB tables, no markdown
 
-## 2. How memory works
+- **Semantic table** — durable, curated, superseded in place. Rows
+  carry a `tier`: `core` (always injected, no similarity gate) or
+  `semantic` (similarity-retrieved on demand). Core and semantic share
+  one table because they share a churn/volume profile (low-churn,
+  durable, retrieval-relevant) and core is tiny — the
+  separate-table rule applies only when profiles differ.
+- **Episodic table** — high-volume, churny, decays. Encoder writes here.
 
-### Three components
+Episodic is a **separate table** from semantic: it is high-churn and
+high-volume; one shared ANN index would let episodic dominate it,
+fragment it under churn, and dilute semantic relevance. ("Store" is
+ling-mem's wrapper term; LanceDB calls it a table.)
 
-- **Core layer.** Two markdown files (`identity.md`, `style.md`) on
-  disk under `~/.linggen/memory/`. Engine-inlined into every session's
-  stable system prompt. The user, the agent, and the extraction
-  pipeline all write the same way — by editing markdown — and every
-  writer goes through normal file-permission plumbing. High bar for
-  entry; the whole pair stays ~30–50 lines combined. No activity logs,
-  no project-specific rules, no meta-feedback about the memory system
-  itself.
+Core was previously markdown files (`identity.md`/`style.md`); the
+rebuild folds them into `tier=core` rows. Determinism comes from the
+unconditional query, not the file. Gains: one substrate, core rows are
+also vector-searchable, consolidator promotes by flipping the tier.
+Loss: no external text-editor edit — mitigated by the memory UI/CLI.
+Third-party hosts read core via the binary (`ling-mem list --tier
+core`); no markdown inject path.
 
-- **Skill layer.** A pluggable memory skill exposes two verb-dispatched
-  tools: `Memory_query` (verbs: `get`, `search`, `list`) and
-  `Memory_write` (verbs: `add`, `update`, `delete`). The default skill
-  ships a local RAG store; the contract is engine-owned and
-  **host-agnostic**, so the same skill works inside Linggen, inside
-  Claude Code, and inside any agent that honors the `provides:
-  [memory]` declaration. Swapping skills changes where data lives, not
-  what tools the model sees. Bulk forget is deliberately not on the
-  model surface — it's user-initiated via the dashboard or `ling-mem
-  forget` CLI.
+### Engines (the hippocampus)
 
-- **Mission layer.** An offline extraction agent that reads recent
-  transcripts, applies the durability rules in §4, and appends rows.
-  Runs on a cron in Linggen via the mission scheduler. Runs on user
-  demand in Claude Code — no scheduler, invoked via the skill's slash
-  command or chat trigger. Same prompt, same rules, different runtimes.
+One async subagent (`ling-mem`), fired **every N turns** (N default ~10,
+configurable in Settings). **Per-session counter** — resets each
+session; no startup trigger; sessions shorter than N turns are not
+consolidated. This is a deliberate simplicity tradeoff (no rolling
+cross-session counter), accepted over completeness.
 
-### Three flows
+At each fire, strictly ordered:
 
-- **In-session writes.** When the user explicitly says *"remember X"* or
-  commits to a behavior the agent should keep doing, the agent writes —
-  `Edit` to the core files for universals, `Memory_write` for scoped
-  facts. A periodic mid-session nudge asks the model whether the recent
-  exchange produced anything durable, so opportunities aren't missed.
-  Cadence is configurable; nudge wording is owned by the active skill.
+1. **Encode** — read the recent in-session exchange, apply §4,
+   write/dedup into the **episodic** table. ≈ waking encoding.
+2. **Consolidate** — promote worthy episodic → semantic with agent
+   judgment (extract, generalize, supersede); past-TTL rows processed
+   first. May propose **semantic → `tier=core`** promotion when a
+   stable universal emerges (user-confirmed; rule 1). Idempotent /
+   re-entrant. ≈ reflective consolidation while
+   awake (not a nightly batch).
+3. **Evict** — delete episodic rows past `EPISODIC_TTL`.
 
-- **Offline mission — append + mechanical maintenance.** The mission
-  appends new rows and runs *mechanical* cleanup: dedup near-rephrases
-  to clearer wording, extend a row's contexts/tags when new evidence
-  fits, add `supersedes` links between rows, retire rows that meet a
-  fixed obsolescence rule (session-arc leak, hard TTL, completed
-  supersedes chain). It does **not** synthesize, generalize, or resolve
-  contradictions — those judgments are reserved for live retrieval (see
-  rule 5 in §3).
+`EPISODIC_TTL` default **7 days** (configurable in Settings), asserted ≥
+a safety multiple of the trigger interval.
 
-- **Retrieval doubles as maintenance.** Push at turn start (the user's
-  message is searched silently and matches prefix the user turn), pull
-  on demand (the model calls `Memory_query`). When matching rows
-  surface, the agent does three jobs at once:
+**Consolidate-before-evict resolves the keep-vs-delete question by
+ordering, not policy:** a past-TTL row always gets a final promotion
+pass in the same tick before it can be evicted. Episodic is therefore
+both bounded and lossless except for rows the consolidator judged not
+worth keeping — which is correct.
 
-  1. **Synthesize.** Multiple rows on the same theme reconcile in
-     prose — *"From memory: …"*. Live and visible.
-  2. **Detect drift.** Notice rows that contradict newer info,
-     contradict what the user just said, or have aged into staleness.
-  3. **Propose action.** Surface the drift to the user. On confirm, the
-     agent issues `Memory_write` (verb=update to merge, or verb=delete
-     to forget a single row). Bulk forget is not on the model tool
-     surface — it's user-initiated via the dashboard or CLI.
+The subagent runs **async** (never blocks the user's turn). A transient
+"running" widget shows while it works. A persistent result line lands
+**only on a material change** (≥1 fact promoted or superseded) — no-op
+ticks stay silent — and is inspectable / undoable, with an explicit
+failure state if the subagent errors. All such copy obeys the
+≤20-word user-facing brevity rule (`code-style.md`).
 
-  Maintenance is encountered, not scheduled. Reconciliation, conflict
-  resolution, and expiration all fire when retrieval pulls the relevant
-  rows and the user is right there to confirm or correct.
+### Binary vs judgment split
 
-### Routing
+- The **`ling-mem` binary** owns both tables + the mechanical primitives
+  (embed, dedup, supersede, decay). No LLM in the binary.
+- **Judgment** ("what's worth keeping") needs an LLM, so it is an agent,
+  scheduled per host:
+  - **Linggen** — built-in: engine schedules the encoder subagent and
+    the consolidator cron mission. Reliable, not user-deletable.
+  - **Third-party (Claude Code, ClawHub/OpenClaw)** — the `ling-mem`
+    skill + lifecycle hooks substitute for the engine scheduler
+    (turn-counter on a Stop hook, etc.).
+- Once Linggen ships built-in, the skill is **third-party-only**.
+- The store lives under `~/.linggen`, owned by the binary, **not** in
+  the skill bundle: deleting the skill degrades capture, never loses
+  data.
 
-Two destinations for candidates that earn a place; everything else is
-dropped. **Memory never writes to project files** (`<project>/AGENTS.md`,
-`CLAUDE.md`, source code, docs).
+### Recall
 
-- **Universal-about-person** (true in any project, any time) → core
-  markdown (`identity.md` or `style.md`).
-- **Everything else durable** (cross-project intent, decision,
-  preference, life context, cross-project learning) → RAG via
-  `Memory_write({verb: "add", ...})`.
-- **Anything else, including project-internal implementation detail**
-  → drop. The agent reads the project's own files (code, AGENTS.md
-  authored by the user) when it needs to know.
+Live path is unchanged: core inlined every session; semantic queried via
+`Memory_query` (verbs `get`/`search`/`list`) and surfaced at turn start.
+Writes via `Memory_write` (`add`/`update`/`delete`). Episodic is not on
+this path. Bulk forget stays user-initiated (dashboard / `ling-mem
+forget` CLI), never a model tool.
 
-Most candidates drop — the durability rules in §4 reject more than they
-accept.
+### Extraction contract
+
+The encoder and the consolidator share one contract: the durability
+rules in §4. Same rules, two runtimes.
 
 ## 3. Design rules
 
@@ -174,10 +176,17 @@ What it must not do is drift: expired facts get retired, conflicting
 rows get reconciled, noisy duplicates get merged. Net value goes up over
 time, not row count alone.
 
-**5. Live for synthesis, offline for mechanics.**
+**5. Consolidation promotes; only user-facing forgets need a human.**
 
-Maintenance happens in two places, split by the kind of judgment it
-needs.
+The consolidator (§2) promotes episodic → semantic with agent judgment —
+extract, generalize, supersede — autonomously, on the every-N-turns
+tick. Episodic eviction is automatic (consolidate-before-evict). What
+still requires explicit user confirmation: **bulk forget and any
+destructive rewrite of an existing semantic row** (rule 1). Live
+retrieval still reconciles/synthesizes in the user's presence. The old
+"semantic maintenance = live only" split is retired.
+
+The table below maps where each operation runs.
 
 *Mechanical maintenance* — exact-rephrase dedup, extending contexts/tags,
 adding `supersedes` links, retiring rows that meet a fixed obsolescence
@@ -216,10 +225,10 @@ those.
 ## 4. What's worth remembering
 
 Memory's value is signal density, not row count. Three rules decide
-whether a candidate earns its place. Routing (core markdown vs RAG) is
-the §2 concern — these rules answer only the binary question:
+whether a candidate earns its place. Scope (`tier=core` vs `semantic`)
+is the §2 concern — these rules answer only the binary question:
 **should this be saved at all?** Memory never writes to project files;
-candidates that don't fit core or RAG are dropped.
+candidates that earn neither tier are dropped.
 
 **1. Don't memorize what lives in workspace files.**
 
@@ -356,39 +365,57 @@ open, every change explicit) and a **skill dashboard** for higher-level
 summaries, extraction controls, and the on-demand cluster-analysis
 described in §4 rule 2. The split is responsibility, not packaging.
 
-## Known limitations
+## Evaluation
 
-This v1 design is opinionated and ships with intentional gaps. Worth
-naming so the next pass knows what to fix:
+- **Retrieval** — [LongMemEval-S](https://arxiv.org/abs/2410.10813)
+  (ICLR 2025), `GRANULARITY=turn` (ling-mem caps embeddings at 512
+  tokens; session-level would measure the cap, not retrieval). Runner +
+  methodology: `linggen-memory/benchmark/`. It measures the *retrieval
+  subsystem only* — a regression check and a comparable number, **not**
+  the system's worth. It cannot see extraction, consolidation, dedup,
+  supersession, or decay, and it rewards the store-everything
+  anti-pattern this design rejects. Frame any published number that way.
+- **Write side** — extraction precision, dedup correctness,
+  supersession accuracy, decay calibration. No standard benchmark
+  exists; this is the eval that measures the hard part. Unbuilt — see
+  Open / next.
 
-- **No row-level confidence calibration.** Old rows from early-version
-  extractors sit equal to fresh user-confirmed rows. A `confidence` or
-  `last_verified` field would let retrieval prioritize correctly.
-- **No scale story past ~10⁴ rows.** Append-mostly works at small scale;
-  at large scale the embedding index needs re-tiering and retrieval
-  needs cluster ranking.
-- **Privacy isolation is by convention, not enforcement.** A `work/` vs
-  `personal/` context tag relies on the agent filtering correctly. No
-  hard cross-context boundary.
-- **Live maintenance is a property the implementation must earn.** "The
-  agent will detect drift and propose forgets" depends on prompting and
-  evals — it's not a guaranteed property of the design alone.
-- **Cold-start has no importer.** New users start empty; there's no
-  path to bootstrap from existing notes or prior tools.
-- **Proactive synthesis lives entirely in the dashboard.** Users who
-  don't open it never get pattern-surfacing value.
+## Open / next
 
-These are deferred deliberately, not overlooked.
+Ordered. Each is a design decision not yet locked.
+
+1. **Decay model** — *resolved* (§2): wall-clock `EPISODIC_TTL` (7d
+   default, Settings-configurable); consolidate-before-evict; per-session
+   every-N-turns trigger, no startup trigger, sub-N sessions skipped.
+2. **Consolidator contract** — exact episodic→semantic promotion rules,
+   re-entrancy watermark, supersession mechanics.
+3. **Dedup threshold retune.** `DEDUP_SIMILARITY_THRESHOLD = 0.88` was
+   tuned for v0.4 MiniLM; Qwen3-Embedding-0.6B's score distribution
+   differs (relevant ~0.4–0.7). Re-validate before consolidation relies
+   on it.
+4. **Write-side eval — the next concrete deliverable.** Decided: do
+   not optimize toward LongMemEval (it scores retrieval over a frozen
+   store-everything haystack — structurally the opposite of curation;
+   our designed system scores *lower* on it by construction, and that
+   is correct). LongMemEval stays a regression check on the raw
+   retrieval subsystem only (query pre-consolidation episodic,
+   turn-granularity; add BM25+fusion to be respectable). The real
+   scorecard is a new eval measuring extraction precision, dedup
+   correctness, supersession accuracy, and decay calibration — unbuilt
+   by anyone; this is the opening. Build it next.
+5. **Encoder ↔ consolidator boundary.** How much judgment the
+   mid-session encoder applies vs. the offline consolidator.
+
+Carried gaps (not blocking the rebuild): no row-level confidence
+calibration; privacy isolation is by convention not enforcement;
+cold-start has no importer; proactive pattern-surfacing lives only in
+the dashboard.
 
 ## Future
 
-- **Cross-device sync** — exports + git is v1; real sync is P2P via
+- **Cross-device sync** — exports + git first; real sync is P2P via
   Linggen's WebRTC transport.
-- **Temporal reasoning** — entity-time graph queries inspired by Zep;
-  `supersedes` is the structural foothold.
-- **Multi-provider** — a local fast skill + a cloud/persistent skill
-  running simultaneously with merged results.
-- **`Memory_archive`** — soft-forget (hidden from default search but
-  recoverable). Eighth tool to add when the default skill supports it.
-- **Confidence calibration** — surface row freshness/age in the UI;
-  use it to rank retrieval.
+- **Temporal reasoning** — entity-time graph queries; `supersedes` is
+  the structural foothold.
+- **`Memory_archive`** — soft-forget: hidden from default search but
+  recoverable.

@@ -16,6 +16,14 @@ guide: |
 - Prefer simple, flat control flow over deep nesting.
 - Keep the codebase clean by removing dead and legacy-only code.
 
+## User-Facing Brevity (global)
+
+Every user-facing message — UI copy, status lines, widget results,
+notifications — says what happened in **≤20 words**. No preamble, no
+justification, no recap. If it needs more, link or make it expandable;
+the default view is one glanceable line. Humans are reading; respect the
+reader's time.
+
 ## File and Function Size
 
 - Keep source files at a reasonable length; split large files into focused modules.
