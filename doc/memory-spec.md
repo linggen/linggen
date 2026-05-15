@@ -85,18 +85,25 @@ cross-session counter), accepted over completeness.
 
 At each fire, strictly ordered:
 
-1. **Encode** — read the recent in-session exchange, apply §4,
-   write/dedup into the **episodic** table. ≈ waking encoding.
-2. **Consolidate** — promote worthy episodic → semantic with agent
-   judgment (extract, generalize, supersede); past-TTL rows processed
-   first. May propose **semantic → `tier=core`** promotion when a
-   stable universal emerges (user-confirmed; rule 1). Idempotent /
-   re-entrant. ≈ reflective consolidation while
+1. **Encode** — read the recent in-session exchange, apply §4's
+   *exclusion* filters only (drop file-derivable, secrets, pure
+   activity), write/dedup into the **episodic** table. Liberal capture;
+   the consolidate step is the durability gate. ≈ waking encoding.
+2. **Consolidate** — process **past-TTL rows only**; each gets one
+   terminal decision: promote worthy rows → semantic (extract +
+   optional `supersedes` link, never a destructive rewrite) or delete.
+   Generalizing / merging stay live-only (§3). May propose **semantic →
+   `tier=core`** when a stable universal emerges (user-confirmed; rule
+   1). Re-entrant by construction — a handled row leaves episodic, so
+   each tick sees only unhandled rows. ≈ reflective consolidation while
    awake (not a nightly batch).
-3. **Evict** — delete episodic rows past `EPISODIC_TTL`.
+3. **Evict** — delete episodic rows older than `EPISODIC_TTL` by
+   last-edit time (a touch resets retention).
 
-`EPISODIC_TTL` default **7 days** (configurable in Settings), asserted ≥
-a safety multiple of the trigger interval.
+`EPISODIC_TTL` default **7 days** (configurable in Settings). Both it
+and the trigger interval must be > 0; losslessness comes from the
+consolidate-before-evict ordering below, not a TTL/interval ratio (the
+two are different units — wall-clock days vs. turns).
 
 **Consolidate-before-evict resolves the keep-vs-delete question by
 ordering, not policy:** a past-TTL row always gets a final promotion
@@ -384,11 +391,14 @@ described in §4 rule 2. The split is responsibility, not packaging.
 
 Ordered. Each is a design decision not yet locked.
 
-1. **Decay model** — *resolved* (§2): wall-clock `EPISODIC_TTL` (7d
+1. **Decay model** — *resolved* (§2): clock = `updated_at` (touch
+   resets it); wall-clock `EPISODIC_TTL` (7d
    default, Settings-configurable); consolidate-before-evict; per-session
    every-N-turns trigger, no startup trigger, sub-N sessions skipped.
-2. **Consolidator contract** — exact episodic→semantic promotion rules,
-   re-entrancy watermark, supersession mechanics.
+2. **Consolidator contract** — *resolved* (§2): consolidate processes
+   past-TTL rows only; each is terminally promoted (→ semantic, optional
+   `supersedes` link, never destructive) or deleted; re-entrancy needs
+   no watermark — a handled row leaves episodic.
 3. **Dedup threshold retune.** `DEDUP_SIMILARITY_THRESHOLD = 0.88` was
    tuned for v0.4 MiniLM; Qwen3-Embedding-0.6B's score distribution
    differs (relevant ~0.4–0.7). Re-validate before consolidation relies
@@ -403,8 +413,13 @@ Ordered. Each is a design decision not yet locked.
    scorecard is a new eval measuring extraction precision, dedup
    correctness, supersession accuracy, and decay calibration — unbuilt
    by anyone; this is the opening. Build it next.
-5. **Encoder ↔ consolidator boundary.** How much judgment the
-   mid-session encoder applies vs. the offline consolidator.
+5. **Encoder ↔ consolidator boundary** — *resolved* (§2): the encoder
+   does liberal capture minus §4's hard exclusions; the consolidator is
+   the durability gate (terminal promote/delete of past-TTL rows).
+6. **Consolidation widget polish** — the tick currently reuses the
+   generic subagent-tree surface. The §2 ideal (no-op ticks silent,
+   persistent line only on a material change, a dedicated
+   inspectable/undoable memory widget) is deferred.
 
 Carried gaps (not blocking the rebuild): no row-level confidence
 calibration; privacy isolation is by convention not enforcement;
