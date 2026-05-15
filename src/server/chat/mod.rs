@@ -21,6 +21,7 @@
 //! and per-turn auto-recall.
 
 mod admin;
+mod consolidation;
 mod handler;
 pub(super) mod helpers;
 mod plan_flow;

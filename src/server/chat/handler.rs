@@ -588,6 +588,12 @@ pub(crate) async fn chat_handler(
             run_id: None,
             parent_run_id: None,
         });
+
+        // Post-turn: if this owner session just hit a consolidation
+        // interval, fire the memory consolidation tick off the turn
+        // (non-blocking — reads what it needs from `engine` here, then
+        // spawns). No-op for consumer/mission/sub-N sessions.
+        super::consolidation::maybe_fire_consolidation(&ctx, &engine);
         state_clone
             .send_agent_status(
                 target_id_clone,

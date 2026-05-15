@@ -21,7 +21,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -790,6 +790,7 @@ async fn prepare_server(
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
+        consolidation_active: Arc::new(Mutex::new(HashSet::new())),
     });
 
     // Flush token usage to disk every 30 seconds.
