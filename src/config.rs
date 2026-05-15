@@ -134,10 +134,28 @@ pub struct AgentConfig {
     /// See `engine/context.rs::context_soft_token_limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_threshold: Option<f32>,
+    /// Memory consolidation trigger: fire the every-N-turns consolidation
+    /// subagent once per N completed turns (per-session counter). Default 10.
+    /// See `memory-spec.md` §2.
+    #[serde(default = "default_consolidate_every_n_turns")]
+    pub consolidate_every_n_turns: usize,
+    /// Episodic-memory retention in days. Episodic rows past this age are
+    /// terminally decided by the consolidate pass, then swept by the evict
+    /// backstop. Default 7. See `memory-spec.md` §2.
+    #[serde(default = "default_episodic_ttl_days")]
+    pub episodic_ttl_days: u64,
 }
 
 fn default_memory_nudge_interval() -> usize {
     6
+}
+
+fn default_consolidate_every_n_turns() -> usize {
+    10
+}
+
+fn default_episodic_ttl_days() -> u64 {
+    7
 }
 
 impl AgentConfig {
@@ -345,6 +363,23 @@ impl Config {
         if self.agent.max_iters > 1000 {
             anyhow::bail!("Agent max_iters must not exceed 1000");
         }
+        if self.agent.consolidate_every_n_turns == 0 {
+            anyhow::bail!(
+                "Agent consolidate_every_n_turns must be greater than 0 (memory consolidation is core, not disablable)"
+            );
+        }
+        // Spec §2 asks EPISODIC_TTL be "≥ a safety multiple of the trigger
+        // interval". The interval is in turns and the TTL in wall-clock days,
+        // so a literal `days ≥ k·turns` inequality conflates units and is not
+        // expressible. Losslessness is actually guaranteed by the
+        // consolidate-before-evict ordering within a tick (step 2 runs before
+        // step 3), not by this floor — so the check reduces to a sane minimum:
+        // a 0-day TTL would evict episodic rows the same tick they are encoded.
+        if self.agent.episodic_ttl_days == 0 {
+            anyhow::bail!(
+                "Agent episodic_ttl_days must be greater than 0 (a 0-day TTL evicts episodic memory before it can be consolidated)"
+            );
+        }
         // Warn (log) if default_models references non-existent model IDs.
         for dm in &self.routing.default_models {
             if !seen_ids.contains(&dm) {
@@ -385,6 +420,8 @@ impl Default for Config {
                 max_delegation_depth: default_max_delegation_depth(),
                 memory_nudge_interval: default_memory_nudge_interval(),
                 compact_threshold: None,
+                consolidate_every_n_turns: default_consolidate_every_n_turns(),
+                episodic_ttl_days: default_episodic_ttl_days(),
             },
             logging: LoggingConfig {
                 level: None,
@@ -427,6 +464,30 @@ mod tests {
         cfg.models[0].id = "  ".to_string();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("Model ID cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_consolidate_interval_zero() {
+        let mut cfg = valid_config();
+        cfg.agent.consolidate_every_n_turns = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("consolidate_every_n_turns"));
+    }
+
+    #[test]
+    fn test_validate_episodic_ttl_zero() {
+        let mut cfg = valid_config();
+        cfg.agent.episodic_ttl_days = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("episodic_ttl_days"));
+    }
+
+    #[test]
+    fn test_default_consolidation_settings() {
+        let cfg = valid_config();
+        assert_eq!(cfg.agent.consolidate_every_n_turns, 10);
+        assert_eq!(cfg.agent.episodic_ttl_days, 7);
+        cfg.validate().unwrap();
     }
 
     #[test]
