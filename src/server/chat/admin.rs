@@ -168,7 +168,24 @@ pub(crate) async fn compact_chat_api(
     {
         Ok(agent_mutex) => {
             let mut engine = agent_mutex.lock().await;
+            // Compact the same effective context auto-compact sees: the
+            // durable chat_history PLUS the live tool/observation outputs,
+            // where the bulk (e.g. fetched Reddit trees) actually lives.
+            // /compact runs outside the agent loop, so a finished run's
+            // observations are still resident — auto-compact reaches the
+            // same content via prepare_loop_messages. Without this, /compact
+            // on a tool-heavy session is a no-op ("nothing to compact").
             let mut messages = std::mem::take(&mut engine.chat_history);
+            let obs_rendered: Vec<String> = engine
+                .observations
+                .iter()
+                .map(|o| engine.observation_for_model(o))
+                .collect();
+            messages.extend(
+                obs_rendered
+                    .into_iter()
+                    .map(|c| crate::message::ChatMessage::new("user", c)),
+            );
             let result = engine.force_compact(&mut messages, focus).await;
 
             let referenced_files: Vec<String> = messages
@@ -180,6 +197,9 @@ pub(crate) async fn compact_chat_api(
 
             // Rewrite the persisted session file with the compacted messages.
             if result.is_some() {
+                // Observation bodies are now folded into the summary held in
+                // chat_history; drop them so they aren't re-expanded.
+                engine.observations.clear();
                 let chat_msgs: Vec<crate::state_fs::sessions::ChatMsg> = messages
                     .iter()
                     .map(|m| {
