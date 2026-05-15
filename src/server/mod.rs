@@ -73,8 +73,8 @@ use api::workspace::{
 };
 use chat::{
     approve_plan_handler, ask_user_response_handler, chat_handler, clear_chat_history_api,
-    compact_chat_api, edit_plan_handler, get_system_prompt_api, pending_ask_user_handler,
-    reject_plan_handler,
+    compact_chat_api, compact_config_api, edit_plan_handler, get_system_prompt_api,
+    pending_ask_user_handler, reject_plan_handler,
 };
 
 #[derive(RustEmbed)]
@@ -959,6 +959,7 @@ async fn prepare_server(
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))
         .route("/api/chat/compact", post(compact_chat_api))
+        .route("/api/chat/compact_config", post(compact_config_api))
         .route("/api/chat/system-prompt", get(get_system_prompt_api))
         .route("/api/plan/approve", post(approve_plan_handler))
         .route("/api/plan/edit", post(edit_plan_handler))

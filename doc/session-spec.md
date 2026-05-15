@@ -65,6 +65,15 @@ Any bash command execution — both agent-initiated and user-initiated (`! cd /p
 
 When a git root is detected for the first time, the project is automatically registered in the project store (same as if the user had manually added it). No manual project management needed.
 
+### Context compaction
+
+When estimated prompt tokens exceed `compact_threshold` × context window, the engine compacts in two tiers (aligned with Claude Code):
+
+1. **Evict** — replace old `tool_result` bodies with a placeholder in place (cheap, structure preserved).
+2. **Summarize** — if still over budget, replace everything between the system prompt and a recent verbatim tail with one model-written structured summary. `/compact` forces this tier regardless of budget.
+
+`compact_threshold` (fraction; per-session → `linggen.toml` → 0.95 default) and `compact_focus` (hint fed to the summary prompt) are per-session, set via `POST /api/chat/compact_config`, persisted in `session.yaml`, and re-read on every engine build — so they survive restart and apply to chat-only and mission sessions. `messages.jsonl` is the unbounded source of truth; there is no blunt history cap.
+
 ## Creators
 
 Every session has a creator that determines how it was born and what capabilities it starts with.

@@ -86,6 +86,8 @@ async fn ensure_session(
         mission_id: req.mission_id.clone(),
         model_id: req.model_id.clone(),
         user_id: req.user_id.clone(),
+        compact_threshold: None,
+        compact_focus: None,
     };
 
     if let Some(sid) = req.session_id.clone() {
@@ -346,7 +348,6 @@ async fn restore_chat_history_if_empty(
             .chat_history
             .push(crate::message::ChatMessage::new(role, &m.content));
     }
-    engine.truncate_chat_history();
     if !engine.chat_history.is_empty() {
         tracing::info!(
             "Restored {} chat_history messages from session store",

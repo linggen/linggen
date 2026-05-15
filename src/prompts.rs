@@ -64,7 +64,6 @@ pub mod keys {
     pub const PLAN_UPDATED: &str = "tool-result.plan_updated";
     pub const DONE_DEFAULT: &str = "tool-result.done_default";
     pub const OBSERVATION_WRAPPER: &str = "tool-result.observation_wrapper";
-    pub const COMPACTION_SUMMARY: &str = "tool-result.compaction_summary";
 
     // -- bailout.* --------------------------------------------------------
     pub const BAILOUT_LOOP_LIMIT: &str = "bailout.loop_limit";
@@ -357,7 +356,6 @@ mod tests {
             keys::PLAN_UPDATED,
             keys::DONE_DEFAULT,
             keys::OBSERVATION_WRAPPER,
-            keys::COMPACTION_SUMMARY,
             keys::BAILOUT_LOOP_LIMIT,
             keys::BAILOUT_MALFORMED_OUTPUT,
             keys::BAILOUT_REPETITION_LOOP,

@@ -121,6 +121,10 @@ pub struct EngineConfig {
     /// Every N user messages, inject a hidden memory self-review nudge into
     /// the turn's message list. `0` disables. Default 6.
     pub memory_nudge_interval: usize,
+    /// Global default auto-compaction trigger as a fraction of context_window_tokens.
+    /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
+    /// on the `AgentEngine` still takes precedence over this.
+    pub compact_threshold_default: Option<f32>,
 }
 
 impl EngineConfig {
@@ -145,6 +149,7 @@ impl EngineConfig {
             consumer_allowed_tools: None,
             consumer_allowed_skills: None,
             memory_nudge_interval: config.agent.memory_nudge_interval,
+            compact_threshold_default: config.agent.compact_threshold,
         }
     }
 
@@ -266,13 +271,18 @@ pub struct AgentEngine {
     /// Cached context window size (in tokens) for the active model.
     /// Queried once at loop start and used to adapt compaction thresholds.
     pub context_window_tokens: Option<usize>,
+    /// Per-session override of the auto-compact trigger fraction of
+    /// `context_window_tokens`. None = use default (0.95). Set runtime-only
+    /// via POST /api/chat/compact_config. Skills replay on iframe load.
+    pub compact_threshold: Option<f32>,
+    /// Per-session hint passed to the summarization model on every
+    /// auto-compact pass. None = no hint (matches default behavior).
+    /// Set runtime-only via the same endpoint.
+    pub compact_focus: Option<String>,
     /// Token usage from the most recent API response.
     pub last_token_usage: Option<crate::agent_manager::models::TokenUsage>,
     /// Cached stable portion of the system prompt.
     pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
-    /// Importance tags for each message in the current messages vec,
-    /// kept in sync with the messages vec during the agent loop.
-    pub(crate) message_importance: Vec<MessageImportance>,
     /// Running token estimate accumulated incrementally during the loop.
     /// Reset after compaction. Avoids re-scanning all messages each iteration.
     pub(crate) accumulated_token_estimate: usize,
@@ -362,16 +372,6 @@ pub(crate) struct CachedSystemPrompt {
     pub content: String,
 }
 
-/// Importance level assigned to each message in the conversation history.
-/// Used by the compaction algorithm to preserve high-value messages longer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum MessageImportance {
-    Low = 0,      // empty search results, routine status
-    Normal = 1,   // standard tool results
-    High = 2,     // errors, write/edit results, user messages
-    Critical = 3, // system prompt, user task
-}
-
 #[derive(Clone)]
 pub(crate) struct CachedToolObs {
     pub model: String,
@@ -448,9 +448,10 @@ impl AgentEngine {
             default_models: Vec::new(),
             auto_fallback: true,
             context_window_tokens: None,
+            compact_threshold: None,
+            compact_focus: None,
             last_token_usage: None,
             cached_system_prompt: None,
-            message_importance: Vec::new(),
             accumulated_token_estimate: 0,
             last_assistant_text: None,
             native_tool_mode: false,

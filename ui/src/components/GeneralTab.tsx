@@ -59,6 +59,24 @@ export const GeneralTab: React.FC<{
               placeholder="(optional) Custom prompt to break tool loops"
             />
           </div>
+          <div>
+            <label className={labelCls}>Auto-Compact Threshold (%)</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={10}
+              max={99}
+              step={1}
+              value={config.agent.compact_threshold != null ? Math.round(config.agent.compact_threshold * 100) : ''}
+              onChange={(e) => {
+                const pct = parseInt(e.target.value, 10);
+                const next = Number.isFinite(pct) && pct >= 10 && pct <= 99 ? pct / 100 : null;
+                onChange({ ...config, agent: { ...config.agent, compact_threshold: next } });
+              }}
+              placeholder="95 (default)"
+            />
+            <p className="text-[11px] text-slate-400 mt-0.5">Auto-compact fires when context usage crosses this fraction of the model window. Blank = engine default (95%). Per-session overrides (e.g. Pulse at 50%) still take precedence. Applies to new sessions.</p>
+          </div>
         </div>
       </section>
 

@@ -230,6 +230,8 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         // default.
         model_id: mission.model.clone(),
         user_id: None,
+        compact_threshold: None,
+        compact_focus: None,
     };
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),

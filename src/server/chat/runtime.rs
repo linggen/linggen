@@ -278,7 +278,6 @@ pub(super) async fn push_user_turn_with_recall(
     engine
         .chat_history
         .push(crate::message::ChatMessage::new("user", ctx.clean_msg.clone()));
-    engine.truncate_chat_history();
 }
 
 /// Forward an engine's thinking-channel events to the SSE event bus.

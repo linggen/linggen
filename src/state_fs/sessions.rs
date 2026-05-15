@@ -23,7 +23,7 @@ fn default_creator() -> String {
     "user".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
@@ -53,6 +53,15 @@ pub struct SessionMeta {
     /// Used to isolate sessions by user in proxy rooms.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "consumer_user_id")]
     pub user_id: Option<String>,
+    /// Per-session override of the auto-compaction trigger fraction of
+    /// `context_window_tokens`. None = use engine default (0.95). Set via
+    /// POST /api/chat/compact_config; persisted so it survives engine restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_threshold: Option<f32>,
+    /// Per-session hint passed to the summarization model on every auto-compact
+    /// pass. None = no hint. Set via the same endpoint as `compact_threshold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_focus: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +211,29 @@ impl SessionStore {
             bail!("Session not found: {}", meta.id);
         }
         let yaml = serde_yml::to_string(meta)?;
+        fs::write(yaml_path, yaml)?;
+        Ok(())
+    }
+
+    /// Update the per-session compact config (threshold + focus) in session.yaml.
+    /// Read-modify-write so other fields (title, cwd, model_id, ...) aren't disturbed.
+    /// Either field can be `None` to clear that override.
+    pub fn set_compact_config(
+        &self,
+        session_id: &str,
+        threshold: Option<f32>,
+        focus: Option<String>,
+    ) -> Result<()> {
+        Self::validate_id(session_id)?;
+        let yaml_path = self.session_dir(session_id).join("session.yaml");
+        if !yaml_path.exists() {
+            bail!("Session not found: {}", session_id);
+        }
+        let content = fs::read_to_string(&yaml_path)?;
+        let mut meta: SessionMeta = serde_yml::from_str(&content)?;
+        meta.compact_threshold = threshold;
+        meta.compact_focus = focus;
+        let yaml = serde_yml::to_string(&meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
     }
@@ -372,6 +404,7 @@ mod tests {
             skill: None,
             creator: "user".into(),
             cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+            compact_threshold: None, compact_focus: None,
         };
         store.add_session(&meta).unwrap();
 
@@ -402,6 +435,7 @@ mod tests {
                     skill: None,
                     creator: "user".into(),
                     cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                    compact_threshold: None, compact_focus: None,
                 })
                 .unwrap();
         }
@@ -420,6 +454,7 @@ mod tests {
             skill: None,
             creator: "user".into(),
             cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+            compact_threshold: None, compact_focus: None,
         };
         store.add_session(&meta).unwrap();
 
@@ -459,6 +494,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .unwrap();
 
@@ -507,6 +543,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .unwrap();
         store
@@ -539,6 +576,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .unwrap();
         store
@@ -571,6 +609,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .is_err());
         assert!(store
@@ -581,6 +620,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .is_err());
         assert!(store
@@ -591,6 +631,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                compact_threshold: None, compact_focus: None,
             })
             .is_err());
     }

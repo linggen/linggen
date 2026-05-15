@@ -128,6 +128,12 @@ pub struct AgentConfig {
     /// the turn. `0` disables. Default 6. See `memory-spec.md`.
     #[serde(default = "default_memory_nudge_interval")]
     pub memory_nudge_interval: usize,
+    /// Global auto-compaction trigger as a fraction of context_window_tokens.
+    /// 0.10–0.99. None = use hardcoded engine default (0.95). Per-session
+    /// override (set via POST /api/chat/compact_config) takes precedence.
+    /// See `engine/context.rs::context_soft_token_limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_threshold: Option<f32>,
 }
 
 fn default_memory_nudge_interval() -> usize {
@@ -378,6 +384,7 @@ impl Default for Config {
                 prompt_loop_breaker: None,
                 max_delegation_depth: default_max_delegation_depth(),
                 memory_nudge_interval: default_memory_nudge_interval(),
+                compact_threshold: None,
             },
             logging: LoggingConfig {
                 level: None,

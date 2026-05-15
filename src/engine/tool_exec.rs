@@ -679,20 +679,7 @@ impl AgentEngine {
                 let obs_content = self.observation_text("tool", &canonical_tool, &rendered_model);
                 let obs_msg = self.tool_result_msg_for(obs_content, &tool_call_id, &canonical_tool);
 
-                // Assign importance based on tool type and result.
-                let importance = if matches!(canonical_tool.as_str(), "Write" | "Edit") {
-                    MessageImportance::High
-                } else if canonical_tool == "Grep"
-                    && (rendered_model.contains("(no matches)")
-                        || rendered_model.contains("no file candidates found"))
-                {
-                    MessageImportance::Low
-                } else if canonical_tool == "Glob" && rendered_model.contains("(no files)") {
-                    MessageImportance::Low
-                } else {
-                    MessageImportance::Normal
-                };
-                self.push_tracked_message(messages, obs_msg, importance);
+                self.push_tracked_message(messages, obs_msg);
 
                 let is_empty_search =
                     (canonical_tool == "Grep"
@@ -774,7 +761,7 @@ impl AgentEngine {
                     &[("tool", &canonical_tool), ("error", &e.to_string())],
                 );
                 let err_msg = self.tool_result_msg_for(err_content, &tool_call_id, &canonical_tool);
-                self.push_tracked_message(messages, err_msg, MessageImportance::High);
+                self.push_tracked_message(messages, err_msg);
             }
         }
         LoopControl::Continue

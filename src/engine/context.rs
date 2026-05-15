@@ -2,25 +2,28 @@ use super::types::*;
 use crate::message::ChatMessage;
 use futures_util::StreamExt;
 
-/// Maximum number of messages to retain in chat_history across turns.
-const CHAT_HISTORY_MAX_MESSAGES: usize = 120;
-
 // ---------------------------------------------------------------------------
 // Adaptive context window thresholds
 // ---------------------------------------------------------------------------
+//
+// chat_history is intentionally unbounded in memory — messages.jsonl is the
+// durable source of truth and context is bounded by compaction, not by a
+// blunt summary-less cap. See doc/compaction-spec.md.
 
 impl AgentEngine {
-    /// Trim chat_history to the most recent `CHAT_HISTORY_MAX_MESSAGES` entries.
-    pub(crate) fn truncate_chat_history(&mut self) {
-        if self.chat_history.len() > CHAT_HISTORY_MAX_MESSAGES {
-            let excess = self.chat_history.len() - CHAT_HISTORY_MAX_MESSAGES;
-            self.chat_history.drain(..excess);
-        }
-    }
 
     pub(crate) fn context_soft_token_limit(&self) -> usize {
+        // Three layers, highest to lowest:
+        //   1. Per-session override (POST /api/chat/compact_config)
+        //   2. Global default from app config (`agent.compact_threshold` in linggen.toml)
+        //   3. Hardcoded engine default (0.95)
+        // Range clamp keeps wild values from breaking the trigger.
+        let frac = self.compact_threshold
+            .or(self.cfg.compact_threshold_default)
+            .map(|t| t.clamp(0.1, 0.99) as f64)
+            .unwrap_or(0.95);
         self.context_window_tokens
-            .map(|cw| (cw as f64 * 0.95) as usize)
+            .map(|cw| (cw as f64 * frac) as usize)
             .unwrap_or(120_000)
     }
 
@@ -32,16 +35,14 @@ impl AgentEngine {
             .unwrap_or(200)
     }
 
-    pub(crate) fn context_keep_tail_messages(&self) -> usize {
+    /// Token budget for the verbatim recent tail kept after a summary.
+    /// A token budget — not a message count. The previous impl compared a
+    /// token-derived value against `messages.len()`, so the window guard
+    /// never opened; see doc/compaction-spec.md.
+    pub(crate) fn context_tail_token_budget(&self) -> usize {
         self.context_window_tokens
-            .map(|cw| ((cw as f64 * 0.15) as usize).max(28))
-            .unwrap_or(28)
-    }
-
-    pub(crate) fn context_max_summary_passes(&self) -> usize {
-        self.context_window_tokens
-            .map(|cw| if cw > 100_000 { 5 } else if cw > 32_000 { 4 } else { 3 })
-            .unwrap_or(3)
+            .map(|cw| (cw as f64 * 0.15) as usize)
+            .unwrap_or(16_000)
     }
 
     // Persistence + event helpers (writes to session files + emits UI events)
@@ -142,16 +143,14 @@ impl AgentEngine {
 
     // Message tracking
 
-    /// Push a message to the messages vec with importance tracking.
-    /// Updates `message_importance` and `accumulated_token_estimate` in sync.
+    /// Push a message to the messages vec, keeping `accumulated_token_estimate`
+    /// in sync so the compaction trigger needn't re-scan every iteration.
     pub(crate) fn push_tracked_message(
         &mut self,
         messages: &mut Vec<ChatMessage>,
         msg: ChatMessage,
-        importance: MessageImportance,
     ) {
         self.accumulated_token_estimate += Self::estimate_tokens_for_text(&msg.content);
-        self.message_importance.push(importance);
         messages.push(msg);
     }
 
@@ -299,395 +298,225 @@ impl AgentEngine {
     }
 
     // Compaction
+    //
+    // Two tiers, aligned with Claude Code (see doc/compaction-spec.md):
+    //   Tier 1 — evict stale tool_result bodies in place (cheap, no model call)
+    //   Tier 2 — one structured-summary pass over the middle of the transcript
+    // No per-message importance, no tool-pair reconciliation, no multi-pass loop.
 
-    /// Richer summary that extracts structured facts from dropped messages:
-    /// file paths mentioned, error messages, tool outcomes.
-    fn summarize_message_window_rich(&self, window: &[&ChatMessage]) -> String {
-        let mut written_files: Vec<String> = Vec::new();
-        let mut read_files: Vec<String> = Vec::new();
-        let mut error_snippets: Vec<String> = Vec::new();
-        let mut search_count = 0usize;
+    const TOOL_EVICTED_PLACEHOLDER: &'static str =
+        "[tool output evicted to free context — re-run the tool if its result is needed]";
 
-        for msg in window {
-            let content = &msg.content;
-            Self::extract_file_paths(content, &mut written_files, &mut read_files);
-            Self::extract_error_snippet(content, &mut error_snippets);
-            if content.contains("name: Grep") || content.contains("name: Glob") {
-                search_count += 1;
-            }
-        }
-
-        let mut summary = self.prompt_store.render_or_fallback(
-            crate::prompts::keys::COMPACTION_SUMMARY,
-            &[("count", &window.len().to_string())],
-        );
-        if !written_files.is_empty() {
-            let files: Vec<&str> = written_files.iter().take(10).map(|s| s.as_str()).collect();
-            summary.push_str(&format!("\nWrote: {}", files.join(", ")));
-        }
-        if !read_files.is_empty() {
-            let files: Vec<&str> = read_files.iter().take(8).map(|s| s.as_str()).collect();
-            summary.push_str(&format!("\nRead: {}", files.join(", ")));
-        }
-        if search_count > 0 {
-            summary.push_str(&format!("\n{} search operations performed.", search_count));
-        }
-        if !error_snippets.is_empty() {
-            summary.push_str(&format!("\n{} error(s):", error_snippets.len()));
-            for e in &error_snippets {
-                summary.push_str(&format!("\n- {}", e));
-            }
-        }
-        summary
-    }
-
-    /// Extract written/edited and read file paths from a message's content.
-    fn extract_file_paths(content: &str, written: &mut Vec<String>, read: &mut Vec<String>) {
-        let has_writes = content.contains("File written:") || content.contains("Edited file:");
-        let has_reads = content.contains("name: Read");
-        if !has_writes && !has_reads {
-            return;
-        }
-        for line in content.lines().map(str::trim) {
-            if has_writes
-                && (line.starts_with("File written:") || line.starts_with("Edited file:"))
-            {
-                if let Some(path) = line.split_whitespace().last() {
-                    let s = path.to_string();
-                    if !written.contains(&s) {
-                        written.push(s);
-                    }
-                }
-            }
-            if has_reads && (line.starts_with("Read:") || line.starts_with("name: Read")) {
-                if let Some(path_part) = line.split_whitespace().last() {
-                    let path = path_part.trim_end_matches(')').trim_end_matches(',').to_string();
-                    if !read.contains(&path) && read.len() < 8 {
-                        read.push(path);
-                    }
-                }
-            }
+    /// Number of leading messages that are never compacted: 1 if a system
+    /// prompt sits at index 0 (the auto path, `[system] + chat_history`),
+    /// else 0 (the `/compact` path passes raw `chat_history`).
+    fn head_len(messages: &[ChatMessage]) -> usize {
+        match messages.first() {
+            Some(m) if m.role == "system" => 1,
+            _ => 0,
         }
     }
 
-    /// Extract the first error line from content, truncated to 120 chars.
-    fn extract_error_snippet(content: &str, snippets: &mut Vec<String>) {
-        if snippets.len() >= 5 {
-            return;
+    /// Tier 1: replace the body of older `tool` (tool_result) messages with a
+    /// short placeholder. Only `content` changes — message structure and
+    /// tool_use↔tool_result pairing are untouched, so this is always safe.
+    /// The protected head and everything from `protect_from` onward (the
+    /// verbatim recent tail) are left intact. Returns tokens reclaimed.
+    fn evict_old_tool_results(messages: &mut [ChatMessage], head: usize, protect_from: usize) -> usize {
+        let placeholder_tokens = Self::estimate_tokens_for_text(Self::TOOL_EVICTED_PLACEHOLDER);
+        let upper = protect_from.min(messages.len());
+        let mut reclaimed = 0usize;
+        for msg in messages.iter_mut().take(upper).skip(head) {
+            if msg.role != "tool" || msg.content == Self::TOOL_EVICTED_PLACEHOLDER {
+                continue;
+            }
+            let before = Self::estimate_tokens_for_text(&msg.content);
+            if before <= placeholder_tokens {
+                continue;
+            }
+            reclaimed += before - placeholder_tokens;
+            msg.content = Self::TOOL_EVICTED_PLACEHOLDER.to_string();
         }
-        if !content.contains("tool_error:") && !content.contains("Error:") {
-            return;
-        }
-        let Some(line) = content.lines().find(|l| l.contains("tool_error:") || l.contains("Error:")) else {
-            return;
-        };
-        let mut short = line.trim().to_string();
-        if short.chars().count() > 120 {
-            short = short.chars().take(120).collect::<String>() + "...";
-        }
-        snippets.push(short);
+        reclaimed
     }
 
-    /// Ensure tool_use (assistant with tool_calls) and tool_result (role="tool")
-    /// messages are always kept or dropped together. OpenAI requires every
-    /// tool_call to have a matching tool output in the next message.
-    fn preserve_tool_pairs(
-        window_msgs: &[ChatMessage],
-        keep_indices: &mut Vec<usize>,
-        drop_indices: &mut Vec<usize>,
-    ) {
-        use std::collections::HashSet;
-
-        let keep_set: HashSet<usize> = keep_indices.iter().copied().collect();
-        let mut promote: HashSet<usize> = HashSet::new();
-
-        // For each kept assistant message with tool_calls, find the tool_result
-        // messages that follow it and promote them to keep.
-        for &ki in keep_indices.iter() {
-            let msg = &window_msgs[ki];
-            if msg.role == "assistant" && !msg.tool_calls.is_empty() {
-                let tc_ids: HashSet<&str> = msg
-                    .tool_calls
-                    .iter()
-                    .map(|tc| tc.id.as_str())
-                    .collect();
-                // Scan forward for matching tool results
-                for j in (ki + 1)..window_msgs.len() {
-                    if let Some(ref tc_id) = window_msgs[j].tool_call_id {
-                        if tc_ids.contains(tc_id.as_str()) && !keep_set.contains(&j) {
-                            promote.insert(j);
-                        }
-                    }
-                    // Stop once we hit another assistant message
-                    if window_msgs[j].role == "assistant" {
-                        break;
-                    }
-                }
+    /// Index where the verbatim recent tail begins. Walk back from the end
+    /// accumulating token estimates until `tail_budget` is exceeded, never
+    /// crossing the protected head. Then:
+    ///  - pull the boundary back to the last assistant message so the
+    ///    freshest exchange (the result the model just asked for) is always
+    ///    kept verbatim, even if it alone exceeds `tail_budget`; otherwise a
+    ///    single huge tool result would be evicted before the model sees it;
+    ///  - advance past any leading `tool` messages so the tail never starts
+    ///    with an orphaned tool_result whose tool_use was summarized away —
+    ///    this is why no separate tool-pair reconciliation is needed.
+    fn tail_start_index(messages: &[ChatMessage], head: usize, tail_budget: usize) -> usize {
+        let mut acc = 0usize;
+        let mut i = messages.len();
+        while i > head {
+            let t = Self::estimate_tokens_for_text(&messages[i - 1].content);
+            if acc + t > tail_budget {
+                break;
             }
+            acc += t;
+            i -= 1;
         }
-
-        // For each kept tool_result, ensure its parent assistant message is also kept.
-        for &ki in keep_indices.iter() {
-            let msg = &window_msgs[ki];
-            if let Some(ref tc_id) = msg.tool_call_id {
-                // Scan backward for the assistant message with this tool_call_id
-                for j in (0..ki).rev() {
-                    if window_msgs[j].role == "assistant"
-                        && window_msgs[j]
-                            .tool_calls
-                            .iter()
-                            .any(|tc| tc.id == *tc_id)
-                        && !keep_set.contains(&j)
-                    {
-                        promote.insert(j);
-                        // Also promote all other tool_results for this assistant
-                        let all_tc_ids: HashSet<&str> = window_msgs[j]
-                            .tool_calls
-                            .iter()
-                            .map(|tc| tc.id.as_str())
-                            .collect();
-                        for k in (j + 1)..window_msgs.len() {
-                            if let Some(ref tid) = window_msgs[k].tool_call_id {
-                                if all_tc_ids.contains(tid.as_str()) && !keep_set.contains(&k) {
-                                    promote.insert(k);
-                                }
-                            }
-                            if window_msgs[k].role == "assistant" {
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
+        let mut start = i.max(head);
+        if let Some(la) = messages.iter().rposition(|m| m.role == "assistant") {
+            start = start.min(la).max(head);
         }
-
-        if !promote.is_empty() {
-            drop_indices.retain(|i| !promote.contains(i));
-            keep_indices.extend(promote);
-            keep_indices.sort_unstable();
+        while start < messages.len() && messages[start].role == "tool" {
+            start += 1;
         }
+        start
     }
 
+    /// Auto-compaction, run once per loop iteration. Token-driven trigger
+    /// (see `context_soft_token_limit`). Tier 1 first (cheap, in place); only
+    /// if still over budget does Tier 2 (one structured summary) run. Returns
+    /// the number of summaries produced (0 or 1).
     pub(crate) async fn maybe_compact_model_messages(
         &mut self,
         messages: &mut Vec<ChatMessage>,
         stage: &str,
     ) -> usize {
-        let mut summary_count = 0usize;
         let soft_token_limit = self.context_soft_token_limit();
         let soft_message_limit = self.context_soft_message_limit();
-        let max_summary_passes = self.context_max_summary_passes();
-        let keep_tail = self.context_keep_tail_messages();
 
-        // Sync importance vector length (safety net for untagged pushes).
-        while self.message_importance.len() < messages.len() {
-            self.message_importance.push(MessageImportance::Normal);
-        }
-
-        // Use accumulated token estimate if available, fall back to full scan.
         let mut token_est = if self.accumulated_token_estimate > 0 {
             self.accumulated_token_estimate
         } else {
             Self::estimate_tokens_for_messages(messages)
         };
 
-        tracing::debug!(
-            "[compact] stage={stage} msgs={} token_est={token_est} soft_token_limit={soft_token_limit} \
-             soft_msg_limit={soft_message_limit} context_window={:?}",
-            messages.len(), self.context_window_tokens,
-        );
-
-        loop {
-            let over_tokens = token_est > soft_token_limit;
-            let over_messages = messages.len() > soft_message_limit;
-            if (!over_tokens && !over_messages) || summary_count >= max_summary_passes {
-                break;
-            }
-            tracing::info!(
-                "[compact] triggered: over_tokens={over_tokens} over_messages={over_messages} \
-                 tokens={token_est}/{soft_token_limit} msgs={}/{soft_message_limit}",
-                messages.len(),
-            );
-
-            if messages.len() <= keep_tail + 2 {
-                break;
-            }
-
-            let start = 1usize; // Keep the leading system prompt.
-            let end = messages.len().saturating_sub(keep_tail);
-            if end <= start {
-                break;
-            }
-
-            // Importance-aware compaction: partition the middle window into
-            // messages to summarize (Low+Normal) and messages to keep (High+Critical).
-            let window_msgs = &messages[start..end];
-            let window_imp = &self.message_importance[start..end];
-
-            let mut keep_indices: Vec<usize> = Vec::new();
-            let mut drop_indices: Vec<usize> = Vec::new();
-            for (i, imp) in window_imp.iter().enumerate() {
-                if *imp >= MessageImportance::High {
-                    keep_indices.push(i);
-                } else {
-                    drop_indices.push(i);
-                }
-            }
-
-            // Preserve tool_use ↔ tool_result pairing: if an assistant message
-            // with tool_calls is kept, its tool_result messages must also be kept
-            // (and vice versa). Otherwise OpenAI errors with "No tool output found".
-            Self::preserve_tool_pairs(window_msgs, &mut keep_indices, &mut drop_indices);
-
-            // If nothing to drop, fall back to dropping everything in window
-            // (original behavior) — the model needs space.
-            if drop_indices.is_empty() {
-                drop_indices = (0..window_msgs.len()).collect();
-                keep_indices.clear();
-            }
-
-            let dropped_messages = drop_indices.len();
-            let dropped_tokens: usize = drop_indices
-                .iter()
-                .map(|&i| Self::estimate_tokens_for_text(&window_msgs[i].content))
-                .sum();
-            let dropped_chars: usize = drop_indices
-                .iter()
-                .map(|&i| window_msgs[i].content.chars().count())
-                .sum();
-
-            // Summarize dropped messages using the model (CC-aligned).
-            // Falls back to deterministic summary if model call fails.
-            let drop_refs: Vec<&ChatMessage> = drop_indices.iter().map(|&i| &window_msgs[i]).collect();
-            let summary = self.summarize_with_model(&drop_refs, None).await;
-
-            // Collect kept high-importance messages.
-            let kept_msgs: Vec<ChatMessage> = keep_indices
-                .iter()
-                .map(|&i| window_msgs[i].clone())
-                .collect();
-            let kept_imp: Vec<MessageImportance> = keep_indices
-                .iter()
-                .map(|&i| window_imp[i])
-                .collect();
-
-            // Remove the entire window, replace with summary + kept messages.
-            messages.drain(start..end);
-            self.message_importance.drain(start..end);
-
-            // Insert summary first, then kept messages (in original order).
-            messages.insert(start, ChatMessage::new("user", summary.clone()));
-            self.message_importance.insert(start, MessageImportance::Normal);
-
-            for (offset, (msg, imp)) in kept_msgs.into_iter().zip(kept_imp).enumerate() {
-                messages.insert(start + 1 + offset, msg);
-                self.message_importance.insert(start + 1 + offset, imp);
-            }
-
-            // Recompute token estimate after compaction.
-            token_est = Self::estimate_tokens_for_messages(messages);
-
-            summary_count += 1;
-            self.push_context_record(
-                ContextType::Summary,
-                Some(format!("{}_summary_{}", stage, summary_count)),
-                Some("system".to_string()),
-                self.agent_id.clone(),
-                summary,
-                serde_json::json!({
-                    "stage": stage,
-                    "dropped_messages": dropped_messages,
-                    "dropped_chars": dropped_chars,
-                    "dropped_estimated_tokens": dropped_tokens,
-                    "kept_high_importance": keep_indices.len()
-                }),
-            );
+        let over = |t: usize, n: usize| t > soft_token_limit || n > soft_message_limit;
+        if !over(token_est, messages.len()) {
+            return 0;
         }
 
-        // Reset accumulated estimate after compaction.
-        self.accumulated_token_estimate = token_est;
+        tracing::info!(
+            "[compact] stage={stage} triggered: tokens={token_est}/{soft_token_limit} \
+             msgs={}/{soft_message_limit}",
+            messages.len(),
+        );
 
+        // Tier 1: evict stale tool_result bodies before the verbatim tail.
+        let head = Self::head_len(messages);
+        let tail_start = Self::tail_start_index(messages, head, self.context_tail_token_budget());
+        let reclaimed = Self::evict_old_tool_results(messages, head, tail_start);
+        if reclaimed > 0 {
+            token_est = Self::estimate_tokens_for_messages(messages);
+            tracing::info!("[compact] tier1 reclaimed ~{reclaimed} tokens, now {token_est}");
+        }
+
+        // Tier 2: if still over budget, one structured-summary pass.
+        let mut summary_count = 0usize;
+        if over(token_est, messages.len()) {
+            let focus = self.compact_focus.clone();
+            if self.compact_once(messages, stage, focus).await.is_some() {
+                summary_count = 1;
+                token_est = Self::estimate_tokens_for_messages(messages);
+                tracing::info!(
+                    "[compact] tier2 summarized; now tokens={token_est} msgs={}",
+                    messages.len(),
+                );
+            }
+        }
+
+        self.accumulated_token_estimate = token_est;
         summary_count
     }
 
-    /// Force-compact the context, regardless of whether we're over budget.
-    /// Used by the `/compact` command. Returns the summary text, or None if
-    /// there's nothing to compact.
+    /// Tier 2 core: replace everything between the system prompt and the
+    /// verbatim recent tail with one structured summary. `focus` (the
+    /// per-session, persisted `compact_focus` for the auto path, or the
+    /// caller's override for `/compact`) is fed to the summary prompt.
+    /// Returns the summary text, or None when there is nothing to summarize
+    /// or the model summary failed — in which case the caller keeps the
+    /// uncompacted messages rather than silently degrading.
+    async fn compact_once(
+        &mut self,
+        messages: &mut Vec<ChatMessage>,
+        stage: &str,
+        focus: Option<String>,
+    ) -> Option<String> {
+        // Keep the protected head (system prompt on the auto path; nothing on
+        // the `/compact` path, which passes raw chat_history).
+        let head = Self::head_len(messages);
+        let tail_start = Self::tail_start_index(messages, head, self.context_tail_token_budget());
+        if tail_start <= head {
+            return None;
+        }
+
+        let dropped: Vec<&ChatMessage> = messages[head..tail_start].iter().collect();
+        let dropped_messages = dropped.len();
+        let dropped_chars: usize = dropped.iter().map(|m| m.content.chars().count()).sum();
+        let dropped_tokens: usize = dropped
+            .iter()
+            .map(|m| Self::estimate_tokens_for_text(&m.content))
+            .sum();
+
+        let summary = self.summarize_span(&dropped, focus.as_deref()).await?;
+
+        messages.drain(head..tail_start);
+        messages.insert(head, ChatMessage::new("user", summary.clone()));
+
+        self.push_context_record(
+            ContextType::Summary,
+            Some(format!("{}_summary", stage)),
+            Some("system".to_string()),
+            self.agent_id.clone(),
+            summary.clone(),
+            serde_json::json!({
+                "stage": stage,
+                "dropped_messages": dropped_messages,
+                "dropped_chars": dropped_chars,
+                "dropped_estimated_tokens": dropped_tokens,
+            }),
+        );
+        Some(summary)
+    }
+
+    /// Force-compact regardless of token budget. Backs the `/compact`
+    /// command. Thin wrapper over the Tier-2 path; `focus` overrides the
+    /// per-session `compact_focus` for this one call only.
     pub(crate) async fn force_compact(
         &mut self,
         messages: &mut Vec<ChatMessage>,
         focus: Option<&str>,
     ) -> Option<String> {
-        let keep_tail = self.context_keep_tail_messages().min(messages.len().saturating_sub(2));
-
-        // Sync importance vector.
-        while self.message_importance.len() < messages.len() {
-            self.message_importance.push(MessageImportance::Normal);
+        let effective_focus = focus
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.compact_focus.clone());
+        let result = self.compact_once(messages, "force", effective_focus).await;
+        if result.is_some() {
+            self.accumulated_token_estimate = Self::estimate_tokens_for_messages(messages);
         }
-
-        let start = 1usize; // Keep system prompt.
-        let end = messages.len().saturating_sub(keep_tail);
-        if end <= start {
-            return None; // Nothing to compact.
-        }
-
-        let window_msgs = &messages[start..end];
-        let window_imp = &self.message_importance[start..end];
-
-        let mut keep_indices: Vec<usize> = Vec::new();
-        let mut drop_indices: Vec<usize> = Vec::new();
-        for (i, imp) in window_imp.iter().enumerate() {
-            if *imp >= MessageImportance::High {
-                keep_indices.push(i);
-            } else {
-                drop_indices.push(i);
-            }
-        }
-        Self::preserve_tool_pairs(window_msgs, &mut keep_indices, &mut drop_indices);
-
-        if drop_indices.is_empty() {
-            drop_indices = (0..window_msgs.len()).collect();
-            keep_indices.clear();
-        }
-
-        let drop_refs: Vec<&ChatMessage> = drop_indices.iter().map(|&i| &window_msgs[i]).collect();
-        let summary = self.summarize_with_model(&drop_refs, focus).await;
-
-        let kept_msgs: Vec<ChatMessage> = keep_indices.iter().map(|&i| window_msgs[i].clone()).collect();
-        let kept_imp: Vec<MessageImportance> = keep_indices.iter().map(|&i| window_imp[i]).collect();
-
-        messages.drain(start..end);
-        self.message_importance.drain(start..end);
-
-        messages.insert(start, ChatMessage::new("user", summary.clone()));
-        self.message_importance.insert(start, MessageImportance::Normal);
-
-        for (offset, (msg, imp)) in kept_msgs.into_iter().zip(kept_imp).enumerate() {
-            messages.insert(start + 1 + offset, msg);
-            self.message_importance.insert(start + 1 + offset, imp);
-        }
-
-        self.accumulated_token_estimate = Self::estimate_tokens_for_messages(messages);
-
-        Some(summary)
+        result
     }
 
-    /// Summarize dropped messages by sending them to the model.
-    /// Falls back to `summarize_message_window_rich` if the model call fails.
-    async fn summarize_with_model(&self, dropped: &[&ChatMessage], focus: Option<&str>) -> String {
-        // Build a compact transcript of the dropped messages for the model.
+    /// Summarize a span of messages into a structured working-state summary
+    /// via the model. Returns None if the model call fails or yields nothing
+    /// — the caller then leaves the transcript uncompacted rather than
+    /// silently degrading to a low-fidelity extract.
+    async fn summarize_span(
+        &self,
+        dropped: &[&ChatMessage],
+        focus: Option<&str>,
+    ) -> Option<String> {
+        if dropped.is_empty() {
+            return None;
+        }
         let mut transcript = String::new();
         for msg in dropped {
-            let role = &msg.role;
-            let content = &msg.content;
-            // Truncate very long messages to avoid blowing up the summarization context.
-            let truncated = if content.len() > 2000 {
-                format!("{}...[truncated]", &content[..2000])
+            let content = if msg.content.chars().count() > 2000 {
+                let head: String = msg.content.chars().take(2000).collect();
+                format!("{head}...[truncated]")
             } else {
-                content.clone()
+                msg.content.clone()
             };
-            transcript.push_str(&format!("[{}] {}\n", role, truncated));
+            transcript.push_str(&format!("[{}] {}\n", msg.role, content));
         }
 
         let focus_instruction = match focus {
@@ -699,13 +528,13 @@ impl AgentEngine {
             "You are summarizing a conversation between a user and a coding assistant. \
              The following {} messages are being compacted to free up context space.\n\n\
              Summarize them into a concise working state that preserves:\n\
-             - What task the user asked for and current progress\n\
+             - What the user asked for and current progress\n\
              - Key decisions made and why\n\
              - Files created, modified, or read (with paths)\n\
              - Errors encountered and how they were resolved\n\
-             - Any pending work or next steps\n\n\
-             Be concise but complete. Use bullet points. Do not lose important details \
-             like file paths, function names, or error messages.{}\n\n\
+             - Pending work and the next step\n\n\
+             Be concise but complete. Use bullet points. Do not lose file paths, \
+             function names, or error messages.{}\n\n\
              --- MESSAGES TO SUMMARIZE ---\n{}",
             dropped.len(),
             focus_instruction,
@@ -713,33 +542,48 @@ impl AgentEngine {
         );
 
         let summarize_msgs = vec![
-            ChatMessage::new("system", "You are a context compaction assistant. Produce a concise summary."),
+            ChatMessage::new(
+                "system",
+                "You are a context compaction assistant. Produce a concise summary.",
+            ),
             ChatMessage::new("user", prompt),
         ];
 
-        // Try model-based summarization.
-        match self.model_manager.chat_text_stream(&self.model_id, &summarize_msgs).await {
+        match self
+            .model_manager
+            .chat_text_stream(&self.model_id, &summarize_msgs)
+            .await
+        {
             Ok(mut stream) => {
                 let mut result = String::new();
                 while let Some(chunk) = stream.next().await {
                     match chunk {
-                        Ok(crate::agent_manager::models::StreamChunk::Token(t)) => result.push_str(&t),
-                        Ok(_) => {} // Usage stats, tool calls — ignore
+                        Ok(crate::agent_manager::models::StreamChunk::Token(t)) => {
+                            result.push_str(&t)
+                        }
+                        Ok(_) => {}
                         Err(e) => {
-                            tracing::warn!("Compaction stream error, falling back to deterministic: {e}");
-                            return self.summarize_message_window_rich(dropped);
+                            tracing::warn!(
+                                "[compact] summary stream error, skipping compaction: {e}"
+                            );
+                            return None;
                         }
                     }
                 }
-                if result.trim().is_empty() {
-                    tracing::warn!("Compaction model returned empty response, falling back");
-                    return self.summarize_message_window_rich(dropped);
+                let result = result.trim();
+                if result.is_empty() {
+                    tracing::warn!("[compact] summary model returned empty, skipping compaction");
+                    return None;
                 }
-                format!("[Context compacted — {} messages summarized by model]\n\n{}", dropped.len(), result.trim())
+                Some(format!(
+                    "[Context compacted — {} messages summarized]\n\n{}",
+                    dropped.len(),
+                    result
+                ))
             }
             Err(e) => {
-                tracing::warn!("Compaction model call failed, falling back to deterministic: {e}");
-                self.summarize_message_window_rich(dropped)
+                tracing::warn!("[compact] summary model call failed, skipping compaction: {e}");
+                None
             }
         }
     }

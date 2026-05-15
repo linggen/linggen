@@ -598,9 +598,17 @@ impl AgentManager {
 
         // Create a new engine for this session (reuse existing creation logic)
         let project_root = Self::canonical_project_root(project_root);
-        let engine = self
+        let mut engine = self
             .build_engine_for_agent(&project_root, &normalized_id, true)
             .await?;
+
+        // Apply any per-session compact config persisted in session.yaml so a
+        // skill's previously-set threshold + focus survive engine restart
+        // without needing to be re-pushed on every iframe mount.
+        if let Ok(Some(meta)) = self.global_sessions.get_session_meta(session_id) {
+            engine.compact_threshold = meta.compact_threshold;
+            engine.compact_focus = meta.compact_focus;
+        }
 
         let agent = Arc::new(Mutex::new(engine));
         // Re-check under lock to handle concurrent creation race.

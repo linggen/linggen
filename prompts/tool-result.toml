@@ -59,8 +59,3 @@ text = "Task completed."
 description = "Format for observation messages fed back to the model"
 vars = ["type", "name", "content"]
 text = "Observation:\ntype: {type}\nname: {name}\ncontent:\n{content}"
-
-[compaction_summary]
-description = "Prefix for deterministic fallback compaction summary"
-vars = ["count"]
-text = "Context summary (compressed {count} messages)."

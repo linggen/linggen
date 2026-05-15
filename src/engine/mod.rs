@@ -38,7 +38,7 @@ pub use skill_activation::{ActivationMode, ActivationOutcome};
 
 // Internal imports used by run_agent_loop
 use streaming::{can_parallel_tool, has_write_path_conflicts};
-use types::{LoopControl, LoopState, MessageImportance, ParsedToolCall};
+use types::{LoopControl, LoopState, ParsedToolCall};
 
 use crate::message::ChatMessage;
 use anyhow::Result;
@@ -215,8 +215,8 @@ impl AgentEngine {
                 .ok()
                 .flatten();
             if let Some(cw) = self.context_window_tokens {
-                debug!("Context window: {}t, soft_limit={}, keep_tail={}, max_passes={}",
-                    cw, self.context_soft_token_limit(), self.context_keep_tail_messages(), self.context_max_summary_passes());
+                debug!("Context window: {}t, soft_limit={}, tail_budget={}t",
+                    cw, self.context_soft_token_limit(), self.context_tail_token_budget());
             }
         }
 
@@ -228,18 +228,6 @@ impl AgentEngine {
         let (messages, allowed_tools, read_paths) =
             self.prepare_loop_messages(&task, use_native_tools);
 
-        // Initialize importance tags: system=Critical, everything else=High.
-        self.message_importance = Vec::with_capacity(messages.len() + 128);
-        for (i, msg) in messages.iter().enumerate() {
-            let importance = if i == 0 {
-                MessageImportance::Critical // system prompt
-            } else if msg.role == "user" && msg.content.contains("Autonomous agent loop started") {
-                MessageImportance::Critical // user task message
-            } else {
-                MessageImportance::High // chat history, observations
-            };
-            self.message_importance.push(importance);
-        }
         // Initialize accumulated token estimate from current messages.
         self.accumulated_token_estimate = Self::estimate_tokens_for_messages(&messages);
 
@@ -395,7 +383,7 @@ impl AgentEngine {
                 let nudge = self.tool_result_msg(
                     "Your response was empty. Please respond with either a tool call or text.".to_string(),
                 );
-                self.push_tracked_message(&mut state.messages, nudge, MessageImportance::Normal);
+                self.push_tracked_message(&mut state.messages, nudge);
                 continue;
             }
             state.empty_response_streak = 0;
@@ -454,7 +442,7 @@ impl AgentEngine {
                 if !raw.is_empty() {
                     assistant_msg.content = raw.clone();
                 }
-                self.push_tracked_message(&mut state.messages, assistant_msg, MessageImportance::High);
+                self.push_tracked_message(&mut state.messages, assistant_msg);
 
                 // Convert ParsedToolCalls to ModelActions
                 let actions: Vec<ModelAction> = Self::tool_calls_to_actions(&native_tool_calls);
@@ -475,7 +463,6 @@ impl AgentEngine {
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
-                    self.truncate_chat_history();
                     self.last_assistant_text = Some(raw);
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
@@ -550,7 +537,6 @@ impl AgentEngine {
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
-                    self.truncate_chat_history();
                     self.last_assistant_text = Some(raw);
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
@@ -655,7 +641,7 @@ impl AgentEngine {
                     let nudge = self.tool_result_msg(
                         self.prompt_store.render_or_fallback(crate::prompts::NUDGE_INVALID_JSON, &[("raw", &raw)]),
                     );
-                    self.push_tracked_message(&mut state.messages, nudge, MessageImportance::Normal);
+                    self.push_tracked_message(&mut state.messages, nudge);
                     self.push_context_record(
                         ContextType::Error,
                         Some("invalid_json".to_string()),

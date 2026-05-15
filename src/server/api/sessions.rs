@@ -120,6 +120,8 @@ pub(crate) async fn create_session(
         mission_id: None,
         model_id: None,
         user_id: req.user_id,
+        compact_threshold: None,
+        compact_focus: None,
     };
 
     match state.manager.global_sessions.add_session(&meta) {
@@ -166,6 +168,8 @@ pub(crate) async fn resolve_session_api(
         mission_id: None,
         model_id: None,
         user_id: None,
+        compact_threshold: None,
+        compact_focus: None,
     };
     let _ = store.add_session(&meta);
     Json(serde_json::json!({
