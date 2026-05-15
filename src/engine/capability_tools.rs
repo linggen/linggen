@@ -324,7 +324,7 @@ async fn autostart(skill_dir: Option<&Path>, autostart_cmd: Option<&str>) -> Res
 /// Resolve an autostart binary: `$SKILL_DIR/bin/<name>` first (what the
 /// skill's `install.sh` lays down), then fall back to the bare name on
 /// `$PATH` so dev setups (`cargo install`) work without manual symlinks.
-fn resolve_binary(skill_dir: Option<&Path>, binary_name: &str) -> PathBuf {
+pub(crate) fn resolve_binary(skill_dir: Option<&Path>, binary_name: &str) -> PathBuf {
     if let Some(dir) = skill_dir {
         let candidate = dir.join("bin").join(binary_name);
         if candidate.is_file() {
