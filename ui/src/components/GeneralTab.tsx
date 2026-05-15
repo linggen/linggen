@@ -9,6 +9,19 @@ export const GeneralTab: React.FC<{
   config: AppConfig;
   onChange: (config: AppConfig) => void;
 }> = ({ config, onChange }) => {
+  // Draft text for the threshold field so partial input (e.g. typing the
+  // first digit "9" of "95") is not reverted by the controlled value /
+  // range check. Commit valid values live; normalize on blur.
+  const thresholdFromConfig = () =>
+    config.agent.compact_threshold != null
+      ? String(Math.round(config.agent.compact_threshold * 100))
+      : '';
+  const [thresholdText, setThresholdText] = React.useState(thresholdFromConfig);
+  React.useEffect(() => {
+    setThresholdText(thresholdFromConfig());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.agent.compact_threshold]);
+
   return (
     <div className="space-y-6">
       {/* Agent Settings */}
@@ -67,11 +80,31 @@ export const GeneralTab: React.FC<{
               min={10}
               max={99}
               step={1}
-              value={config.agent.compact_threshold != null ? Math.round(config.agent.compact_threshold * 100) : ''}
+              value={thresholdText}
               onChange={(e) => {
-                const pct = parseInt(e.target.value, 10);
-                const next = Number.isFinite(pct) && pct >= 10 && pct <= 99 ? pct / 100 : null;
-                onChange({ ...config, agent: { ...config.agent, compact_threshold: next } });
+                const raw = e.target.value;
+                setThresholdText(raw);
+                if (raw === '') {
+                  onChange({ ...config, agent: { ...config.agent, compact_threshold: null } });
+                  return;
+                }
+                const pct = parseInt(raw, 10);
+                if (Number.isFinite(pct) && pct >= 10 && pct <= 99) {
+                  onChange({ ...config, agent: { ...config.agent, compact_threshold: pct / 100 } });
+                }
+                // partial / out-of-range: keep showing what was typed,
+                // don't commit — normalized on blur.
+              }}
+              onBlur={() => {
+                const pct = parseInt(thresholdText, 10);
+                if (!Number.isFinite(pct)) {
+                  setThresholdText('');
+                  onChange({ ...config, agent: { ...config.agent, compact_threshold: null } });
+                  return;
+                }
+                const clamped = Math.min(99, Math.max(10, pct));
+                setThresholdText(String(clamped));
+                onChange({ ...config, agent: { ...config.agent, compact_threshold: clamped / 100 } });
               }}
               placeholder="95 (default)"
             />
