@@ -9,10 +9,14 @@
 //! Pipeline per tick (locked contract, `memory-spec.md` §2):
 //!
 //! 1. **Encode** + 2. **Consolidate** — one non-interactive `ling-mem`
-//!    subagent (`agents/ling-mem.md`, Bash-only, locked to the resolved
-//!    binary). Encodes the recent exchange into the episodic table, then
-//!    terminally promotes/deletes the *past-TTL* worklist the engine
-//!    pre-selected.
+//!    subagent (`agents/ling-mem.md`). Its only tool is Bash (spec
+//!    `tools: ["Bash"]`); the task prompt directs it to the resolved
+//!    binary path. There is no `bash_allow_prefixes` lock — `tools:
+//!    ["Bash"]` + the tight non-interactive prompt is the boundary,
+//!    accepted for an internal agent whose only inputs are the user's
+//!    own transcript and engine-selected rows. Encodes the recent
+//!    exchange into the episodic table, then terminally
+//!    promotes/deletes the *past-TTL* worklist the engine pre-selected.
 //! 3. **Evict** — deterministic engine code (no LLM): `ling-mem evict`
 //!    backstops any past-TTL row the subagent failed to reach.
 //!
@@ -37,6 +41,11 @@ const TRANSCRIPT_TURN_MULTIPLIER: usize = 2;
 /// Per-message content cap in the transcript snapshot — long tool dumps
 /// don't belong in an encoding prompt. Mirrors `context.rs::summarize_span`.
 const TRANSCRIPT_MSG_CHARS: usize = 2000;
+/// Per-row content cap in the worklist block. Episodic facts are
+/// one-liners; this bounds the prompt and contains an oversized or
+/// instruction-laden row (the user's own data, but still untrusted text
+/// flowing into a prompt).
+const WORKLIST_CONTENT_CHARS: usize = 500;
 /// Bound on a single deterministic `ling-mem` invocation.
 const LING_MEM_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -165,10 +174,13 @@ pub(super) fn maybe_fire_consolidation(ctx: &ChatRunCtx, engine: &AgentEngine) {
             ),
         }
 
-        // Best-effort release. A panic inside the tick would leak the slot
-        // until the next daemon restart (which clears the set) —
-        // acceptable, matches the mission scheduler's guard robustness;
-        // the fix for a panicking tick is the tick, not masking it here.
+        // Best-effort release. Errors (Err arm above) still reach here —
+        // only a genuine Rust panic in the tick skips it, since the task
+        // future isn't awaited. Consequence: that session gets *zero*
+        // further consolidation ticks until the daemon restarts (which
+        // clears the set), not just a one-tick miss. Accepted — matches
+        // the mission scheduler's guard robustness; the fix for a
+        // panicking tick is the tick, not masking it here.
         state.consolidation_active.lock().await.remove(&session_id);
     });
 }
@@ -212,8 +224,10 @@ async fn run_consolidation_tick(
     let cutoff = Utc::now() - ChronoDuration::days(episodic_ttl_days as i64);
 
     // `ling-mem` lives at `$SKILL_DIR/bin/ling-mem` (memory skill install)
-    // with a `$PATH` fallback. Resolve once; the subagent is locked to
-    // this exact binary via `bash_allow_prefixes`.
+    // with a `$PATH` fallback. Resolve once; the task prompt directs the
+    // subagent to this absolute path so commands resolve regardless of
+    // PATH (this is for resolvability, not a security lock — see the
+    // module doc on the boundary).
     let skill_dir = state
         .skill_manager
         .active_provider("memory")
@@ -268,9 +282,16 @@ async fn run_consolidation_tick(
     .await
     .map_err(|e| e.context("ling-mem consolidation subagent"))?;
 
+    use crate::engine::tools::ToolResult;
     let summary = match result {
-        crate::engine::tools::ToolResult::Success(text) => text,
-        _ => anyhow::bail!("consolidation subagent returned a non-success result"),
+        ToolResult::Success(text) => text,
+        // The Bash-only non-interactive agent should always finish with
+        // AgentOutcome::None → Success. Anything else (an unexpected
+        // plan/done outcome) is a bug worth seeing in the log.
+        ToolResult::AgentOutcome(o) => {
+            anyhow::bail!("consolidation subagent ended with outcome {o:?}, not a result")
+        }
+        other => anyhow::bail!("consolidation subagent returned {other:?}"),
     };
 
     // Step 3 (deterministic backstop): evict whatever past-TTL rows the
@@ -350,8 +371,9 @@ async fn run_ling_mem(bin: &Path, data_dir: &Path, args: &[&str]) -> anyhow::Res
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// The subagent task. Carries the literal binary path (commands must
-/// start with it — `bash_allow_prefixes`), the data dir, the exchange to
+/// The subagent task. Carries the literal binary path (the agent is
+/// instructed to invoke exactly this — for PATH-independent
+/// resolvability, not a hard lock), the data dir, the exchange to
 /// encode, and the pre-selected past-TTL worklist.
 fn build_task_prompt(
     session_id: &str,
@@ -376,9 +398,15 @@ fn build_task_prompt(
                 } else {
                     format!(" contexts={}", r.contexts.join(","))
                 };
+                let content: String = r.content.chars().take(WORKLIST_CONTENT_CHARS).collect();
+                let ellipsis = if r.content.chars().count() > WORKLIST_CONTENT_CHARS {
+                    "…"
+                } else {
+                    ""
+                };
                 format!(
-                    "- id={} type={}{}\n  content: {}",
-                    r.id, r.fact_type, ctx, r.content
+                    "- id={} type={}{}\n  content: {}{}",
+                    r.id, r.fact_type, ctx, content, ellipsis
                 )
             })
             .collect::<Vec<_>>()
