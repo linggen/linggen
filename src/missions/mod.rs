@@ -323,15 +323,6 @@ fn yaml_looks_legacy(yaml: &str) -> bool {
         || yaml.lines().any(|line| line.starts_with("mode:"))
 }
 
-/// Map legacy `permission_tier` → new `permission.mode`.
-fn legacy_tier_to_mode(tier: &str) -> &'static str {
-    match tier {
-        "readonly" => "read",
-        "standard" => "edit",
-        _ => "admin", // "full" or unknown
-    }
-}
-
 /// Parse a mission `.md` file. Tries the new format first; on failure (or when
 /// the YAML looks legacy) falls back to the legacy parser and maps fields.
 ///
@@ -897,8 +888,10 @@ mod tests {
             requires: Some(vec!["memory".into()]),
             allowed_tools: Some(vec!["Read".into(), "Bash".into()]),
             permission: Some(Some(MissionPermission {
-                mode: "admin".into(),
-                paths: vec!["~/.linggen".into()],
+                paths: vec![crate::skills::PathGrant {
+                    path: "~/.linggen".into(),
+                    mode: "admin".into(),
+                }],
                 warning: Some("test warn".into()),
             })),
             ..Default::default()
@@ -913,8 +906,11 @@ mod tests {
         assert_eq!(loaded.allow_skills, vec!["memory".to_string()]);
         assert_eq!(loaded.requires, vec!["memory".to_string()]);
         assert_eq!(loaded.allowed_tools, vec!["Read".to_string(), "Bash".to_string()]);
-        assert_eq!(loaded.permission.as_ref().unwrap().mode, "admin");
-        assert_eq!(loaded.permission.as_ref().unwrap().paths, vec!["~/.linggen".to_string()]);
+        let perm = loaded.permission.as_ref().unwrap();
+        assert_eq!(perm.paths.len(), 1);
+        assert_eq!(perm.paths[0].path, "~/.linggen");
+        assert_eq!(perm.paths[0].mode, "admin");
+        assert_eq!(perm.warning.as_deref(), Some("test warn"));
         assert!(loaded.enabled);
         assert_eq!(loaded.created_at, created.created_at);
     }
@@ -996,20 +992,23 @@ mod tests {
         let m = parse_mission_md("nightly", content).unwrap();
         assert_eq!(m.schedule, "0 23 * * *");
         assert!(m.enabled);
-        assert_eq!(m.permission.as_ref().unwrap().mode, "edit"); // standard → edit
+        assert!(m.permission.is_none()); // legacy permission_tier no longer honored
         assert_eq!(m.prompt, "Do the nightly scan.");
         assert_eq!(m.created_at, 123);
     }
 
     #[test]
-    fn test_legacy_permission_tier_mapping() {
+    fn test_legacy_permission_tier_not_honored() {
+        // Legacy `permission_tier` is no longer mapped to a mode — such
+        // missions load with no permission grants; authors must migrate to
+        // the per-path `permission.paths` shape.
         let ro = "---\nschedule: 0 * * * *\nenabled: true\npermission_tier: readonly\n---\nHi\n";
         let std_ = "---\nschedule: 0 * * * *\nenabled: true\npermission_tier: standard\n---\nHi\n";
         let full = "---\nschedule: 0 * * * *\nenabled: true\npermission_tier: full\n---\nHi\n";
 
-        assert_eq!(parse_mission_md("a", ro).unwrap().permission.as_ref().unwrap().mode, "read");
-        assert_eq!(parse_mission_md("b", std_).unwrap().permission.as_ref().unwrap().mode, "edit");
-        assert_eq!(parse_mission_md("c", full).unwrap().permission.as_ref().unwrap().mode, "admin");
+        assert!(parse_mission_md("a", ro).unwrap().permission.is_none());
+        assert!(parse_mission_md("b", std_).unwrap().permission.is_none());
+        assert!(parse_mission_md("c", full).unwrap().permission.is_none());
     }
 
     #[test]
@@ -1072,7 +1071,9 @@ mod tests {
         let content = std::fs::read_to_string(mdir.join("mission.md")).unwrap();
         assert!(!content.contains("permission_tier"));
         assert!(content.contains("description: migrated"));
-        assert!(content.contains("permission:"));
+        // Legacy permission_tier is dropped, not migrated to permission.paths,
+        // so the rewritten new-format file carries no `permission:` block.
+        assert!(!content.contains("permission:"));
     }
 
     #[test]

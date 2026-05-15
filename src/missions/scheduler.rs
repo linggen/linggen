@@ -896,7 +896,6 @@ async fn execute_entry_script(
     last_run_at: &str,
 ) -> anyhow::Result<i32> {
     use std::process::Stdio;
-    use tokio::io::AsyncWriteExt;
 
     let mission_dir_abs = mission_dir
         .canonicalize()
@@ -930,10 +929,13 @@ async fn execute_entry_script(
     );
     let output = cmd.output().await?;
 
-    let mut stdout_file = tokio::fs::File::create(output_dir.join("stdout.log")).await?;
-    stdout_file.write_all(&output.stdout).await?;
-    let mut stderr_file = tokio::fs::File::create(output_dir.join("stderr.log")).await?;
-    stderr_file.write_all(&output.stderr).await?;
+    // One-shot writes (open + write-all + close). Previously this used
+    // tokio::fs::File + write_all without an explicit flush; tokio's File
+    // buffers and does not flush on drop, so a reader (or the next mission
+    // step) could observe an empty/partial log. tokio::fs::write closes the
+    // file before returning, eliminating the race.
+    tokio::fs::write(output_dir.join("stdout.log"), &output.stdout).await?;
+    tokio::fs::write(output_dir.join("stderr.log"), &output.stderr).await?;
 
     let code = output.status.code().unwrap_or(-1);
     if code != 0 {
