@@ -86,9 +86,12 @@ cross-session counter), accepted over completeness.
 At each fire, strictly ordered:
 
 1. **Encode** — read the recent in-session exchange, apply §4's
-   *exclusion* filters only (drop file-derivable, secrets, pure
-   activity), write/dedup into the **episodic** table. Liberal capture;
-   the consolidate step is the durability gate. ≈ waking encoding.
+   *exclusion* filters (drop file-derivable, secrets, pure activity)
+   **plus a write-time usefulness bar** (write only what a future task
+   benefits from; drop garbage), then write/dedup into the **episodic**
+   table. The encoder is the *first* gate — episodic is recall-visible
+   immediately now that recall spans both tables — and the consolidator
+   remains the terminal promote/delete gate past-TTL. ≈ waking encoding.
 2. **Consolidate** — process **past-TTL rows only**; each gets one
    terminal decision: promote worthy rows → semantic (extract +
    optional `supersedes` link, never a destructive rewrite) or delete.
@@ -138,9 +141,11 @@ failure state if the subagent errors. All such copy obeys the
 
 Live path is unchanged: core inlined every session; semantic queried via
 `Memory_query` (verbs `get`/`search`/`list`) and surfaced at turn start.
-Writes via `Memory_write` (`add`/`update`/`delete`). Episodic is not on
-this path. Bulk forget stays user-initiated (dashboard / `ling-mem
-forget` CLI), never a model tool.
+Writes via `Memory_write` (`add`/`update`/`delete`). Recall spans
+**both** tables: `Memory_query` queries semantic *and* episodic and
+returns one merged, deduped result (semantic copy wins a near-dup tie).
+Bulk forget stays user-initiated (dashboard / `ling-mem forget` CLI),
+never a model tool.
 
 ### Extraction contract
 
@@ -414,8 +419,11 @@ Ordered. Each is a design decision not yet locked.
    correctness, supersession accuracy, and decay calibration — unbuilt
    by anyone; this is the opening. Build it next.
 5. **Encoder ↔ consolidator boundary** — *resolved* (§2): the encoder
-   does liberal capture minus §4's hard exclusions; the consolidator is
-   the durability gate (terminal promote/delete of past-TTL rows).
+   applies §4's hard exclusions **+ a write-time usefulness bar**
+   (episodic is recall-visible immediately); the consolidator remains
+   the terminal promote/delete gate for past-TTL rows. Revised
+   2026-05-19 from "liberal capture" once recall began spanning episodic
+   — server-side dedup (`insert_with_dedup`) already covers duplicates.
 6. **Consolidation widget polish** — the tick currently reuses the
    generic subagent-tree surface. The §2 ideal (no-op ticks silent,
    persistent line only on a material change, a dedicated

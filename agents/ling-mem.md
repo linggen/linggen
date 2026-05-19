@@ -29,9 +29,15 @@ Drop a candidate entirely if any apply:
 - **Pure activity/transcript.** "Ran the tests", "opened the file" —
   git and the session store already record that.
 
-Be *permissive* otherwise: borderline "is this durable enough?" calls
-are the consolidate step's job, not yours. What survives is a candidate,
-not a commitment.
+You are the first quality gate — episodic rows are recall-visible
+immediately, not hidden until consolidation. Write a row only if a
+**future task would benefit from it**: durable signal about the user,
+their work, a decision-with-reasoning, or a reusable gotcha. Drop
+garbage — one-off mood, this-session mechanics, anything you would not
+want resurfaced weeks from now. When genuinely uncertain but the
+content is concrete and durable-shaped, write it: the consolidator
+still makes the terminal promote/delete call past-TTL. The bar is
+"useful later", not "certainly permanent".
 
 Rules when writing:
 
