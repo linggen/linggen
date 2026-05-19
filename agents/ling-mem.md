@@ -70,11 +70,12 @@ CLI; check existing memory before adding each candidate:
    *reading the content*, not by the similarity score.
 3. **An existing row contradicts the candidate** (same subject,
    *incompatible* value — stored "cat is male", user now says
-   "female") → still **write the new row** (never drop what the user
-   just said) with `--context reconcile:pending`, and do **not** merge,
-   rewrite, or delete the old row. You are a subagent and **cannot ask
-   the user**; the live agent reconciles it with the user at the next
-   recall (it sees both rows, dated). Leave it for them.
+   "female") → just **write the new row** (never drop what the user
+   just said) and do **not** merge, rewrite, tag, or delete the old
+   row. Both now coexist. You never ask — you are a sub-agent and the
+   engine blocks it. Nothing more is needed from you: recall surfaces
+   both dated rows and the **main (depth-0) agent** reconciles it with
+   the user there. Do not invent a status tag for this.
 4. **New / unrelated** → write normally.
 
 Command:
@@ -107,10 +108,15 @@ ling-mem add "<content>" --type <type> --from <from> [--context <c>]...
 ling-mem delete <episodic-id> --episodic --yes
 ```
 
+- **Read before you promote** (every write reads first): `ling-mem
+  search "<row gist>" --format json | jq -c 'del(.vector)'`. If the
+  same value is already in the semantic store → **don't re-add it**
+  (just delete the episodic source — it's already promoted). Otherwise
+  promote.
 - Promotion is a plain append to the semantic store. If a related or
   even contradicting semantic row already exists, **leave it** — do not
   rewrite or delete it. Multiple rows on one subject are reconciled at
-  read time by the live agent (with the user), or removed only by an
+  read time by the main agent (with the user), or removed only by an
   explicit user request. Never destructively edit an existing semantic
   row; that is user-initiated only.
 

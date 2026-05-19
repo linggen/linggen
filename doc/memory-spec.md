@@ -92,11 +92,11 @@ scanning session/transcript files on disk), applies §4's *exclusion*
 filters (drop file-derivable, secrets, pure activity) **plus a
 write-time usefulness bar** (write only what a future task benefits
 from; drop garbage), and **reads existing memory before each write**
-(`ling-mem search`): skip a duplicate (exact or reworded), and on a
-contradiction append the new row + tag `reconcile:pending` without
-merging/deleting the old one. It does **not** ask (it's a sub-agent —
-see Reconcile's depth-0 invariant); the live agent resolves the flagged
-conflict with the user at the next recall.
+(`ling-mem search`): skip a duplicate (exact or reworded); on a
+contradiction just append the new row without merging/deleting the old
+one (both coexist — no status tag). It does **not** ask (it's a
+sub-agent — see Reconcile's depth-0 invariant); recall surfaces both
+dated rows and the main agent resolves it with the user there.
 The encoder is the *first* gate — episodic is recall-visible immediately
 (recall spans both tables). It does **only** encode. ≈ waking encoding.
 
@@ -246,11 +246,11 @@ deadlocks). This decides where each write path's "ask" lives:
 - **N-turn encoder** (a sub-agent — *cannot* ask) — reads first
   (`ling-mem search`); skips an exact/reworded duplicate; on a
   contradiction it **appends the new row** (never drops what the user
-  just said), tags it `reconcile:pending`, and **never merges/deletes
-  the old row**. It does *not* ask. The conflict is resolved by the
-  **depth-0 live agent at the next recall** (recall surfaces both dated
-  rows; the live nudge already asks). Encoder = read + dedup + flag,
-  never silent-merge, never ask.
+  just said) and **never merges/deletes the old row** — no status tag,
+  both simply coexist. It does *not* ask. The conflict is resolved by
+  the **depth-0 main agent at the next recall** (recall surfaces both
+  dated rows; the live nudge already asks). Encoder = read + dedup +
+  append-both, never silent-merge, never ask, no flag.
 - **`dream` mission** (no user at all) — reads the store, mechanical +
   high-confidence only; defers contradictions entirely.
 
