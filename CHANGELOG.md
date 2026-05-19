@@ -22,10 +22,12 @@ Memory system — recall redesign (Complementary Learning Systems model).
 - **Reconcile contract** — memory is reconciled against existing memory
   on any reactivation (write, recall, dream). Near-duplicates are
   deduped mechanically; a genuine contradiction is resolved **with the
-  user** (asked, with dates) and `supersedes`-linked, never silently
-  overwritten or merged into storage; the no-user dream run defers
-  contradictions to a later recall. Live-agent guidance ships in the
-  memory nudge; the full contract is in `doc/memory-spec.md` §2.
+  user** (asked, with dates) by appending the corrected row, never
+  silently overwritten or merged into storage; the no-user dream run
+  defers contradictions to a later recall. The store stays CRUD-only —
+  reconciliation is append + read-time + explicit user delete (no
+  structural "replaces" link). Live-agent guidance ships in the memory
+  nudge; the full contract is in `doc/memory-spec.md` §2.
 
 ### Added
 

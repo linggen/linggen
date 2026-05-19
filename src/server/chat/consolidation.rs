@@ -56,8 +56,8 @@ const WORKLIST_CONTENT_CHARS: usize = 500;
 const LING_MEM_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of one per-session encode tick — how many rows were written to
-/// episodic. Only logged. (Promote/supersede/delete counts belong to the
-/// `dream` mission's consolidate path, which returns its own tuple.)
+/// episodic. Only logged. (Promote/delete counts belong to the `dream`
+/// mission's consolidate path, which returns its own tuple.)
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct TickOutcome {
     pub encoded: u32,
@@ -202,8 +202,8 @@ fn snapshot_recent_exchange(engine: &AgentEngine, interval: usize) -> String {
 
 /// The per-session tick: **encode only** (wake-time). Consolidate +
 /// evict is owned by the `dream` mission (`missions::scheduler`), not the
-/// per-session path — see the module doc. `promoted`/`superseded`/
-/// `deleted` are therefore always 0 here.
+/// per-session path — see the module doc. Promote/delete counts are not
+/// produced here.
 async fn run_consolidation_tick(
     state: &Arc<ServerState>,
     manager: &Arc<AgentManager>,
@@ -260,7 +260,7 @@ pub(crate) async fn run_consolidate_evict(
     agent_id: &str,
     ws_root: &PathBuf,
     episodic_ttl_days: u64,
-) -> anyhow::Result<(u32, u32, u32)> {
+) -> anyhow::Result<(u32, u32)> {
     // The engine owns TTL policy: one absolute cutoff drives both the
     // worklist selection and the evict backstop.
     let cutoff = Utc::now() - ChronoDuration::days(episodic_ttl_days as i64);
@@ -270,14 +270,14 @@ pub(crate) async fn run_consolidate_evict(
         .await
         .map_err(|e| e.context("listing episodic rows for consolidation"))?;
     if worklist.is_empty() {
-        return Ok((0, 0, 0));
+        return Ok((0, 0));
     }
 
     let task = build_consolidate_task(&bin, &data_dir, &cutoff, &worklist);
     let summary = run_ling_mem_subagent(manager, ws_root, agent_id, session_id, task)
         .await
         .map_err(|e| e.context("ling-mem consolidate subagent"))?;
-    let (promoted, superseded, deleted) = parse_consolidated(&summary)?;
+    let (promoted, deleted) = parse_consolidated(&summary)?;
 
     // Deterministic backstop: evict whatever past-TTL rows the subagent
     // didn't terminally handle. Same cutoff. Failures here are non-fatal —
@@ -287,7 +287,7 @@ pub(crate) async fn run_consolidate_evict(
         tracing::warn!(session_id = %session_id, error = %e, "evict backstop failed (non-fatal)");
     }
 
-    Ok((promoted, superseded, deleted))
+    Ok((promoted, deleted))
 }
 
 /// Resolve the `ling-mem` binary + data dir. `ling-mem` lives at
@@ -519,9 +519,8 @@ fn parse_encoded(summary: &str) -> anyhow::Result<u32> {
 }
 
 /// Parse the CONSOLIDATE contract line:
-/// `CONSOLIDATED promoted=<n> superseded=<n> deleted=<n>` or
-/// `CONSOLIDATE_FAILED <reason>`.
-fn parse_consolidated(summary: &str) -> anyhow::Result<(u32, u32, u32)> {
+/// `CONSOLIDATED promoted=<n> deleted=<n>` or `CONSOLIDATE_FAILED <reason>`.
+fn parse_consolidated(summary: &str) -> anyhow::Result<(u32, u32)> {
     let line = summary
         .lines()
         .rev()
@@ -534,11 +533,7 @@ fn parse_consolidated(summary: &str) -> anyhow::Result<(u32, u32, u32)> {
     if let Some(reason) = line.strip_prefix("CONSOLIDATE_FAILED") {
         anyhow::bail!("consolidate reported failure:{}", reason);
     }
-    Ok((
-        field(line, "promoted"),
-        field(line, "superseded"),
-        field(line, "deleted"),
-    ))
+    Ok((field(line, "promoted"), field(line, "deleted")))
 }
 
 /// Read `key=<u32>` out of a status line; missing/garbage → 0.
@@ -568,16 +563,14 @@ mod tests {
 
     #[test]
     fn parse_consolidated_reads_counts() {
-        let (p, s, d) =
-            parse_consolidated("noise\nCONSOLIDATED promoted=2 superseded=1 deleted=4").unwrap();
-        assert_eq!((p, s, d), (2, 1, 4));
+        let (p, d) = parse_consolidated("noise\nCONSOLIDATED promoted=2 deleted=4").unwrap();
+        assert_eq!((p, d), (2, 4));
     }
 
     #[test]
     fn parse_consolidated_zeroed_ok() {
-        let (p, s, d) =
-            parse_consolidated("CONSOLIDATED promoted=0 superseded=0 deleted=0").unwrap();
-        assert_eq!((p, s, d), (0, 0, 0));
+        let (p, d) = parse_consolidated("CONSOLIDATED promoted=0 deleted=0").unwrap();
+        assert_eq!((p, d), (0, 0));
     }
 
     #[test]

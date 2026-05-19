@@ -86,15 +86,16 @@ preference, a decision-with-reasoning, or a re-hit gotcha. Write it to
 the semantic store, then delete the episodic source:
 
 ```
-ling-mem add "<content>" --type <type> --from <from> [--context <c>]... [--supersedes <semantic-id>]
+ling-mem add "<content>" --type <type> --from <from> [--context <c>]...
 ling-mem delete <episodic-id> --episodic --yes
 ```
 
-- Add `--supersedes <id>` **only** when you are highly confident this
-  row replaces a specific existing semantic row (the task lists likely
-  matches). That is a metadata link for retrieval ranking — it does
-  **not** delete the old row. Never destructively rewrite or delete an
-  existing semantic row; that is user-initiated only.
+- Promotion is a plain append to the semantic store. If a related or
+  even contradicting semantic row already exists, **leave it** — do not
+  rewrite or delete it. Multiple rows on one subject are reconciled at
+  read time by the live agent (with the user), or removed only by an
+  explicit user request. Never destructively edit an existing semantic
+  row; that is user-initiated only.
 
 **Delete** when the row is not worth keeping:
 
@@ -109,11 +110,11 @@ synthesized story, do not resolve contradictions between rows. Those
 need the user present. A contradicting pair → promote each row on its
 own merits as a *separate* atom (or delete on its own merits); never
 pick a winner or merge them — the conflict is left for a later
-user-present recall to resolve. Append and link only.
+user-present recall to resolve. Append only.
 
 **CONSOLIDATE output** — exactly one final line, ≤20 words, machine-parseable:
 
-`CONSOLIDATED promoted=<n> superseded=<n> deleted=<n>`
+`CONSOLIDATED promoted=<n> deleted=<n>`
 
 Emit it with zeros if the worklist was empty. On an unrecoverable error
 emit `CONSOLIDATE_FAILED <short reason>` and stop. No prose, no

@@ -55,7 +55,9 @@ forgetting of what didn't earn permanence.
 
 ### Stores — two LanceDB tables, no markdown
 
-- **Semantic table** — durable, curated, superseded in place. Rows
+- **Semantic table** — durable, curated, append-mostly (changed by a
+  new row + read-time reconciliation, or explicit user edit/delete —
+  never silent in-place rewrite). Rows
   carry a `tier`: `core` (always injected, no similarity gate) or
   `semantic` (similarity-retrieved on demand). Core and semantic share
   one table because they share a churn/volume profile (low-churn,
@@ -100,8 +102,8 @@ engine owns TTL policy and selects the past-TTL worklist (the binary
 stays policy-free). Each run, strictly ordered:
 
 1. **Consolidate** — process **past-TTL rows only**; each gets one
-   terminal decision: promote worthy rows → semantic (extract +
-   optional `supersedes` link, never a destructive rewrite) or delete.
+   terminal decision: promote worthy rows → semantic (a plain append;
+   never a destructive rewrite of an existing row) or delete.
    Generalizing / merging / contradiction-resolution stay user-present
    (Reconcile, below) — the no-user dream run does mechanical,
    high-confidence promote/delete only. May propose **semantic →
@@ -128,7 +130,7 @@ no-op runs stay quiet.
 ### Binary vs judgment split
 
 - The **`ling-mem` binary** owns both tables + the mechanical primitives
-  (embed, dedup, supersede, decay). **No LLM in the binary** — it is the
+  (embed, dedup, decay). **No LLM in the binary** — it is the
   portable, deterministic data layer, the single shared source every
   caller goes through.
 - **Judgment** ("what's worth keeping", "is this a contradiction") needs
@@ -208,10 +210,14 @@ against existing memory:
 - **Contradiction** (same subject, *incompatible* value) → resolve
   **only with the user present and only when material** to the current
   interaction: surface the conflicting rows **with their dates** and ask
-  the user to choose/correct; on answer, write the resolution and
-  `supersedes`-link the stale row. With **no user** (dream / the
-  non-interactive encoder) or when not material: leave both as linked
-  atoms and defer to a later recall. Cosine similarity **cannot**
+  the user to choose/correct; on answer, write the resolved value as a
+  **new timestamped row** (the stale one stays — recall reconciles by
+  recency; the user may explicitly delete it). Never silently overwrite.
+  With **no user** (dream / the non-interactive encoder) or when not
+  material: leave both rows as-is and defer to a later recall. There is
+  no structural "replaces" link — reconciliation is append + read-time
+  + explicit user delete (see §3, §4; a link is Future, not built).
+  Cosine similarity **cannot**
   separate a contradiction from a restatement — both score high — so
   this classification needs the LLM, never the binary's dedup alone.
 - **New** → write.
@@ -275,7 +281,7 @@ time, not row count alone.
 
 The dream consolidator (§2) autonomously does **mechanical + high-
 confidence** work: promote clear-cut episodic → semantic, exact-rephrase
-dedup, `supersedes` links, and consolidate-before-evict. It does **not**
+dedup, and consolidate-before-evict. It does **not**
 merge distinct facts, generalize utterances into rules, or resolve
 contradictions — those are judgment, and per Reconcile (§2) they happen
 only with the **user present** (live write or recall), never in the
@@ -286,9 +292,8 @@ no-user dream run. Explicit user confirmation is still required for
 The table below maps where each operation runs.
 
 *Mechanical maintenance* — exact-rephrase dedup, extending contexts/tags,
-adding `supersedes` links, retiring rows that meet a fixed obsolescence
-rule — runs offline in the mission. The decisions are mechanical: a
-rule fires, the action follows.
+retiring rows that meet a fixed obsolescence rule — runs offline in the
+mission. The decisions are mechanical: a rule fires, the action follows.
 
 *Semantic maintenance* — merging facts into a story, generalizing
 patterns into rules, choosing between contradicting rows — runs only in
@@ -302,8 +307,7 @@ Bulk forget is user-initiated only, regardless of where it would run.
 | Append a new row | Offline mission OR live session | Pure additive |
 | Exact-rephrase dedup (clearer wording on a near-duplicate) | Offline OR live | Mechanical — pick the better string |
 | Extend `contexts[]` / `tags[]` from new evidence | Offline OR live | Mechanical — array union |
-| Add a `supersedes` link between two rows | Offline OR live | Metadata only |
-| Retire by fixed obsolescence rule (session-arc leak, hard TTL, completed supersedes chain) | Offline OR live | Mechanical — the criterion is a fixed rule |
+| Retire by fixed obsolescence rule (session-arc leak, hard TTL) | Offline OR live | Mechanical — the criterion is a fixed rule |
 | Merge distinct facts into a synthesized story | **Live only** | Content rewrite — hallucination risk |
 | Generalize utterances into a "user always X" rule | **Live only** | Over-fit risk |
 | Resolve a contradiction between rows | **Live only** | Needs context the offline run may lack |
@@ -423,10 +427,10 @@ But every such fact ages, so:
   raw timestamps also let the agent answer *"when did I get the cat?"* /
   *"how long did I have it?"* — questions a flattened row destroys.
 
-  Optional hint: when the extractor is highly confident the new row
-  supersedes an earlier one, it can tag the new row with a `supersedes:
-  <id>` link. That's metadata for retrieval ranking, not a destructive
-  edit.
+  There is no structural "replaces" link: a newer row does not point at
+  the row it obsoletes. Currency is inferred at read time from
+  timestamps + content (a future link primitive is noted under Future,
+  not built). The older row simply remains until explicitly forgotten.
 
   Destructive consolidation (actually deleting the old row) is
   user-initiated only — *"clean up my cat memory"* or a dashboard
@@ -490,8 +494,8 @@ Ordered. Each is a design decision not yet locked.
    per-session/every-N-turns (no startup, sub-N skipped); consolidate +
    evict run on the `dream` mission (daily cron + turn-seam catch-up).
 2. **Consolidator contract** — *resolved* (§2): consolidate processes
-   past-TTL rows only; each is terminally promoted (→ semantic, optional
-   `supersedes` link, never destructive) or deleted; re-entrancy needs
+   past-TTL rows only; each is terminally promoted (→ semantic, a plain
+   append, never destructive) or deleted; re-entrancy needs
    no watermark — a handled row leaves episodic. Split (2026-05-19) onto
    the built-in **`dream` mission** (global, visible, cron + turn-seam
    catch-up); the per-session subagent is now **encode-only**.
@@ -517,9 +521,10 @@ Ordered. Each is a design decision not yet locked.
    — server-side dedup (`insert_with_dedup`) already covers duplicates.
 6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
    (any reactivation), gated action; near-dup→mechanical dedup,
-   contradiction→user-present AskUser(dated)+supersede, no-user→defer;
-   similarity can't detect contradiction (needs the engine LLM); never
-   synthesize-into-storage / destructive-delete. One contract, three
+   contradiction→user-present AskUser(dated)→append resolved row,
+   no-user→defer; similarity can't detect contradiction (needs the
+   engine LLM); never synthesize-into-storage / destructive-delete;
+   no structural replaces-link (append + read-time + user delete). One contract, three
    call sites, differ only by user-presence. Implementation mechanism
    (shared engine module vs shared prompt) deferred to build time.
 7. **Consolidation widget polish** — the dream mission now carries a
@@ -537,7 +542,11 @@ the dashboard.
 
 - **Cross-device sync** — exports + git first; real sync is P2P via
   Linggen's WebRTC transport.
-- **Temporal reasoning** — entity-time graph queries; `supersedes` is
-  the structural foothold.
+- **Structural revision link + temporal reasoning** — a `replaces`
+  link (newer row → the row it obsoletes) plus entity-time graph
+  queries. Deliberately *not* built: it is a schema change (→ a
+  store wipe under the no-forward-migration policy) and reconciliation
+  works without it (append + read-time + explicit user delete). Revisit
+  only if read-time reconciliation proves insufficient at scale.
 - **`Memory_archive`** — soft-forget: hidden from default search but
   recoverable.

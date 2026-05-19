@@ -64,10 +64,11 @@ pub(crate) fn nudge_message() -> ChatMessage {
          **contradicts** the new fact on the same subject (opposite \
          value — e.g. \"cat is male\" vs \"cat is female\", not merely \
          similar) and it matters here, **ask the user** which is right, \
-         showing both rows with their dates; write their answer and add \
-         a `supersedes` link to the stale row — never silently \
-         overwrite. Unsure, immaterial, or no real conflict → append a \
-         new timestamped row; later recall reconciles. \
+         showing both rows with their dates; write their answer as a new \
+         timestamped row — never silently overwrite. (Delete the wrong \
+         row only if the user explicitly asks.) Unsure, immaterial, or \
+         no real conflict → just append the new row; later recall \
+         reconciles by recency. \
          \
          Reconcile on recall: if memory you were given this turn holds \
          rows that conflict on something the user's request depends on, \

@@ -360,10 +360,8 @@ async fn dispatch_dream_mission(
     .await;
 
     let status = match &result {
-        Ok((promoted, superseded, deleted)) => {
-            info!(
-                "dream mission: consolidate ok (promoted={promoted} superseded={superseded} deleted={deleted})"
-            );
+        Ok((promoted, deleted)) => {
+            info!("dream mission: consolidate ok (promoted={promoted} deleted={deleted})");
             "completed"
         }
         Err(e) => {
