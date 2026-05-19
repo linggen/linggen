@@ -101,22 +101,9 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
             // required. Per-mission dependencies are declared in `requires:`
             // and checked at dispatch by find_missing_requires.
 
-            // Determine working directory for this mission. Prefer `cwd`
-            // (the new field); fall back to legacy `project`, then env cwd.
-            // Expand `~` and `$VAR` so frontmatter like `cwd: ~/.linggen`
-            // resolves to an absolute path the agent's Bash tool can spawn in.
-            let raw_cwd = mission
-                .cwd
-                .clone()
-                .or_else(|| mission.project.clone())
-                .unwrap_or_else(|| {
-                    std::env::current_dir()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                });
-            let root = crate::util::resolve_path(std::path::Path::new(&raw_cwd));
-            let project_path = root.to_string_lossy().to_string();
+            // Working dir: `cwd` → legacy `project` → env cwd, with
+            // `~`/`$VAR` expansion (so the agent's Bash tool can spawn in it).
+            let (root, project_path) = mission_root(mission);
 
             // Busy-skip: if previous run is still executing, skip and log.
             if ms.running.load(std::sync::atomic::Ordering::Relaxed) {
@@ -277,6 +264,7 @@ async fn dispatch_dream_mission(
     pre_session_id: Option<String>,
 ) {
     use crate::server::AgentStatusKind;
+    use std::sync::atomic::Ordering;
 
     let agent_id = MISSION_AGENT_ID;
     let mission_run_id = format!(
@@ -284,6 +272,16 @@ async fn dispatch_dream_mission(
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
+
+    // Shared overlap guard: both the cron fire and the turn-seam catch-up
+    // funnel through here. `swap(true)` — if it was already true, another
+    // dream run owns it; record a skip and bail WITHOUT clearing (the
+    // owner clears). Only the acquirer clears, at the end.
+    if state.dream_running.swap(true, Ordering::SeqCst) {
+        info!("dream mission: already running, skipping this trigger");
+        record_mission_run(&state, mission, &mission_run_id, None, "skipped", true);
+        return;
+    }
 
     let has_pre_session = pre_session_id.is_some();
     let session_id = pre_session_id.or_else(|| create_mission_session(mission));
@@ -393,6 +391,86 @@ async fn dispatch_dream_mission(
             session_id.clone(),
         )
         .await;
+
+    // Release the shared guard — only the acquirer reaches here.
+    state.dream_running.store(false, Ordering::SeqCst);
+}
+
+/// Resolve a mission's working dir the same way the scheduler loop does:
+/// `cwd` → legacy `project` → current dir, with `~`/`$VAR` expansion.
+fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
+    let raw_cwd = mission
+        .cwd
+        .clone()
+        .or_else(|| mission.project.clone())
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
+    let root = crate::util::resolve_path(std::path::Path::new(&raw_cwd));
+    let project_path = root.to_string_lossy().to_string();
+    (root, project_path)
+}
+
+/// Turn-seam catch-up for the built-in `dream` mission. Called from the
+/// post-turn seam (owner sessions only). The mission has a daily cron,
+/// but cron is missed when the machine is off/asleep; this re-triggers it
+/// the next time Linggen is used if it hasn't run within
+/// `dream_catchup_hours`. Cheap + non-blocking: spawns, reads run
+/// history, compares, and only then dispatches. Overlap with the cron
+/// fire is prevented by the shared `dream_running` guard in
+/// [`dispatch_dream_mission`].
+pub(crate) fn maybe_fire_dream_catchup(state: Arc<ServerState>) {
+    tokio::spawn(async move {
+        // Respect user intent: a missing or disabled `dream` mission means
+        // the user opted out of auto-consolidation — no catch-up.
+        let mission = match state.manager.missions.get_mission(DREAM_MISSION_ID) {
+            Ok(Some(m)) if m.enabled => m,
+            Ok(_) => return,
+            Err(e) => {
+                debug!("dream catch-up: get_mission failed: {e}");
+                return;
+            }
+        };
+
+        // Last *attempt* (completed or failed; skipped doesn't count) by
+        // trigger time. None ⇒ never run ⇒ overdue.
+        let last_run_secs = match state.manager.missions.list_mission_runs(DREAM_MISSION_ID) {
+            Ok(runs) => runs
+                .iter()
+                .filter(|r| !r.skipped)
+                .map(|r| r.triggered_at)
+                .max(),
+            Err(e) => {
+                debug!("dream catch-up: list_mission_runs failed: {e}");
+                return;
+            }
+        };
+
+        let catchup_hours = crate::config::Config::load_with_path()
+            .map(|(c, _)| c.agent.dream_catchup_hours)
+            .unwrap_or_else(|_| crate::config::Config::default().agent.dream_catchup_hours);
+        let threshold_secs = catchup_hours.saturating_mul(3600);
+        let now = crate::util::now_ts_secs();
+
+        let overdue = match last_run_secs {
+            None => true,
+            Some(last) => now.saturating_sub(last) >= threshold_secs,
+        };
+        if !overdue {
+            return;
+        }
+
+        info!(
+            "dream catch-up: last run {:?}s ago (threshold {}h) — triggering",
+            last_run_secs.map(|l| now.saturating_sub(l)),
+            catchup_hours
+        );
+        let (root, project_path) = mission_root(&mission);
+        dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None).await;
+    });
 }
 
 /// Dispatch a mission prompt to the mission agent.

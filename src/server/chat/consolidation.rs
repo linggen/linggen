@@ -22,11 +22,12 @@
 //! selects the past-TTL worklist itself (binary stays policy-free), and
 //! hands it to the subagent.
 //!
-//! Today the per-session tick runs both phases in sequence (behavior is
-//! the same as the old single combined call). Step 6 of the
-//! memory-recall-redesign moves [`run_consolidate_evict`] onto a built-in
-//! "dream" mission (daily cron + turn-seam catch-up) and leaves the
-//! per-session tick **encode-only** — the split here is the prerequisite.
+//! The per-session tick is **encode-only** (wake-time). Consolidate +
+//! evict is owned entirely by the built-in `dream` mission (daily cron +
+//! turn-seam catch-up; see `missions::scheduler`), which calls
+//! [`run_consolidate_evict`] directly. This is the Complementary
+//! Learning Systems split: fast hippocampal encoding while awake, slow
+//! neocortical consolidation + forgetting offline.
 //! See `project_memory_recall_redesign` / `project_consolidator_contract`.
 
 use super::ChatRunCtx;
@@ -54,22 +55,12 @@ const WORKLIST_CONTENT_CHARS: usize = 500;
 /// Bound on a single deterministic `ling-mem` invocation.
 const LING_MEM_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Parsed result of one tick — drives the task #6 widget (material change
-/// = any of promoted/superseded > 0). For now it is only logged.
+/// Result of one per-session encode tick — how many rows were written to
+/// episodic. Only logged. (Promote/supersede/delete counts belong to the
+/// `dream` mission's consolidate path, which returns its own tuple.)
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct TickOutcome {
     pub encoded: u32,
-    pub promoted: u32,
-    pub superseded: u32,
-    pub deleted: u32,
-}
-
-impl TickOutcome {
-    /// A persistent result line lands only on a material change
-    /// (`memory-spec.md` §2) — ≥1 row promoted or superseded.
-    fn is_material(&self) -> bool {
-        self.promoted > 0 || self.superseded > 0
-    }
 }
 
 /// Minimal projection of an episodic `ling-mem` row — only the fields the
@@ -130,7 +121,6 @@ pub(super) fn maybe_fire_consolidation(ctx: &ChatRunCtx, engine: &AgentEngine) {
     let manager = ctx.manager.clone();
     let agent_id = ctx.agent_id.clone();
     let ws_root = ctx.root.clone();
-    let episodic_ttl_days = engine.cfg.episodic_ttl_days;
 
     tokio::spawn(async move {
         // Per-session overlap guard. Acquired *inside* the task so two
@@ -154,28 +144,24 @@ pub(super) fn maybe_fire_consolidation(ctx: &ChatRunCtx, engine: &AgentEngine) {
             &session_id,
             &agent_id,
             &ws_root,
-            episodic_ttl_days,
             recent_transcript,
         )
         .await;
 
         match result {
-            Ok(outcome) if outcome.is_material() => tracing::info!(
+            Ok(o) if o.encoded > 0 => tracing::info!(
                 session_id = %session_id,
-                ?outcome,
-                "memory consolidation tick: material change"
+                encoded = o.encoded,
+                "memory encode tick: wrote episodic rows"
             ),
-            Ok(outcome) => tracing::debug!(
+            Ok(_) => tracing::debug!(
                 session_id = %session_id,
-                ?outcome,
-                "memory consolidation tick: no-op"
+                "memory encode tick: nothing durable"
             ),
-            // Surfaced as an explicit failure widget in task #6; for now
-            // the trigger wiring just records it.
             Err(e) => tracing::warn!(
                 session_id = %session_id,
                 error = %e,
-                "memory consolidation tick failed"
+                "memory encode tick failed"
             ),
         }
 
@@ -214,17 +200,16 @@ fn snapshot_recent_exchange(engine: &AgentEngine, interval: usize) -> String {
     lines.join("\n")
 }
 
-/// One encode → consolidate → evict pass for `session_id`. Behavior is
-/// the same as the old single combined call; the difference is the two
-/// phases are now separate, independently-reusable subagent invocations
-/// (the dream mission of step 6 will own [`run_consolidate_evict`] alone).
+/// The per-session tick: **encode only** (wake-time). Consolidate +
+/// evict is owned by the `dream` mission (`missions::scheduler`), not the
+/// per-session path — see the module doc. `promoted`/`superseded`/
+/// `deleted` are therefore always 0 here.
 async fn run_consolidation_tick(
     state: &Arc<ServerState>,
     manager: &Arc<AgentManager>,
     session_id: &str,
     agent_id: &str,
     ws_root: &PathBuf,
-    episodic_ttl_days: u64,
     recent_transcript: String,
 ) -> anyhow::Result<TickOutcome> {
     let encoded = run_encode(
@@ -237,22 +222,7 @@ async fn run_consolidation_tick(
     )
     .await?;
 
-    let (promoted, superseded, deleted) = run_consolidate_evict(
-        state,
-        manager,
-        session_id,
-        agent_id,
-        ws_root,
-        episodic_ttl_days,
-    )
-    .await?;
-
-    Ok(TickOutcome {
-        encoded,
-        promoted,
-        superseded,
-        deleted,
-    })
+    Ok(TickOutcome { encoded })
 }
 
 /// **Encode phase.** Write the recent exchange into episodic. Per-session,
@@ -616,20 +586,6 @@ mod tests {
         assert!(parse_consolidated("I did some stuff but forgot the line").is_err());
     }
 
-    #[test]
-    fn tick_outcome_materiality() {
-        assert!(TickOutcome {
-            promoted: 1,
-            ..Default::default()
-        }
-        .is_material());
-        assert!(!TickOutcome {
-            encoded: 9,
-            deleted: 9,
-            ..Default::default()
-        }
-        .is_material());
-    }
 
     #[test]
     fn parse_episodic_rows_handles_array_and_ndjson() {

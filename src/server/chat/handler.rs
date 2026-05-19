@@ -590,10 +590,16 @@ pub(crate) async fn chat_handler(
         });
 
         // Post-turn: if this owner session just hit a consolidation
-        // interval, fire the memory consolidation tick off the turn
-        // (non-blocking — reads what it needs from `engine` here, then
-        // spawns). No-op for consumer/mission/sub-N sessions.
+        // interval, fire the memory ENCODE tick off the turn (non-blocking
+        // — reads what it needs from `engine` here, then spawns). No-op
+        // for consumer/mission/sub-N sessions.
         super::consolidation::maybe_fire_consolidation(&ctx, &engine);
+        // Owner turns also catch up the `dream` consolidate+evict mission
+        // if its daily cron was missed (machine off/asleep). Cheap,
+        // non-blocking, guarded; no-op unless overdue.
+        if engine.prompt_profile.include_memory {
+            crate::missions::scheduler::maybe_fire_dream_catchup(ctx.state.clone());
+        }
         state_clone
             .send_agent_status(
                 target_id_clone,

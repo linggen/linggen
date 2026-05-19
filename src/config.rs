@@ -144,6 +144,14 @@ pub struct AgentConfig {
     /// backstop. Default 7. See `memory-spec.md` §2.
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u64,
+
+    /// Catch-up threshold (hours) for the built-in `dream` consolidation
+    /// mission. The mission has a daily cron, but cron is missed when the
+    /// machine is off/asleep; on each completed turn, if `dream` has not
+    /// run in this many hours it is triggered as a catch-up. Default 24.
+    /// See `memory-spec.md` §2.
+    #[serde(default = "default_dream_catchup_hours")]
+    pub dream_catchup_hours: u64,
 }
 
 fn default_memory_nudge_interval() -> usize {
@@ -156,6 +164,10 @@ fn default_consolidate_every_n_turns() -> usize {
 
 fn default_episodic_ttl_days() -> u64 {
     7
+}
+
+fn default_dream_catchup_hours() -> u64 {
+    24
 }
 
 impl AgentConfig {
@@ -380,6 +392,11 @@ impl Config {
                 "Agent episodic_ttl_days must be greater than 0 (a 0-day TTL evicts episodic memory before it can be consolidated)"
             );
         }
+        if self.agent.dream_catchup_hours == 0 {
+            anyhow::bail!(
+                "Agent dream_catchup_hours must be greater than 0 (a 0-hour catch-up would re-trigger the dream mission every turn)"
+            );
+        }
         // Warn (log) if default_models references non-existent model IDs.
         for dm in &self.routing.default_models {
             if !seen_ids.contains(&dm) {
@@ -422,6 +439,7 @@ impl Default for Config {
                 compact_threshold: None,
                 consolidate_every_n_turns: default_consolidate_every_n_turns(),
                 episodic_ttl_days: default_episodic_ttl_days(),
+                dream_catchup_hours: default_dream_catchup_hours(),
             },
             logging: LoggingConfig {
                 level: None,

@@ -794,6 +794,7 @@ async fn prepare_server(
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
         consolidation_active: Arc::new(Mutex::new(HashSet::new())),
+        dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     // Flush token usage to disk every 30 seconds.
