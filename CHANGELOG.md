@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+Memory system — recall redesign (Complementary Learning Systems model).
+
+### Changed
+
+- **Capture is split by "wake/sleep".** A per-session, every-N-turns
+  subagent does **encode only** (recent exchange → episodic). A new
+  built-in, visible **`dream` mission** owns **consolidate + evict**
+  globally on a daily cron **plus a turn-seam catch-up** (covers a
+  machine that was off overnight). The dream mission is per-run
+  stoppable and deletable as a supported opt-out (degrades automatic
+  curation, never loses data); each run leaves an audit record.
+- **Write-time quality bar** — the encoder writes only what a future
+  task benefits from (episodic is recall-visible immediately), instead
+  of liberal capture.
+- **Write routing by salience** — explicit "remember…"/standing
+  instructions go to the durable store immediately via `Memory_write`;
+  incidental signal goes through episodic→consolidate.
+- **Reconcile contract** — memory is reconciled against existing memory
+  on any reactivation (write, recall, dream). Near-duplicates are
+  deduped mechanically; a genuine contradiction is resolved **with the
+  user** (asked, with dates) and `supersedes`-linked, never silently
+  overwritten or merged into storage; the no-user dream run defers
+  contradictions to a later recall. Live-agent guidance ships in the
+  memory nudge; the full contract is in `doc/memory-spec.md` §2.
+
+### Added
+
+- `agent.dream_catchup_hours` (default 24) — catch-up threshold for the
+  built-in `dream` consolidation mission.
+
 ## v0.10.0 (2026-04-29)
 
 Proxy rooms, user isolation, mission as first-class subsystem, memory system redesign, and LAN access fixes.

@@ -102,10 +102,14 @@ ling-mem delete <episodic-id> --episodic --yes
 ling-mem delete <episodic-id> --episodic --yes
 ```
 
-**Never** in this phase: do not generalize scattered utterances into a
-"user always X" rule, do not merge distinct facts into a synthesized
-story, do not resolve contradictions between rows. Those need the user
-present and happen in live retrieval, not here. Append and link only.
+**Never** in this phase (you are the *no-user* branch of the Reconcile
+contract, `memory-spec.md` §2): do not generalize scattered utterances
+into a "user always X" rule, do not merge distinct facts into a
+synthesized story, do not resolve contradictions between rows. Those
+need the user present. A contradicting pair → promote each row on its
+own merits as a *separate* atom (or delete on its own merits); never
+pick a winner or merge them — the conflict is left for a later
+user-present recall to resolve. Append and link only.
 
 **CONSOLIDATE output** — exactly one final line, ≤20 words, machine-parseable:
 
