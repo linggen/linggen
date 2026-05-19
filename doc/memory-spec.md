@@ -86,13 +86,20 @@ encoding while awake, slow consolidation + forgetting "asleep":
 **Encode — per-session, every N turns** (N default ~10, Settings).
 Per-session counter: resets each session; no startup trigger; sessions
 shorter than N turns are not encoded (a deliberate simplicity tradeoff).
-An async `ling-mem` subagent reads the recent in-session exchange,
-applies §4's *exclusion* filters (drop file-derivable, secrets, pure
-activity) **plus a write-time usefulness bar** (write only what a future
-task benefits from; drop garbage), then writes/dedups into the
-**episodic** table. The encoder is the *first* gate — episodic is
-recall-visible immediately (recall spans both tables). It does **only**
-encode. ≈ waking encoding.
+An async `ling-mem` subagent reads the recent in-session exchange (the
+transcript the engine already holds — memory is **never** captured by
+scanning session/transcript files on disk), applies §4's *exclusion*
+filters (drop file-derivable, secrets, pure activity) **plus a
+write-time usefulness bar** (write only what a future task benefits
+from; drop garbage), then writes into the **episodic** table
+(byte-identical restatements are exact-deduped by the binary; near-dups
+and contradictions are left for the LLM, not mechanically collapsed).
+The encoder is the *first* gate — episodic is recall-visible immediately
+(recall spans both tables). It does **only** encode. ≈ waking encoding.
+
+Cross-tool memory comes from the **shared store + per-host in-host
+encode** (Linggen's engine here; the cross-agent skill inside other
+hosts), never from one tool scraping another's logs.
 
 **Consolidate + evict — global, the built-in `dream` mission.** A
 normal, **visible** built-in mission (`~/.linggen/missions/dream/`,
@@ -155,7 +162,9 @@ Live path is unchanged: core inlined every session; semantic queried via
 `Memory_query` (verbs `get`/`search`/`list`) and surfaced at turn start.
 Writes via `Memory_write` (`add`/`update`/`delete`). Recall spans
 **both** tables: `Memory_query` queries semantic *and* episodic and
-returns one merged, deduped result (semantic copy wins a near-dup tie).
+returns one union — **exact-content** duplicates collapsed (semantic
+copy wins); a high-cosine *contradiction* is deliberately kept so recall
+surfaces both for the user/LLM to reconcile, never silently hidden.
 Bulk forget stays user-initiated (dashboard / `ling-mem forget` CLI),
 never a model tool.
 
@@ -205,8 +214,10 @@ reactivation, and core is reactivated every turn.)
 becomes a memory interrogation. Classify the candidate / surfaced rows
 against existing memory:
 
-- **Near-duplicate** (same value, reworded) → mechanical dedup, anytime,
-  no prompt. The binary already collapses these on write.
+- **Exact duplicate** (byte-identical content, same type) → mechanical
+  collapse, anytime, no prompt. The binary does this on write. A
+  *reworded* restatement is **not** mechanically merged (cosine can't
+  tell it from a contradiction) — it's left for the LLM to reconcile.
 - **Contradiction** (same subject, *incompatible* value) → resolve
   **only with the user present and only when material** to the current
   interaction: surface the conflicting rows **with their dates** and ask
@@ -305,7 +316,7 @@ Bulk forget is user-initiated only, regardless of where it would run.
 | Operation | Where | Why |
 |:--|:--|:--|
 | Append a new row | Offline mission OR live session | Pure additive |
-| Exact-rephrase dedup (clearer wording on a near-duplicate) | Offline OR live | Mechanical — pick the better string |
+| Exact-content dedup (byte-identical restatement, same type) | Offline OR live | Mechanical — collapse, keep one. A *reworded* near-dup is **not** mechanical (cosine ≠ sameness) → it's the Live-only judgment rows below |
 | Extend `contexts[]` / `tags[]` from new evidence | Offline OR live | Mechanical — array union |
 | Retire by fixed obsolescence rule (session-arc leak, hard TTL) | Offline OR live | Mechanical — the criterion is a fixed rule |
 | Merge distinct facts into a synthesized story | **Live only** | Content rewrite — hallucination risk |
@@ -518,10 +529,12 @@ Ordered. Each is a design decision not yet locked.
    (episodic is recall-visible immediately); the consolidator remains
    the terminal promote/delete gate for past-TTL rows. Revised
    2026-05-19 from "liberal capture" once recall began spanning episodic
-   — server-side dedup (`insert_with_dedup`) already covers duplicates.
+   — server-side dedup (`insert_with_dedup`) collapses byte-identical
+   restatements (exact-content only; reworded/contradiction is the LLM's).
 6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
-   (any reactivation), gated action; near-dup→mechanical dedup,
-   contradiction→user-present AskUser(dated)→append resolved row,
+   (any reactivation), gated action; exact-dup→mechanical collapse
+   (cosine is never a sameness gate — it can't tell a restatement from a
+   contradiction); contradiction→user-present AskUser(dated)→append resolved row,
    no-user→defer; similarity can't detect contradiction (needs the
    engine LLM); never synthesize-into-storage / destructive-delete;
    no structural replaces-link (append + read-time + user delete). One contract, three

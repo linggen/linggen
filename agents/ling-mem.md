@@ -60,7 +60,9 @@ Rules when writing:
 shipped artifact tied to user identity or a trajectory-level pattern,
 never as an activity catch-all.
 
-Command (the binary dedups mechanically — do not pre-check for dupes):
+Command (the binary collapses only byte-identical restatements;
+reworded near-dups and contradictions are reconciled later, not here —
+do not pre-check or pre-merge):
 
 ```
 ling-mem add "<content>" --episodic --type <fact|preference|decision|learned> --from <user|agent|derived> [--context <scope>]...
