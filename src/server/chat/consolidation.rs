@@ -283,7 +283,7 @@ async fn run_encode(
 ///
 /// Empty worklist → nothing is past-TTL, so there is also nothing to
 /// evict: no subagent spawn, returns `(0, 0, 0)`.
-async fn run_consolidate_evict(
+pub(crate) async fn run_consolidate_evict(
     state: &Arc<ServerState>,
     manager: &Arc<AgentManager>,
     session_id: &str,

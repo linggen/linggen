@@ -76,6 +76,9 @@ use chat::{
     compact_chat_api, compact_config_api, edit_plan_handler, get_system_prompt_api,
     pending_ask_user_handler, reject_plan_handler,
 };
+/// The global consolidate+evict pass — invoked by the built-in `dream`
+/// mission (see `missions::scheduler`).
+pub(crate) use chat::run_consolidate_evict;
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]

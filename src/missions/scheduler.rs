@@ -13,6 +13,13 @@ const CHECK_INTERVAL_SECS: u64 = 10;
 /// Maximum triggers per mission per day to prevent runaway cost.
 const MAX_TRIGGERS_PER_DAY: u32 = 100;
 
+/// The built-in memory-consolidation mission. Its id is its directory
+/// name under `~/.linggen/missions/`. Firing it does NOT run a generic
+/// `ling` agent prompt — the worklist/TTL is engine-owned, so a static
+/// mission body can't carry it. Instead it invokes the engine's global
+/// consolidate+evict pass directly (see [`dispatch_dream_mission`]).
+const DREAM_MISSION_ID: &str = "dream";
+
 /// Per-mission tracking state.
 struct MissionState {
     /// Last minute we fired this mission (to dedup within the same minute).
@@ -254,6 +261,140 @@ pub async fn dispatch_mission_prompt_public(
     dispatch_mission_prompt(state, root, project_path, mission, session_id).await;
 }
 
+/// Run the built-in `dream` mission: the engine's global consolidate +
+/// evict pass. Not a generic agent prompt — the TTL/worklist is
+/// engine-owned (locked contract), which a static mission body can't
+/// carry. We still create the mission session, emit the same events, and
+/// write a `MissionRunEntry` so it shows up in mission history exactly
+/// like any mission (the audit trail the user asked for); the heavy
+/// lifting is `run_consolidate_evict`, which spawns its own `ling-mem`
+/// CONSOLIDATE subagent with its own run record.
+async fn dispatch_dream_mission(
+    state: Arc<ServerState>,
+    root: std::path::PathBuf,
+    project_path: &str,
+    mission: &Mission,
+    pre_session_id: Option<String>,
+) {
+    use crate::server::AgentStatusKind;
+
+    let agent_id = MISSION_AGENT_ID;
+    let mission_run_id = format!(
+        "mission-run-{}-{}",
+        crate::util::now_ts_secs(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+
+    let has_pre_session = pre_session_id.is_some();
+    let session_id = pre_session_id.or_else(|| create_mission_session(mission));
+
+    if !has_pre_session {
+        if let Some(ref sid) = session_id {
+            let evt_cwd = mission
+                .cwd
+                .clone()
+                .or_else(|| mission.project.clone())
+                .unwrap_or_default();
+            let _ = state.events_tx.send(ServerEvent::SessionCreated {
+                session_id: sid.clone(),
+                title: mission_session_title(mission),
+                creator: "mission".into(),
+                project: Some(evt_cwd.clone()),
+                project_name: std::path::Path::new(&evt_cwd)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string()),
+                skill: None,
+                mission_id: Some(mission.id.clone()),
+            });
+            // Persist a kickoff line so the session chat documents what ran.
+            let global_store = crate::state_fs::SessionStore::with_sessions_dir(
+                crate::paths::global_sessions_dir(),
+            );
+            let _ = global_store.add_chat_message(
+                sid,
+                &crate::state_fs::sessions::ChatMsg {
+                    agent_id: agent_id.to_string(),
+                    from_id: "user".to_string(),
+                    to_id: agent_id.to_string(),
+                    content: "Memory dream: consolidate past-TTL episodic memories and evict the rest.".to_string(),
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: false,
+                },
+            );
+        }
+    }
+
+    let _ = state.events_tx.send(ServerEvent::MissionTriggered {
+        mission_id: mission.id.clone(),
+        agent_id: agent_id.to_string(),
+        project_root: project_path.to_string(),
+        session_id: session_id.clone(),
+    });
+    state
+        .send_agent_status(
+            agent_id.to_string(),
+            AgentStatusKind::Working,
+            Some("Memory consolidation".to_string()),
+            None,
+            session_id.clone(),
+        )
+        .await;
+
+    // TTL policy is engine-owned. Read the live config; fall back to the
+    // built-in default if it can't be loaded.
+    let episodic_ttl_days = crate::config::Config::load_with_path()
+        .map(|(c, _)| c.agent.episodic_ttl_days)
+        .unwrap_or_else(|_| crate::config::Config::default().agent.episodic_ttl_days);
+
+    // The consolidate+evict subagent is keyed to this mission session so
+    // its run record / events are auditable under the mission.
+    let sid_for_call = session_id
+        .clone()
+        .unwrap_or_else(|| mission_run_id.clone());
+    let result = crate::server::run_consolidate_evict(
+        &state,
+        &state.manager,
+        &sid_for_call,
+        agent_id,
+        &root,
+        episodic_ttl_days,
+    )
+    .await;
+
+    let status = match &result {
+        Ok((promoted, superseded, deleted)) => {
+            info!(
+                "dream mission: consolidate ok (promoted={promoted} superseded={superseded} deleted={deleted})"
+            );
+            "completed"
+        }
+        Err(e) => {
+            warn!("dream mission: consolidate failed: {e}");
+            "failed"
+        }
+    };
+
+    record_mission_run_full(
+        &state,
+        mission,
+        &mission_run_id,
+        session_id.as_deref(),
+        status,
+        false,
+        None,
+        None,
+    );
+    state
+        .send_agent_status(
+            agent_id.to_string(),
+            AgentStatusKind::Idle,
+            None,
+            None,
+            session_id.clone(),
+        )
+        .await;
+}
+
 /// Dispatch a mission prompt to the mission agent.
 async fn dispatch_mission_prompt(
     state: Arc<ServerState>,
@@ -263,6 +404,13 @@ async fn dispatch_mission_prompt(
     pre_session_id: Option<String>,
 ) {
     use crate::server::AgentStatusKind;
+
+    // The built-in memory mission is engine-driven, not a generic agent
+    // prompt — branch before any agent/prompt setup.
+    if mission.id == DREAM_MISSION_ID {
+        dispatch_dream_mission(state, root, project_path, mission, pre_session_id).await;
+        return;
+    }
 
     let agent_id = MISSION_AGENT_ID;
 
