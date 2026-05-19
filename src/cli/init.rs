@@ -13,6 +13,14 @@ const RESET: &str = "\x1b[0m";
 #[folder = "agents/"]
 struct AgentAssets;
 
+/// Built-in missions (e.g. the memory `dream` consolidation pass),
+/// embedded at compile time. Unlike agents, these are seeded **once**
+/// (sentinel-gated) and then owned by the user — see
+/// [`install_default_missions`].
+#[derive(Embed)]
+#[folder = "missions/"]
+struct MissionAssets;
+
 pub async fn run(_global: bool, _root: Option<PathBuf>) -> Result<()> {
     println!("ling init — setting up Linggen environment\n");
 
@@ -21,6 +29,7 @@ pub async fn run(_global: bool, _root: Option<PathBuf>) -> Result<()> {
 
     // 2. Install default agent specs
     install_default_agents()?;
+    install_default_missions()?;
 
     // 3. Create default config if missing
     ensure_default_config()?;
@@ -82,6 +91,48 @@ pub fn install_default_agents() -> Result<()> {
     }
 
     println!("  {}[OK]{} Installed {} default agent specs", GREEN, RESET, count);
+    Ok(())
+}
+
+/// Seed built-in missions (the memory `dream` consolidation pass) into
+/// `~/.linggen/missions/`. **Install-once, then user-owned:** a sentinel
+/// (`.builtin-missions-installed`) records that seeding has happened, so
+/// upgrades never clobber a user's schedule/enabled edits and — crucially
+/// — never resurrect a mission the user deliberately deleted (deleting
+/// `dream` is a supported choice that disables auto-consolidation, not a
+/// bug). Idempotent and safe to call on every daemon start.
+pub fn install_default_missions() -> Result<()> {
+    let missions_dir = crate::paths::global_missions_dir();
+    let sentinel = missions_dir.join(".builtin-missions-installed");
+    if sentinel.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(&missions_dir)?;
+
+    let mut count = 0;
+    for filename in MissionAssets::iter() {
+        let Some(file) = MissionAssets::get(&filename) else {
+            continue;
+        };
+        let dest = missions_dir.join(filename.as_ref());
+        // Only seed if absent — never overwrite an existing (possibly
+        // user-edited) mission.
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dest, file.data.as_ref())?;
+        count += 1;
+    }
+
+    // Mark seeding done regardless of count, so a user-deleted built-in
+    // mission is not re-created on the next start.
+    fs::write(&sentinel, b"")?;
+    if count > 0 {
+        println!("  {}[OK]{} Seeded {} built-in mission(s)", GREEN, RESET, count);
+    }
     Ok(())
 }
 
