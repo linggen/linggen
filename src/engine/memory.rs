@@ -44,31 +44,46 @@ pub(crate) fn should_consolidate(chat_history: &[ChatMessage], interval: usize) 
 
 /// The synthetic user message that nudges the model to check whether the
 /// recent exchange produced anything worth saving to, or contradicts
-/// something already in, memory.
+/// something already in, memory. Carries the live (user-present) half of
+/// the Reconcile contract (`memory-spec.md` §2): read-before-write +
+/// reconcile-on-contradiction.
 pub(crate) fn nudge_message() -> ChatMessage {
     ChatMessage::new(
         "user",
         "[MEMORY CHECK — hidden reminder, not from the user] \
          Did the last few exchanges produce anything durable — an \
-         identity fact, a cross-project preference, or a fact only the \
-         user can supply? Or did the user contradict something already \
-         in memory? Anything the user *explicitly* asked you to \
-         remember, a standing instruction, or a stated identity / \
-         preference must already have been written the moment it was \
-         said — don't wait for this check; it backstops the \
-         *incidental* durable signal you didn't capture live. \
-         If yes, act now: universals about the person → \
-         Edit `~/.linggen/memory/identity.md` or `style.md` (tiny, \
-         high-bar); cross-project user intent / decision / preference / \
+         identity fact, a cross-project preference, a decision, or a \
+         fact only the user can supply? Anything the user *explicitly* \
+         asked you to remember, a standing instruction, or a stated \
+         preference you must have written the moment it was said — this \
+         check only backstops the *incidental* signal you didn't \
+         capture live. \
+         \
+         Read before you write: `Memory_query` first. If an equivalent \
+         row already exists, don't duplicate it. If an existing row \
+         **contradicts** the new fact on the same subject (opposite \
+         value — e.g. \"cat is male\" vs \"cat is female\", not merely \
+         similar) and it matters here, **ask the user** which is right, \
+         showing both rows with their dates; write their answer and add \
+         a `supersedes` link to the stale row — never silently \
+         overwrite. Unsure, immaterial, or no real conflict → append a \
+         new timestamped row; later recall reconciles. \
+         \
+         Reconcile on recall: if memory you were given this turn holds \
+         rows that conflict on something the user's request depends on, \
+         ask them (with dates) before relying on it. You may merge rows \
+         *in your reply*; never write a synthesized/merged row to the \
+         store, and never delete to \"tidy\" — that is user-only. \
+         \
+         Where: universals about the person → Edit \
+         `~/.linggen/memory/identity.md` or `style.md` (tiny, \
+         high-bar); cross-project intent / decision / preference / \
          learning → `Memory_write({verb: \"add\", ...})` when a memory \
-         provider is installed. Append, don't overwrite — if a row \
-         contradicts a new fact, add the new one and let live retrieval \
-         reconcile next time. **Do NOT write to project files** \
-         (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are \
-         user-curated. Project-internal implementation detail is not \
-         memory — drop it; the agent reads the source next time. If \
-         nothing durable, reply briefly with `(no memory changes)` and \
-         continue with the user's current request."
+         provider is installed. **Never** write project files \
+         (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs) or store \
+         file-derivable detail — the agent reads the source next time. \
+         If nothing durable and nothing to reconcile, reply briefly \
+         with `(no memory changes)` and continue."
             .to_string(),
     )
 }
