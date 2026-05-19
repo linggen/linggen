@@ -91,9 +91,12 @@ transcript the engine already holds — memory is **never** captured by
 scanning session/transcript files on disk), applies §4's *exclusion*
 filters (drop file-derivable, secrets, pure activity) **plus a
 write-time usefulness bar** (write only what a future task benefits
-from; drop garbage), then writes into the **episodic** table
-(byte-identical restatements are exact-deduped by the binary; near-dups
-and contradictions are left for the LLM, not mechanically collapsed).
+from; drop garbage), and **reads existing memory before each write**
+(`ling-mem search`): skip a duplicate (exact or reworded), and on a
+contradiction append the new row + tag `reconcile:pending` without
+merging/deleting the old one. It does **not** ask (it's a sub-agent —
+see Reconcile's depth-0 invariant); the live agent resolves the flagged
+conflict with the user at the next recall.
 The encoder is the *first* gate — episodic is recall-visible immediately
 (recall spans both tables). It does **only** encode. ≈ waking encoding.
 
@@ -224,20 +227,36 @@ against existing memory:
   the user to choose/correct; on answer, write the resolved value as a
   **new timestamped row** (the stale one stays — recall reconciles by
   recency; the user may explicitly delete it). Never silently overwrite.
-  With **no user** (dream / the non-interactive encoder) or when not
-  material: leave both rows as-is and defer to a later recall. There is
-  no structural "replaces" link — reconciliation is append + read-time
-  + explicit user delete (see §3, §4; a link is Future, not built).
-  Cosine similarity **cannot**
-  separate a contradiction from a restatement — both score high — so
-  this classification needs the LLM, never the binary's dedup alone.
+  When **not material**, or in a context that **cannot ask**: append
+  the new row, leave the old one, defer the ask. There is no structural
+  "replaces" link — reconciliation is append + read-time + explicit
+  user delete (see §3, §4; a link is Future, not built). Cosine
+  **cannot** separate a contradiction from a restatement — both score
+  high — so this classification needs the LLM, never the binary's dedup.
 - **New** → write.
 
-Read-before-write: the live, user-present `Memory_write` path runs this
-check *before* persisting (skip on near-dup; ask on contradiction).
-Recall runs the same check on what it surfaced. The dream run uses the
-no-user branch. One contract, the engine's LLM, three call sites —
-differing only by whether a user is present to ask.
+**Who can actually ask — a hard engine invariant.** Only a *depth-0*
+agent can `AskUser`; **sub-agents are categorically blocked** from it
+(`tools/mod.rs` — a detached/post-turn subagent blocking on a prompt
+deadlocks). This decides where each write path's "ask" lives:
+
+- **Live `Memory_write`** (the conversational agent, depth-0) — reads
+  first; near-dup → skip; contradiction → AskUser, then append the
+  resolved row.
+- **N-turn encoder** (a sub-agent — *cannot* ask) — reads first
+  (`ling-mem search`); skips an exact/reworded duplicate; on a
+  contradiction it **appends the new row** (never drops what the user
+  just said), tags it `reconcile:pending`, and **never merges/deletes
+  the old row**. It does *not* ask. The conflict is resolved by the
+  **depth-0 live agent at the next recall** (recall surfaces both dated
+  rows; the live nudge already asks). Encoder = read + dedup + flag,
+  never silent-merge, never ask.
+- **`dream` mission** (no user at all) — reads the store, mechanical +
+  high-confidence only; defers contradictions entirely.
+
+So "every write reads first" holds on all three; only *where the ask
+happens* differs, forced by the depth-0 invariant — the encoder flags,
+the live agent asks.
 
 **Floors.** Synthesis *for the answer* is encouraged (merge rows into a
 dated narrative in the reply); synthesis *into a stored row* is

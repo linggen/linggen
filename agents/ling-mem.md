@@ -60,9 +60,24 @@ Rules when writing:
 shipped artifact tied to user identity or a trajectory-level pattern,
 never as an activity catch-all.
 
-Command (the binary collapses only byte-identical restatements;
-reworded near-dups and contradictions are reconciled later, not here —
-do not pre-check or pre-merge):
+**Read before you write — every row.** You have Bash + the `ling-mem`
+CLI; check existing memory before adding each candidate:
+
+1. `ling-mem search "<candidate gist>" --format json | jq -c 'del(.vector)'`
+   (also `--episodic`) to find rows on the same subject.
+2. **Already there** (exact, or a reworded restatement of the same
+   value) → **skip it.** Do not write a duplicate. Decide sameness by
+   *reading the content*, not by the similarity score.
+3. **An existing row contradicts the candidate** (same subject,
+   *incompatible* value — stored "cat is male", user now says
+   "female") → still **write the new row** (never drop what the user
+   just said) with `--context reconcile:pending`, and do **not** merge,
+   rewrite, or delete the old row. You are a subagent and **cannot ask
+   the user**; the live agent reconciles it with the user at the next
+   recall (it sees both rows, dated). Leave it for them.
+4. **New / unrelated** → write normally.
+
+Command:
 
 ```
 ling-mem add "<content>" --episodic --type <fact|preference|decision|learned> --from <user|agent|derived> [--context <scope>]...
