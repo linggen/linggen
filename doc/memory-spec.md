@@ -40,7 +40,8 @@ to see it*:
 - **Semantic** — everything else durable. Curated, deduplicated,
   similarity-retrieved on demand. The live recall hot path.
 - **Episodic** — recent extracted experience, awaiting consolidation.
-  Decays. Not on the live query path; it is the consolidator's input.
+  Decays. **On the recall path** (recall spans both tables — see §2
+  Recall) *and* the consolidator's input.
 
 If a candidate earns none of the three, **drop it.** Memory never writes
 to project files (`AGENTS.md`, `CLAUDE.md`, source, docs) — those are
@@ -77,58 +78,67 @@ core`); no markdown inject path.
 
 ### Engines (the hippocampus)
 
-One async subagent (`ling-mem`), fired **every N turns** (N default ~10,
-configurable in Settings). **Per-session counter** — resets each
-session; no startup trigger; sessions shorter than N turns are not
-consolidated. This is a deliberate simplicity tradeoff (no rolling
-cross-session counter), accepted over completeness.
+Two triggers, split by the Complementary Learning Systems model — fast
+encoding while awake, slow consolidation + forgetting "asleep":
 
-At each fire, strictly ordered:
+**Encode — per-session, every N turns** (N default ~10, Settings).
+Per-session counter: resets each session; no startup trigger; sessions
+shorter than N turns are not encoded (a deliberate simplicity tradeoff).
+An async `ling-mem` subagent reads the recent in-session exchange,
+applies §4's *exclusion* filters (drop file-derivable, secrets, pure
+activity) **plus a write-time usefulness bar** (write only what a future
+task benefits from; drop garbage), then writes/dedups into the
+**episodic** table. The encoder is the *first* gate — episodic is
+recall-visible immediately (recall spans both tables). It does **only**
+encode. ≈ waking encoding.
 
-1. **Encode** — read the recent in-session exchange, apply §4's
-   *exclusion* filters (drop file-derivable, secrets, pure activity)
-   **plus a write-time usefulness bar** (write only what a future task
-   benefits from; drop garbage), then write/dedup into the **episodic**
-   table. The encoder is the *first* gate — episodic is recall-visible
-   immediately now that recall spans both tables — and the consolidator
-   remains the terminal promote/delete gate past-TTL. ≈ waking encoding.
-2. **Consolidate** — process **past-TTL rows only**; each gets one
+**Consolidate + evict — global, the built-in `dream` mission.** A
+normal, **visible** built-in mission (`~/.linggen/missions/dream/`,
+installed once on setup/upgrade, user-stoppable per run, deletable as a
+supported opt-out). Engine-driven, not a free-form agent prompt: the
+engine owns TTL policy and selects the past-TTL worklist (the binary
+stays policy-free). Each run, strictly ordered:
+
+1. **Consolidate** — process **past-TTL rows only**; each gets one
    terminal decision: promote worthy rows → semantic (extract +
    optional `supersedes` link, never a destructive rewrite) or delete.
-   Generalizing / merging stay live-only (§3). May propose **semantic →
-   `tier=core`** when a stable universal emerges (user-confirmed; rule
-   1). Re-entrant by construction — a handled row leaves episodic, so
-   each tick sees only unhandled rows. ≈ reflective consolidation while
-   awake (not a nightly batch).
-3. **Evict** — delete episodic rows older than `EPISODIC_TTL` by
+   Generalizing / merging / contradiction-resolution stay user-present
+   (Reconcile, below) — the no-user dream run does mechanical,
+   high-confidence promote/delete only. May propose **semantic →
+   `tier=core`** for a stable universal (user-confirmed; rule 1).
+   Re-entrant by construction — a handled row leaves episodic.
+2. **Evict** — delete episodic rows older than `EPISODIC_TTL` by
    last-edit time (a touch resets retention).
 
-`EPISODIC_TTL` default **7 days** (configurable in Settings). Both it
-and the trigger interval must be > 0; losslessness comes from the
-consolidate-before-evict ordering below, not a TTL/interval ratio (the
-two are different units — wall-clock days vs. turns).
+`EPISODIC_TTL` default **7 days** (Settings). Losslessness comes from
+**consolidate-before-evict ordering** within a run: a past-TTL row
+always gets a final promotion pass before it can be evicted. Episodic
+is therefore bounded and lossless except for rows the consolidator
+judged not worth keeping — which is correct.
 
-**Consolidate-before-evict resolves the keep-vs-delete question by
-ordering, not policy:** a past-TTL row always gets a final promotion
-pass in the same tick before it can be evicted. Episodic is therefore
-both bounded and lossless except for rows the consolidator judged not
-worth keeping — which is correct.
-
-The subagent runs **async** (never blocks the user's turn). A transient
-"running" widget shows while it works. A persistent result line lands
-**only on a material change** (≥1 fact promoted or superseded) — no-op
-ticks stay silent — and is inspectable / undoable, with an explicit
-failure state if the subagent errors. All such copy obeys the
-≤20-word user-facing brevity rule (`code-style.md`).
+**Schedule = daily cron + turn-seam catch-up.** Cron alone is missed
+when the machine is off/asleep, so on each completed owner turn, if the
+mission has not run within `dream_catchup_hours` (default 24) it is
+triggered as a catch-up — the next time Linggen is used after a missed
+night. A shared in-flight guard prevents a cron run and a catch-up (or
+two catch-ups) from overlapping. Each run produces a mission run-record
+(the audit trail of automated promote/delete) and is per-run stoppable;
+no-op runs stay quiet.
 
 ### Binary vs judgment split
 
 - The **`ling-mem` binary** owns both tables + the mechanical primitives
-  (embed, dedup, supersede, decay). No LLM in the binary.
-- **Judgment** ("what's worth keeping") needs an LLM, so it is an agent,
-  scheduled per host:
-  - **Linggen** — built-in: engine schedules the encoder subagent and
-    the consolidator cron mission. Reliable, not user-deletable.
+  (embed, dedup, supersede, decay). **No LLM in the binary** — it is the
+  portable, deterministic data layer, the single shared source every
+  caller goes through.
+- **Judgment** ("what's worth keeping", "is this a contradiction") needs
+  an LLM. "No LLM in the binary" scopes to the `ling-mem` *binary* only
+  — the **Linggen engine has the LLM**, and every judgment site (encode,
+  recall, the dream mission) runs in the engine. Scheduled per host:
+  - **Linggen** — built-in: the engine runs the per-session encoder
+    subagent and the built-in `dream` consolidate+evict mission (daily
+    cron + turn-seam catch-up). Reliable; per-run stoppable; deletable
+    as a supported opt-out (degrades curation, never loses data).
   - **Third-party (Claude Code, ClawHub/OpenClaw)** — the `ling-mem`
     skill + lifecycle hooks substitute for the engine scheduler
     (turn-counter on a Stop hook, etc.).
@@ -180,10 +190,50 @@ rule) does **not** authorize the offline consolidator to synthesize
 surfaced at recall, step 4). The consolidator may promote the
 individual durable rows; it never mints a new general rule alone.
 
+### Reconcile
+
+Memory is reconciled against existing memory as an **ambient
+responsibility, on any reactivation** — not at fixed seams. Core is
+re-injected every turn, recall surfaces rows at turn start and mid-task,
+write compares a candidate, the dream run holds a worklist: each is a
+reconcile opportunity. (Brain-faithful: reconsolidation fires on
+reactivation, and core is reactivated every turn.)
+
+**Detection is ambient; the action is gated** — otherwise every turn
+becomes a memory interrogation. Classify the candidate / surfaced rows
+against existing memory:
+
+- **Near-duplicate** (same value, reworded) → mechanical dedup, anytime,
+  no prompt. The binary already collapses these on write.
+- **Contradiction** (same subject, *incompatible* value) → resolve
+  **only with the user present and only when material** to the current
+  interaction: surface the conflicting rows **with their dates** and ask
+  the user to choose/correct; on answer, write the resolution and
+  `supersedes`-link the stale row. With **no user** (dream / the
+  non-interactive encoder) or when not material: leave both as linked
+  atoms and defer to a later recall. Cosine similarity **cannot**
+  separate a contradiction from a restatement — both score high — so
+  this classification needs the LLM, never the binary's dedup alone.
+- **New** → write.
+
+Read-before-write: the live, user-present `Memory_write` path runs this
+check *before* persisting (skip on near-dup; ask on contradiction).
+Recall runs the same check on what it surfaced. The dream run uses the
+no-user branch. One contract, the engine's LLM, three call sites —
+differing only by whether a user is present to ask.
+
+**Floors.** Synthesis *for the answer* is encouraged (merge rows into a
+dated narrative in the reply); synthesis *into a stored row* is
+forbidden offline — that is the false-memory mechanism. Never
+destructively delete (user-explicit only). The dream run updates only at
+high confidence (clear-cut promote / exact dup); it never resolves
+nuance or contradiction.
+
 ### Extraction contract
 
 The encoder and the consolidator share one contract: the durability
-rules in §4. Same rules, two runtimes.
+rules in §4, plus Reconcile above. Same rules, runtimes differ only by
+user-presence.
 
 ## 3. Design rules
 
@@ -221,15 +271,17 @@ What it must not do is drift: expired facts get retired, conflicting
 rows get reconciled, noisy duplicates get merged. Net value goes up over
 time, not row count alone.
 
-**5. Consolidation promotes; only user-facing forgets need a human.**
+**5. Consolidation promotes mechanically; judgment is user-present.**
 
-The consolidator (§2) promotes episodic → semantic with agent judgment —
-extract, generalize, supersede — autonomously, on the every-N-turns
-tick. Episodic eviction is automatic (consolidate-before-evict). What
-still requires explicit user confirmation: **bulk forget and any
-destructive rewrite of an existing semantic row** (rule 1). Live
-retrieval still reconciles/synthesizes in the user's presence. The old
-"semantic maintenance = live only" split is retired.
+The dream consolidator (§2) autonomously does **mechanical + high-
+confidence** work: promote clear-cut episodic → semantic, exact-rephrase
+dedup, `supersedes` links, and consolidate-before-evict. It does **not**
+merge distinct facts, generalize utterances into rules, or resolve
+contradictions — those are judgment, and per Reconcile (§2) they happen
+only with the **user present** (live write or recall), never in the
+no-user dream run. Explicit user confirmation is still required for
+**bulk forget and any destructive rewrite of an existing semantic row**
+(rule 1).
 
 The table below maps where each operation runs.
 
@@ -381,9 +433,12 @@ But every such fact ages, so:
   review. The agent proposes the merged version; the user approves
   before any write.
 
-The extractor should pre-flag candidates that semantically overlap with
-existing rows so the live agent (and the dashboard) sees the cluster at
-retrieval time and can act on it with the user.
+This whole rule is the **Reconcile** contract (§2) applied to user-only
+facts: append timestamped rows; reconcile when the user is present;
+never merge-at-write offline. Note that *similarity* surfaces the
+cluster but cannot tell a restatement from a contradiction ("cat is
+male" vs "cat is female" score nearly identical) — separating those is
+the user-present LLM judgment step, not the binary's dedup.
 
 ## Implementation pointers
 
@@ -430,17 +485,20 @@ described in §4 rule 2. The split is responsibility, not packaging.
 Ordered. Each is a design decision not yet locked.
 
 1. **Decay model** — *resolved* (§2): clock = `updated_at` (touch
-   resets it); wall-clock `EPISODIC_TTL` (7d
-   default, Settings-configurable); consolidate-before-evict; per-session
-   every-N-turns trigger, no startup trigger, sub-N sessions skipped.
+   resets it); wall-clock `EPISODIC_TTL` (7d default,
+   Settings-configurable); consolidate-before-evict. Encode trigger is
+   per-session/every-N-turns (no startup, sub-N skipped); consolidate +
+   evict run on the `dream` mission (daily cron + turn-seam catch-up).
 2. **Consolidator contract** — *resolved* (§2): consolidate processes
    past-TTL rows only; each is terminally promoted (→ semantic, optional
    `supersedes` link, never destructive) or deleted; re-entrancy needs
-   no watermark — a handled row leaves episodic.
-3. **Dedup threshold retune.** `DEDUP_SIMILARITY_THRESHOLD = 0.88` was
-   tuned for v0.4 MiniLM; Qwen3-Embedding-0.6B's score distribution
-   differs (relevant ~0.4–0.7). Re-validate before consolidation relies
-   on it.
+   no watermark — a handled row leaves episodic. Split (2026-05-19) onto
+   the built-in **`dream` mission** (global, visible, cron + turn-seam
+   catch-up); the per-session subagent is now **encode-only**.
+3. **Dedup threshold** — *resolved*: `DEDUP_SIMILARITY_THRESHOLD = 0.75`,
+   retuned 2026-05-15 against the real Qwen3-Embedding-0.6B distribution
+   (restatements 0.78–0.97, distinct pairs ≤0.65; 0.75 sits in the gap,
+   leaning toward under-merge). Lives in `linggen-memory`.
 4. **Write-side eval — the next concrete deliverable.** Decided: do
    not optimize toward LongMemEval (it scores retrieval over a frozen
    store-everything haystack — structurally the opposite of curation;
@@ -457,10 +515,18 @@ Ordered. Each is a design decision not yet locked.
    the terminal promote/delete gate for past-TTL rows. Revised
    2026-05-19 from "liberal capture" once recall began spanning episodic
    — server-side dedup (`insert_with_dedup`) already covers duplicates.
-6. **Consolidation widget polish** — the tick currently reuses the
-   generic subagent-tree surface. The §2 ideal (no-op ticks silent,
-   persistent line only on a material change, a dedicated
-   inspectable/undoable memory widget) is deferred.
+6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
+   (any reactivation), gated action; near-dup→mechanical dedup,
+   contradiction→user-present AskUser(dated)+supersede, no-user→defer;
+   similarity can't detect contradiction (needs the engine LLM); never
+   synthesize-into-storage / destructive-delete. One contract, three
+   call sites, differ only by user-presence. Implementation mechanism
+   (shared engine module vs shared prompt) deferred to build time.
+7. **Consolidation widget polish** — the dream mission now carries a
+   per-run mission record (the promote/delete audit trail) and is
+   per-run stoppable; no-op runs stay quiet. Still deferred: a
+   dedicated inspectable/undoable *memory* widget distinct from the
+   generic mission/subagent surface.
 
 Carried gaps (not blocking the rebuild): no row-level confidence
 calibration; privacy isolation is by convention not enforcement;
