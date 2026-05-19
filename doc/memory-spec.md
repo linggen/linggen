@@ -147,6 +147,39 @@ returns one merged, deduped result (semantic copy wins a near-dup tie).
 Bulk forget stays user-initiated (dashboard / `ling-mem forget` CLI),
 never a model tool.
 
+### Write routing — by salience (step-3b)
+
+Two write speeds, split by salience — mirrors the brain (explicit,
+flagged input gets a fast strong trace; incidental experience goes
+through slow hippocampal consolidation). Capture is **not**
+episodic-only:
+
+- **Explicit / declarative** — the user says "remember…", states an
+  identity fact, gives a standing instruction, or uses commitment
+  language ("always", "never", "from now on"). The live agent commits
+  it **this turn** via `Memory_write` → semantic. Immediate, not queued
+  behind the episodic→consolidate path. Salience → semantic *now*.
+- **Incidental / observed** — what the user/agent did, a decision that
+  emerged, ambient context. Goes to **episodic** via the every-N-turns
+  encoder; the consolidator promotes past-TTL.
+- **Core** is *not* a counter or a fast lane: salience gets a row to
+  semantic; only a **stable universal** (name, role, enduring rule)
+  becomes `tier=core`, user-confirmed or high-confidence identity-class.
+  A volatile fact ("age 18") goes semantic but is a poor core
+  candidate. The *kind* of fact decides core, never how many times it
+  was said.
+
+Redundancy across the two paths is safe and self-healing: cross-table
+recall dedup keeps the semantic copy; the consolidator later deletes
+the episodic twin.
+
+**Repetition.** An *explicit* restatement reinforces via the live path
+above. An *implicit* pattern (the user keeps doing A but never states a
+rule) does **not** authorize the offline consolidator to synthesize
+"user always A" — that generalization needs the user present (§3;
+surfaced at recall, step 4). The consolidator may promote the
+individual durable rows; it never mints a new general rule alone.
+
 ### Extraction contract
 
 The encoder and the consolidator share one contract: the durability

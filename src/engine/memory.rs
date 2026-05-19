@@ -52,7 +52,12 @@ pub(crate) fn nudge_message() -> ChatMessage {
          Did the last few exchanges produce anything durable — an \
          identity fact, a cross-project preference, or a fact only the \
          user can supply? Or did the user contradict something already \
-         in memory? If yes, act now: universals about the person → \
+         in memory? Anything the user *explicitly* asked you to \
+         remember, a standing instruction, or a stated identity / \
+         preference must already have been written the moment it was \
+         said — don't wait for this check; it backstops the \
+         *incidental* durable signal you didn't capture live. \
+         If yes, act now: universals about the person → \
          Edit `~/.linggen/memory/identity.md` or `style.md` (tiny, \
          high-bar); cross-project user intent / decision / preference / \
          learning → `Memory_write({verb: \"add\", ...})` when a memory \
