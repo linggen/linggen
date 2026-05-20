@@ -115,7 +115,7 @@ Write call:
 ```json
 Memory_write({
   verb: "add",
-  episodic: true,
+  tier: "episodic",
   host: "linggen",
   content: "<fact text>",
   type: "<fact|preference|decision|learned>",
@@ -161,7 +161,7 @@ Memory_write({
   contexts: ["<c>", ...]
 })
 
-Memory_write({verb: "delete", episodic: true, id: "<episodic-id>"})
+Memory_write({verb: "delete", tier: "episodic", id: "<episodic-id>"})
 ```
 
 - **Read before you promote** (every write reads first):
@@ -179,7 +179,7 @@ Memory_write({verb: "delete", episodic: true, id: "<episodic-id>"})
 **Delete** when the row is not worth keeping:
 
 ```json
-Memory_write({verb: "delete", episodic: true, id: "<episodic-id>"})
+Memory_write({verb: "delete", tier: "episodic", id: "<episodic-id>"})
 ```
 
 **Never** in this phase (you are the *no-user* branch of the Reconcile

@@ -77,15 +77,14 @@ fn memory_capability() -> Capability {
                         "query":    {"type": "string", "description": "Required for verb=search. Natural-language description of what you're looking for."},
                         "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND semantics). For verb=search, narrows ranked results; for verb=list, primary filter. Omit to skip."},
                         "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "Filter by fact type. Omit to return all types."},
-                        "tier":     {"type": "string", "enum": ["core", "semantic"], "description": "Filter by tier within the semantic table. `core` = always-on identity/style universals; `semantic` = the wider retrieval pool. Ignored for episodic. Omit to span both tiers."},
+                        "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Memory category. `core` = always-on identity/style universals; `semantic` = curated retrieval pool; `episodic` = staging table (encoder writes here pre-promotion). **Omit to span all three.** Replaces the old `episodic: boolean` flag."},
                         "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "**DEFAULT: do not pass.** Filter by origin. Pass only when the user explicitly asked to see rows from a specific origin (rare)."},
                         "outcome":  {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "**DEFAULT: do not pass.** Filter by outcome. Almost no rows have `outcome=neutral`; passing it returns 0 rows even when the store has data. Pass only when the user explicitly asked to see only positive / negative outcomes."},
                         "since":    {"type": "string", "description": "RFC-3339 lower bound on effective timestamp. Omit to skip."},
                         "until":    {"type": "string", "description": "RFC-3339 upper bound (verb=list only). Omit to skip."},
                         "sort":     {"type": "string", "enum": ["newest", "oldest"], "description": "verb=list only. Defaults to newest."},
                         "limit":    {"type": "integer", "description": "Max rows. Defaults to 10 for search, 50 for list."},
-                        "offset":   {"type": "integer", "description": "verb=list only. Skip this many rows in sort order."},
-                        "episodic": {"type": "boolean", "description": "Target the episodic staging table instead of the curated semantic table. Default false. `verb=search` already spans both via Recall and ignores this flag; `verb=get` / `verb=list` use it to pick a table."}
+                        "offset":   {"type": "integer", "description": "verb=list only. Skip this many rows in sort order."}
                     },
                     "required": ["verb"]
                 }),
@@ -109,7 +108,7 @@ fn memory_capability() -> Capability {
                         "contexts":      {"type": "array", "items": {"type": "string"}, "description": "Scope tags (e.g. [\"cross-project\", \"music/piano\"]). Free-form; N:M with facts."},
                         "tags":          {"type": "array", "items": {"type": "string"}, "description": "Free-form metadata with prefix convention (e.g. \"topic:ui\", \"intent:goal\")."},
                         "type":          {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "verb=add/update. Prefer `fact` / `preference` / `decision` / `learned` for new writes; `tried` / `fixed` / `built` are deprecated."},
-                        "tier":          {"type": "string", "enum": ["core", "semantic"], "description": "verb=add/update. Storage tier within the semantic table. `core` = always-injected identity/style universals (keep tiny); `semantic` (default) = wider retrieval pool. Ignored when `episodic: true`."},
+                        "tier":          {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "verb=add/update. Destination memory category. `core` = always-injected identity/style universals (keep tiny); `semantic` (default) = curated retrieval pool; `episodic` = staging table (per-session encoder + dream consolidator write here; live agent saves stay on `semantic`). Replaces the old `episodic: boolean` flag."},
                         "from":          {"type": "string", "enum": ["user", "agent", "derived"], "description": "Origin. Pick `user` when the user said it directly, `derived` for cross-session synthesis, `agent` for agent observations."},
                         "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "Only meaningful for `tried` / `fixed` / `decision`. Omit for `fact` / `preference` / `learned`."},
                         "clear_outcome": {"type": "boolean", "description": "verb=update only. Clear outcome to null."},
@@ -117,7 +116,6 @@ fn memory_capability() -> Capability {
                         "clear_cwd":     {"type": "boolean", "description": "verb=update only. Clear cwd to null."},
                         "host":          {"type": "string", "description": "Writing host (`linggen` / `claude-code` / `codex` / …). Identifies which tool runtime committed the row. Distinct from `from` (which says whether content came from user/agent/derived)."},
                         "clear_host":    {"type": "boolean", "description": "verb=update only. Clear host to null."},
-                        "episodic":      {"type": "boolean", "description": "Target the episodic staging table instead of the curated semantic table. Default false. The per-session encoder + dream consolidator set this true; live agent saves stay on semantic."},
                         "occurred_at":   {"type": "string", "description": "verb=add only. RFC-3339 timestamp of the described event (e.g. \"2026-04-27T16:00:00Z\"). **Omit entirely if unknown** — do not pass empty strings, partial dates, or null. Date-only \"YYYY-MM-DD\" is also accepted (interpreted as midnight UTC)."},
                         "source_session":{"type": "string", "description": "verb=add only. Opaque session id the fact was extracted from."},
                         "skip_dedup":    {"type": "boolean", "description": "verb=add only. Skip server-side merge-into-near-duplicate. Set to true when running your own dedup pass."}

@@ -449,7 +449,7 @@ fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
          Phase: ENCODE. Session `{session}`. Today is {today}.\n\
          \n\
          Encode this recent exchange into episodic via \
-         `Memory_write({{verb: \"add\", episodic: true, host: \"linggen\", \
+         `Memory_write({{verb: \"add\", tier: \"episodic\", host: \"linggen\", \
          …}})`. Apply the exclusion filters and the usefulness bar from \
          your instructions. Date-stamp ages relative to {today}.\n\
          <recent-exchange>\n{transcript}\n</recent-exchange>\n\
@@ -497,8 +497,8 @@ fn build_consolidate_task(cutoff: &DateTime<Utc>, worklist: &[EpisodicRow]) -> S
          engine already selected them — do NOT list episodic yourself. \
          For EACH: promote (write to semantic with `Memory_write({{verb: \
          \"add\", host: \"linggen\", …}})`, then \
-         `Memory_write({{verb: \"delete\", episodic: true, id: <id>}})`) \
-         or delete only (`Memory_write({{verb: \"delete\", episodic: true, \
+         `Memory_write({{verb: \"delete\", tier: \"episodic\", id: <id>}})`) \
+         or delete only (`Memory_write({{verb: \"delete\", tier: \"episodic\", \
          id: <id>}})`).\n\
          <worklist>\n{worklist_block}\n</worklist>\n\
          \n\

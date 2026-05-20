@@ -114,6 +114,46 @@ pub(crate) async fn dispatch(
         });
     }
 
+    // Memory-tool tier collapse: the schema now exposes a single
+    // `tier` enum [core | semantic | episodic]. The daemon's wire
+    // format still uses a separate `episodic: bool` flag (semantic
+    // is split into tiers internally). Translate at the boundary:
+    //
+    //   tier="episodic"  → episodic: true,  tier dropped
+    //   tier="core"      → episodic: false, tier kept ("core" filters within semantic)
+    //   tier="semantic"  → episodic: false, tier kept
+    //   tier missing     → no episodic flag (verb=search spans both via Recall;
+    //                       verb=get/list will default to semantic, which is
+    //                       fine for the common LLM-issued case)
+    //
+    // Also inject `host: "linggen"` on Memory_write when the LLM
+    // forgot — the dispatcher knows it's running inside the linggen
+    // engine, so the row's provenance is unambiguous. Prompt-level
+    // reminders alone aren't enough; the live agent's main prompt
+    // doesn't repeat the rule and was leaving host=null on direct
+    // writes, breaking cross-agent provenance in the dashboard.
+    //
+    // Keep this isolated to memory tools; the cap_name guard avoids
+    // touching unrelated capabilities that may use `tier` differently.
+    if cap_name == "memory" {
+        if let Some(obj) = args.as_object_mut() {
+            if let Some(tier) = obj.get("tier").and_then(|v| v.as_str()) {
+                if tier == "episodic" {
+                    obj.insert("episodic".to_string(), serde_json::Value::Bool(true));
+                    obj.remove("tier");
+                }
+            }
+            if tool_name == "Memory_write"
+                && !obj.contains_key("host")
+            {
+                obj.insert(
+                    "host".to_string(),
+                    serde_json::Value::String("linggen".to_string()),
+                );
+            }
+        }
+    }
+
     // Log the full request body so failures (esp. "0 rows returned") are
     // diagnosable from the linggen log without DC packet capture. The args
     // are typically small JSON; a 200-char preview keeps log lines bounded.
