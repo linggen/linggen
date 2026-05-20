@@ -76,8 +76,95 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     println!();
     check_agents_dir();
 
+    // 9. ling-mem (memory backend)
+    println!();
+    check_ling_mem().await;
+
     println!();
     Ok(())
+}
+
+/// Memory backend (`ling-mem`) health. Reports the binary location +
+/// version, the daemon's `/api/health` response on :9888, the on-disk
+/// store, and the canonical skill bundle. Each independent — a missing
+/// daemon doesn't mask a present binary, etc.
+async fn check_ling_mem() {
+    println!("  Memory (ling-mem):");
+
+    // Binary on PATH.
+    let bin = which_path("ling-mem");
+    match &bin {
+        Some(path) => {
+            let ver = ling_mem_version(path).unwrap_or_else(|| "unknown".to_string());
+            ok("Binary    ", &format!("{} (v{})", path.display(), ver));
+        }
+        None => fail("Binary    ", "ling-mem not on PATH (install via linggen.dev/install-shared-memory.sh)"),
+    }
+
+    // Daemon on :9888 (default). Check the standard port; users running
+    // a non-default port will see a Skip and can rely on `ling-mem status`.
+    let port: u16 = 9888;
+    if is_port_listening(port).await {
+        match fetch_ling_mem_health(port).await {
+            Some(v) => ok("Daemon    ", &format!(":{port} healthy (v{v})")),
+            None    => fail("Daemon    ", &format!(":{port} listening but /api/health did not respond")),
+        }
+    } else {
+        info("Daemon    ", &format!(":{port} not running (start with `ling-mem start`)"));
+    }
+
+    // Store. Memory rows live under ~/.linggen/memory/memory.lancedb/
+    // with two tables: `semantic` (core + long-term) and `episodic`
+    // (staging). The dir exists from first daemon launch.
+    let store = crate::paths::linggen_home().join("memory/memory.lancedb");
+    if store.exists() {
+        ok("Store     ", &format!("{}", store.display()));
+    } else {
+        info("Store     ", &format!("{} (will be created on first write)", store.display()));
+    }
+
+    // Canonical shared-memory skill bundle. Per-host SKILL.md stubs
+    // point back here for references/scripts/hooks; absence means the
+    // skill hasn't been installed (or was installed pre-canonical-layout).
+    let skill = crate::paths::linggen_home().join("skills/shared-memory");
+    if skill.join("SKILL.md").is_file() {
+        ok("Skill     ", &format!("{}", skill.display()));
+    } else {
+        info("Skill     ", &format!("{} (run install-shared-memory.sh to install)", skill.display()));
+    }
+}
+
+fn which_path(bin: &str) -> Option<PathBuf> {
+    let out = std::process::Command::new("which").arg(bin).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(PathBuf::from(s)) }
+}
+
+fn ling_mem_version(bin: &Path) -> Option<String> {
+    // `ling-mem --version` prints `ling-mem <ver>` — pick the 2nd token.
+    let out = std::process::Command::new(bin).arg("--version").output().ok()?;
+    if !out.status.success() { return None; }
+    let s = String::from_utf8_lossy(&out.stdout);
+    s.split_whitespace().nth(1).map(|v| v.to_string())
+}
+
+async fn fetch_ling_mem_health(port: u16) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Envelope { ok: bool, data: Option<HealthData> }
+    #[derive(serde::Deserialize)]
+    struct HealthData { #[allow(dead_code)] status: String, version: String }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build().ok()?;
+    let resp = client.get(format!("http://127.0.0.1:{port}/api/health")).send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    let env: Envelope = resp.json().await.ok()?;
+    if !env.ok { return None; }
+    env.data.map(|d| d.version)
 }
 
 fn print_server_status(port: u16, listening: bool, pid: Option<u32>) {
