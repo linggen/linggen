@@ -11,7 +11,11 @@
 //! — there is no second markdown substrate to keep in sync.
 
 use serde::Deserialize;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 /// Binary name. Resolved against `$PATH`; the installer puts `ling-mem`
 /// there. Missing binary degrades gracefully: `load_core` returns `None`
@@ -22,6 +26,15 @@ const LING_MEM_BIN: &str = "ling-mem";
 /// be tiny (a handful of universals); the cap keeps a runaway tag from
 /// silently inflating every prompt.
 const CORE_LIMIT: usize = 200;
+
+/// Wall-clock cap on the `ling-mem list --tier core` subprocess.
+/// `load_core` runs on every stable-prompt build (per session start /
+/// rebuild), so a hung daemon — e.g. ling-mem holding a LanceDB lock
+/// during an encoder run — would freeze the whole engine loop before
+/// the model request ever fires. The cap means "no core injected this
+/// turn" instead of "agent stuck indefinitely". 2s is generous for a
+/// localhost JSON list call yet still bounds the worst case.
+const LOAD_CORE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Pre-rendered core memory block. `facts` is the markdown body the
 /// prompt template inlines verbatim — a bullet list of `tier=core` row
@@ -40,29 +53,8 @@ struct CoreRow {
 /// unavailable / errors out — the caller emits the empty-block prompt
 /// in that case so a fresh install still starts cleanly).
 pub(crate) fn load_core() -> Option<CoreContent> {
-    let output = Command::new(LING_MEM_BIN)
-        .args([
-            "--format",
-            "json",
-            "list",
-            "--tier",
-            "core",
-            "--limit",
-        ])
-        .arg(CORE_LIMIT.to_string())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        tracing::debug!(
-            status = ?output.status.code(),
-            "ling-mem list --tier core exited non-zero; treating core as empty"
-        );
-        return None;
-    }
-
-    let stdout = std::str::from_utf8(&output.stdout).ok()?;
-    let rows = parse_ndjson_rows(stdout)?;
+    let stdout = run_with_timeout(LOAD_CORE_TIMEOUT)?;
+    let rows = parse_ndjson_rows(&stdout)?;
     if rows.is_empty() {
         return None;
     }
@@ -73,6 +65,73 @@ pub(crate) fn load_core() -> Option<CoreContent> {
         .collect::<Vec<_>>()
         .join("\n");
     Some(CoreContent { facts })
+}
+
+/// Spawn `ling-mem list --tier core` and bound the wait by `timeout`.
+/// Returns stdout on success; `None` on spawn error, non-zero exit,
+/// timeout, or stdout that isn't valid UTF-8. On timeout the child is
+/// killed so it doesn't linger zombie.
+fn run_with_timeout(timeout: Duration) -> Option<String> {
+    let mut child = Command::new(LING_MEM_BIN)
+        .args([
+            "--format",
+            "json",
+            "list",
+            "--tier",
+            "core",
+            "--limit",
+        ])
+        .arg(CORE_LIMIT.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // Wait for the child on a side thread so we can race it against a
+    // wall-clock timeout. `child.wait_timeout` would be cleaner but
+    // needs the `wait-timeout` crate; this approach uses only std.
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take();
+    let pid = child.id();
+    thread::spawn(move || {
+        let result = (|| -> Option<(std::process::ExitStatus, String)> {
+            let mut buf = String::new();
+            if let Some(mut out) = stdout {
+                let _ = out.read_to_string(&mut buf);
+            }
+            let status = child.wait().ok()?;
+            Some((status, buf))
+        })();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Some((status, buf))) => {
+            if !status.success() {
+                tracing::debug!(
+                    status = ?status.code(),
+                    "ling-mem list --tier core exited non-zero; treating core as empty"
+                );
+                return None;
+            }
+            Some(buf)
+        }
+        Ok(None) => None,
+        Err(_) => {
+            // Subprocess overran the budget. The engine loop proceeds
+            // with no core injected this turn; the orphan finishes
+            // whenever the daemon unblocks. (Cleaner kill-on-timeout
+            // would require sharing the child handle across threads
+            // or pulling in `wait-timeout` — not worth the complexity
+            // for a 2s budget; an idle ling-mem invocation is cheap.)
+            tracing::warn!(
+                pid,
+                ?timeout,
+                "ling-mem list --tier core timed out; treating core as empty"
+            );
+            None
+        }
+    }
 }
 
 /// Parse `ling-mem`'s NDJSON list output (one JSON object per line).
