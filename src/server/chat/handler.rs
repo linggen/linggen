@@ -323,20 +323,40 @@ async fn promote_mission_session_to_user(
 
 /// Repopulate `chat_history` from the session store when the engine was
 /// freshly created (e.g. after a model change invalidated the engine
-/// cache). System messages and observations are skipped — only user/
-/// assistant turns rejoin the in-memory history.
+/// cache, or after `/clear` emptied it). System messages and observations
+/// are skipped — only user/assistant turns rejoin the in-memory history.
+///
+/// `current_user_msg` is the message about to enter the turn. The chat
+/// handler persists each incoming user message to the session store
+/// **before** spawning the engine task (so other clients see it
+/// immediately via the event broadcast), so the same message shows up in
+/// `get_chat_history` here. `push_user_turn_with_recall` will then push
+/// it into `chat_history` again — leaving a duplicate that silently
+/// inflates the user-turn counter (the consolidation encoder fired one
+/// turn early under N=3 because of this). Trim the trailing entry when
+/// it's the current message so the post-push state is exactly one copy.
 async fn restore_chat_history_if_empty(
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
     session_id: Option<&str>,
+    current_user_msg: &str,
 ) {
     if !engine.chat_history.is_empty() {
         return;
     }
     let sid = session_id.unwrap_or("default");
-    let Ok(msgs) = manager.global_sessions.get_chat_history(sid) else {
+    let Ok(mut msgs) = manager.global_sessions.get_chat_history(sid) else {
         return;
     };
+    // Drop the trailing entry if it matches the just-persisted current
+    // user message; push_user_turn_with_recall will add it back exactly
+    // once. Only the very last entry can be the current message (the
+    // persist write was the most recent op).
+    if let Some(last) = msgs.last() {
+        if !last.is_observation && last.from_id == "user" && last.content == current_user_msg {
+            msgs.pop();
+        }
+    }
     for m in &msgs {
         if m.is_observation || m.from_id == "system" {
             continue;
@@ -573,7 +593,13 @@ pub(crate) async fn chat_handler(
             policy,
         };
 
-        restore_chat_history_if_empty(&mut engine, &manager, ctx.session_id.as_deref()).await;
+        restore_chat_history_if_empty(
+            &mut engine,
+            &manager,
+            ctx.session_id.as_deref(),
+            &clean_msg_clone,
+        )
+        .await;
         apply_session_bound_skill(&mut engine, &ctx).await;
 
         dispatch_turn(&ctx, &mut engine, &manager, &clean_msg_clone).await;
