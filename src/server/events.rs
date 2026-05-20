@@ -69,6 +69,15 @@ pub enum ServerEvent {
         to: String,
         content: String,
         session_id: Option<String>,
+        /// Set when this message comes from a subagent — lets the UI
+        /// route it into the SubagentPane instead of the main chat
+        /// (matching how the activity/content-block events carry
+        /// these). Both fall back to None for top-level (depth-0)
+        /// messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_agent_id: Option<String>,
     },
     SubagentSpawned {
         parent_id: String,
@@ -276,8 +285,15 @@ impl ServerEvent {
         use crate::agent_manager::AgentEvent;
         match event {
             AgentEvent::StateUpdated => Some(Self::StateUpdated),
-            AgentEvent::Message { from, to, content } => {
-                Some(Self::Message { from, to, content, session_id })
+            AgentEvent::Message { from, to, content, run_id, parent_id } => {
+                Some(Self::Message {
+                    from,
+                    to,
+                    content,
+                    session_id,
+                    run_id,
+                    parent_agent_id: parent_id,
+                })
             }
             AgentEvent::SubagentSpawned { parent_id, subagent_id, task, subagent_run_id, parent_run_id } => {
                 Some(Self::SubagentSpawned { parent_id, subagent_id, task, session_id, subagent_run_id, parent_run_id })

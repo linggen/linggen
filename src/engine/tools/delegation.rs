@@ -269,6 +269,12 @@ pub(crate) async fn run_delegation(
             from: caller_id.clone(),
             to: target_agent_id.clone(),
             content: format!("Delegated task: {}", task),
+            // This synthetic "delegated" message comes from the caller
+            // (depth-0 in the typical path), so it routes to main chat
+            // as before. Subagent-originated terminal messages are the
+            // ones that needed routing — they come from context.rs.
+            run_id: None,
+            parent_id: None,
         }, session_id.clone())
         .await;
 

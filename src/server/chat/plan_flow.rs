@@ -160,7 +160,9 @@ pub(super) async fn run_plan_execution(
                             to: "user".to_string(),
                             content: text.clone(),
                             session_id: ctx.session_id.clone(),
-                        });
+                run_id: None,
+                parent_agent_id: None,
+            });
                     }
                 }
             }

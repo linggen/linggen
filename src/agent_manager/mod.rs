@@ -71,6 +71,14 @@ pub enum AgentEvent {
         from: String,
         to: String,
         content: String,
+        /// Unique run_id of the emitting agent — set for subagents so the
+        /// UI can route the message into the SubagentPane instead of
+        /// leaking it into the parent chat. None for top-level messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        /// agent_id of the parent when this comes from a subagent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
     },
     AgentStatus {
         agent_id: String,

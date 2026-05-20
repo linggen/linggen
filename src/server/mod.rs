@@ -126,7 +126,7 @@ fn default_status_text(status: AgentStatusKind) -> String {
 pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
     let ts_ms = crate::util::now_ts_ms();
     match event {
-        ServerEvent::Message { from, to, content, session_id } => {
+        ServerEvent::Message { from, to, content, session_id, run_id, parent_agent_id } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(UiEvent {
                 id: format!("msg-{seq}"),
@@ -143,6 +143,13 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
                     "from": from,
                     "to": to,
                     "role": if from == "user" { "user" } else { "assistant" },
+                    // Subagent routing keys — present only when emitted
+                    // from a delegated engine. handleMessage in the UI
+                    // uses these to route the bubble into SubagentPane
+                    // instead of the parent's main chat (the gap that
+                    // was leaking "ENCODED encoded=0" into chat).
+                    "run_id": run_id,
+                    "parent_agent_id": parent_agent_id,
                 })),
             })
         }
@@ -1323,6 +1330,8 @@ mod tests {
                 to: "user".into(),
                 content: "hello".into(),
                 session_id: None,
+                run_id: None,
+                parent_agent_id: None,
             },
             ServerEvent::SubagentSpawned {
                 parent_id: "ling".into(),

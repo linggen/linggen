@@ -52,7 +52,9 @@ pub(super) async fn run_loop_with_tracking(
                     to: "user".to_string(),
                     content: display,
                     session_id: session_id.map(|s| s.to_string()),
-                });
+                run_id: None,
+                parent_agent_id: None,
+            });
                 // Reset agent status so the UI's "Model Loading…" spinner stops.
                 let _ = events_tx.send(ServerEvent::AgentStatus {
                     agent_id: agent_id.to_string(),

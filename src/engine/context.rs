@@ -99,11 +99,21 @@ impl AgentEngine {
             let target = self.outbound_target();
             // Emit to UI immediately, so structured messages are visible
             // even when no outer chat handler emits an explicit Outcome event.
+            // Include run_id + parent_id so the UI can route subagent
+            // messages into SubagentPane instead of leaking them into the
+            // parent's main chat — these fields are None for top-level
+            // (depth-0) messages and routing falls back to main chat as
+            // before.
+            let is_subagent = self.tools.builtins.delegation_depth() > 0;
+            let run_id = if is_subagent { self.run_id.clone() } else { None };
+            let parent_id = if is_subagent { self.parent_agent_id.clone() } else { None };
             manager
                 .send_event(crate::agent_manager::AgentEvent::Message {
                     from: agent_id.clone(),
                     to: target.clone(),
                     content: content.to_string(),
+                    run_id,
+                    parent_id,
                 }, self.session_id.clone())
                 .await;
             // Subagents inherit the parent's session_id. Persisting their
