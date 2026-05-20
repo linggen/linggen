@@ -4,6 +4,7 @@ import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { agentTracker } from '../agentTracker';
 import { getSessionId } from './_shared';
+import { markRunsCompletedForSession } from './chat';
 import type { AgentStatusValue } from '../../stores/serverStore';
 
 export function handleRun(item: UiEvent): void {
@@ -175,6 +176,10 @@ function handleSubagentResult(item: UiEvent): void {
     const agentStore = useServerStore.getState();
     agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' as AgentStatusValue }));
     agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
+    // Reactive mirror update — flip the subagent's run record from
+    // 'running' to 'completed' so the spinner / session-list badge
+    // doesn't wait for the next page_state poll (5–10s lag).
+    markRunsCompletedForSession(sid, { subagentRunId: trackingId });
   }
 }
 

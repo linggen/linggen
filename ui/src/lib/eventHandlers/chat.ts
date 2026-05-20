@@ -292,7 +292,40 @@ export function handleTurnComplete(item: UiEvent): void {
   const agentStore = useServerStore.getState();
   agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' }));
   agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
+  // Mark the matching top-level agent_run as completed in the local
+  // mirror. The spinner reads agentRuns directly (see ChatPanel), and
+  // page_state polling lag would otherwise keep `status === 'running'`
+  // for seconds after the turn actually finished — leaving the spinner
+  // animating with no real work in flight.
+  markRunsCompletedForSession(sid, { topLevelOnly: true });
 }
+
+/**
+ * Flip matching `running` rows in the local `agentRuns` mirror to
+ * `completed`. We don't know the exact run_id from a TurnComplete /
+ * SubagentResult event in every code path, so we match by
+ * (session_id, top-level-or-subagent) instead. The next page_state
+ * push will replace this with the server-authoritative state.
+ */
+function markRunsCompletedForSession(
+  sessionId: string,
+  opts: { topLevelOnly?: boolean; subagentRunId?: string } = {},
+): void {
+  const store = useServerStore.getState();
+  const next = store.agentRuns.map((r) => {
+    if (r.session_id !== sessionId) return r;
+    if (r.status !== 'running') return r;
+    if (opts.subagentRunId) {
+      if (r.run_id !== opts.subagentRunId) return r;
+    } else if (opts.topLevelOnly && r.parent_run_id) {
+      return r;
+    }
+    return { ...r, status: 'completed', ended_at: Date.now() };
+  });
+  useServerStore.setState({ agentRuns: next });
+}
+// Re-export for run.ts which needs the same helper for SubagentResult.
+export { markRunsCompletedForSession };
 
 // ---------------------------------------------------------------------------
 // Tool progress (stdout/stderr lines from running tools)
