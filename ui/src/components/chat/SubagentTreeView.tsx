@@ -74,7 +74,7 @@ export const SubagentTreeView: React.FC<{
               <span className={cn('text-[11px] ml-1', statusColor)}>{statusSuffix}</span>
             </div>
 
-            {compact ? null : isRunning ? (
+            {isRunning ? (
               entry.toolSteps && entry.toolSteps.length > 0 ? (<>
                 {entry.toolSteps.slice(-3).map((step, si, arr) => {
                   const isLastStep = si === arr.length - 1;
@@ -94,13 +94,15 @@ export const SubagentTreeView: React.FC<{
                 {entry.toolSteps.length > 3 && (
                   <div className="text-[11px] pl-4 text-slate-400 dark:text-slate-500 italic">+{entry.toolSteps.length - 3} more</div>
                 )}
-              </>) : entry.currentActivity ? (
+              </>) : !compact && entry.currentActivity ? (
+                // The "Thinking (model)" fallback is verbose; only show
+                // in the full pane view, not the inline parent-bubble strip.
                 <div className="flex items-start gap-0 text-[11px] pl-4 text-slate-400 dark:text-slate-500">
                   <span className="select-none shrink-0">⎿&nbsp;&nbsp;</span>
                   <span>{entry.currentActivity}</span>
                 </div>
               ) : null
-            ) : showExpanded && entry.toolSteps && entry.toolSteps.length > 0 ? (
+            ) : !compact && showExpanded && entry.toolSteps && entry.toolSteps.length > 0 ? (
               <>
                 {entry.toolSteps.map((step, si) => {
                   const isLastStep = si === entry.toolSteps.length - 1 && !entry.resultText;

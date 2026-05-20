@@ -433,8 +433,20 @@ async fn run_ling_mem(bin: &Path, data_dir: &Path, args: &[&str]) -> anyhow::Res
 /// path or `--data-dir`.
 fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
     let today = Utc::now().format("%Y-%m-%d");
+    let turn_count = recent_transcript
+        .lines()
+        .filter(|l| l.starts_with("[user]"))
+        .count();
+    // Lead with a friendly one-liner so the SubagentPane shows a
+    // readable summary above the technical instructions; LLM still
+    // sees the full spec below.
     format!(
-        "Phase: ENCODE. Session `{session}`. Today is {today}.\n\
+        "📝 Review the last {n} turn{plural} of the user's chat in main \
+         and decide which durable signal — facts, preferences, decisions, \
+         reusable gotchas — is worth saving to episodic memory.\n\
+         \n\
+         ---\n\
+         Phase: ENCODE. Session `{session}`. Today is {today}.\n\
          \n\
          Encode this recent exchange into episodic via \
          `Memory_write({{verb: \"add\", episodic: true, host: \"linggen\", \
@@ -444,6 +456,8 @@ fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
          \n\
          Then emit your ENCODED status block (count line plus one \
          bullet per encoded row, see your agent instructions) and stop.",
+        n = turn_count,
+        plural = if turn_count == 1 { "" } else { "s" },
         session = session_id,
         today = today,
         transcript = recent_transcript,
