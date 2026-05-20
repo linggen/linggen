@@ -454,8 +454,9 @@ mod tests {
 
     #[test]
     fn test_capability_tool_tier_comes_from_registry() {
-        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Read);
-        assert_eq!(tool_action_tier("Memory_write"), PermissionMode::Edit);
+        // Both pinned at Chat — see capabilities.rs::memory_capability for why.
+        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Chat);
+        assert_eq!(tool_action_tier("Memory_write"), PermissionMode::Chat);
     }
 
     #[test]

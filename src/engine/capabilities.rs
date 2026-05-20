@@ -63,7 +63,12 @@ fn memory_capability() -> Capability {
             CapabilityTool {
                 name: "Memory_query".to_string(),
                 description: "Read memory. Verb-dispatched: `get` (fetch one row by id), `search` (semantic search; ranked by relevance), `list` (filter-only browse, no semantic ranking — for audits or exact enumeration). Memory is the user's biography across sessions — durable identity, cross-project preferences, decisions with their reasoning, life context. Project-internal facts (code architecture, repo conventions) are NOT in memory — the agent reads the project's own files (source, the user's `AGENTS.md` / `CLAUDE.md` if any) directly when it needs that content.\n\n**All filters are optional and AND-combined; omit anything you aren't intentionally narrowing on.** Speculatively passing `from`, `outcome`, or a specific `type` is the #1 cause of empty results — most rows don't carry an `outcome`, and the user's actual data may not match the value you guessed. When unsure, start with just `verb` (+ `query` for search) and add filters only after you see what's there.".to_string(),
-                tier: PermissionMode::Read,
+                // Memory ops are conversation primitives — the user's own
+                // data being saved on their behalf — not workspace mutations.
+                // Pinned at Chat so every session tier can use them without
+                // a permission prompt, matching the "save silently" design
+                // in system-prompt.toml's core_memory_block.
+                tier: PermissionMode::Chat,
                 args_schema: json!({
                     "type": "object",
                     "properties": {
@@ -86,7 +91,13 @@ fn memory_capability() -> Capability {
             CapabilityTool {
                 name: "Memory_write".to_string(),
                 description: "Modify memory. Verb-dispatched: `add` (insert a new row), `update` (edit fields of an existing row by id), `delete` (hard-delete a single row by id). Memory should grow with genuinely durable signal: cross-project user identity / goals (`fact`), commitment-language behavioral rules (`preference`), decisions whose reasoning is the retrieval value (`decision`), cross-project tech gotchas (`learned`). Don't store project-internal architecture, conventions, or implementation detail — drop those candidates entirely. Memory does NOT write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are user-curated, and the agent reads them directly when needed. **Append, don't overwrite**: when a new utterance contradicts or refines an existing row, `verb=add` a new row and let live retrieval reconcile by recency — never overwrite a user-stated fact on inference. Reserve `verb=update` for mechanical rephrasing of the same fact and `verb=delete` for explicit user requests to forget. Bulk forget is not on this tool surface — handle it via the dashboard or by iterating verb=delete after explicit user confirmation.".to_string(),
-                tier: PermissionMode::Edit,
+                // Memory writes don't touch the workspace — they hit the
+                // user's own daemon-backed store. Pinned at Chat so a
+                // chat/read session can save "my cat's name is Xiaoman"
+                // without a permission prompt; deletes are still bounded
+                // by the spec ("explicit user requests to forget" only)
+                // and surface a "Deleted: …" chip the user can object to.
+                tier: PermissionMode::Chat,
                 args_schema: json!({
                     "type": "object",
                     "properties": {
@@ -225,7 +236,7 @@ mod tests {
             capability_for_tool("Memory_query").expect("Memory_query is a capability tool");
         assert_eq!(cap_name, "memory");
         assert_eq!(tool.name, "Memory_query");
-        assert_eq!(tool.tier, PermissionMode::Read);
+        assert_eq!(tool.tier, PermissionMode::Chat);
     }
 
     #[test]
@@ -241,8 +252,11 @@ mod tests {
 
     #[test]
     fn tool_tiers_match_canonical_contract() {
-        assert_eq!(tool_tier("Memory_query"), Some(PermissionMode::Read));
-        assert_eq!(tool_tier("Memory_write"), Some(PermissionMode::Edit));
+        // Both memory tools are pinned at Chat so any session tier
+        // (chat/read/edit/admin) can use them without a permission prompt.
+        // See the per-tool comments in `memory_capability` for why.
+        assert_eq!(tool_tier("Memory_query"), Some(PermissionMode::Chat));
+        assert_eq!(tool_tier("Memory_write"), Some(PermissionMode::Chat));
     }
 
     #[test]
