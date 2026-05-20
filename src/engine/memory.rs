@@ -1,10 +1,11 @@
 //! Mid-session self-review nudge.
 //!
-//! Built-in core memory (identity + style) lives in `core_memory.rs`.
-//! Skill memory (facts, activity, semantic retrieval) is dispatched
-//! through `capability_tools::dispatch` after being registered from the
-//! memory skill's `SKILL.md` `tools:` block — there is no memory-specific
-//! dispatch code in the engine anymore.
+//! Built-in core memory (the `tier=core` rows the engine inlines into
+//! every owner session) lives in `core_memory.rs`. The rest of the
+//! semantic store is dispatched through `capability_tools::dispatch`
+//! after being registered from the memory skill's `SKILL.md` `tools:`
+//! block — there is no memory-specific dispatch code in the engine
+//! anymore.
 //!
 //! What lives here: the periodic nudge that asks the model whether the
 //! recent exchange produced anything worth saving.
@@ -76,11 +77,12 @@ pub(crate) fn nudge_message() -> ChatMessage {
          *in your reply*; never write a synthesized/merged row to the \
          store, and never delete to \"tidy\" — that is user-only. \
          \
-         Where: universals about the person → Edit \
-         `~/.linggen/memory/identity.md` or `style.md` (tiny, \
-         high-bar); cross-project intent / decision / preference / \
-         learning → `Memory_write({verb: \"add\", ...})` when a memory \
-         provider is installed. **Never** write project files \
+         Where: stable universals about the person (name, role, hard \
+         work rules) → `Memory_write({verb: \"add\", tier: \"core\", \
+         ...})` — `tier=core` rows are injected into every session, so \
+         keep that bar high. Cross-project intent / decision / \
+         preference / learning → `Memory_write({verb: \"add\", ...})` \
+         (semantic tier, the default). **Never** write project files \
          (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs) or store \
          file-derivable detail — the agent reads the source next time. \
          If nothing durable and nothing to reconcile, reply briefly \

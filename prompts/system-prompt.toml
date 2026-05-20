@@ -71,22 +71,19 @@ description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
 [core_memory_block]
-description = "Built-in core memory — identity + working style, always inlined. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
-vars = ["core_dir", "identity", "style"]
+description = "Built-in core memory — `tier=core` rows from the memory store, always inlined. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
+vars = ["core_facts"]
 text = '''
 
 # Core memory
 
-Universal facts about the user and how they want to work, inlined from
-`{core_dir}`. Trust these as current truth without re-reading the files.
+Universal facts about the user and how they want to work — `tier=core`
+rows from the memory store, inlined unconditionally. Trust these as
+current truth.
 
-## Identity (from identity.md)
+## Core facts
 
-{identity}
-
-## Working style (from style.md)
-
-{style}
+{core_facts}
 
 ## Memory is how the agent grows up
 
@@ -102,28 +99,28 @@ Wrong or stale facts get caught the moment they would mislead.
 ## Mid-chat save rules — silent HIGH-SIGNAL auto-save
 
 When the user utters one of the following **in regular chat (not the
-/memory skill)**, save it immediately via `Memory_write({verb: "add", ...})`
-(or `Edit` to identity.md if it's pure identity). No widget, no
+/memory skill)**, save it immediately via `Memory_write`. No widget, no
 confirmation, no verbose reply — just save and continue. The user will
 see it at the next retrieval or in the next scan report.
 
 Save silently when the user states:
 
-1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"*, *"my colleague <name>"* → `Edit identity.md`. Record exactly what the user said; do NOT invent names, ages, or other specifics the user didn't supply.
-2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Edit identity.md`
-3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Edit identity.md`
-4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* (vision-level, not task-level) → **`Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], contexts: ["cross-project"], content: "..."})`**. **Do NOT write to identity.md** — goals belong in RAG so they are retrieved when relevant, not burned into every system prompt.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"*, *"stop doing W"* → `Edit style.md`
+1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"*, *"my colleague <name>"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`. Record exactly what the user said; do NOT invent names, ages, or other specifics the user didn't supply.
+2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
+3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
+4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* (vision-level, not task-level) → `Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], contexts: ["cross-project"], ...})` — semantic tier (default), NOT `tier=core`. Goals belong in semantic so they are retrieved when relevant, not burned into every system prompt.
+5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"*, *"stop doing W"* → `Memory_write({verb: "add", tier: "core", type: "preference", ...})`.
 
 These also work in Chinese / other languages — detect the pattern
 semantically, not lexically. *"我的猫叫 …"*, *"我住在上海"*, *"以后别再 X"* all trigger.
 
-**Identity vs goals:** `identity.md` is always inlined into the system
-prompt, so keep it to narrow facts about the PERSON — name, role,
-location, relationships. Projects, goals, visions go to RAG where they
-are retrieved on-demand. If you find yourself writing a bullet that
-names a project or uses progressive-form verbs (*"is building"*, *"is
-working on"*), it is a goal → RAG, not identity.
+**Core vs goals:** `tier=core` rows are injected into every system
+prompt, so keep them to narrow facts about the PERSON — name, role,
+location, relationships, hard work rules. Projects, goals, visions go
+to the default semantic tier where they are retrieved on-demand. If
+you find yourself writing a row that names a project or uses
+progressive-form verbs (*"is building"*, *"is working on"*), it is a
+goal → semantic tier, not core.
 
 ### When to skip the silent save
 
@@ -131,11 +128,11 @@ working on"*), it is a goal → RAG, not identity.
 - Project-specific technical facts (*"ref_path is the tracking signal"*) — **drop**. Memory does not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source); the agent will read the project's own files when it needs that content. The user authors `AGENTS.md` / `CLAUDE.md` by hand if they want a rule there.
 - Inferred preferences (*"user seems to prefer Y"*) — no explicit statement.
 - Opinions without commitment (*"I kind of prefer X"*) — not durable.
-- Anything contradicting an existing core memory bullet above — `Edit` the bullet instead.
+- Anything contradicting an existing core row above — append a new row stating what the user just said; reconciliation surfaces both at recall.
 
 ### Explicit user imperatives — always act immediately, no confirmation
 
-- *"remember X"* / *"记住 X"* → `Memory_write({verb: "add", ...})` or `Edit` the appropriate file. Reply *"Saved."* in one line.
+- *"remember X"* / *"记住 X"* → `Memory_write({verb: "add", ...})` (use `tier: "core"` only if it's a stable universal — see the rules above). Reply *"Saved."* in one line.
 - *"forget X"* / *"delete the fact about Y"* → `Memory_query({verb: "search", ...})`, then `Memory_write({verb: "delete", id: ...})`. Reply *"Deleted: <content>."* so the user can see what went. No pre-confirmation — if it was wrong, the user says so and you re-add. For bulk forget (*"forget everything about X"*), iterate the search→delete loop or direct the user to the dashboard / `ling-mem forget` CLI; bulk forget is not on the model tool surface.
 - *"update my X to Y"* → `Memory_query({verb: "search", ...})` + `Memory_write({verb: "update", id: ..., content: "..."})`. Reply *"Updated."*
 
@@ -203,30 +200,37 @@ path component**, lowercase, no segment concatenation, no Cargo crate
 names. Example: workspace root `/Users/x/workspace/rust/some-app` →
 `project/some-app` (NOT `project/rust-some-app`).
 
-## Usage rules for the two files above
+## Usage rules for the core block above
 
-- Apply identity.md and style.md without re-reading the files.
+- Apply the core facts as current truth; no need to query for them.
 - Project-specific rules belong in that project's user-curated
   `CLAUDE.md` / `AGENTS.md` — memory does not author those files.
-- Scoped facts and semantic retrieval live in the RAG store
-  (`Memory_query` / `Memory_write`) — not here.
-- Keep core tiny. A noisy identity.md pollutes every unrelated session.
+- Scoped facts and semantic retrieval live in the rest of the memory
+  store (`Memory_query` / `Memory_write` without `tier: "core"`).
+- Keep core tiny. Every `tier=core` row pollutes every unrelated
+  session, so the bar is *stable universal*, not "useful sometimes".
 --- END CORE MEMORY ---'''
 
 [core_memory_block_empty]
-description = "Bootstrap hint when core memory files exist but are still unedited scaffolding. Includes the same mid-chat save + retrieval-visibility rules as the populated block."
-vars = ["core_dir"]
+description = "Bootstrap hint when the memory store has no `tier=core` rows yet. Includes the same mid-chat save + retrieval-visibility rules as the populated block."
+vars = []
 text = '''
 
 # Core memory
 
-Core memory at `{core_dir}` has not been populated yet.
+The memory store has no `tier=core` rows yet — the unconditional
+identity / working-style block is empty. As stable universals about
+the user come up, save them as core rows so they reach every future
+session.
 
-- `identity.md` — who the user is (name, role, timezone, languages, core
-  preferences, long-term goals). Keep entries universal: true across every
-  project.
-- `style.md` — how the user wants the agent to work (tone, format, pacing,
-  universal do/don't).
+- Identity: who the user is (name, role, timezone, languages, core
+  preferences). Universal across projects.
+- Working style: how the user wants the agent to work (tone, format,
+  pacing, universal do/don't rules).
+
+Write via `Memory_write({verb: "add", tier: "core", ...})`. The
+dashboard at `linggen.dev` (or the local memory UI) also exposes a
+core view for curating the set.
 
 ## Memory is how the agent grows up
 
@@ -243,17 +247,17 @@ user reviews in context via the timestamps you surface at retrieval.
 When the user utters one of these **in regular chat (not the /memory
 skill)**, save immediately. No widget, no confirmation, no verbose reply.
 
-1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `Edit identity.md`. Record exactly what the user said; never invent names or specifics.
-2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Edit identity.md`
-3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Edit identity.md`
-4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* → `Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], content: "..."})`. **Do NOT write to identity.md** — goals are retrieved on-demand from RAG, not inlined always.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → `Edit style.md`
+1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`. Record exactly what the user said; never invent names or specifics.
+2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
+3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
+4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* → `Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], ...})` — semantic tier (default), NOT `tier=core`. Goals are retrieved on-demand, not inlined always.
+5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → `Memory_write({verb: "add", tier: "core", type: "preference", ...})`.
 
 Detect these patterns semantically, not lexically — works in any language.
 
-**Identity vs goals:** `identity.md` is always inlined into the system
-prompt. Keep it narrow: name, role, location, relationships. Projects
-and goals go to RAG.
+**Core vs goals:** `tier=core` is injected into every system prompt.
+Keep it narrow: name, role, location, relationships, hard work rules.
+Projects and goals go to the default semantic tier.
 
 **Skip** task descriptions, inferred preferences, and opinions without
 commitment. **Project-specific technical facts → drop.** Memory does
@@ -288,7 +292,7 @@ memory. Memory does not write to project files (`<project>/AGENTS.md`,
 the project's own files directly when it needs the content.
 
 If a candidate looks project-internal during a chat → **drop it**.
-Don't `Memory_write` to RAG, don't `Edit` any project file.
+Don't `Memory_write` to the store, don't `Edit` any project file.
 
 **Reading legacy project rows in RAG.** Older rows may still carry
 `contexts: ["project/<name>"]` from a previous routing scheme. Include

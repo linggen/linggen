@@ -1,154 +1,104 @@
-//! Built-in memory — identity + working-style files.
+//! Built-in core memory — `tier=core` rows pulled from the user's
+//! memory store and injected into every owner session.
 //!
-//! Layer 1 of the two-layer memory system (see `doc/memory-spec.md`).
-//! Two markdown files under `~/.linggen/memory/`:
-//!
-//! - `identity.md` — who the user is (name, role, timezone, language,
-//!   universal preferences).
-//! - `style.md` — how the user wants to be assisted (tone, format, pacing,
-//!   universal do/don't rules).
-//!
-//! Both must be **universal**: true in any project, any domain. High bar
-//! for entry; the whole pair should stay ~30–50 lines combined.
-//!
-//! Layer 2 (facts, activity, semantic retrieval) lives in the active memory
-//! skill and is reached through the `Memory.*` tool family — not this module.
+//! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
+//! `semantic` LanceDB table, not as files on disk. The engine queries
+//! them via the `ling-mem` CLI (which transparently routes through the
+//! HTTP daemon when one is running) and renders the bodies as a bullet
+//! list for the prompt template. Promotion in and out of the core tier
+//! happens through ordinary memory writes
+//! (`Memory_write({verb: "add", tier: "core", ...})`) and the dashboard
+//! — there is no second markdown substrate to keep in sync.
 
-use std::fs;
-use std::io;
-use std::path::Path;
+use serde::Deserialize;
+use std::process::Command;
 
-const IDENTITY_FILE: &str = "identity.md";
-const STYLE_FILE: &str = "style.md";
+/// Binary name. Resolved against `$PATH`; the installer puts `ling-mem`
+/// there. Missing binary degrades gracefully: `load_core` returns `None`
+/// and the prompt falls through to the empty-core block.
+const LING_MEM_BIN: &str = "ling-mem";
 
-const IDENTITY_TEMPLATE: &str = r#"---
-name: identity
-description: Who the user is — universal across every project and context
----
+/// Upper bound on rows pulled into the system prompt. Core is meant to
+/// be tiny (a handful of universals); the cap keeps a runaway tag from
+/// silently inflating every prompt.
+const CORE_LIMIT: usize = 200;
 
-<!--
-Keep this small. Only facts that stay true regardless of project or domain.
-Delete this comment once you've filled the sections below.
--->
-
-## Name
-
-## Role
-
-## Location & timezone
-
-## Languages
-
-## Core preferences
-"#;
-
-const STYLE_TEMPLATE: &str = r#"---
-name: style
-description: How the user wants the agent to assist — universal working style
----
-
-<!--
-Tone, format, pacing, and cross-project do/don't rules.
-Project-specific conventions belong in that project's CLAUDE.md / AGENTS.md,
-not here.
--->
-
-## Tone
-
-## Format
-
-## Pacing
-
-## Universal rules
-"#;
-
-/// Loaded content for the built-in memory block. Bodies exclude the YAML
-/// frontmatter — only the markdown body the user authored.
+/// Pre-rendered core memory block. `facts` is the markdown body the
+/// prompt template inlines verbatim — a bullet list of `tier=core` row
+/// contents, newest first.
 pub(crate) struct CoreContent {
-    pub identity: String,
-    pub style: String,
+    pub facts: String,
 }
 
-/// Read `identity.md` and `style.md` from the memory directory. Returns
-/// `Some` only when at least one file has substantive user content beyond
-/// headings and template comments. Creates the templates on first access
-/// so the user always has a file to edit, and treats unedited templates
-/// as absent so the caller emits the "populate me" bootstrap hint instead
-/// of injecting empty scaffolding.
+#[derive(Deserialize)]
+struct CoreRow {
+    content: String,
+}
+
+/// Query `tier=core` rows from `ling-mem` and render them as a bullet
+/// list. Returns `None` when there are no core rows (or the binary is
+/// unavailable / errors out — the caller emits the empty-block prompt
+/// in that case so a fresh install still starts cleanly).
 pub(crate) fn load_core() -> Option<CoreContent> {
-    let dir = crate::paths::memory_dir();
-    let _ = ensure_templates(&dir);
+    let output = Command::new(LING_MEM_BIN)
+        .args([
+            "--format",
+            "json",
+            "list",
+            "--tier",
+            "core",
+            "--limit",
+        ])
+        .arg(CORE_LIMIT.to_string())
+        .output()
+        .ok()?;
 
-    let identity = read_body(&dir.join(IDENTITY_FILE)).unwrap_or_default();
-    let style = read_body(&dir.join(STYLE_FILE)).unwrap_or_default();
-
-    if !has_user_content(&identity) && !has_user_content(&style) {
+    if !output.status.success() {
+        tracing::debug!(
+            status = ?output.status.code(),
+            "ling-mem list --tier core exited non-zero; treating core as empty"
+        );
         return None;
     }
 
-    Some(CoreContent { identity, style })
-}
-
-/// Ensure the core directory and both template files exist. Idempotent:
-/// never overwrites user content.
-pub(crate) fn ensure_templates(dir: &Path) -> io::Result<()> {
-    fs::create_dir_all(dir)?;
-    write_if_missing(&dir.join(IDENTITY_FILE), IDENTITY_TEMPLATE)?;
-    write_if_missing(&dir.join(STYLE_FILE), STYLE_TEMPLATE)?;
-    Ok(())
-}
-
-fn write_if_missing(path: &Path, body: &str) -> io::Result<()> {
-    if path.exists() {
-        return Ok(());
+    let stdout = std::str::from_utf8(&output.stdout).ok()?;
+    let rows = parse_ndjson_rows(stdout)?;
+    if rows.is_empty() {
+        return None;
     }
-    fs::write(path, body)
+
+    let facts = rows
+        .iter()
+        .map(|r| format!("- {}", r.content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(CoreContent { facts })
 }
 
-fn read_body(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
-    Some(strip_frontmatter(&text).trim().to_string())
-}
-
-fn strip_frontmatter(text: &str) -> &str {
-    if !text.starts_with("---") {
-        return text;
-    }
-    let parts: Vec<&str> = text.splitn(3, "---").collect();
-    if parts.len() < 3 {
-        return text;
-    }
-    parts[2]
-}
-
-/// Treat a body as "populated" only when it has at least one line that
-/// isn't a heading, blank, or HTML template comment. Used to decide
-/// between inlining the file content and emitting the bootstrap hint.
-fn has_user_content(body: &str) -> bool {
-    let mut in_comment = false;
-    for raw in body.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
+/// Parse `ling-mem`'s NDJSON list output (one JSON object per line).
+/// Tolerates trailing whitespace and blank lines. Returns `None` only if
+/// every non-blank line failed to parse — a partial parse keeps the rows
+/// it did get so a single malformed row can't blank out the entire core.
+fn parse_ndjson_rows(stdout: &str) -> Option<Vec<CoreRow>> {
+    let mut rows = Vec::new();
+    let mut had_any_line = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        if in_comment {
-            if line.contains("-->") {
-                in_comment = false;
+        had_any_line = true;
+        match serde_json::from_str::<CoreRow>(trimmed) {
+            Ok(row) => rows.push(row),
+            Err(e) => {
+                tracing::debug!(error = %e, "skipping malformed ling-mem row");
             }
-            continue;
         }
-        if line.starts_with("<!--") {
-            if !line.contains("-->") {
-                in_comment = true;
-            }
-            continue;
-        }
-        if line.starts_with('#') {
-            continue;
-        }
-        return true;
     }
-    false
+    if !had_any_line {
+        return Some(Vec::new());
+    }
+    Some(rows)
 }
 
 #[cfg(test)]
@@ -156,36 +106,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn template_body_is_not_user_content() {
-        let body = strip_frontmatter(IDENTITY_TEMPLATE);
-        assert!(!has_user_content(body));
+    fn parses_ndjson_list_output() {
+        let stdout = "{\"content\":\"I'm a founder\"}\n{\"content\":\"Prefer terse replies\"}\n";
+        let rows = parse_ndjson_rows(stdout).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].content, "I'm a founder");
+        assert_eq!(rows[1].content, "Prefer terse replies");
     }
 
     #[test]
-    fn populated_body_is_user_content() {
-        let body = "## Name\nLiang\n\n## Role\nFounder";
-        assert!(has_user_content(body));
+    fn empty_stdout_returns_empty_rows() {
+        let rows = parse_ndjson_rows("").unwrap();
+        assert!(rows.is_empty());
     }
 
     #[test]
-    fn multiline_comment_does_not_count() {
-        let body = "<!--\nHelpful\nguidance\n-->\n\n## Name";
-        assert!(!has_user_content(body));
-    }
-
-    #[test]
-    fn ensure_templates_creates_files() {
-        let tmp = std::env::temp_dir().join("linggen_core_memory_test");
-        let _ = fs::remove_dir_all(&tmp);
-        ensure_templates(&tmp).unwrap();
-        assert!(tmp.join(IDENTITY_FILE).exists());
-        assert!(tmp.join(STYLE_FILE).exists());
-
-        fs::write(tmp.join(IDENTITY_FILE), "overwritten").unwrap();
-        ensure_templates(&tmp).unwrap();
-        let after = fs::read_to_string(tmp.join(IDENTITY_FILE)).unwrap();
-        assert_eq!(after, "overwritten", "ensure_templates must not overwrite");
-
-        let _ = fs::remove_dir_all(&tmp);
+    fn malformed_lines_are_skipped_not_fatal() {
+        let stdout = "{\"content\":\"keep me\"}\nnot-json\n{\"content\":\"and me\"}\n";
+        let rows = parse_ndjson_rows(stdout).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].content, "keep me");
+        assert_eq!(rows[1].content, "and me");
     }
 }

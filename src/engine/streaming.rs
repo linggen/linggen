@@ -135,23 +135,14 @@ pub(crate) fn check_context_staleness(
             content.hash(&mut hasher);
         }
     }
-    // Hash the built-in memory files (identity.md + style.md) so user edits
-    // invalidate the cached stable system prompt on the next turn. Only .md
-    // files at the top level are hashed — per-skill data subdirectories are
-    // skipped (their mtime changes on every daemon write).
-    let memory_dir = crate::paths::memory_dir();
-    if let Ok(entries) = std::fs::read_dir(&memory_dir) {
-        let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                content.hash(&mut hasher);
-            }
-        }
-    }
+    // Core memory (`tier=core` rows from the store) is reloaded by
+    // `core_memory::load_core` whenever the stable-prompt cache is
+    // rebuilt; nothing under `~/.linggen/memory/` is hashed here. Known
+    // gap: a `Memory_write({tier:"core"})` issued by the model does not
+    // by itself invalidate the cached prompt for the rest of the
+    // session — the new row surfaces on the next rebuild trigger
+    // (project file edit, new session, etc.). Event-driven invalidation
+    // on Memory_write is future work.
     hasher.finish() != prev_hash
 }
 

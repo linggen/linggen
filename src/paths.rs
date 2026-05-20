@@ -73,9 +73,11 @@ pub fn global_missions_dir() -> PathBuf {
 
 /// `~/.linggen/memory/` — root of the memory tree.
 ///
-/// Holds the two built-in files (`identity.md`, `style.md`) inlined into
-/// the stable system prompt, plus per-skill data under
+/// Holds the LanceDB store (`memory.lancedb/`, owned by the `ling-mem`
+/// binary) plus per-skill data subdirs under
 /// `~/.linggen/memory/<skill-name>/` for installed memory providers.
+/// Core identity / working-style facts live as `tier=core` rows inside
+/// the store — there are no built-in markdown files anymore.
 /// See `doc/memory-spec.md`.
 pub fn memory_dir() -> PathBuf {
     linggen_home().join("memory")

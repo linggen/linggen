@@ -23,10 +23,11 @@ past their TTL and makes one terminal decision per row —
 - **forget** (evict) the rest.
 
 The worklist and TTL policy are engine-owned (the consolidator never
-queries or decides retention itself). Promotion only ever *adds* to the
-semantic store with an optional supersedes link — it never destructively
-rewrites or deletes existing long-term memory; that stays
-user-initiated.
+queries or decides retention itself). Promotion only ever *adds* a new
+row to the semantic store — it never destructively rewrites or deletes
+existing long-term memory. Reconciliation across rows on the same
+subject happens at read time and on explicit user delete, never as a
+silent offline rewrite.
 
 **You can stop a run** from the mission UI if it ever misbehaves — it
 simply re-arms on the next cycle. **Deleting this mission** disables

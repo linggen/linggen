@@ -269,26 +269,22 @@ impl AgentEngine {
         }
 
         // --- Core memory (owner only) ---
-        // Layer 1: ~/.linggen/core/identity.md + style.md — universals
-        // inlined into the stable prompt. When files are still unedited
-        // scaffolding, emit the bootstrap hint instead so the model knows
-        // how to initialize memory. Layer 2 (facts / activity / semantic
-        // retrieval) reaches the model through Memory_* tools registered
-        // when a `provides: [memory]` skill is active — not through here.
+        // Core = `tier=core` rows from the memory store, inlined
+        // unconditionally (no similarity gate). Pulled via the `ling-mem`
+        // CLI in `core_memory::load_core`. Empty / unreachable store ⇒
+        // the bootstrap block fires instead, telling the model how to
+        // populate core. Semantic retrieval over the rest of the store
+        // reaches the model through Memory_* tools registered when a
+        // `provides: [memory]` skill is active — not through here.
         if self.prompt_profile.include_memory {
-            let core_dir_display = crate::paths::memory_dir().display().to_string();
             match core_memory::load_core() {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
                     keys::CORE_MEMORY_BLOCK,
-                    &[
-                        ("core_dir", &core_dir_display),
-                        ("identity", &c.identity),
-                        ("style", &c.style),
-                    ],
+                    &[("core_facts", &c.facts)],
                 )),
                 None => stable.push_str(&self.prompt_store.render_or_fallback(
                     keys::CORE_MEMORY_BLOCK_EMPTY,
-                    &[("core_dir", &core_dir_display)],
+                    &[],
                 )),
             }
         }
@@ -597,16 +593,12 @@ impl AgentEngine {
                 }
                 // Skill tool is always allowed so the model can discover/invoke skills.
                 allowed.insert("Skill".to_string());
-                // Read/Write/Edit are always allowed when the built-in memory
-                // directory exists, so the model can read and update
-                // identity.md / style.md during any skill (honoring an
-                // explicit "remember this" request from the user without
-                // needing a tool-permission escalation).
-                if crate::paths::memory_dir().is_dir() {
-                    allowed.insert("Read".to_string());
-                    allowed.insert("Write".to_string());
-                    allowed.insert("Edit".to_string());
-                }
+                // Core memory is curated via `Memory_write({tier:"core"})`,
+                // not file edits, so the previous auto-grant of
+                // Read/Write/Edit on `~/.linggen/memory/` is no longer
+                // justified and has been removed. Skills that legitimately
+                // need filesystem access must declare it through their own
+                // permission surface.
                 self.inject_http_capability_tools(&mut allowed);
                 return Some(allowed);
             }
