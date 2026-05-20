@@ -5,13 +5,21 @@ import { formatCompactTokens } from './utils/activity';
 import { truncateDetail } from './utils/content-block';
 import { useInteractionStore } from '../../stores/interactionStore';
 
-/** Subagent tree view — Claude Code-style per-entry Task() blocks. */
+/** Subagent tree view — Claude Code-style per-entry Task() blocks.
+ *
+ * `compact` mode strips the live "currentActivity" / toolSteps body
+ * and shows only the one-line status row per entry. Used in the
+ * parent's main-chat bubble while the SubagentPane on the right
+ * carries the full detail surface. Defaults to false so the pane
+ * keeps its existing rich view.
+ */
 export const SubagentTreeView: React.FC<{
   entries: SubagentTreeEntry[];
   isGenerating: boolean;
   isExpanded: boolean;
   onToggle: () => void;
-}> = ({ entries, isGenerating, isExpanded, onToggle }) => {
+  compact?: boolean;
+}> = ({ entries, isGenerating, isExpanded, onToggle, compact = false }) => {
   const allDone = entries.every((e) => e.status !== 'running');
 
   const showExpanded = isGenerating || isExpanded;
@@ -66,7 +74,7 @@ export const SubagentTreeView: React.FC<{
               <span className={cn('text-[11px] ml-1', statusColor)}>{statusSuffix}</span>
             </div>
 
-            {isRunning ? (
+            {compact ? null : isRunning ? (
               entry.toolSteps && entry.toolSteps.length > 0 ? (<>
                 {entry.toolSteps.slice(-3).map((step, si, arr) => {
                   const isLastStep = si === arr.length - 1;
@@ -126,7 +134,7 @@ export const SubagentTreeView: React.FC<{
         );
       })}
 
-      {allDone && !showExpanded && !isGenerating && (
+      {!compact && allDone && !showExpanded && !isGenerating && (
         <div className="text-[11px] text-slate-400 dark:text-slate-500 pl-4 italic">(click to expand)</div>
       )}
     </div>

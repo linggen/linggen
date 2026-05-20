@@ -79,11 +79,17 @@ export const AgentMessage: React.FC<{
   return (
     <>
       {msg.subagentTree && msg.subagentTree.length > 0 && (
+        // Inline view shows only the compact status row per subagent
+        // (e.g. "ling-mem01 — running…"). The full detail — tool calls,
+        // "Thinking (model)" activity, AskUser widget — lives in the
+        // SubagentPane on the right. Two surfaces, one truth: the
+        // store holds the data, this view just renders the summary.
         <SubagentTreeView
           entries={msg.subagentTree}
           isGenerating={!!msg.isGenerating}
           isExpanded={isExpanded}
           onToggle={onToggle}
+          compact
         />
       )}
 

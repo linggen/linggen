@@ -154,14 +154,21 @@ export const SubagentPane: React.FC<Props> = ({
 
       {/* Active tab content */}
       <div className="flex-1 overflow-y-auto px-3 py-2 custom-scrollbar min-h-0">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          {active.task ? (
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 italic whitespace-pre-wrap break-words line-clamp-3 flex-1 min-w-0">
-              Task: {active.task}
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-1">
+              From main → {active.agentName || active.subagentId}
             </div>
-          ) : (
-            <div className="flex-1" />
-          )}
+            {active.task ? (
+              <div className="text-[12px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words bg-white dark:bg-[#1a1a1a] rounded-md border border-slate-200 dark:border-white/10 px-2.5 py-1.5">
+                {active.task}
+              </div>
+            ) : (
+              <div className="text-[11px] italic text-slate-400 dark:text-slate-500">
+                (no task body — engine spawned with empty prompt)
+              </div>
+            )}
+          </div>
           {active.status === 'running' && onCancelAgentRun && (
             <button
               onClick={() => onCancelAgentRun(active.subagentId)}
