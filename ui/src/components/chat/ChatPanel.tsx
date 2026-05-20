@@ -352,7 +352,14 @@ export const ChatPanel: React.FC<{
   // Track agent active state and elapsed time — keyed by session ID
   const agentStatusText = useServerStore((s) => s.agentStatusText);
   const currentStatus = agentStatus?.[sessionId || ''];
-  const isAgentActive = !!currentStatus && currentStatus !== 'idle';
+  // Spinner is bound to `isRunning` — the server-authoritative "agent
+  // run in flight" signal — NOT to `agentStatus[sid]`. The latter
+  // proxy was set from too many paths (handleTurnComplete,
+  // handleSubagentResult, applyTopLevelActivity, pageState.busy_sessions, …)
+  // and drifted out of sync, leaving the spinner stuck while text said
+  // "Idle". When `isRunning` is false there's literally nothing
+  // executing for this session — the spinner has no business showing.
+  const isAgentActive = !!isRunning;
   const [spinnerVerb, setSpinnerVerb] = useState('');
   const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
   useEffect(() => {
