@@ -352,14 +352,25 @@ export const ChatPanel: React.FC<{
   // Track agent active state and elapsed time — keyed by session ID
   const agentStatusText = useServerStore((s) => s.agentStatusText);
   const currentStatus = agentStatus?.[sessionId || ''];
-  // Spinner is bound to `isRunning` — the server-authoritative "agent
-  // run in flight" signal — NOT to `agentStatus[sid]`. The latter
-  // proxy was set from too many paths (handleTurnComplete,
-  // handleSubagentResult, applyTopLevelActivity, pageState.busy_sessions, …)
-  // and drifted out of sync, leaving the spinner stuck while text said
-  // "Idle". When `isRunning` is false there's literally nothing
-  // executing for this session — the spinner has no business showing.
-  const isAgentActive = !!isRunning;
+  // Bind the spinner to the server's authoritative agent_runs records,
+  // NOT the agentStatus proxy: that proxy is set from too many paths
+  // (handleTurnComplete, handleSubagentResult, applyTopLevelActivity,
+  // pageState.busy_sessions, …) and drifted out of sync, leaving the
+  // spinner stuck while text already said "Idle". `useServerStore.isRunning()`
+  // is itself derived from agentStatus, so it inherits the same drift.
+  // The truth: a *top-level* run record (parent_run_id null) with
+  // status='running' for THIS session ⇒ spinner. Subagent runs
+  // (parent_run_id set) drive the SubagentPane, not the main spinner.
+  const agentRuns = useServerStore((s) => s.agentRuns);
+  const isAgentActive = useMemo(() => {
+    if (!sessionId) return false;
+    return agentRuns.some(
+      (r) =>
+        r.session_id === sessionId &&
+        !r.parent_run_id &&
+        r.status === 'running',
+    );
+  }, [agentRuns, sessionId]);
   const [spinnerVerb, setSpinnerVerb] = useState('');
   const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
   useEffect(() => {
