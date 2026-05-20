@@ -184,26 +184,33 @@ impl AgentEngine {
             serde_json::json!({ "mode": "structured" }),
         );
 
-        // Record start of loop in session store
+        // Record start of loop in session store. Skip for subagents
+        // (delegation_depth > 0): they share the parent's session_id, so
+        // a write here would dump every subagent's task prompt — e.g.
+        // the encoder's full "<recent-exchange>...</recent-exchange>"
+        // payload — into the parent's messages.jsonl as a system
+        // observation, which then re-renders on every chat reload.
         if let Some(manager) = self.tools.get_manager() {
-            let aid = self
-                .agent_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            manager
-                .add_chat_message(
-                    &self.cfg.ws_root,
-                    session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        agent_id: aid.clone(),
-                        from_id: "system".to_string(),
-                        to_id: aid,
-                        content: format!("Starting autonomous loop for task: {}", task),
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: true,
-                    },
-                )
-                .await;
+            if self.tools.builtins.delegation_depth() == 0 {
+                let aid = self
+                    .agent_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                manager
+                    .add_chat_message(
+                        &self.cfg.ws_root,
+                        session_id.unwrap_or("default"),
+                        &crate::state_fs::sessions::ChatMsg {
+                            agent_id: aid.clone(),
+                            from_id: "system".to_string(),
+                            to_id: aid,
+                            content: format!("Starting autonomous loop for task: {}", task),
+                            timestamp: crate::util::now_ts_secs(),
+                            is_observation: true,
+                        },
+                    )
+                    .await;
+            }
         }
 
         // Query and cache the model's context window for adaptive thresholds.

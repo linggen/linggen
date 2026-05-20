@@ -58,6 +58,16 @@ impl AgentEngine {
                 .agent_id
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
+            // Subagents share the parent's `session_id`, so a raw write
+            // would dump every subagent's tool observations into the
+            // parent's messages.jsonl — those then leak back into the
+            // chat on replay. The subagent's activity is already surfaced
+            // through the SubagentSpawned / Activity / SubagentResult
+            // event stream (rendered inside the subagent tree widget),
+            // so skipping the persist here is non-lossy for the UI.
+            if self.tools.builtins.delegation_depth() > 0 {
+                return Ok(());
+            }
             manager
                 .add_chat_message(
                     &self.cfg.ws_root,
@@ -96,25 +106,37 @@ impl AgentEngine {
                     content: content.to_string(),
                 }, self.session_id.clone())
                 .await;
-            manager
-                .add_chat_message(
-                    &self.cfg.ws_root,
-                    session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        agent_id: agent_id.clone(),
-                        from_id: agent_id.clone(),
-                        to_id: target,
-                        content: content.to_string(),
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: false,
-                    },
-                )
-                .await;
+            // Subagents inherit the parent's session_id. Persisting their
+            // terminal message into the parent's messages.jsonl was making
+            // contract status lines (e.g. the encoder's `ENCODED
+            // encoded=0`) show up as their own chat bubbles on replay —
+            // visible noise in the parent's transcript. The Message event
+            // above already carries the text to the UI's subagent-tree
+            // widget; SubagentResult also re-carries it as `outcome` for
+            // event-ordering safety. So the on-disk persist is the only
+            // step that needs to skip for delegated runs.
+            let is_subagent = self.tools.builtins.delegation_depth() > 0;
+            if !is_subagent {
+                manager
+                    .add_chat_message(
+                        &self.cfg.ws_root,
+                        session_id.unwrap_or("default"),
+                        &crate::state_fs::sessions::ChatMsg {
+                            agent_id: agent_id.clone(),
+                            from_id: agent_id.clone(),
+                            to_id: target,
+                            content: content.to_string(),
+                            timestamp: crate::util::now_ts_secs(),
+                            is_observation: false,
+                        },
+                    )
+                    .await;
 
-            // Nudge UI to refresh immediately.
-            manager
-                .send_event(crate::agent_manager::AgentEvent::StateUpdated, self.session_id.clone())
-                .await;
+                // Nudge UI to refresh immediately.
+                manager
+                    .send_event(crate::agent_manager::AgentEvent::StateUpdated, self.session_id.clone())
+                    .await;
+            }
         }
         Ok(())
     }

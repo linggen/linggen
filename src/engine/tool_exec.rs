@@ -502,26 +502,31 @@ impl AgentEngine {
                 .await;
             // Persist tool call to session store as an observation (not loaded
             // into chat history on reload — tool results are ephemeral context).
-            let tool_msg = serde_json::json!({
-                "type": "tool",
-                "tool": canonical_tool.clone(),
-                "args": safe_args
-            })
-            .to_string();
-            manager
-                .add_chat_message(
-                    &self.tools.builtins.cwd(),
-                    session_id.unwrap_or("default"),
-                    &crate::state_fs::sessions::ChatMsg {
-                        agent_id: from.clone(),
-                        from_id: from,
-                        to_id: target,
-                        content: tool_msg,
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: true,
-                    },
-                )
-                .await;
+            // Skip for subagents: they share the parent's session_id, so
+            // every subagent tool call would otherwise show up as a `system`
+            // observation in the parent's transcript on reload.
+            if self.tools.builtins.delegation_depth() == 0 {
+                let tool_msg = serde_json::json!({
+                    "type": "tool",
+                    "tool": canonical_tool.clone(),
+                    "args": safe_args
+                })
+                .to_string();
+                manager
+                    .add_chat_message(
+                        &self.tools.builtins.cwd(),
+                        session_id.unwrap_or("default"),
+                        &crate::state_fs::sessions::ChatMsg {
+                            agent_id: from.clone(),
+                            from_id: from,
+                            to_id: target,
+                            content: tool_msg,
+                            timestamp: crate::util::now_ts_secs(),
+                            is_observation: true,
+                        },
+                    )
+                    .await;
+            }
         }
 
         let call = ToolCall {
