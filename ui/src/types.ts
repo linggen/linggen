@@ -185,7 +185,7 @@ export interface OllamaPsResponse {
 export interface AppConfig {
   models: ModelConfigUI[];
   server: { port: number; host: string };
-  agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null; compact_threshold?: number | null };
+  agent: { max_iters: number; write_safety_mode: string; tool_permission_mode: string; prompt_loop_breaker?: string | null; compact_threshold?: number | null; consolidate_every_n_turns?: number };
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; default_policy?: string | null; auto_fallback?: boolean };
