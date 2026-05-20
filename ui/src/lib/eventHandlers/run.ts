@@ -138,7 +138,30 @@ function handleSubagentResult(item: UiEvent): void {
   const trackingId = String(item.data.subagent_run_id || item.data.subagent_id || '');
   if (!trackingId || !parentId) return;
 
+  // The SubagentResult event also carries the subagent's outcome text;
+  // capture it as a fallback for the expand-on-click view in case the
+  // terminal Message event was missed or arrived after unregister.
+  const outcomeText = extractOutcomeText(item.data.outcome);
+
   useChatStore.getState().updateSubagentTree(parentId, trackingId,
-    (entry) => ({ ...entry, status: 'done', currentActivity: null }));
+    (entry) => ({
+      ...entry,
+      status: 'done',
+      currentActivity: null,
+      // Preserve any resultText already captured by handleMessage —
+      // outcome is the fallback, not an overwrite.
+      resultText: entry.resultText ?? outcomeText ?? entry.resultText,
+    }));
   agentTracker.unregisterSubagent(trackingId);
+}
+
+function extractOutcomeText(outcome: unknown): string | undefined {
+  if (!outcome) return undefined;
+  if (typeof outcome === 'string') return outcome;
+  if (typeof outcome === 'object' && outcome !== null) {
+    const o = outcome as Record<string, unknown>;
+    const candidate = o.text || o.message || o.summary || o.result;
+    if (typeof candidate === 'string') return candidate;
+  }
+  return undefined;
 }

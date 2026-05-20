@@ -89,11 +89,24 @@ export function handleMessage(item: UiEvent): void {
   if (!content) return;
   if (shouldHideInternalChatMessage(from, content)) return;
 
-  // Subagent returns used to be dropped here and shown only inside the parent
-  // bubble's subagent tree. That made the live chat diverge from the replay
-  // path (which reads messages.jsonl and shows each return as its own bubble).
-  // Let them through — they appear as their own chat entries and the chat
-  // always appends instead of inserting activity into an older bubble.
+  // Subagent returns: route the terminal text into the parent's subagent
+  // tree entry (revealed on click-to-expand) instead of leaking it into
+  // the main chat. This is what the user sees when an encoder subagent
+  // emits a contract line like "ENCODED encoded=0" — purely operational,
+  // shouldn't sit in the conversation transcript next to the assistant's
+  // real reply. Replay reads messages.jsonl directly so the on-disk
+  // record is unaffected.
+  const subagentRunId = String(item.data?.run_id || '');
+  const subagentTrackingId = subagentRunId || from;
+  const subagentParent = agentTracker.getParent(subagentTrackingId);
+  if (subagentParent) {
+    useChatStore.getState().updateSubagentTree(
+      subagentParent,
+      subagentTrackingId,
+      (entry) => ({ ...entry, resultText: content }),
+    );
+    return;
+  }
 
   try {
     const parsed = JSON.parse(content);

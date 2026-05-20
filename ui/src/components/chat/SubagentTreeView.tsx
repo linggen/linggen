@@ -74,21 +74,34 @@ export const SubagentTreeView: React.FC<{
                 </div>
               ) : null
             ) : showExpanded && entry.toolSteps && entry.toolSteps.length > 0 ? (
-              entry.toolSteps.map((step, si) => {
-                const isLastStep = si === entry.toolSteps.length - 1;
-                const connector = isLastStep ? '⎿' : '│';
-                const stepBulletColor = step.status === 'done' ? 'text-emerald-500' : step.status === 'failed' ? 'text-red-500' : 'text-amber-500';
-                return (
-                  <div key={si} className="flex items-start gap-0 text-[11px] pl-4">
-                    <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">{connector}&nbsp;&nbsp;</span>
-                    <span className={cn('mr-0.5', stepBulletColor)}>⏺</span>
-                    <span className={cn('font-medium', step.status === 'failed' ? 'text-red-600 dark:text-red-400' : 'text-cyan-600 dark:text-cyan-400')}>{step.toolName}</span>
-                    {step.args && (
-                      <span className="text-slate-400 dark:text-slate-500">({truncateDetail(step.args, 60)})</span>
-                    )}
+              <>
+                {entry.toolSteps.map((step, si) => {
+                  const isLastStep = si === entry.toolSteps.length - 1 && !entry.resultText;
+                  const connector = isLastStep ? '⎿' : '│';
+                  const stepBulletColor = step.status === 'done' ? 'text-emerald-500' : step.status === 'failed' ? 'text-red-500' : 'text-amber-500';
+                  return (
+                    <div key={si} className="flex items-start gap-0 text-[11px] pl-4">
+                      <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">{connector}&nbsp;&nbsp;</span>
+                      <span className={cn('mr-0.5', stepBulletColor)}>⏺</span>
+                      <span className={cn('font-medium', step.status === 'failed' ? 'text-red-600 dark:text-red-400' : 'text-cyan-600 dark:text-cyan-400')}>{step.toolName}</span>
+                      {step.args && (
+                        <span className="text-slate-400 dark:text-slate-500">({truncateDetail(step.args, 60)})</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {entry.resultText && (
+                  <div className="flex items-start gap-0 text-[11px] pl-4 text-slate-500 dark:text-slate-400">
+                    <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">⎿&nbsp;&nbsp;</span>
+                    <span className="whitespace-pre-wrap break-words">{entry.resultText}</span>
                   </div>
-                );
-              })
+                )}
+              </>
+            ) : showExpanded && entry.resultText ? (
+              <div className="flex items-start gap-0 text-[11px] pl-4 text-slate-500 dark:text-slate-400">
+                <span className="text-slate-400 dark:text-slate-600 select-none shrink-0">⎿&nbsp;&nbsp;</span>
+                <span className="whitespace-pre-wrap break-words">{entry.resultText}</span>
+              </div>
             ) : null}
           </div>
         );

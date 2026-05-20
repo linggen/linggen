@@ -17,6 +17,10 @@ export interface SubagentTreeEntry {
   contextTokens: number;
   currentActivity: string | null;
   toolSteps: SubagentToolStep[];
+  /** Final text the subagent returned (status line, summary, etc.). Captured
+   * from the subagent's terminal Message event so it can be revealed in the
+   * expand-on-click view instead of leaking into the parent chat. */
+  resultText?: string;
   /** Client-side stamp for ordering/diagnostics (set when subagent is spawned). */
   timestampMs?: number;
 }
