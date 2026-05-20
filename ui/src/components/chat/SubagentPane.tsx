@@ -15,14 +15,21 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '../../lib/cn';
-import type { ChatMessage, SubagentTreeEntry } from '../../types';
+import type { ChatMessage, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
 import { SubagentTreeView } from './SubagentTreeView';
+import { AskUserCard } from '../AskUserCard';
+import { ToolPermissionCard } from '../ToolPermissionCard';
 
 interface Props {
   messages: ChatMessage[];
   /** Toggled by ChatPanel's auto-collapse timer; lets the parent hide
    *  the pane after the last subagent has been done for a few seconds. */
   visible: boolean;
+  /** Pending AskUser (or permission) widget the engine emitted. Pass
+   *  through only when the event's agent_id matches one of our tabs —
+   *  ChatPanel does the predicate; we just render in the matching tab. */
+  pendingAskUser?: PendingAskUser | null;
+  onRespondToAskUser?: (questionId: string, answers: AskUserAnswer[]) => void;
 }
 
 /** Collect every subagent entry attached to any message in this session,
@@ -38,14 +45,35 @@ function collectEntries(messages: ChatMessage[]): SubagentTreeEntry[] {
   return out;
 }
 
-export const SubagentPane: React.FC<Props> = ({ messages, visible }) => {
+export const SubagentPane: React.FC<Props> = ({
+  messages,
+  visible,
+  pendingAskUser,
+  onRespondToAskUser,
+}) => {
   const entries = useMemo(() => collectEntries(messages), [messages]);
 
-  // Default active tab: most recently registered subagent.
+  // Match the pending AskUser to one of our tabs by either subagentId
+  // or agentName, since the event's `agent_id` may be the run id or
+  // the agent name depending on the call site.
+  const askUserEntry = useMemo(() => {
+    if (!pendingAskUser) return null;
+    const id = pendingAskUser.agentId;
+    return (
+      entries.find((e) => e.subagentId === id || e.agentName === id) ?? null
+    );
+  }, [entries, pendingAskUser]);
+
+  // Default active tab: most recently registered subagent. Auto-switch
+  // to the tab that owns the pending question.
   const [activeId, setActiveId] = useState<string | null>(null);
   useEffect(() => {
     if (entries.length === 0) {
       setActiveId(null);
+      return;
+    }
+    if (askUserEntry) {
+      setActiveId(askUserEntry.subagentId);
       return;
     }
     if (!activeId || !entries.some((e) => e.subagentId === activeId)) {
@@ -54,7 +82,7 @@ export const SubagentPane: React.FC<Props> = ({ messages, visible }) => {
       const fallback = entries[entries.length - 1];
       setActiveId((running ?? fallback).subagentId);
     }
-  }, [entries, activeId]);
+  }, [entries, activeId, askUserEntry]);
 
   if (!visible || entries.length === 0) return null;
 
@@ -70,14 +98,18 @@ export const SubagentPane: React.FC<Props> = ({ messages, visible }) => {
         </span>
         {entries.map((entry) => {
           const isActive = entry.subagentId === active.subagentId;
-          const glyph =
-            entry.status === 'running'
+          const needsUser =
+            askUserEntry && askUserEntry.subagentId === entry.subagentId;
+          const glyph = needsUser
+            ? '❓'
+            : entry.status === 'running'
               ? '●'
               : entry.status === 'failed'
                 ? '✗'
                 : '✓';
-          const glyphColor =
-            entry.status === 'running'
+          const glyphColor = needsUser
+            ? 'text-blue-500'
+            : entry.status === 'running'
               ? 'text-amber-500'
               : entry.status === 'failed'
                 ? 'text-red-500'
@@ -124,6 +156,25 @@ export const SubagentPane: React.FC<Props> = ({ messages, visible }) => {
             /* always expanded in dedicated pane */
           }}
         />
+
+        {askUserEntry &&
+          askUserEntry.subagentId === active.subagentId &&
+          pendingAskUser &&
+          onRespondToAskUser && (
+            <div className="mt-3">
+              {pendingAskUser.questions[0]?.header === 'Permission' ? (
+                <ToolPermissionCard
+                  pending={pendingAskUser}
+                  onRespond={onRespondToAskUser}
+                />
+              ) : (
+                <AskUserCard
+                  pending={pendingAskUser}
+                  onRespond={onRespondToAskUser}
+                />
+              )}
+            </div>
+          )}
       </div>
     </div>
   );

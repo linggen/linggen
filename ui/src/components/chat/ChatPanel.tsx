@@ -501,21 +501,33 @@ export const ChatPanel: React.FC<{
     return out;
   }, [filteredMainMessages]);
   const anyRunning = subagentEntries.some((e) => e.status === 'running');
+  // Predicate: is the pending AskUser destined for a subagent tab? If
+  // yes, the pane owns the widget (and we suppress the inline render);
+  // if no, the main chat keeps it (current behaviour).
+  const askUserBelongsToSubagent = useMemo(() => {
+    if (!pendingAskUser) return false;
+    const id = pendingAskUser.agentId;
+    return subagentEntries.some(
+      (e) => e.subagentId === id || e.agentName === id,
+    );
+  }, [pendingAskUser, subagentEntries]);
   const [paneVisible, setPaneVisible] = useState(false);
   useEffect(() => {
     if (subagentEntries.length === 0) {
       setPaneVisible(false);
       return;
     }
-    if (anyRunning) {
+    if (anyRunning || askUserBelongsToSubagent) {
+      // Force-open the pane whenever a subagent is running or needs a
+      // user answer — cancels any auto-collapse in flight.
       setPaneVisible(true);
       return;
     }
-    // All done — schedule auto-collapse.
+    // All done, no pending widget — schedule auto-collapse.
     setPaneVisible(true);
     const t = setTimeout(() => setPaneVisible(false), 5000);
     return () => clearTimeout(t);
-  }, [anyRunning, subagentEntries.length]);
+  }, [anyRunning, subagentEntries.length, askUserBelongsToSubagent]);
 
   const filteredSubagentMessages = useMemo(() => {
     const q = subagentMessageFilter.trim().toLowerCase();
@@ -681,7 +693,7 @@ export const ChatPanel: React.FC<{
             planProps={{ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }}
           />
         )}
-        {pendingAskUser && onRespondToAskUser && (
+        {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
           <div className="px-3 py-2">
             {pendingAskUser.questions[0]?.header === 'Permission'
               ? <ToolPermissionCard pending={pendingAskUser} onRespond={onRespondToAskUser} />
@@ -702,7 +714,12 @@ export const ChatPanel: React.FC<{
 
       {showSubagentPane && paneVisible && (
         <div className="md:flex-[2] md:min-w-0 md:max-w-[40%] border-t md:border-t-0 border-slate-200 dark:border-white/10 min-h-[180px] md:min-h-0">
-          <SubagentPane messages={filteredMainMessages} visible={paneVisible} />
+          <SubagentPane
+            messages={filteredMainMessages}
+            visible={paneVisible}
+            pendingAskUser={askUserBelongsToSubagent ? pendingAskUser : null}
+            onRespondToAskUser={onRespondToAskUser}
+          />
         </div>
       )}
       </div>
