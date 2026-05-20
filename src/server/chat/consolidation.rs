@@ -240,7 +240,7 @@ async fn run_encode(
     }
     let _ = state; // memory daemon is reached through Memory_* tools now
     let task = build_encode_task(session_id, recent_transcript);
-    let summary = run_ling_mem_subagent(manager, ws_root, agent_id, session_id, task)
+    let summary = run_ling_mem_subagent(state, manager, ws_root, agent_id, session_id, task)
         .await
         .map_err(|e| e.context("ling-mem encode subagent"))?;
     parse_encoded(&summary)
@@ -277,7 +277,7 @@ pub(crate) async fn run_consolidate_evict(
     }
 
     let task = build_consolidate_task(&cutoff, &worklist);
-    let summary = run_ling_mem_subagent(manager, ws_root, agent_id, session_id, task)
+    let summary = run_ling_mem_subagent(state, manager, ws_root, agent_id, session_id, task)
         .await
         .map_err(|e| e.context("ling-mem consolidate subagent"))?;
     let (promoted, deleted) = parse_consolidated(&summary)?;
@@ -317,12 +317,25 @@ async fn resolve_ling_mem(state: &Arc<ServerState>) -> (PathBuf, PathBuf) {
 /// the task carries the absolute binary path so commands resolve without
 /// relying on PATH.
 async fn run_ling_mem_subagent(
+    state: &Arc<ServerState>,
     manager: &Arc<AgentManager>,
     ws_root: &PathBuf,
     agent_id: &str,
     session_id: &str,
     task: String,
 ) -> anyhow::Result<String> {
+    // Build an AskUserBridge from ServerState so the subagent's AskUser
+    // tool can emit events + receive responses through the same
+    // pending_ask_user map the parent uses. The bridge is ServerState-
+    // scoped, so it outlives the parent's turn (the encoder runs
+    // post-turn). Subagent AskUser already times out at 5 min
+    // (tools/mod.rs::ask_user) — no deadlock risk.
+    let ask_user_bridge = Some(Arc::new(crate::engine::tools::AskUserBridge {
+        events_tx: state.events_tx.clone(),
+        pending: state.pending_ask_user.clone(),
+        session_id: Some(session_id.to_string()),
+    }));
+
     let result = crate::engine::tools::run_delegation(
         manager.clone(),
         ws_root.clone(),
@@ -332,7 +345,7 @@ async fn run_ling_mem_subagent(
         None, // parent_run_id
         0,    // delegation_depth
         1,    // max_delegation_depth — never re-delegates
-        None, // ask_user_bridge — unattended
+        ask_user_bridge,
         Some(session_id.to_string()),
         None,       // parent_policy — spec tools restrict it
         Vec::new(), // parent_path_modes

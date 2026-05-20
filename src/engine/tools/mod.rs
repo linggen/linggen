@@ -345,13 +345,14 @@ impl Tools {
             }
         }
 
-        // Sub-agents cannot use AskUser.
-        if self.delegation_depth > 0 {
-            return Ok(ToolResult::Success(
-                self.prompt(crate::prompts::keys::ASKUSER_SUBAGENT_BLOCKED, &[]),
-            ));
-        }
-
+        // Subagents are now allowed to call AskUser as long as the caller
+        // wired an `ask_user_bridge` (the parent's bridge is propagated via
+        // `run_delegation` so the subagent shares the same
+        // pending_ask_user map + events_tx). The `AskUser` event carries
+        // the emitting `agent_id`; the UI routes the widget to the right
+        // surface (main chat for depth-0, SubagentPane for depth>0) based
+        // on that. The 5-minute timeout below covers the previous
+        // "subagent hangs waiting for an answer" concern.
         let bridge = match &self.ask_user_bridge {
             Some(b) => Arc::clone(b),
             None => {
