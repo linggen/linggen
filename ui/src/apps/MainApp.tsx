@@ -264,7 +264,7 @@ export const MainApp: React.FC = () => {
         {/* Header */}
         <HeaderBar
           isRunning={isRunning}
-          onOpenSettings={() => openSettings()}
+          onOpenSettings={() => openSettings('general')}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : undefined}
         />
