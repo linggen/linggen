@@ -52,6 +52,13 @@ Rules when writing:
 - **Stamp ages against a date, not "now".** "3-year-old cat" →
   "has a cat, age 3 as of <YYYY-MM-DD from the task>".
 - One fact per row. Pick the narrowest correct `type` and `from`.
+- **`decision` rows must come from the user**, not the assistant.
+  A choice / commitment / direction the user stated or explicitly
+  endorsed — *not* the assistant's explanations, opinions, or "should"
+  claims in its own reply. If the user just asked a question and the
+  agent answered, there is **no decision to encode**: drop those
+  candidates entirely. `from` must be `user` for any `decision` row;
+  if you can only justify `from: agent`, the row isn't a decision.
 
 **Type taxonomy — emit only four by default:**
 
