@@ -523,9 +523,12 @@ export const ChatPanel: React.FC<{
       setPaneVisible(true);
       return;
     }
-    // All done, no pending widget — schedule auto-collapse.
+    // All done, no pending widget — schedule auto-collapse. 60s gives
+    // the user time to skim the subagent's tool calls + final status
+    // before the pane disappears, without keeping the right surface
+    // open indefinitely. Cancelled if a new subagent spawns first.
     setPaneVisible(true);
-    const t = setTimeout(() => setPaneVisible(false), 5000);
+    const t = setTimeout(() => setPaneVisible(false), 60_000);
     return () => clearTimeout(t);
   }, [anyRunning, subagentEntries.length, askUserBelongsToSubagent]);
 
