@@ -14,7 +14,7 @@
  * to the inline SubagentTreeView (the iframe-friendly path).
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Copy, FileText } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import type { ChatMessage, ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
 import { MarkdownContent } from './MarkdownContent';
@@ -36,6 +36,8 @@ interface Props {
    *  agent's cancel button uses; the subagent's tracking id is the run
    *  id the cancel API expects. */
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
+  /** Close the entire pane immediately (overrides auto-collapse). */
+  onClose?: () => void;
 }
 
 /** Collect every subagent entry attached to any message in this session,
@@ -57,6 +59,7 @@ export const SubagentPane: React.FC<Props> = ({
   pendingAskUser,
   onRespondToAskUser,
   onCancelAgentRun,
+  onClose,
 }) => {
   const entries = useMemo(() => collectEntries(messages), [messages]);
 
@@ -151,6 +154,64 @@ export const SubagentPane: React.FC<Props> = ({
             </button>
           );
         })}
+      </div>
+
+      {/* Toolbar: copy chat / copy system prompt / close.
+       *  Sits in its own strip directly under the tab list so the
+       *  buttons are reachable regardless of how deep the chat scroll
+       *  has gone. Buttons act on the *active* tab. */}
+      <div className="flex items-center justify-end gap-1 px-2 py-1 border-b border-slate-200 dark:border-white/10 shrink-0">
+        <button
+          onClick={() => {
+            // Build a flat transcript of the active subagent's chat:
+            // task → tool calls → result. Plain text so it pastes into
+            // any editor / chat window cleanly.
+            const lines: string[] = [];
+            if (active.task) {
+              lines.push(`From main → ${active.agentName || active.subagentId}:`);
+              lines.push(active.task);
+              lines.push('');
+            }
+            for (const step of active.toolSteps || []) {
+              const status = step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : '⏺';
+              lines.push(`${status} ${step.toolName}${step.args ? `(${step.args})` : ''}`);
+            }
+            if (active.resultText) {
+              if (active.toolSteps && active.toolSteps.length > 0) lines.push('');
+              lines.push(`${active.agentName || active.subagentId} → main:`);
+              lines.push(active.resultText);
+            }
+            navigator.clipboard.writeText(lines.join('\n'));
+          }}
+          className="p-1 rounded text-slate-400 hover:text-blue-500 hover:bg-blue-500/10 transition-colors"
+          title="Copy chat transcript"
+          aria-label="Copy chat"
+        >
+          <Copy size={12} />
+        </button>
+        <button
+          onClick={() => {
+            // Copies the raw task prompt — the system-prompt-equivalent
+            // for this subagent run. Useful for debugging or rerunning
+            // the encoder against the same input.
+            navigator.clipboard.writeText(active.task || '');
+          }}
+          className="p-1 rounded text-slate-400 hover:text-blue-500 hover:bg-blue-500/10 transition-colors"
+          title="Copy system prompt (task)"
+          aria-label="Copy system prompt"
+        >
+          <FileText size={12} />
+        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            title="Close pane"
+            aria-label="Close pane"
+          >
+            <X size={12} />
+          </button>
+        )}
       </div>
 
       {/* Active tab content — chat-style render matching main chat:
