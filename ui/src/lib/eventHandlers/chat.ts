@@ -83,30 +83,34 @@ export function handleToken(item: UiEvent): void {
 // ---------------------------------------------------------------------------
 
 export function handleMessage(item: UiEvent): void {
-  const from = String(item.data?.from || item.agent_id || 'assistant');
-  const to = String(item.data?.to || '');
+  const agentId = String(item.agent_id || '');
   let content = String(item.text || '');
   if (!content) return;
-  if (shouldHideInternalChatMessage(from, content)) return;
 
-  // Subagent returns: route the terminal text into the parent's subagent
-  // tree entry (revealed on click-to-expand) instead of leaking it into
-  // the main chat. This is what the user sees when an encoder subagent
-  // emits a contract line like "ENCODED encoded=0" — purely operational,
-  // shouldn't sit in the conversation transcript next to the assistant's
-  // real reply. Replay reads messages.jsonl directly so the on-disk
-  // record is unaffected.
-  const subagentRunId = String(item.data?.run_id || '');
-  const subagentTrackingId = subagentRunId || from;
-  const subagentParent = agentTracker.getParent(subagentTrackingId);
-  if (subagentParent) {
-    useChatStore.getState().updateSubagentTree(
-      subagentParent,
-      subagentTrackingId,
-      (entry) => ({ ...entry, resultText: content }),
-    );
-    return;
+  // Subagent terminal text: route into the parent's subagent tree entry
+  // (revealed on click-to-expand) instead of leaking into the main chat.
+  // Match the same tracker lookup the Token / TextSegment / ContentBlock
+  // handlers use — by `item.agent_id` (or the explicit run_id when the
+  // event carries one), NOT by `data.from` (which can be a role like
+  // "assistant" and never matches the tracker). The previous fix here
+  // checked `from` and silently failed for ENCODED status lines.
+  if (agentId) {
+    const subagentTrackingId = String(item.data?.run_id || agentId);
+    const subagentParent =
+      agentTracker.getParent(subagentTrackingId) || agentTracker.getParent(agentId);
+    if (subagentParent) {
+      useChatStore.getState().updateSubagentTree(
+        subagentParent,
+        subagentTrackingId,
+        (entry) => ({ ...entry, resultText: content }),
+      );
+      return;
+    }
   }
+
+  const from = String(item.data?.from || item.agent_id || 'assistant');
+  const to = String(item.data?.to || '');
+  if (shouldHideInternalChatMessage(from, content)) return;
 
   try {
     const parsed = JSON.parse(content);
