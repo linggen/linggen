@@ -19,6 +19,7 @@ import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
 import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
+import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
 import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
@@ -270,6 +271,11 @@ export const ChatPanel: React.FC<{
   mobile?: boolean;
   scrollToBottom?: () => void;
   showScrollButton?: boolean;
+  /** Render the dedicated SubagentPane on the right (or stacked on
+   *  narrow screens). Default true at the top-level Linggen UI; iframe
+   *  consumers should pass `false` and let the inline SubagentTreeView
+   *  inside each parent message handle subagent visibility instead. */
+  showSubagentPane?: boolean;
 }> = ({
   chatMessages,
   queuedMessages,
@@ -309,6 +315,7 @@ export const ChatPanel: React.FC<{
   mobile,
   scrollToBottom: scrollToBottomProp,
   showScrollButton: showScrollButtonProp,
+  showSubagentPane = true,
 }) => {
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
   const [subagentMessageFilter, setSubagentMessageFilter] = useState('');
@@ -480,6 +487,36 @@ export const ChatPanel: React.FC<{
     return { historicalMessages: filteredMainMessages, streamingMessage: null };
   }, [filteredMainMessages]);
 
+  // Subagent pane visibility. Show whenever any message in this session
+  // has a subagent tree; auto-collapse 5s after the LAST subagent goes
+  // done (status !== 'running') and there are no widgets needing the
+  // user. Reopens immediately on the next spawn.
+  const subagentEntries = useMemo(() => {
+    const out: import('../../types').SubagentTreeEntry[] = [];
+    for (const m of filteredMainMessages) {
+      if (m.subagentTree && m.subagentTree.length > 0) {
+        out.push(...m.subagentTree);
+      }
+    }
+    return out;
+  }, [filteredMainMessages]);
+  const anyRunning = subagentEntries.some((e) => e.status === 'running');
+  const [paneVisible, setPaneVisible] = useState(false);
+  useEffect(() => {
+    if (subagentEntries.length === 0) {
+      setPaneVisible(false);
+      return;
+    }
+    if (anyRunning) {
+      setPaneVisible(true);
+      return;
+    }
+    // All done — schedule auto-collapse.
+    setPaneVisible(true);
+    const t = setTimeout(() => setPaneVisible(false), 5000);
+    return () => clearTimeout(t);
+  }, [anyRunning, subagentEntries.length]);
+
   const filteredSubagentMessages = useMemo(() => {
     const q = subagentMessageFilter.trim().toLowerCase();
     if (!q) return subagentMessages;
@@ -594,7 +631,17 @@ export const ChatPanel: React.FC<{
         )}
       </div>
 
-      <div ref={chatScrollRef} className="relative flex-1 overflow-y-scroll px-2 py-1.5 flex flex-col gap-2 custom-scrollbar min-h-0">
+      <div className="relative flex-1 flex flex-col md:flex-row gap-0 min-h-0">
+      <div
+        ref={chatScrollRef}
+        className={cn(
+          'relative overflow-y-scroll px-2 py-1.5 flex flex-col gap-2 custom-scrollbar min-h-0',
+          // 60/40 split on wide when the pane is shown; full width when it's not.
+          showSubagentPane && paneVisible
+            ? 'flex-1 md:flex-[3] md:min-w-0'
+            : 'flex-1',
+        )}
+      >
         {floatingUserMsg && (
           <div
             className="sticky top-0 z-20 mx-1 mb-1 px-3 py-2 rounded-md bg-slate-100/95 dark:bg-white/10 backdrop-blur text-[13px] text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-white/10 cursor-pointer"
@@ -651,6 +698,13 @@ export const ChatPanel: React.FC<{
             <ArrowDown size={14} className="text-slate-600 dark:text-slate-300" />
           </button>
         )}
+      </div>
+
+      {showSubagentPane && paneVisible && (
+        <div className="md:flex-[2] md:min-w-0 md:max-w-[40%] border-t md:border-t-0 border-slate-200 dark:border-white/10 min-h-[180px] md:min-h-0">
+          <SubagentPane messages={filteredMainMessages} visible={paneVisible} />
+        </div>
+      )}
       </div>
 
       {/* Status spinner — always visible when active or just completed */}
