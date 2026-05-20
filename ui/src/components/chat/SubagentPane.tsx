@@ -16,8 +16,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import type { ChatMessage, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
-import { SubagentTreeView } from './SubagentTreeView';
+import type { ChatMessage, ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
+import { MarkdownContent } from './MarkdownContent';
+import { ContentBlockView } from './ContentBlockView';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
 
@@ -152,48 +153,81 @@ export const SubagentPane: React.FC<Props> = ({
         })}
       </div>
 
-      {/* Active tab content */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 custom-scrollbar min-h-0">
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div className="flex-1 min-w-0">
-            <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-1">
-              From main → {active.agentName || active.subagentId}
-            </div>
-            {active.task ? (
-              <div className="text-[12px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words bg-white dark:bg-[#1a1a1a] rounded-md border border-slate-200 dark:border-white/10 px-2.5 py-1.5">
-                {active.task}
-              </div>
-            ) : (
-              <div className="text-[11px] italic text-slate-400 dark:text-slate-500">
-                (no task body — engine spawned with empty prompt)
-              </div>
-            )}
-          </div>
-          {active.status === 'running' && onCancelAgentRun && (
+      {/* Active tab content — chat-style render matching main chat:
+       *   user bubble (task) → tool blocks → assistant text (result)
+       * Tool calls are also shown in the parent's main-chat tree, but
+       * here they render with the same ⏺/⎿/✓ ContentBlockView used in
+       * main chat (markdown, args/output expansion, etc.) so the pane
+       * IS the full conversation thread between main agent and subagent.
+       */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 custom-scrollbar min-h-0 flex flex-col gap-3">
+        {/* Header row with optional stop button */}
+        {active.status === 'running' && onCancelAgentRun && (
+          <div className="flex items-center justify-end -mb-1">
             <button
               onClick={() => onCancelAgentRun(active.subagentId)}
-              className="shrink-0 p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+              className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors text-[11px]"
               title="Stop this subagent"
-              aria-label="Stop subagent"
             >
               <X size={12} />
             </button>
-          )}
-        </div>
-        <SubagentTreeView
-          entries={[active]}
-          isGenerating={active.status === 'running'}
-          isExpanded={true}
-          onToggle={() => {
-            /* always expanded in dedicated pane */
-          }}
-        />
+          </div>
+        )}
 
+        {/* 1. Incoming task — user-style bubble (right-aligned, same as
+         *    main chat's user bubbles). MarkdownContent handles the
+         *    code blocks / lists / inline code in encoder prompts. */}
+        {active.task && (
+          <div className="self-start max-w-[92%]">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-1">
+              From main → {active.agentName || active.subagentId}
+            </div>
+            <div className="bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-slate-100 rounded-md px-2.5 py-1.5 text-[13px]">
+              <MarkdownContent text={active.task} />
+            </div>
+          </div>
+        )}
+
+        {/* 2. Tool calls — same ContentBlockView main chat uses, so the
+         *    bubble style, expansion, args/output render are identical. */}
+        {active.toolSteps && active.toolSteps.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {active.toolSteps.map((step, idx) => {
+              const block: ContentBlock = {
+                type: 'tool_use',
+                tool: step.toolName,
+                args: step.args,
+                status: step.status,
+              };
+              return (
+                <ContentBlockView
+                  key={idx}
+                  block={block}
+                  isLast={idx === active.toolSteps.length - 1}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* 3. Live thinking indicator while the subagent is mid-call
+         *    with no tool yet — matches main chat's "Thinking…" line. */}
+        {active.status === 'running' &&
+          (!active.toolSteps || active.toolSteps.length === 0) &&
+          active.currentActivity && (
+            <div className="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 italic">
+              <span className="text-blue-500 animate-pulse">✶</span>
+              <span>{active.currentActivity}</span>
+            </div>
+          )}
+
+        {/* 4. AskUser widget — same card main chat uses, rendered here
+         *    when the question's agent_id matches this tab. */}
         {askUserEntry &&
           askUserEntry.subagentId === active.subagentId &&
           pendingAskUser &&
           onRespondToAskUser && (
-            <div className="mt-3">
+            <div>
               {pendingAskUser.questions[0]?.header === 'Permission' ? (
                 <ToolPermissionCard
                   pending={pendingAskUser}
@@ -207,6 +241,19 @@ export const SubagentPane: React.FC<Props> = ({
               )}
             </div>
           )}
+
+        {/* 5. Final result — assistant-style text bubble (left-aligned,
+         *    same MD treatment as main chat agent replies). */}
+        {active.resultText && (
+          <div className="self-start max-w-[92%]">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-1">
+              {active.agentName || active.subagentId} → main
+            </div>
+            <div className="text-slate-800 dark:text-slate-200 text-[13px]">
+              <MarkdownContent text={active.resultText} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
