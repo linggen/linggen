@@ -3,6 +3,7 @@ import { cn } from '../../lib/cn';
 import type { SubagentTreeEntry } from '../../types';
 import { formatCompactTokens } from './utils/activity';
 import { truncateDetail } from './utils/content-block';
+import { useInteractionStore } from '../../stores/interactionStore';
 
 /** Subagent tree view — Claude Code-style per-entry Task() blocks. */
 export const SubagentTreeView: React.FC<{
@@ -15,6 +16,16 @@ export const SubagentTreeView: React.FC<{
 
   const showExpanded = isGenerating || isExpanded;
 
+  // Subagent needs the user → swap the status glyph to ❓ so the inline
+  // line in the parent bubble doesn't look "running normally" while a
+  // widget is waiting in the SubagentPane. Reads the same single
+  // pendingAskUser slot the routing predicate uses.
+  const pendingAskUser = useInteractionStore((s) => s.pendingAskUser);
+  const needsUserAgentId = pendingAskUser?.agentId ?? null;
+  const entryNeedsUser = (entry: SubagentTreeEntry): boolean =>
+    !!needsUserAgentId &&
+    (entry.subagentId === needsUserAgentId || entry.agentName === needsUserAgentId);
+
   return (
     <div
       className={cn('mb-1.5 font-mono text-[12px]', !isGenerating && allDone && 'cursor-pointer select-none')}
@@ -22,27 +33,35 @@ export const SubagentTreeView: React.FC<{
     >
       {entries.map((entry, entryIdx) => {
         const isRunning = entry.status === 'running';
-        const bulletColor = isRunning
-          ? 'text-amber-500'
-          : entry.status === 'failed'
-            ? 'text-red-500'
-            : 'text-emerald-500';
-        const statusSuffix = isRunning
-          ? ' — running…'
-          : entry.status === 'failed'
-            ? ' — failed'
-            : ` — done (${entry.toolCount} tool use${entry.toolCount === 1 ? '' : 's'}${entry.contextTokens > 0 ? ` · ${formatCompactTokens(entry.contextTokens)} tokens` : ''})`;
-        const statusColor = isRunning
-          ? 'text-amber-600 dark:text-amber-400'
-          : entry.status === 'failed'
-            ? 'text-red-600 dark:text-red-400'
-            : 'text-emerald-600 dark:text-emerald-400';
+        const needsUser = entryNeedsUser(entry);
+        const bulletColor = needsUser
+          ? 'text-blue-500'
+          : isRunning
+            ? 'text-amber-500'
+            : entry.status === 'failed'
+              ? 'text-red-500'
+              : 'text-emerald-500';
+        const bulletGlyph = needsUser ? '❓' : '⏺';
+        const statusSuffix = needsUser
+          ? ' — needs your input ↗'
+          : isRunning
+            ? ' — running…'
+            : entry.status === 'failed'
+              ? ' — failed'
+              : ` — done (${entry.toolCount} tool use${entry.toolCount === 1 ? '' : 's'}${entry.contextTokens > 0 ? ` · ${formatCompactTokens(entry.contextTokens)} tokens` : ''})`;
+        const statusColor = needsUser
+          ? 'text-blue-600 dark:text-blue-400'
+          : isRunning
+            ? 'text-amber-600 dark:text-amber-400'
+            : entry.status === 'failed'
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-emerald-600 dark:text-emerald-400';
 
         return (
           <div key={`${entry.subagentId}-${entryIdx}`} className="mb-0.5">
             <div className="flex items-start gap-0">
               <span className="shrink-0">&nbsp;&nbsp;</span>
-              <span className={cn('text-[11px] mr-0.5', bulletColor, isRunning && 'animate-pulse')}>⏺</span>
+              <span className={cn('text-[11px] mr-0.5', bulletColor, (isRunning || needsUser) && 'animate-pulse')}>{bulletGlyph}</span>
               <span className="text-cyan-600 dark:text-cyan-400 font-semibold">{entry.subagentId || entry.agentName || 'Task'}</span>
               <span className={cn('text-[11px] ml-1', statusColor)}>{statusSuffix}</span>
             </div>

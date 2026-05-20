@@ -14,6 +14,7 @@
  * to the inline SubagentTreeView (the iframe-friendly path).
  */
 import React, { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import type { ChatMessage, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
 import { SubagentTreeView } from './SubagentTreeView';
@@ -30,6 +31,10 @@ interface Props {
    *  ChatPanel does the predicate; we just render in the matching tab. */
   pendingAskUser?: PendingAskUser | null;
   onRespondToAskUser?: (questionId: string, answers: AskUserAnswer[]) => void;
+  /** Cancel a running subagent. Wired to the same endpoint the main
+   *  agent's cancel button uses; the subagent's tracking id is the run
+   *  id the cancel API expects. */
+  onCancelAgentRun?: (runId: string) => void | Promise<void>;
 }
 
 /** Collect every subagent entry attached to any message in this session,
@@ -50,18 +55,24 @@ export const SubagentPane: React.FC<Props> = ({
   visible,
   pendingAskUser,
   onRespondToAskUser,
+  onCancelAgentRun,
 }) => {
   const entries = useMemo(() => collectEntries(messages), [messages]);
 
-  // Match the pending AskUser to one of our tabs by either subagentId
-  // or agentName, since the event's `agent_id` may be the run id or
-  // the agent name depending on the call site.
+  // Match the pending AskUser to one of our tabs. Prefer an exact
+  // subagentId (run id) match — that's globally unique. Fall back to
+  // an agentName match, preferring a *running* entry, so when two
+  // subagents share the same name only the live one gets the widget.
   const askUserEntry = useMemo(() => {
     if (!pendingAskUser) return null;
     const id = pendingAskUser.agentId;
-    return (
-      entries.find((e) => e.subagentId === id || e.agentName === id) ?? null
+    const byRunId = entries.find((e) => e.subagentId === id);
+    if (byRunId) return byRunId;
+    const byNameRunning = entries.find(
+      (e) => e.agentName === id && e.status === 'running',
     );
+    if (byNameRunning) return byNameRunning;
+    return entries.find((e) => e.agentName === id) ?? null;
   }, [entries, pendingAskUser]);
 
   // Default active tab: most recently registered subagent. Auto-switch
@@ -143,11 +154,25 @@ export const SubagentPane: React.FC<Props> = ({
 
       {/* Active tab content */}
       <div className="flex-1 overflow-y-auto px-3 py-2 custom-scrollbar min-h-0">
-        {active.task && (
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 italic mb-2 whitespace-pre-wrap break-words line-clamp-3">
-            Task: {active.task}
-          </div>
-        )}
+        <div className="flex items-start justify-between gap-2 mb-2">
+          {active.task ? (
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 italic whitespace-pre-wrap break-words line-clamp-3 flex-1 min-w-0">
+              Task: {active.task}
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
+          {active.status === 'running' && onCancelAgentRun && (
+            <button
+              onClick={() => onCancelAgentRun(active.subagentId)}
+              className="shrink-0 p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+              title="Stop this subagent"
+              aria-label="Stop subagent"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
         <SubagentTreeView
           entries={[active]}
           isGenerating={active.status === 'running'}

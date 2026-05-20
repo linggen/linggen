@@ -719,6 +719,7 @@ export const ChatPanel: React.FC<{
             visible={paneVisible}
             pendingAskUser={askUserBelongsToSubagent ? pendingAskUser : null}
             onRespondToAskUser={onRespondToAskUser}
+            onCancelAgentRun={onCancelAgentRun}
           />
         </div>
       )}
