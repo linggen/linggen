@@ -92,11 +92,13 @@ scanning session/transcript files on disk), applies §4's *exclusion*
 filters (drop file-derivable, secrets, pure activity) **plus a
 write-time usefulness bar** (write only what a future task benefits
 from; drop garbage), and **reads existing memory before each write**
-(`ling-mem search`): skip a duplicate (exact or reworded); on a
-contradiction just append the new row without merging/deleting the old
-one (both coexist — no status tag). It does **not** ask (it's a
-sub-agent — see Reconcile's depth-0 invariant); recall surfaces both
-dated rows and the main agent resolves it with the user there.
+(`Memory_query`): skip a duplicate (exact or reworded); on a
+contradiction it calls `AskUser` — the widget surfaces in the
+encoder's own `SubagentPane` tab (routed by `agent_id`), and on
+answer the encoder writes the resolved row. On the 5-min `AskUser`
+timeout it falls back to "append new row with `reconcile:pending`,
+leave the old one" so the conflict can still be resolved at a later
+recall. See the Reconcile block for the full per-depth contract.
 The encoder is the *first* gate — episodic is recall-visible immediately
 (recall spans both tables). It does **only** encode. ≈ waking encoding.
 
@@ -235,28 +237,34 @@ against existing memory:
   high — so this classification needs the LLM, never the binary's dedup.
 - **New** → write.
 
-**Who can actually ask — a hard engine invariant.** Only a *depth-0*
-agent can `AskUser`; **sub-agents are categorically blocked** from it
-(`tools/mod.rs` — a detached/post-turn subagent blocking on a prompt
-deadlocks). This decides where each write path's "ask" lives:
+**Who can actually ask — and where the widget surfaces.** Both the
+depth-0 live agent and depth-1 subagents may call `AskUser`; the prior
+depth>0 block in `tools/mod.rs` was lifted once subagents got their
+own UI surface (`SubagentPane`). What still decides each path is the
+session's chat surface the widget routes to, not whether the call is
+allowed:
 
 - **Live `Memory_write`** (the conversational agent, depth-0) — reads
-  first; near-dup → skip; contradiction → AskUser, then append the
-  resolved row.
-- **N-turn encoder** (a sub-agent — *cannot* ask) — reads first
-  (`ling-mem search`); skips an exact/reworded duplicate; on a
-  contradiction it **appends the new row** (never drops what the user
-  just said) and **never merges/deletes the old row** — no status tag,
-  both simply coexist. It does *not* ask. The conflict is resolved by
-  the **depth-0 main agent at the next recall** (recall surfaces both
-  dated rows; the live nudge already asks). Encoder = read + dedup +
-  append-both, never silent-merge, never ask, no flag.
+  first; near-dup → skip; contradiction → `AskUser` in the **main
+  chat**; on answer, append the resolved row.
+- **N-turn encoder** (a sub-agent) — reads first (`Memory_query`);
+  skips an exact/reworded duplicate; on a contradiction it **calls
+  `AskUser`** showing both rows with their dates plus a free-text
+  "other" option. The widget surfaces in the encoder's own
+  `SubagentPane` tab (routed by `agent_id`), so the user can answer
+  at their own pace without interrupting the main chat. On answer
+  the encoder writes the resolved row and may delete the loser
+  (explicit user resolution is the one delete the encoder is allowed
+  to make). On **timeout** (5 min, enforced by the AskUser tool)
+  the encoder falls back: write the new row with
+  `--context reconcile:pending`, leave the old one, let a later
+  recall surface both.
 - **`dream` mission** (no user at all) — reads the store, mechanical +
   high-confidence only; defers contradictions entirely.
 
-So "every write reads first" holds on all three; only *where the ask
-happens* differs, forced by the depth-0 invariant — the encoder flags,
-the live agent asks.
+So "every write reads first" still holds on all three; the *ask* now
+runs at whichever depth saw the conflict, with each agent's widget
+landing in its own chat surface.
 
 **Floors.** Synthesis *for the answer* is encouraged (merge rows into a
 dated narrative in the reply); synthesis *into a stored row* is
