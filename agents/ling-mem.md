@@ -98,13 +98,21 @@ Memory_write({
 })
 ```
 
-**ENCODE output** — exactly one final line, ≤20 words, machine-parseable:
+**ENCODE output** — the contract is machine-parseable but should also
+show the user *what* you wrote so they can object. First line is the
+count; one bullet per encoded row follows, then stop. No other prose,
+no markdown headers, no leading or trailing text.
 
-`ENCODED encoded=<n>`
+```
+ENCODED encoded=<n>
+- <type>: "<one-line gist of the content>"
+- <type>: "<one-line gist of the content>"
+```
 
-Emit it with `encoded=0` if nothing was worth writing. On an
-unrecoverable error emit `ENCODE_FAILED <short reason>` and stop. No
-prose, no markdown, nothing before or after.
+When you encoded nothing, emit just the count line with `encoded=0`
+and no bullets. On an unrecoverable error emit `ENCODE_FAILED <short
+reason>` and stop. Keep each bullet ≤20 words — a recognisable
+summary, not the full content.
 
 ## CONSOLIDATE — terminally decide a pre-selected worklist
 

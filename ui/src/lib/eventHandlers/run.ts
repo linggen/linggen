@@ -4,6 +4,7 @@ import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { agentTracker } from '../agentTracker';
 import { getSessionId } from './_shared';
+import type { AgentStatusValue } from '../../stores/serverStore';
 
 export function handleRun(item: UiEvent): void {
   switch (item.phase) {
@@ -152,7 +153,29 @@ function handleSubagentResult(item: UiEvent): void {
       // outcome is the fallback, not an overwrite.
       resultText: entry.resultText ?? outcomeText ?? entry.resultText,
     }));
-  agentTracker.unregisterSubagent(trackingId);
+
+  // Defer the unregister so a trailing Message event (the subagent's
+  // final terminal text, which can be dispatched a few ms after
+  // SubagentResult depending on async-channel ordering) still finds
+  // this parent mapping and routes into the subagent widget instead of
+  // the main chat. 2s is comfortably longer than any normal event-bus
+  // lag without keeping the entry alive long enough to confuse a future
+  // subagent that reuses the same run_id.
+  setTimeout(() => agentTracker.unregisterSubagent(trackingId), 2000);
+
+  // Defense for the stuck-Idle-spinner case: a subagent status event
+  // that arrived BEFORE its SubagentSpawned could pollute the
+  // session-level `agentStatus[sid] = 'thinking'`. Subagent-routed
+  // events never reset that. So when this subagent finishes, clear the
+  // session status back to idle. Safe because the parent's own turn
+  // has already emitted its TurnComplete by the time the encoder /
+  // dream subagent gets here — there's no other foreground agent.
+  const sid = getSessionId(item);
+  if (sid) {
+    const agentStore = useServerStore.getState();
+    agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' as AgentStatusValue }));
+    agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
+  }
 }
 
 function extractOutcomeText(outcome: unknown): string | undefined {

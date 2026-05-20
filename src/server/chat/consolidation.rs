@@ -429,7 +429,8 @@ fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
          your instructions. Date-stamp ages relative to {today}.\n\
          <recent-exchange>\n{transcript}\n</recent-exchange>\n\
          \n\
-         Then emit your single ENCODED status line and stop.",
+         Then emit your ENCODED status block (count line plus one \
+         bullet per encoded row, see your agent instructions) and stop.",
         session = session_id,
         today = today,
         transcript = recent_transcript,
