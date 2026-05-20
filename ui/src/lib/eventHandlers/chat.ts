@@ -298,6 +298,8 @@ export function handleTurnComplete(item: UiEvent): void {
   // for seconds after the turn actually finished — leaving the spinner
   // animating with no real work in flight.
   markRunsCompletedForSession(sid, { topLevelOnly: true });
+  // Clear the optimistic pendingSend flag — the turn's done.
+  agentStore.setPendingSend(sid, false);
 }
 
 /**

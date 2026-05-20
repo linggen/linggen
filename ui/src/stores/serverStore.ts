@@ -32,6 +32,16 @@ interface ServerState {
   agentContext: Record<string, { tokens: number; messages: number; tokenLimit?: number }>; // key: session ID
   tokensPerSec: number; // global — not per-session
 
+  /** Optimistic "I just sent a chat" flag, keyed by session ID. Set when
+   *  sendChatMessage fires off, cleared on TurnComplete. Bridges the
+   *  page_state polling lag so the spinner shows immediately after send
+   *  even if `agentRuns` hasn't caught up yet — the user feels instant
+   *  feedback, then the real run record takes over. Without this the
+   *  spinner is sometimes invisible for fast turns that complete before
+   *  the next page_state push. */
+  pendingSends: Record<string, boolean>;
+  setPendingSend: (sessionId: string, pending: boolean) => void;
+
   // Derived
   isRunning: () => boolean;
 
@@ -80,6 +90,14 @@ export const useServerStore = create<ServerState>((set, get) => ({
   agentStatusText: {},
   agentContext: {},
   tokensPerSec: 0,
+  pendingSends: {},
+  setPendingSend: (sessionId, pending) =>
+    set((s) => {
+      const next = { ...s.pendingSends };
+      if (pending) next[sessionId] = true;
+      else delete next[sessionId];
+      return { pendingSends: next };
+    }),
 
   isRunning: () => Object.values(get().agentStatus).some((s) => s !== 'idle'),
 

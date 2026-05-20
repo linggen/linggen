@@ -362,15 +362,23 @@ export const ChatPanel: React.FC<{
   // status='running' for THIS session ⇒ spinner. Subagent runs
   // (parent_run_id set) drive the SubagentPane, not the main spinner.
   const agentRuns = useServerStore((s) => s.agentRuns);
+  const pendingSends = useServerStore((s) => s.pendingSends);
   const isAgentActive = useMemo(() => {
     if (!sessionId) return false;
+    // Optimistic path — set by sendChatMessage, cleared by
+    // handleTurnComplete. Bridges the page_state polling lag so the
+    // spinner appears the instant the user sends, even before the
+    // server's run record has propagated. Without this the spinner
+    // sometimes never shows for fast turns that complete inside the
+    // poll window.
+    if (pendingSends[sessionId]) return true;
     return agentRuns.some(
       (r) =>
         r.session_id === sessionId &&
         !r.parent_run_id &&
         r.status === 'running',
     );
-  }, [agentRuns, sessionId]);
+  }, [agentRuns, sessionId, pendingSends]);
   const [spinnerVerb, setSpinnerVerb] = useState('');
   const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
   useEffect(() => {

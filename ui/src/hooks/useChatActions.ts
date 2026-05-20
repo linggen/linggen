@@ -235,6 +235,10 @@ export function useChatActions(
     }
 
     try {
+      // Optimistic spinner trigger — set the pendingSends flag immediately
+      // so ChatPanel renders the busy state before the server's first
+      // page_state push lands. Cleared by handleTurnComplete.
+      useServerStore.getState().setPendingSend(sid, true);
       const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
       const sessionModel = useUiStore.getState().sessionModel;
       const data = await getTransport().sendChat({
