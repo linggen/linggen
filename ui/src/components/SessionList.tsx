@@ -104,6 +104,18 @@ export const SessionList: React.FC<{
   const storeSessions = useSessionStore((s) => s.allSessions);
   const allSessions = filterSessions ?? storeSessions;
   const agentStatus = useServerStore((s) => s.agentStatus);
+  // Server-authoritative "is a run in flight" per session. Indexed
+  // once per render: O(runs) instead of a scan per row. Subagent runs
+  // (parent_run_id set) intentionally don't light up the row spinner
+  // — that's the SubagentPane's signal, not the session list's.
+  const agentRunsRaw = useServerStore((s) => s.agentRuns);
+  const runningSessionIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const r of agentRunsRaw) {
+      if (r.status === 'running' && !r.parent_run_id) out.add(r.session_id);
+    }
+    return out;
+  }, [agentRunsRaw]);
   const openMissionEditor = useOpenMissionEditor();
   // When filters are hidden the consumer is pre-filtering via filterSessions,
   // so default to 'all' to avoid the 'user'-only default clipping the list.
@@ -465,7 +477,7 @@ export const SessionList: React.FC<{
                     />
                   ) : (
                     <div className="mt-0.5">
-                      {agentStatus[session.id] && agentStatus[session.id] !== 'idle'
+                      {runningSessionIds.has(session.id)
                         ? <div className="w-[13px] h-[13px] rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
                         : creatorIcon(session.creator)}
                     </div>
