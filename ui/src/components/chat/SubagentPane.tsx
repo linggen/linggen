@@ -102,7 +102,7 @@ export const SubagentPane: React.FC<Props> = ({
     entries.find((e) => e.subagentId === activeId) ?? entries[entries.length - 1];
 
   return (
-    <div className="flex flex-col min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
+    <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
       {/* Tab strip */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-200 dark:border-white/10 overflow-x-auto custom-scrollbar shrink-0">
         <span className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mr-1 shrink-0">

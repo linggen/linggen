@@ -523,14 +523,32 @@ export const ChatPanel: React.FC<{
       setPaneVisible(true);
       return;
     }
-    // All done, no pending widget — schedule auto-collapse. 60s gives
-    // the user time to skim the subagent's tool calls + final status
-    // before the pane disappears, without keeping the right surface
-    // open indefinitely. Cancelled if a new subagent spawns first.
+    // All done, no pending widget — schedule auto-collapse. 10 min
+    // gives ample time to read the subagent's full chat without the
+    // pane vanishing mid-scroll. Cancelled if a new subagent spawns.
     setPaneVisible(true);
-    const t = setTimeout(() => setPaneVisible(false), 60_000);
+    const t = setTimeout(() => setPaneVisible(false), 600_000);
     return () => clearTimeout(t);
   }, [anyRunning, subagentEntries.length, askUserBelongsToSubagent]);
+
+  // Defensive idle reset: when no subagents are running for this
+  // session, force the session-level agentStatus to `idle` even if a
+  // late event polluted it. handleSubagentResult tries this once per
+  // SubagentResult event, but a straggler ContentBlock or AgentStatus
+  // event arriving after my unregister deferral could re-set the
+  // session to 'thinking'/'calling_tool'. Re-asserting on the derived
+  // "all done" transition is cheap and idempotent.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (subagentEntries.length === 0) return;
+    if (anyRunning) return;
+    const store = useServerStore.getState();
+    const current = store.agentStatus[sessionId];
+    if (current && current !== 'idle') {
+      store.setAgentStatus((prev) => ({ ...prev, [sessionId]: 'idle' }));
+      store.setAgentStatusText((prev) => ({ ...prev, [sessionId]: 'Idle' }));
+    }
+  }, [sessionId, anyRunning, subagentEntries.length]);
 
   const filteredSubagentMessages = useMemo(() => {
     const q = subagentMessageFilter.trim().toLowerCase();
