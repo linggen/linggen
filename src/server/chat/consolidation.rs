@@ -238,8 +238,8 @@ async fn run_encode(
     if recent_transcript.trim().is_empty() {
         return Ok(0);
     }
-    let (bin, data_dir) = resolve_ling_mem(state).await;
-    let task = build_encode_task(session_id, &bin, &data_dir, recent_transcript);
+    let _ = state; // memory daemon is reached through Memory_* tools now
+    let task = build_encode_task(session_id, recent_transcript);
     let summary = run_ling_mem_subagent(manager, ws_root, agent_id, session_id, task)
         .await
         .map_err(|e| e.context("ling-mem encode subagent"))?;
@@ -264,6 +264,9 @@ pub(crate) async fn run_consolidate_evict(
     // The engine owns TTL policy: one absolute cutoff drives both the
     // worklist selection and the evict backstop.
     let cutoff = Utc::now() - ChronoDuration::days(episodic_ttl_days as i64);
+    // Worklist selection + the deterministic evict backstop still talk
+    // to the binary (engine-direct, no subagent), so we keep
+    // resolve_ling_mem for those two callers.
     let (bin, data_dir) = resolve_ling_mem(state).await;
 
     let worklist = select_past_ttl_worklist(&bin, &data_dir, cutoff)
@@ -273,7 +276,7 @@ pub(crate) async fn run_consolidate_evict(
         return Ok((0, 0));
     }
 
-    let task = build_consolidate_task(&bin, &data_dir, &cutoff, &worklist);
+    let task = build_consolidate_task(&cutoff, &worklist);
     let summary = run_ling_mem_subagent(manager, ws_root, agent_id, session_id, task)
         .await
         .map_err(|e| e.context("ling-mem consolidate subagent"))?;
@@ -411,53 +414,32 @@ async fn run_ling_mem(bin: &Path, data_dir: &Path, args: &[&str]) -> anyhow::Res
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// ENCODE-phase task. Carries the literal binary path (invoke exactly
-/// this — PATH-independent resolvability, not a hard lock), the data dir,
-/// and the exchange to encode.
-fn build_encode_task(
-    session_id: &str,
-    bin: &Path,
-    data_dir: &Path,
-    recent_transcript: &str,
-) -> String {
-    let bin = bin.display();
-    let dd = data_dir.display();
+/// ENCODE-phase task. The subagent talks to memory through the
+/// `Memory_query` / `Memory_write` capability tools (HTTP-dispatched to
+/// the active memory daemon), so the task no longer carries a binary
+/// path or `--data-dir`.
+fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
     let today = Utc::now().format("%Y-%m-%d");
-
     format!(
         "Phase: ENCODE. Session `{session}`. Today is {today}.\n\
          \n\
-         Invoke the binary as EXACTLY this path on every command (commands \
-         must start with it, then `--data-dir {dd}`):\n\
-         `{bin}`\n\
-         Example: `{bin} --data-dir {dd} add \"...\" --episodic --type fact --from user`\n\
-         \n\
-         Encode this recent exchange into episodic. Apply the exclusion \
-         filters and the usefulness bar from your instructions. \
-         Date-stamp ages relative to {today}.\n\
+         Encode this recent exchange into episodic via \
+         `Memory_write({{verb: \"add\", episodic: true, host: \"linggen\", \
+         …}})`. Apply the exclusion filters and the usefulness bar from \
+         your instructions. Date-stamp ages relative to {today}.\n\
          <recent-exchange>\n{transcript}\n</recent-exchange>\n\
          \n\
          Then emit your single ENCODED status line and stop.",
         session = session_id,
         today = today,
-        bin = bin,
-        dd = dd,
         transcript = recent_transcript,
     )
 }
 
-/// CONSOLIDATE-phase task. Carries the binary path, data dir, the TTL
-/// cutoff (context only — the engine already applied it), and the
-/// pre-selected past-TTL worklist to terminally decide.
-fn build_consolidate_task(
-    bin: &Path,
-    data_dir: &Path,
-    cutoff: &DateTime<Utc>,
-    worklist: &[EpisodicRow],
-) -> String {
-    let bin = bin.display();
-    let dd = data_dir.display();
-
+/// CONSOLIDATE-phase task. The engine already selected the past-TTL
+/// worklist (the binary stays policy-free for selection); the subagent
+/// only makes the terminal promote/delete call per row via `Memory_*`.
+fn build_consolidate_task(cutoff: &DateTime<Utc>, worklist: &[EpisodicRow]) -> String {
     let worklist_block = worklist
         .iter()
         .map(|r| {
@@ -483,20 +465,16 @@ fn build_consolidate_task(
     format!(
         "Phase: CONSOLIDATE.\n\
          \n\
-         Invoke the binary as EXACTLY this path on every command (commands \
-         must start with it, then `--data-dir {dd}`):\n\
-         `{bin}`\n\
-         \n\
          These episodic rows are older than the {cutoff} TTL cutoff. The \
          engine already selected them — do NOT list episodic yourself. \
-         For EACH: promote (write to the semantic store, then \
-         `{bin} --data-dir {dd} delete <id> --episodic --yes`) or delete \
-         (`{bin} --data-dir {dd} delete <id> --episodic --yes`).\n\
+         For EACH: promote (write to semantic with `Memory_write({{verb: \
+         \"add\", host: \"linggen\", …}})`, then \
+         `Memory_write({{verb: \"delete\", episodic: true, id: <id>}})`) \
+         or delete only (`Memory_write({{verb: \"delete\", episodic: true, \
+         id: <id>}})`).\n\
          <worklist>\n{worklist_block}\n</worklist>\n\
          \n\
          Then emit your single CONSOLIDATED status line and stop.",
-        bin = bin,
-        dd = dd,
         cutoff = cutoff.to_rfc3339(),
         worklist_block = worklist_block,
     )
