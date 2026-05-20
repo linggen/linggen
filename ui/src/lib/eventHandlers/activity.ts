@@ -17,9 +17,18 @@ export function handleActivity(item: UiEvent): void {
   // Route subagent activity to parent tree. Prefer the emitter's unique
   // run_id as the tracking key — distinguishes parallel subagents that
   // share the same agent_id (e.g. six "ling" subagents running in parallel).
+  //
+  // The wire field name varies per event type: SubagentSpawned/Result use
+  // `parent_id`; AgentStatus uses `parent_agent_id` (see server/events.rs).
+  // Accept both so the first subagent status event arriving BEFORE
+  // SubagentSpawned has registered the tracker still routes to the
+  // subagent tree instead of leaking into the session-level status —
+  // root cause of the "Idle spinner stuck after encoder run" bug.
   const runIdFromData = item.data?.run_id ? String(item.data.run_id) : null;
   const trackingId = runIdFromData || agentId;
-  const parentIdFromData = item.data?.parent_id ? String(item.data.parent_id) : null;
+  const parentIdFromData =
+    (item.data?.parent_agent_id ? String(item.data.parent_agent_id) : null) ||
+    (item.data?.parent_id ? String(item.data.parent_id) : null);
   const parentIdForSubagent =
     agentTracker.getParent(trackingId) ||
     (parentIdFromData ? parentIdFromData.toLowerCase() : null);

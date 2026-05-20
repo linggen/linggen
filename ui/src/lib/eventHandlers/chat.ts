@@ -89,15 +89,18 @@ export function handleMessage(item: UiEvent): void {
 
   // Subagent terminal text: route into the parent's subagent tree entry
   // (revealed on click-to-expand) instead of leaking into the main chat.
-  // Match the same tracker lookup the Token / TextSegment / ContentBlock
-  // handlers use — by `item.agent_id` (or the explicit run_id when the
-  // event carries one), NOT by `data.from` (which can be a role like
-  // "assistant" and never matches the tracker). The previous fix here
-  // checked `from` and silently failed for ENCODED status lines.
+  // Detection order: tracker hit by run_id or agent_id, then explicit
+  // parent_id from the event payload as a race fallback (Message can
+  // arrive before SubagentSpawned has registered the tracker).
   if (agentId) {
     const subagentTrackingId = String(item.data?.run_id || agentId);
+    const parentFromData =
+      (item.data?.parent_agent_id ? String(item.data.parent_agent_id) : null) ||
+      (item.data?.parent_id ? String(item.data.parent_id) : null);
     const subagentParent =
-      agentTracker.getParent(subagentTrackingId) || agentTracker.getParent(agentId);
+      agentTracker.getParent(subagentTrackingId) ||
+      agentTracker.getParent(agentId) ||
+      (parentFromData ? parentFromData.toLowerCase() : null);
     if (subagentParent) {
       useChatStore.getState().updateSubagentTree(
         subagentParent,
