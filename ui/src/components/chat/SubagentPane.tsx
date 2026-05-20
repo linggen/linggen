@@ -80,15 +80,33 @@ export const SubagentPane: React.FC<Props> = ({
   }, [entries, pendingAskUser]);
 
   // Default active tab: most recently registered subagent. Auto-switch
-  // to the tab that owns the pending question.
+  // to the tab that owns the pending question, and ALSO when a new
+  // running subagent appears — so the user follows the live one instead
+  // of staying on a previously-done tab.
   const [activeId, setActiveId] = useState<string | null>(null);
+  const prevRunningIdsRef = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     if (entries.length === 0) {
       setActiveId(null);
+      prevRunningIdsRef.current = new Set();
       return;
     }
     if (askUserEntry) {
       setActiveId(askUserEntry.subagentId);
+      return;
+    }
+    // Detect newly-running entries (running now, weren't running last
+    // render). Auto-switch to the newest one so the user sees the
+    // live work without manually clicking the new tab.
+    const runningIds = new Set(
+      entries.filter((e) => e.status === 'running').map((e) => e.subagentId),
+    );
+    const newlyRunning = [...runningIds].filter(
+      (id) => !prevRunningIdsRef.current.has(id),
+    );
+    prevRunningIdsRef.current = runningIds;
+    if (newlyRunning.length > 0) {
+      setActiveId(newlyRunning[newlyRunning.length - 1]);
       return;
     }
     if (!activeId || !entries.some((e) => e.subagentId === activeId)) {

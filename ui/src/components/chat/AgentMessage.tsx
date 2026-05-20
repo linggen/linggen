@@ -78,21 +78,6 @@ export const AgentMessage: React.FC<{
 
   return (
     <>
-      {msg.subagentTree && msg.subagentTree.length > 0 && (
-        // Inline view shows only the compact status row per subagent
-        // (e.g. "ling-mem01 — running…"). The full detail — tool calls,
-        // "Thinking (model)" activity, AskUser widget — lives in the
-        // SubagentPane on the right. Two surfaces, one truth: the
-        // store holds the data, this view just renders the summary.
-        <SubagentTreeView
-          entries={msg.subagentTree}
-          isGenerating={!!msg.isGenerating}
-          isExpanded={isExpanded}
-          onToggle={onToggle}
-          compact
-        />
-      )}
-
       {/* Thinking indicator is now shown as the bottom spinner above the input box */}
 
       {hasToolBlocks && segments.map((seg, idx) => {
@@ -128,6 +113,22 @@ export const AgentMessage: React.FC<{
       })()}
 
       <TurnSummaryFooter msg={msg} />
+
+      {msg.subagentTree && msg.subagentTree.length > 0 && (
+        // Subagents fire *after* the response (encoder runs post-turn),
+        // so the compact status strip renders at the bottom of the
+        // assistant bubble — below the reply, after the summary. The
+        // full detail (tool calls, AskUser, result) lives in the
+        // SubagentPane on the right. Two surfaces, one source: this
+        // view just shows the at-a-glance status row.
+        <SubagentTreeView
+          entries={msg.subagentTree}
+          isGenerating={!!msg.isGenerating}
+          isExpanded={isExpanded}
+          onToggle={onToggle}
+          compact
+        />
+      )}
     </>
   );
 });
