@@ -448,14 +448,12 @@ fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
          ---\n\
          Phase: ENCODE. Session `{session}`. Today is {today}.\n\
          \n\
-         Encode this recent exchange via \
-         `Memory_write({{verb: \"add\", tier: \"episodic\", host: \"linggen\", \
-         …}})` by default. **Exception:** when your read-before-write \
-         step finds a conflicting old row in `semantic`, write the \
-         resolved row with `tier: \"semantic\"` instead and delete the \
-         old semantic row by id (per your instructions' tier-discipline \
-         rule) — never leave a parallel episodic copy next to a still- \
-         living semantic one. Apply the exclusion filters and the \
+         Encode this recent exchange via `Memory_write({{verb: \"add\", \
+         host: \"linggen\", …}})`. Follow `[memory_protocol]` in your \
+         system prompt for the read-before-write rule, the AskUser \
+         contradiction shape, and tier selection — **pick the tier \
+         (core / semantic / episodic) per row by confidence**, not by a \
+         hardcoded default. Apply the exclusion filters and the \
          usefulness bar from your instructions. Date-stamp ages relative \
          to {today}.\n\
          <recent-exchange>\n{transcript}\n</recent-exchange>\n\

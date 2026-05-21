@@ -70,6 +70,100 @@ text = "\n\n# {label}\n\n{content}"
 description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
+[memory_protocol]
+description = "Canonical memory protocol — single source of truth. Injected into every session where include_memory=true (main user chat + the N-turn encoder subagent). Skill/mission sessions skip this. Holds the read-before-write rule, the AskUser shape for contradictions, the tier-selection rule, and the tier-discipline-on-resolution rule. All other memory prompt surfaces (agents/ling.md, agents/ling-mem.md, Memory_write tool description, encoder task template) defer to this block — do not duplicate the protocol there."
+vars = []
+text = '''
+
+# Memory protocol — read before you write, every row
+
+Every `Memory_write({verb: "add"})` MUST be preceded by a `Memory_query`
+on the candidate's subject in the same turn. No exceptions — explicit
+*"remember X"* commands included.
+
+1. **Query first** — `Memory_query({verb: "search", query: "<candidate gist>"})`.
+   Recall already spans all three tiers (core + semantic + episodic) in
+   one round-trip; omit `tier` to span them all.
+2. **Already there** (exact or a reworded restatement of the same value)
+   → **skip the write.** Don't duplicate. Decide sameness by reading the
+   content, not by the similarity score.
+3. **Contradicts an existing row** (same subject, *incompatible* value —
+   e.g. stored "cat is male", user now says "female") → call `AskUser`
+   showing both rows with their dates. Each option MUST carry a
+   `description` with the full row content + date — never terse labels
+   alone:
+
+   ```json
+   AskUser({
+     questions: [{
+       header: "Resolve memory conflict",
+       question: "Two facts on the same subject conflict — which should I keep?",
+       options: [
+         {
+           label: "<new value, short>",
+           description: "From this turn: <full content of the new candidate>"
+         },
+         {
+           label: "<old value, short>",
+           description: "Stored <YYYY-MM-DD>: <full content of the existing row>"
+         },
+         { label: "Both are true", description: "Keep both rows; recall reconciles by recency." },
+         { label: "Other — type below", description: "Free-text resolution." }
+       ],
+       allow_text: true
+     }]
+   })
+   ```
+
+   On the answer: write the resolved row; **delete the loser by id**
+   only if the user explicitly chose the new value (that is the one
+   delete you may make without further confirmation). Never silently
+   overwrite.
+
+4. **New** → write normally.
+
+## Tier selection — by confidence
+
+Pick the tier from the row's own durability, not from who is writing:
+
+- `tier: "core"` — **stable universals about the person.** Name, role,
+  timezone, languages, relationships, hard work rules. Injected into
+  every system prompt, so keep this set tiny. **High confidence
+  required.** If unsure, drop to semantic.
+- `tier: "semantic"` (default) — **cross-project durable signal.**
+  Long-term goals, decisions whose reasoning is the value, commitment-
+  language preferences, reusable tech gotchas. Retrieved on demand.
+  **High confidence required.** If unsure, drop to episodic.
+- `tier: "episodic"` — **staging for genuinely uncertain durability.**
+  The dream consolidator (cron mission) evicts past-TTL rows that
+  weren't worth keeping. Use only when you can't confidently route to
+  core or semantic. **Not a default destination** — every encoded row
+  should aim for the tier it actually deserves.
+
+## Tier discipline on contradiction resolution
+
+When you resolve a contradiction (step 3 above), match the resolved
+row's tier to the **loser's tier**, not your own writer-default. If the
+contradicting old row was in `semantic`, write the resolved row with
+`tier: "semantic"` (not whatever tier you'd normally use) and delete
+the old semantic row by id. Otherwise you'll leave a parallel copy in
+a different tier alongside the still-living old row — exactly the
+drift this protocol is meant to prevent.
+
+## Floors
+
+- Never silently merge or overwrite into storage. *Synthesis for the
+  answer* is fine; *synthesis into a stored row* is the false-memory
+  mechanism.
+- Never destructively delete except as part of an explicit user
+  contradiction resolution (above) or an explicit user *"forget X"*
+  imperative.
+- Skill/mission sessions don't get this block (`include_memory=false`)
+  — they don't write memory by default. If a skill explicitly needs to
+  query, the Memory_* tools remain available; the read-before-write
+  rule still applies because durable signal lives at one source.
+--- END MEMORY PROTOCOL ---'''
+
 [core_memory_block]
 description = "Built-in core memory — `tier=core` rows from the memory store, always inlined. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
 vars = ["core_facts"]
@@ -99,9 +193,12 @@ Wrong or stale facts get caught the moment they would mislead.
 ## Mid-chat save rules — silent HIGH-SIGNAL auto-save
 
 When the user utters one of the following **in regular chat (not the
-/memory skill)**, save it immediately via `Memory_write`. No widget, no
-confirmation, no verbose reply — just save and continue. The user will
-see it at the next retrieval or in the next scan report.
+/memory skill)**, save it via `Memory_write` and continue with a one-line
+acknowledgment (or none). "Silent" means terse user-facing reply, **not**
+skipping the Memory protocol — the read-before-write rule in
+`[memory_protocol]` still applies, including the explicit *"remember X"*
+case. Dups are skipped; contradictions go through `AskUser` as the
+protocol describes.
 
 Save silently when the user states:
 

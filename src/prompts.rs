@@ -30,6 +30,7 @@ pub mod keys {
     pub const SYSTEM_DELEGATION_ENTRY: &str = "system-prompt.delegation_entry";
     pub const CORE_MEMORY_BLOCK: &str = "system-prompt.core_memory_block";
     pub const CORE_MEMORY_BLOCK_EMPTY: &str = "system-prompt.core_memory_block_empty";
+    pub const MEMORY_PROTOCOL: &str = "system-prompt.memory_protocol";
     pub const SYSTEM_CONSUMER_FRAME: &str = "system-prompt.consumer_frame";
 
     // -- system-reminder.* ------------------------------------------------

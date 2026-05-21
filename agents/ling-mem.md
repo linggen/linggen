@@ -72,72 +72,25 @@ Rules when writing:
 shipped artifact tied to user identity or a trajectory-level pattern,
 never as an activity catch-all.
 
-**Read before you write — every row.** Check existing memory before
-adding each candidate:
+**Read before you write — every row.** Follow the `[memory_protocol]`
+block in your system prompt for the canonical 4-step rule (query →
+skip dup → AskUser on contradiction → write), the AskUser JSON shape,
+the tier-selection rule (by confidence), and tier-discipline on
+contradiction resolution. The protocol is identical to the live
+agent's — one source of truth, no encoder-specific overrides.
 
-1. `Memory_query({verb: "search", query: "<candidate gist>"})` to find
-   rows on the same subject. Recall already spans semantic + episodic,
-   so a single search covers both tables.
-2. **Already there** (exact, or a reworded restatement of the same
-   value) → **skip it.** Do not write a duplicate. Decide sameness by
-   *reading the content*, not by the similarity score.
-3. **An existing row contradicts the candidate** (same subject,
-   *incompatible* value — e.g. stored "cat is male", user now says
-   "female") → **AskUser** to resolve. Each option MUST carry a
-   `description` showing the **full row content + its date** so the
-   user can see what they're actually choosing between — never just
-   a one-word label:
+Encoder-specific notes that are NOT in `[memory_protocol]`:
 
-   ```json
-   AskUser({
-     questions: [{
-       header: "Resolve memory conflict",
-       question: "Two facts on the same subject conflict — which should I keep?",
-       options: [
-         {
-           label: "<new value, short>",
-           description: "From this turn: <full content of the new candidate>"
-         },
-         {
-           label: "<old value, short>",
-           description: "Stored <YYYY-MM-DD>: <full content of the existing row>"
-         },
-         { label: "Both are true", description: "Keep both rows; recall reconciles by recency." },
-         { label: "Other — type below", description: "Free-text resolution." }
-       ],
-       allow_text: true
-     }]
-   })
-   ```
-
-   The `label` is the glanceable summary; the `description` is the
-   evidence. Skipping `description` (or using terse labels alone)
-   leaves the user choosing between unlabeled options — never do that.
-
-   **Tier discipline on resolution:** match the resolved row's tier to
-   the conflicting old row's tier. If the contradicting old row was in
-   `tier: "semantic"`, write the resolved row with
-   `tier: "semantic"` (not `episodic`) AND delete the old semantic row
-   by id. Otherwise you'll leave a parallel episodic copy alongside the
-   still-living semantic one — two near-duplicates across tiers, exactly
-   the drift this protocol is meant to prevent. Episodic is only for
-   *new incidental* signal with no existing semantic conflict.
-
-   On the user's answer:
-   - `new` → write the new row; **delete** the old row (explicit
-     user resolution — the only delete you're allowed here).
-   - `old` → do nothing; the user just confirmed the existing row.
-   - `other` → write a fresh row with the user's typed text;
-     **delete** both prior conflicting rows.
-   - **Timeout / no answer (5 min)** → fall back: write the new row,
-     leave the old one, append `--context reconcile:pending` to the
-     new row. Recall will surface both later for the depth-0 agent
-     to follow up.
-
-   The widget appears in your dedicated chat pane (routed by your
-   agent_id), not the main chat — the user can answer at their pace
-   without interrupting their conversation with ling.
-4. **New / unrelated** → write normally.
+- Your AskUser widget surfaces in your **dedicated SubagentPane tab**
+  (routed by your `agent_id`), not the main chat. The user can answer
+  at their pace without interrupting the conversation with ling.
+- **Timeout fallback** — if the user doesn't answer in 5 min, write the
+  new row, leave the old one, and add `--context reconcile:pending` so
+  the next live-agent recall can pick it up.
+- The encoder runs on the *just-happened exchange*, so any contradiction
+  you find is about content the user literally just discussed — it's
+  material by construction. Don't skip the AskUser thinking it might
+  interrupt.
 
 Write call:
 

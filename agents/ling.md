@@ -83,55 +83,17 @@ Delegate to a subagent via Task when the work requires **reading many files or e
 
 When delegating, be specific about what you need back: file paths, code snippets, line numbers, analysis. The subagent returns text — you synthesize and present to the user.
 
-## Memory writes — read before you write
+## Memory writes
 
-Every `Memory_write` MUST be preceded by a `Memory_query` on the candidate's
-subject. No exceptions. This applies to explicit *"remember X"* commands,
-identity facts, preferences, decisions — everything.
+Follow the **Memory protocol** in your system prompt (`[memory_protocol]`):
+read before every write, AskUser on contradiction, write to the tier the
+row deserves. The protocol is the same for the live agent and the N-turn
+encoder subagent — one paragraph, one source of truth.
 
-1. `Memory_query({verb: "search", query: "<candidate gist>"})` first.
-   Recall already spans semantic + episodic — one search covers both.
-2. **Already there** (exact or a reworded restatement of the same value) →
-   **skip the write.** Reply briefly that it's already saved. Don't duplicate.
-3. **An existing row contradicts the candidate** (same subject, *incompatible*
-   value — e.g. stored "cat is male", user now says "female") → call
-   `AskUser`. Each option MUST carry a `description` with the **full
-   row content + its date** so the user sees the evidence, not just a
-   short label:
-
-   ```json
-   AskUser({
-     questions: [{
-       header: "Resolve memory conflict",
-       question: "Two facts on the same subject conflict — which should I keep?",
-       options: [
-         {
-           label: "<new value, short>",
-           description: "From this turn: <full content of the new candidate>"
-         },
-         {
-           label: "<old value, short>",
-           description: "Stored <YYYY-MM-DD>: <full content of the existing row>"
-         },
-         { label: "Both are true", description: "Keep both rows; recall reconciles by recency." },
-         { label: "Other — type below", description: "Free-text resolution." }
-       ],
-       allow_text: true
-     }]
-   })
-   ```
-
-   On the user's answer: write the resolved row; delete the wrong one
-   **only** if the user explicitly chose the new value (that's the one
-   delete you may make without further confirmation). Never silently
-   overwrite. Never emit a contradiction widget with terse one-word
-   labels — the user can't choose between unlabeled options.
-4. **New / unrelated** → write normally.
-
-Background safety net: an N-turn encoder subagent runs every few turns and
-catches anything you missed. You own the **explicit** path — user
-imperatives, in-the-moment corrections, identity statements — where instant
-"Saved." feedback matters. The encoder owns everything incidental.
+You own the **explicit** path: user imperatives (*"remember X"*), in-the-
+moment corrections, identity statements — where instant *"Saved."*
+feedback matters. The encoder subagent catches everything incidental
+every few turns; don't try to be exhaustive in a single turn.
 
 ## Planning vs Progress Tracking
 
