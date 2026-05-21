@@ -620,6 +620,17 @@ pub fn check_permission(
         tool_action_tier(tool)
     };
 
+    // 1a. Chat-tier tools (Memory_query, Memory_write — see capabilities.rs)
+    // are at the floor. Nothing exceeds Chat, and they don't touch the
+    // workspace — they hit the user's own daemon-backed memory store, not
+    // any path in `session_cwd`. Path-gating them produces a bogus
+    // "Switch this folder to chat" ExceedsCeiling prompt when path_modes
+    // is empty (e.g. encoder subagent, which inherits `Vec::new()` from
+    // `consolidation.rs::run_ling_mem_subagent`). Allow unconditionally.
+    if action_tier == PermissionMode::Chat {
+        return PermissionCheckResult::Allowed;
+    }
+
     // 2. Bash-specific path gating: if the command contains explicit absolute
     // or tilde-prefixed path args, each must be covered at action_tier.
     // Without this, `bash ls /B` from a session with read-on-/A would pass

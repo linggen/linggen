@@ -1016,6 +1016,39 @@ async fn prepare_server(
         tokio::spawn(crate::missions::scheduler::mission_scheduler_loop(scheduler_state));
     }
 
+    // Spawn the agent_run sweeper. Reaps `Running` rows older than the
+    // threshold that never got `finish_agent_run` called (panic, dropped
+    // future, missing finish on a new exit path). Without this, a stale
+    // row keeps the UI spinner stuck on the affected session forever.
+    {
+        let sweep_state = state.clone();
+        const SWEEP_INTERVAL_SECS: u64 = 60;
+        const STALE_THRESHOLD_SECS: u64 = 15 * 60; // 15 min — well beyond any normal turn
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
+            tick.tick().await; // skip the immediate first tick
+            loop {
+                tick.tick().await;
+                let now = crate::util::now_ts_secs();
+                let reaped = sweep_state
+                    .manager
+                    .run_store
+                    .sweep_stale_running(now, STALE_THRESHOLD_SECS);
+                if !reaped.is_empty() {
+                    tracing::warn!(
+                        count = reaped.len(),
+                        run_ids = ?reaped,
+                        threshold_secs = STALE_THRESHOLD_SECS,
+                        "run/sweep: reaped stale Running rows"
+                    );
+                    let _ = sweep_state
+                        .events_tx
+                        .send(ServerEvent::StateUpdated);
+                }
+            }
+        });
+    }
+
     // Spawn remote relay tasks (heartbeat + offer polling) if remote.toml exists.
     rtc::relay::spawn_relay_tasks(state.clone());
 

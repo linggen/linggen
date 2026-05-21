@@ -42,6 +42,23 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'WebFetch': return args.url || raw;
       case 'WebSearch': return args.query || raw;
       case 'Skill': return args.skill || raw;
+      case 'Memory_query': {
+        // verb=search → show the query; verb=get → show the id;
+        // verb=list → show the filter or "list" itself.
+        const verb = args.verb || '';
+        if (verb === 'search' && args.query) return `"${args.query}"`;
+        if (verb === 'get' && args.id) return args.id;
+        if (verb === 'list') return args.type || args.tier || 'list';
+        return args.query || args.id || verb || raw;
+      }
+      case 'Memory_write': {
+        // verb=add/update → show the content snippet; verb=delete → show the id.
+        const verb = args.verb || '';
+        if (verb === 'delete' && args.id) return `delete ${args.id}`;
+        if (args.content) return `"${args.content}"`;
+        if (args.id) return args.id;
+        return verb || raw;
+      }
       default: {
         const first = Object.values(args).find(v => typeof v === 'string' && (v as string).length < 80) as string | undefined;
         return first || raw;

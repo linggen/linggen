@@ -118,6 +118,10 @@ export const SkillsCard: React.FC<{
   projectRoot?: string;
   onClickSkill?: (skill: SkillInfoFull) => void;
 }> = ({ skills, projectRoot, onClickSkill }) => {
+  const projectSkills = useMemo(() => sortByUsage(skills.filter((s) => !isGlobalOrCompat(s))), [skills]);
+  const globalSkills = useMemo(() => sortByUsage(skills.filter(isGlobalOrCompat)), [skills]);
+  const projectName = projectRoot ? projectRoot.split('/').filter(Boolean).pop() || 'Project' : 'Project';
+
   if (skills.length === 0) {
     return (
       <div className="p-4 text-center text-[12px] text-slate-400 italic">
@@ -125,10 +129,6 @@ export const SkillsCard: React.FC<{
       </div>
     );
   }
-
-  const projectSkills = useMemo(() => sortByUsage(skills.filter((s) => !isGlobalOrCompat(s))), [skills]);
-  const globalSkills = useMemo(() => sortByUsage(skills.filter(isGlobalOrCompat)), [skills]);
-  const projectName = projectRoot ? projectRoot.split('/').filter(Boolean).pop() || 'Project' : 'Project';
 
   return (
     <div className="flex-1 px-2 py-2 overflow-y-auto text-xs space-y-1.5">

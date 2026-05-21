@@ -334,7 +334,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                         agent_id: selectedAgent,
                       }),
                     });
-                  } catch {}
+                  } catch {
+                    // Best-effort clear; UI already reflects the empty queue.
+                  }
                 }}
                 className="text-[11px] px-1.5 py-0.5 rounded bg-amber-200/50 dark:bg-amber-500/20 hover:bg-amber-300/60 dark:hover:bg-amber-500/30 transition-colors"
                 title="Dismiss queue"

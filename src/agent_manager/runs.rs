@@ -116,6 +116,49 @@ impl RunStore {
         result
     }
 
+    /// Sweep stale `Running` rows that have been alive longer than
+    /// `max_age_secs` since `started_at`. Returns the run_ids that were
+    /// reaped so the caller can log + emit a state update. Used by the
+    /// periodic sweeper to recover from any code path that began a run
+    /// but never finished it (panics, dropped futures, missing
+    /// `finish_agent_run` on a new exit path).
+    pub fn sweep_stale_running(&self, now_secs: u64, max_age_secs: u64) -> Vec<String> {
+        let mut runs = self.runs.lock().unwrap();
+        let mut reaped = Vec::new();
+        for (run_id, run) in runs.iter_mut() {
+            if run.status != AgentRunStatus::Running {
+                continue;
+            }
+            if now_secs.saturating_sub(run.started_at) < max_age_secs {
+                continue;
+            }
+            run.status = AgentRunStatus::Failed;
+            run.ended_at = Some(now_secs);
+            run.detail = Some(format!(
+                "sweeper: stale run reaped after {}s without finish_agent_run",
+                max_age_secs
+            ));
+            reaped.push(run_id.clone());
+        }
+        // Remove reaped runs entirely so they stop showing in `agent_runs`
+        // page_state — matches `finish_agent_run`'s normal cleanup path.
+        for id in &reaped {
+            if let Some(run) = runs.remove(id) {
+                if let Some(ref parent_id) = run.parent_run_id {
+                    let mut children = self.children.lock().unwrap();
+                    if let Some(siblings) = children.get_mut(parent_id) {
+                        siblings.retain(|x| x != id);
+                        if siblings.is_empty() {
+                            children.remove(parent_id);
+                        }
+                    }
+                }
+                self.children.lock().unwrap().remove(id);
+            }
+        }
+        reaped
+    }
+
     pub fn list_children(&self, parent_run_id: &str) -> Vec<AgentRunRecord> {
         let child_ids = self
             .children

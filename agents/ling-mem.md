@@ -83,23 +83,45 @@ adding each candidate:
    *reading the content*, not by the similarity score.
 3. **An existing row contradicts the candidate** (same subject,
    *incompatible* value — e.g. stored "cat is male", user now says
-   "female") → **AskUser** to resolve. The question must show both
-   rows with their dates and give the user three choices:
+   "female") → **AskUser** to resolve. Each option MUST carry a
+   `description` showing the **full row content + its date** so the
+   user can see what they're actually choosing between — never just
+   a one-word label:
 
    ```json
    AskUser({
      questions: [{
-       header: "Memory conflict",
-       question: "Two conflicting facts on the same subject — which is true?",
+       header: "Resolve memory conflict",
+       question: "Two facts on the same subject conflict — which should I keep?",
        options: [
-         { label: "<new value, today's date>", value: "new" },
-         { label: "<old value, dated YYYY-MM-DD>", value: "old" },
-         { label: "Other (type below)", value: "other" }
+         {
+           label: "<new value, short>",
+           description: "From this turn: <full content of the new candidate>"
+         },
+         {
+           label: "<old value, short>",
+           description: "Stored <YYYY-MM-DD>: <full content of the existing row>"
+         },
+         { label: "Both are true", description: "Keep both rows; recall reconciles by recency." },
+         { label: "Other — type below", description: "Free-text resolution." }
        ],
        allow_text: true
      }]
    })
    ```
+
+   The `label` is the glanceable summary; the `description` is the
+   evidence. Skipping `description` (or using terse labels alone)
+   leaves the user choosing between unlabeled options — never do that.
+
+   **Tier discipline on resolution:** match the resolved row's tier to
+   the conflicting old row's tier. If the contradicting old row was in
+   `tier: "semantic"`, write the resolved row with
+   `tier: "semantic"` (not `episodic`) AND delete the old semantic row
+   by id. Otherwise you'll leave a parallel episodic copy alongside the
+   still-living semantic one — two near-duplicates across tiers, exactly
+   the drift this protocol is meant to prevent. Episodic is only for
+   *new incidental* signal with no existing semantic conflict.
 
    On the user's answer:
    - `new` → write the new row; **delete** the old row (explicit

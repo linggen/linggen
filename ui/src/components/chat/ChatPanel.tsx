@@ -372,13 +372,19 @@ export const ChatPanel: React.FC<{
     // sometimes never shows for fast turns that complete inside the
     // poll window.
     if (pendingSends[sessionId]) return true;
+    // Defensive: if the status text says "Idle", the session genuinely
+    // isn't working — don't show the spinner even if a stale page_state
+    // poll re-asserted a `running` row. handleTurnComplete is the
+    // authoritative "turn finished" signal; agentStatusText is set
+    // synchronously there.
+    if (agentStatusText?.[sessionId] === 'Idle') return false;
     return agentRuns.some(
       (r) =>
         r.session_id === sessionId &&
         !r.parent_run_id &&
         r.status === 'running',
     );
-  }, [agentRuns, sessionId, pendingSends]);
+  }, [agentRuns, sessionId, pendingSends, agentStatusText]);
   const [spinnerVerb, setSpinnerVerb] = useState('');
   const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
   useEffect(() => {
@@ -460,9 +466,17 @@ export const ChatPanel: React.FC<{
     [visibleMessages]
   );
 
-  // Show floating banner with nearest user message scrolled above viewport
+  // Show floating banner with nearest user message scrolled above viewport.
+  // Clear when the session changes — the previous session's banner would
+  // otherwise linger until the next scroll event in the new session.
+  useEffect(() => {
+    setFloatingUserMsg(null);
+    userMsgRefs.current.clear();
+  }, [sessionId]);
   const filteredMainMessagesRef = useRef(filteredMainMessages);
-  filteredMainMessagesRef.current = filteredMainMessages;
+  useEffect(() => {
+    filteredMainMessagesRef.current = filteredMainMessages;
+  }, [filteredMainMessages]);
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
@@ -532,11 +546,24 @@ export const ChatPanel: React.FC<{
   // if no, the main chat keeps it (current behaviour).
   const askUserBelongsToSubagent = useMemo(() => {
     if (!pendingAskUser) return false;
-    const id = pendingAskUser.agentId;
-    return subagentEntries.some(
-      (e) => e.subagentId === id || e.agentName === id,
+    const id = normalizeAgentKey(pendingAskUser.agentId);
+    if (!id) return false;
+    // First: tree-match (existing behavior). Works once SubagentSpawned has
+    // populated the parent message's subagentTree.
+    const matched = subagentEntries.some(
+      (e) =>
+        normalizeAgentKey(e.subagentId) === id ||
+        normalizeAgentKey(e.agentName) === id,
     );
-  }, [pendingAskUser, subagentEntries]);
+    if (matched) return true;
+    // Fallback: if the prompt comes from any agent other than the session's
+    // main agent (`selectedAgent`, e.g. "ling"), it must be from a subagent
+    // (the per-turn encoder is "ling-mem"). Without this fallback, the
+    // widget falls through to the main-chat renderer when the SubagentSpawned
+    // event hasn't reached the store yet, or when filters drop the parent
+    // message from `subagentEntries`.
+    return id !== normalizeAgentKey(selectedAgent);
+  }, [pendingAskUser, subagentEntries, selectedAgent]);
   const [paneVisible, setPaneVisible] = useState(false);
   useEffect(() => {
     if (subagentEntries.length === 0) {

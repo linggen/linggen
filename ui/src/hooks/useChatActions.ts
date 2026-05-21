@@ -9,6 +9,8 @@ import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
+import { contentBlockSummary } from '../components/chat/utils/content-block';
+import type { ContentBlock } from '../types';
 
 /** Resolve the effective project root: explicit override > store value. */
 function getProjectRoot(override?: string | null): string {
@@ -356,9 +358,23 @@ export function useChatActions(
             lines.push(`  [subagent:${sa.subagentId}] ${sa.task}${stats.length ? ` (${stats.join(', ')})` : ''} — ${sa.status}`);
           }
         }
-        const entries = Array.isArray(m.activityEntries) ? m.activityEntries : [];
-        if (entries.length > 0) { for (const entry of entries) lines.push(`  > ${entry}`); }
-        else if (m.activitySummary) { lines.push(`  > ${m.activitySummary}`); }
+        // Prefer structured content blocks for tool calls — they carry the
+        // arg JSON so the export shows `Memory_query("user has a cat")`
+        // instead of the bare `Used tool: Memory_query`. Fall back to
+        // activityEntries when content blocks aren't present (older
+        // messages, plan output, etc.).
+        const blocks = Array.isArray(m.content) ? m.content : [];
+        const toolBlocks = blocks.filter((b) => b.type === 'tool_use');
+        if (toolBlocks.length > 0) {
+          for (const b of toolBlocks) {
+            const summary = b.args ? contentBlockSummary(b as ContentBlock) : '';
+            lines.push(summary ? `  > ${b.tool}(${summary})` : `  > ${b.tool || 'Tool'}`);
+          }
+        } else {
+          const entries = Array.isArray(m.activityEntries) ? m.activityEntries : [];
+          if (entries.length > 0) { for (const entry of entries) lines.push(`  > ${entry}`); }
+          else if (m.activitySummary) { lines.push(`  > ${m.activitySummary}`); }
+        }
         if (m.text) lines.push(m.text);
         return lines.join('\n') + '\n';
       }).join('\n');

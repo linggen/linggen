@@ -831,6 +831,13 @@ impl AgentManager {
         self.clear_working_place_for_agent(&repo_path, agent_id)
             .await;
         self.cancelled_runs.lock().await.remove(&run_id);
+        tracing::info!(
+            run_id = %run_id,
+            agent_id = %agent_id,
+            session_id = %record.session_id,
+            parent_run_id = ?record.parent_run_id,
+            "run/begin"
+        );
         Ok(run_id)
     }
 
@@ -841,15 +848,24 @@ impl AgentManager {
         detail: Option<String>,
     ) -> Result<()> {
         let ended_at = Some(crate::util::now_ts_secs());
-        self.run_store.update_run(run_id, status, detail, ended_at);
+        self.run_store.update_run(run_id, status, detail.clone(), ended_at);
         self.clear_working_place_for_run(run_id).await;
         let _ = self.events.send((AgentEvent::StateUpdated, None));
         self.cancelled_runs.lock().await.remove(run_id);
         // Record activity for the agent that just finished
-        if let Some(run) = self.run_store.get_run(run_id) {
+        let run_snapshot = self.run_store.get_run(run_id);
+        if let Some(ref run) = run_snapshot {
             self.update_agent_activity(&run.repo_path, &run.agent_id).await;
         }
         self.run_store.remove_run(run_id);
+        tracing::info!(
+            run_id = %run_id,
+            agent_id = run_snapshot.as_ref().map(|r| r.agent_id.as_str()).unwrap_or("?"),
+            session_id = run_snapshot.as_ref().map(|r| r.session_id.as_str()).unwrap_or("?"),
+            status = ?status,
+            detail = ?detail,
+            "run/finish"
+        );
         Ok(())
     }
 
