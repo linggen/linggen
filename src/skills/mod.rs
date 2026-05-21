@@ -642,6 +642,19 @@ impl SkillManager {
             let path = entry.path();
             match load_skill_from_path(&path, source.clone()) {
                 Ok(Some(skill)) => {
+                    // Compat entries (~/.claude/skills/, ~/.codex/skills/)
+                    // are typically thin per-host stubs pointing back to the
+                    // canonical Global bundle at ~/.linggen/skills/. If the
+                    // Global copy is already loaded, don't let the stub
+                    // shadow it — the stub dir lacks scripts/, references/,
+                    // etc., so web-launcher apps would 404 on bundle files.
+                    if matches!(skill.source, SkillSource::Compat { .. }) {
+                        if let Some(existing) = skills.get(&skill.name) {
+                            if matches!(existing.source, SkillSource::Global) {
+                                continue;
+                            }
+                        }
+                    }
                     skills.insert(skill.name.clone(), skill);
                 }
                 Ok(None) => {}
