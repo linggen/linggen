@@ -30,6 +30,13 @@ pub enum ActivationMode {
     /// when a skill claims `trigger: "/commit"`). Implicit approval — the
     /// prefix opt-in stands in for the prompt.
     Trigger,
+    /// Agent invoked the skill via the built-in `Skill` tool. Tools-only
+    /// activation: register the skill's tool defs into the session and
+    /// set `active_skill`, but DO NOT prompt for grants and DO NOT write
+    /// `session_permissions`. The Skill tool returns the SKILL.md content
+    /// as a tool result; activation here is the side effect that makes
+    /// the skill's tools callable on the next turn.
+    ToolInvocation,
     /// Read-only — for `get_system_prompt_api`. Sets `active_skill` on a
     /// throwaway engine so prompt export reflects the skill, but never
     /// writes session_permissions, never saves to disk, never emits events.
@@ -66,7 +73,22 @@ impl AgentEngine {
     ) -> ActivationOutcome {
         // Export: throwaway engine — set active_skill + scope, no grant side
         // effects, no save, no prompt. Used by the Copy-System-Prompt button.
+        // Tools NOT registered on export — the export path is a read-only
+        // prompt snapshot and the throwaway engine's tool registry is
+        // discarded.
         if matches!(mode, ActivationMode::Export) {
+            apply_skill_app_scope(self, &skill);
+            self.active_skill = Some(skill);
+            return ActivationOutcome::Activated { grants_changed: false };
+        }
+
+        // ToolInvocation: agent-driven Skill tool call. Tools-only mode —
+        // register skill tool defs and set active_skill, but never prompt
+        // for grants and never write permissions. Cwd seeding is also
+        // skipped because the agent is borrowing the skill's tools, not
+        // entering its workspace.
+        if matches!(mode, ActivationMode::ToolInvocation) {
+            register_skill_tools(self, &skill);
             apply_skill_app_scope(self, &skill);
             self.active_skill = Some(skill);
             return ActivationOutcome::Activated { grants_changed: false };
@@ -81,12 +103,14 @@ impl AgentEngine {
             match prompt_for_grants(self, &skill).await {
                 PromptOutcome::Approve => {
                     let grants_changed = write_skill_grants(self, &skill);
+                    register_skill_tools(self, &skill);
                     apply_skill_app_scope(self, &skill);
                     seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
                     return ActivationOutcome::Activated { grants_changed };
                 }
                 PromptOutcome::RunInCurrentMode => {
+                    register_skill_tools(self, &skill);
                     apply_skill_app_scope(self, &skill);
                     seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
@@ -106,10 +130,46 @@ impl AgentEngine {
         } else {
             false
         };
+        register_skill_tools(self, &skill);
         apply_skill_app_scope(self, &skill);
         seed_session_cwd_from_skill(self, &skill);
         self.active_skill = Some(skill);
         ActivationOutcome::Activated { grants_changed }
+    }
+}
+
+/// Register a skill's tool defs into the engine's `skill_tools` registry.
+/// Stamps the owning skill's name + dir on each entry so dispatch can
+/// resolve back without a second lookup.
+///
+/// **Accumulation policy:** tools from earlier-activated skills stay
+/// loaded. The agent keeps access to historical skill tools throughout
+/// the session.
+///
+/// **Collision policy:** if two skills declare a tool with the same
+/// name, the newer activation overwrites the older entry and a warning
+/// is logged. No skill ships colliding names today; the warning is a
+/// future tripwire.
+fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
+    if skill.disable_model_invocation {
+        return;
+    }
+    for tool_def in &skill.tool_defs {
+        if let Some(existing) = engine.tools.skill_tools.get(&tool_def.name) {
+            let prev_owner = existing.skill_name.as_deref().unwrap_or("<unknown>");
+            tracing::warn!(
+                "skill tool name collision: '{}' from skill '{}' overwrites entry from '{}'",
+                tool_def.name,
+                skill.name,
+                prev_owner,
+            );
+        }
+        let mut def = tool_def.clone();
+        def.skill_name = Some(skill.name.clone());
+        if def.skill_dir.is_none() {
+            def.skill_dir = skill.skill_dir.clone();
+        }
+        engine.tools.register_skill_tool(def);
     }
 }
 

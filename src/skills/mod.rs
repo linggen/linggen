@@ -33,12 +33,14 @@ fn page_update_tool_def() -> SkillToolDef {
     args.insert(
         "top_bar".to_string(),
         SkillParamDef {
+            // Shape varies per skill — keep param_type permissive so the LLM
+            // can pick whichever the active skill teaches.
             param_type: "array".to_string(),
             required: false,
             default: None,
             description:
-                "Array of compact metric widgets shown at the top of the dashboard. \
-                 Each item: {\"widget\":\"custom\",\"data\":{...}}."
+                "Optional top-of-dashboard section. Shape is defined by the active \
+                 skill's SKILL.md."
                     .to_string(),
             items: None,
         },
@@ -50,7 +52,8 @@ fn page_update_tool_def() -> SkillToolDef {
             required: false,
             default: None,
             description:
-                "Optional status line at the bottom. Shape: {\"text\":\"...\"}."
+                "Optional footer section. Shape is defined by the active skill's \
+                 SKILL.md."
                     .to_string(),
             items: None,
         },
@@ -58,15 +61,17 @@ fn page_update_tool_def() -> SkillToolDef {
     args.insert(
         "body_patch".to_string(),
         SkillParamDef {
+            // Some skills use an array of selector patches (`[{match, widget}]`),
+            // others use a single object keyed by section (`{section, cards}`).
+            // Leave param_type as `array` for back-compat with existing
+            // selector-style skills; the renderer normalizes either shape.
             param_type: "array".to_string(),
             required: false,
             default: None,
             description:
-                "In-place body updates that swap individual widgets without rebuilding \
-                 the rest. Each entry: {\"match\":{\"type\":\"...\",\"title\":\"...\"},\
-                 \"widget\":{...}}. Match is by type+title (case-insensitive); if no \
-                 existing widget matches, the patch is appended. Use this for rescans / \
-                 partial refreshes — preserves all other widgets."
+                "Partial body update — preserves widgets the patch doesn't touch. \
+                 Shape is defined by the active skill's SKILL.md (some skills use \
+                 selector patches, others key by section)."
                     .to_string(),
             items: None,
         },
@@ -75,11 +80,11 @@ fn page_update_tool_def() -> SkillToolDef {
         name: "PageUpdate".to_string(),
         description:
             "Refresh the skill's dashboard UI. Pass `top_bar`, `body`, `footer`, \
-             and/or `body_patch` as top-level arguments — omit any section you don't \
-             want to change (previous values persist). At least one must be provided \
-             and non-empty. Use `body_patch` for single-widget refreshes (rescan, etc.) \
-             so other widgets stay intact; use `body` only when replacing the full layout. \
-             See the skill's SKILL.md for widget shapes."
+             and/or `body_patch` as top-level arguments — omit any section you \
+             don't want to change (previous values persist). At least one must be \
+             provided and non-empty. **All payload shapes (widgets, patch entries, \
+             section keys) are defined by the active skill's SKILL.md — follow that \
+             contract, not a default schema.**"
                 .to_string(),
         cmd: String::new(),
         endpoint: None,

@@ -14,13 +14,14 @@
  * to the inline SubagentTreeView (the iframe-friendly path).
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Copy, FileText } from 'lucide-react';
+import { X, Copy, FileText, ArrowDown } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import type { ChatMessage, ContentBlock, PendingAskUser, AskUserAnswer, SubagentTreeEntry } from '../../types';
 import { MarkdownContent } from './MarkdownContent';
 import { ContentBlockView } from './ContentBlockView';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
+import { useAutoScroll } from '../../hooks/useAutoScroll';
 
 interface Props {
   messages: ChatMessage[];
@@ -121,6 +122,23 @@ export const SubagentPane: React.FC<Props> = ({
 
   const active =
     entries.find((e) => e.subagentId === activeId) ?? entries[entries.length - 1];
+
+  // Auto-scroll the active subagent's pane the same way the main chat
+  // does: follow tool calls and final result as they stream in, cancel
+  // when the user scrolls up, resume when they scroll back to bottom.
+  // We synthesize a `messages`/`lastMsg` shape the shared hook expects:
+  // tool-step count drives the message-length signal, currentActivity +
+  // resultText drive the streaming-text growth signal. Swap to a fresh
+  // hook identity when the active tab changes via `key={active.subagentId}`
+  // on the scroll container so the hook resets cleanly.
+  const autoScroll = useAutoScroll(
+    { length: active.toolSteps?.length ?? 0 },
+    {
+      isGenerating: active.status === 'running',
+      text: active.resultText || '',
+      liveText: active.currentActivity || '',
+    },
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
@@ -239,7 +257,10 @@ export const SubagentPane: React.FC<Props> = ({
        * main chat (markdown, args/output expansion, etc.) so the pane
        * IS the full conversation thread between main agent and subagent.
        */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 custom-scrollbar min-h-0 flex flex-col gap-3">
+      <div
+        key={active.subagentId}
+        className="flex-1 overflow-y-auto px-3 py-3 custom-scrollbar min-h-0 flex flex-col gap-3 relative"
+      >
         {/* Header row with optional stop button */}
         {active.status === 'running' && onCancelAgentRun && (
           <div className="flex items-center justify-end -mb-1">
@@ -332,6 +353,19 @@ export const SubagentPane: React.FC<Props> = ({
               <MarkdownContent text={active.resultText} />
             </div>
           </div>
+        )}
+        {/* Sentinel for auto-scroll-to-bottom — kept as the last child of
+         *  the scroll container so the hook's scrollIntoView targets it. */}
+        <div ref={autoScroll.chatEndRef} />
+        {autoScroll.showScrollButton && (
+          <button
+            onClick={autoScroll.scrollToBottom}
+            className="sticky bottom-2 left-1/2 -translate-x-1/2 z-30 w-8 h-8 rounded-full bg-white dark:bg-[#1a1a1a] border border-slate-300 dark:border-white/15 shadow-lg flex items-center justify-center hover:bg-slate-50 dark:hover:bg-white/10 transition-all opacity-80 hover:opacity-100"
+            title="Scroll to bottom"
+            aria-label="Scroll to bottom"
+          >
+            <ArrowDown size={14} className="text-slate-600 dark:text-slate-300" />
+          </button>
         )}
       </div>
     </div>

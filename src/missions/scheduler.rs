@@ -748,6 +748,12 @@ async fn dispatch_mission_prompt(
         body: mission.prompt.clone(),
         mission_dir: Some(state.manager.missions.mission_dir(&mission.id)),
     });
+    // Mission sessions don't write to the user's biographical memory and
+    // shouldn't see the core block + memory protocol in their system prompt.
+    // Mirrors the chat-handler gate for skill-creator sessions. Invalidate
+    // the cached prompt so the next build excludes the memory sections.
+    engine.prompt_profile.include_memory = false;
+    engine.cached_system_prompt = None;
     // Force Auto permission mode (legacy — kept for backward compat with old check flow).
     engine.cfg.tool_permission_mode = crate::config::ToolPermissionMode::Auto;
 

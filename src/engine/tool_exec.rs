@@ -716,6 +716,40 @@ impl AgentEngine {
                     );
                     *empty_search_streak = 0;
                 }
+
+                // Skill tool side-effect: register the invoked skill's
+                // tool defs into the session and set `active_skill`. This
+                // lives at the dispatch layer (not inside `invoke_skill`)
+                // because the engine handle isn't reachable from the
+                // `Tools` struct that hosts tool implementations. The
+                // result text (SKILL.md content) was already produced by
+                // `invoke_skill`; this is the activation side-effect that
+                // makes the skill's tools callable on the next turn.
+                // Accumulates across invocations; collisions warn + win
+                // newer (see `register_skill_tools` in skill_activation).
+                if canonical_tool == "Skill" {
+                    let skill_name = original_args
+                        .get("skill")
+                        .or_else(|| original_args.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    if let Some(name) = skill_name {
+                        let lookup = self
+                            .tools
+                            .get_manager()
+                            .map(|m| m.skill_manager.clone());
+                        if let Some(skill_manager) = lookup {
+                            if let Some(skill) = skill_manager.get_skill(&name).await {
+                                let _ = self
+                                    .activate_skill(
+                                        skill,
+                                        crate::engine::ActivationMode::ToolInvocation,
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 warn!("Tool failed: {} err={}", canonical_tool, e);

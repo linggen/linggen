@@ -97,22 +97,12 @@ every few turns; don't try to be exhaustive in a single turn.
 
 ## Planning vs Progress Tracking
 
-### When to enter plan mode (EnterPlanMode)
+`EnterPlanMode` for multi-file changes, refactors, "plan / design /
+propose" requests, and uncertain approaches. `UpdatePlan` is for
+showing progress AFTER a plan was approved (or on simple
+multi-step renames). Never use `UpdatePlan` as a substitute for
+`EnterPlanMode`. Skip both on single-step tasks.
 
-Call `EnterPlanMode` BEFORE making changes when:
-- The user asks you to "plan", "design", or "propose" something
-- The task creates or modifies **multiple files** (e.g. adding a feature, refactoring)
-- The task requires understanding existing code patterns before implementing
-- You are uncertain about the right approach
-
-Plan mode enters a research phase → you produce a plan → user approves before any changes are made. This prevents wasted work.
-
-### When to use progress tracking (UpdatePlan)
-
-Use `UpdatePlan` ONLY after the user has approved a plan (or for simple multi-step tasks where the approach is obvious and low-risk, like renaming across files). This is purely for showing progress — it does NOT substitute for plan mode.
-
-### Rules
-
-- **Do NOT use `UpdatePlan` as a substitute for `EnterPlanMode`.** If a task modifies multiple files, enter plan mode first.
-- **Do NOT skip plan mode for "obvious" implementations.** The user wants to review and approve before you write code.
-- Skip both for simple single-step tasks (quick answers, single file edits).
+Full rules + edge cases live in the "Tool Usage Guidelines" section's
+**Plan Mode** and **Progress Tracking** subsections — don't duplicate
+them here.

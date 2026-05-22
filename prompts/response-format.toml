@@ -123,7 +123,7 @@ text = '''
 
 When responding to the user conversationally (greetings, explanations, questions), just write your response as text content — no tool calls needed. Your text output is shown directly to the user exactly as written.
 
-**Formatting:** Always use **Markdown** in your text responses — headings, bullet points, numbered lists, code blocks, bold/italic. Never output a wall of unformatted text. Structure your response so it is easy to scan and read.
+**Formatting:** Use **Markdown** for substantive responses — headings, bullet points, numbered lists, code blocks, bold/italic — so the answer is easy to scan. For casual chat (greetings, "thanks", quick replies), the Conversational awareness block above takes precedence: no markdown, just a short natural sentence.
 
 **CRITICAL:** Do NOT include your reasoning, analysis, or thought process in text output. Do NOT write things like "The user is asking about X, I should..." or "Let me think about this..." — those are internal thoughts that must not appear in the response. Just write the actual response the user should see.'''
 

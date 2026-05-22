@@ -138,6 +138,45 @@ pub(super) async fn persist_and_emit_last_assistant_text(
     }
 }
 
+/// One row surfaced by per-turn auto-recall. Carries the id so the
+/// agent can act on duplicates / conflicts directly via `Memory_write`,
+/// and the UI can deep-link a row to the memory dashboard.
+#[derive(Debug, Clone)]
+pub(super) struct RecallRow {
+    pub id: String,
+    pub r#type: String,
+    pub host: String,
+    pub date: String,
+    pub content: String,
+}
+
+impl RecallRow {
+    /// One-line rendering for injection into the model's context. Matches
+    /// CC's `recall.sh` shape so a row reads the same in linggen and CC.
+    fn to_line(&self) -> String {
+        format!(
+            "From memory ({}, {}, {}, id={}): {}",
+            self.r#type, self.host, self.date, self.id, self.content
+        )
+    }
+}
+
+/// Format a recall hit list into the block the model sees. Includes the
+/// same reconcile footer the always-on block uses (`core_memory.rs`),
+/// gated on `rows.len() > 1` — single-hit blocks have nothing to dedup
+/// or compare against.
+fn format_recall_for_model(rows: &[RecallRow]) -> String {
+    let mut out = rows
+        .iter()
+        .map(|r| r.to_line())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if rows.len() > 1 {
+        out.push_str(crate::engine::core_memory::RECONCILE_FOOTER);
+    }
+    out
+}
+
 /// Per-turn semantic recall against the active memory provider.
 ///
 /// Bails silently on any path that could block the user: short prompts,
@@ -148,7 +187,7 @@ async fn auto_recall_memory(
     state: &Arc<ServerState>,
     prompt: &str,
     session_id: Option<&str>,
-) -> Option<String> {
+) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
     const FETCH_LIMIT: usize = 8;
@@ -208,7 +247,7 @@ async fn auto_recall_memory(
 
     let want_proj_ctx = project_name.as_deref().map(|p| format!("project/{p}"));
 
-    let mut hits: Vec<String> = Vec::new();
+    let mut hits: Vec<RecallRow> = Vec::new();
     for row in rows {
         if hits.len() >= TOP_K {
             break;
@@ -235,27 +274,37 @@ async fn auto_recall_memory(
             continue;
         }
 
-        let typ = row.get("type").and_then(|v| v.as_str()).unwrap_or("fact");
+        let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if id.is_empty() {
+            // Without an id the agent can't act on the row (delete/replace_ids
+            // need one) and the UI can't deep-link. Skip rather than surface
+            // a half-row.
+            continue;
+        }
+        let typ = row.get("type").and_then(|v| v.as_str()).unwrap_or("fact").to_string();
+        let host = row.get("host").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
         let date = row
             .get("created_at")
             .and_then(|v| v.as_str())
             .map(|s| if s.len() >= 10 { &s[..10] } else { s })
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
         let content = row
             .get("content")
             .and_then(|v| v.as_str())
             .unwrap_or("")
-            .trim();
+            .trim()
+            .to_string();
         if content.is_empty() {
             continue;
         }
-        hits.push(format!("From memory ({typ}, {date}): {content}"));
+        hits.push(RecallRow { id, r#type: typ, host, date, content });
     }
 
     if hits.is_empty() {
         None
     } else {
-        Some(hits.join("\n"))
+        Some(hits)
     }
 }
 
@@ -266,16 +315,42 @@ pub(super) async fn push_user_turn_with_recall(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
 ) {
-    if let Some(prefix) = auto_recall_memory(
-        &ctx.state,
-        &ctx.clean_msg,
-        ctx.session_id.as_deref(),
-    )
-    .await
-    {
+    // Same gate as the core block + memory protocol injection: skill /
+    // mission sessions don't query the user's biographical memory.
+    // Without this, a Pulse turn fires Memory_query, surfaces hits, and
+    // the "🧠 N memories recalled" widget appears in a skill session that
+    // shouldn't touch memory at all.
+    let recalled = if engine.prompt_profile.include_memory {
+        auto_recall_memory(&ctx.state, &ctx.clean_msg, ctx.session_id.as_deref()).await
+    } else {
+        None
+    };
+    if let Some(rows) = recalled {
+        // What the model sees: structured "From memory (...): ..." lines
+        // followed by the reconcile footer (when ≥2 rows). Same shape as
+        // CC's recall.sh and the engine's always-on block — one protocol
+        // across all surfaces.
+        let model_text = format_recall_for_model(&rows);
         engine
             .chat_history
-            .push(crate::message::ChatMessage::new("system", prefix));
+            .push(crate::message::ChatMessage::new("system", model_text.clone()));
+
+        // What the user sees: persisted as a chat message with
+        // from_id="memory" so the UI can render a collapsible widget and
+        // the chat export naturally includes the recall. Content is the
+        // same text the model received — no separate channel — so what
+        // the user sees is exactly what the model saw.
+        crate::server::chat::helpers::persist_and_emit_to_store(
+            &ctx.manager.global_sessions,
+            &ctx.events_tx,
+            &ctx.agent_id,
+            "memory",
+            &ctx.agent_id,
+            &model_text,
+            ctx.session_id.as_deref(),
+            false,
+        )
+        .await;
     }
     engine
         .chat_history

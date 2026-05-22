@@ -535,35 +535,20 @@ impl AgentEngine {
         self.task.clone()
     }
 
-    /// Load skill-defined tools into the registry based on the agent spec's skills list.
-    /// Skills with `disable_model_invocation == true` are skipped (their tools are not
-    /// registered in the model-facing tool schema).
+    /// Cache which provider-backed capabilities (Memory_*, etc.) have a
+    /// live provider for this session. Drives tool-schema injection and
+    /// permission-tier lookup.
+    ///
+    /// Skill-defined tools (FetchReddit, ScanDisk, PageUpdate, …) are NOT
+    /// loaded here. Each skill's tool defs are registered into
+    /// `engine.tools.skill_tools` lazily, when the skill is activated for
+    /// the session via `activate_skill` — `/skill-name`, the `Skill`
+    /// tool, session-bound, or trigger-prefix paths. User sessions that
+    /// never activate a skill stay clean: only built-ins + active
+    /// capabilities visible to the model.
     pub async fn load_skill_tools(&mut self, skill_manager: &crate::skills::SkillManager) {
         if self.spec.is_none() { return };
 
-        // Phase 1: register skill-unique tool defs (shell, HTTP, data).
-        // Capability tools (Memory_*, etc.) are NOT listed here — their
-        // schemas live in `engine::capabilities`.
-        for skill in skill_manager.list_skills().await {
-            if skill.disable_model_invocation {
-                continue;
-            }
-            for mut tool_def in skill.tool_defs {
-                // Stamp the owning skill's name on each tool so HTTP dispatch
-                // can find the skill's daemon without a second lookup by
-                // walking the whole registry.
-                tool_def.skill_name = Some(skill.name.clone());
-                if tool_def.skill_dir.is_none() {
-                    tool_def.skill_dir = skill.skill_dir.clone();
-                }
-                self.tools.register_skill_tool(tool_def);
-            }
-        }
-
-        // Phase 2: cache which capabilities have a live provider. Drives
-        // tool-schema injection and permission-tier lookup. We iterate the
-        // engine's capability registry once and ask the skill manager for
-        // each name.
         self.tools.active_capabilities.clear();
         for cap in super::capabilities::CAPABILITIES.iter() {
             if skill_manager.active_provider(&cap.name).await.is_some() {

@@ -81,33 +81,70 @@ Every `Memory_write({verb: "add"})` MUST be preceded by a `Memory_query`
 on the candidate's subject in the same turn. No exceptions — explicit
 *"remember X"* commands included.
 
+## NEVER ignore a conflict — the load-bearing floor
+
+If `Memory_query` returned **any** row on the same subject with a
+different value (or with a *similar kind of claim* that drifts from the
+candidate), you MUST call `AskUser` before writing. **No exceptions.**
+
+Forbidden moves:
+
+- Writing a new row "alongside" prior conflicting ones, hoping
+  reconciliation cleans it up later. There is no later cleanup —
+  **you are the cleanup.**
+- Treating a same-subject contradiction as "just a new fact" because
+  the wording differs.
+- Skipping `AskUser` because you "judged" the new value is right. The
+  user owns memory; you confirm before changing it.
+- Calling `add` then `delete` as two separate writes. Use
+  `replace_ids` (see step 3) — one atomic call, no half-states.
+
+A spurious `AskUser` is cheap. A silent drifted row is expensive and
+follows the user forever.
+
 1. **Query first** — `Memory_query({verb: "search", query: "<candidate gist>"})`.
    Recall already spans all three tiers (core + semantic + episodic) in
    one round-trip; omit `tier` to span them all.
 2. **Already there** (exact or a reworded restatement of the same value)
    → **skip the write.** Don't duplicate. Decide sameness by reading the
    content, not by the similarity score.
-3. **Contradicts an existing row** (same subject, *incompatible* value —
-   e.g. stored "cat is male", user now says "female") → call `AskUser`
-   showing both rows with their dates. Each option MUST carry a
-   `description` with the full row content + date — never terse labels
-   alone:
+3. **Contradicts existing row(s)** — **THIS IS THE STEP MODELS MOST OFTEN SKIP. READ CAREFULLY.**
+
+   A contradiction is **NOT** just "stored 'cat is male' / user now says 'female'." It is **any** of these:
+
+   - Same subject, **different value** (cat male/female; 100 words / 200 words / 150 words for assistant length).
+   - Same subject, **different phrasing of the same kind of claim** (e.g. you already have "User wants assistant messages under 100 words" — the new "User prefers around 150 words" is a CONFLICT, not a new fact, even though the wording is different).
+   - **Multiple existing rows already on the same subject** with drifted values — the moment you see ≥2 prior rows on one topic, you are walking into pre-existing drift; do **not** add a third without resolving.
+
+   Heuristic: if your `Memory_query` returned ≥1 row whose `type` matches and whose subject overlaps the candidate, **assume conflict** until you've explicitly read each one and confirmed it is the **same value** (→ skip per step 2) or **unrelated**. Default to "conflict" when ambiguous, not "new."
+
+   When in doubt: **ask the user.** A spurious AskUser is cheap; a third drifted row is expensive.
+
+   Call `AskUser`.
+   Each option MUST carry a `description` with the full row content +
+   date — never terse labels alone. **If more than one existing row is
+   on the same subject** (the store already has prior drift), list each
+   as its own option so the user can collapse them in one decision:
 
    ```json
    AskUser({
      questions: [{
        header: "Resolve memory conflict",
-       question: "Two facts on the same subject conflict — which should I keep?",
+       question: "Conflicting facts on the same subject — which should I keep?",
        options: [
          {
            label: "<new value, short>",
            description: "From this turn: <full content of the new candidate>"
          },
          {
-           label: "<old value, short>",
-           description: "Stored <YYYY-MM-DD>: <full content of the existing row>"
+           label: "<old value 1, short>",
+           description: "Stored <YYYY-MM-DD>: <full content of existing row 1>"
          },
-         { label: "Both are true", description: "Keep both rows; recall reconciles by recency." },
+         {
+           label: "<old value 2, short>",
+           description: "Stored <YYYY-MM-DD>: <full content of existing row 2>"
+         },
+         { label: "Both/all are true", description: "Keep all rows; recall reconciles by recency." },
          { label: "Other — type below", description: "Free-text resolution." }
        ],
        allow_text: true
@@ -115,12 +152,52 @@ on the candidate's subject in the same turn. No exceptions — explicit
    })
    ```
 
-   On the answer: write the resolved row; **delete the loser by id**
-   only if the user explicitly chose the new value (that is the one
-   delete you may make without further confirmation). Never silently
-   overwrite.
+   **On the user's pick — act in the SAME turn, fully. Use the atomic
+   `replace_ids` primitive — never separate add + delete calls.**
+
+   - User picked the **new** value → one call:
+
+     ```json
+     Memory_write({
+       verb: "add",
+       content: "<resolved value>",
+       tier: "<loser's tier>",
+       type: "<same type>",
+       replace_ids: ["<loser_id_1>", "<loser_id_2>", ...]
+     })
+     ```
+
+     `replace_ids` must list **every** conflicting row id from your
+     query — not just one. The daemon inserts the new row and deletes
+     each id atomically. Never reply *"old conflicting rows may still
+     surface until reconciliation cleans them up"* — **you ARE the
+     reconciliation in that moment.** If you called `add` without
+     `replace_ids` when losers existed, you just made the drift worse.
+   - User picked an **existing** row → do nothing (they just confirmed
+     it). No write, no delete.
+   - User picked **other / free-text** → same `add` with `replace_ids`
+     listing every prior conflicting row.
+   - User picked **both/all** → do nothing destructive; leave them.
 
 4. **New** → write normally.
+
+## Explicit user imperatives — *"remember X"*, *"update X to Y"*, *"forget X"*
+
+These are not contradictions to resolve — the user has already chosen.
+Skip the AskUser step but still **query first** to find what's there:
+
+- *"remember X"* / *"记住 X"* — `Memory_query` on the subject. If exact
+  match exists, reply *"Already saved."*; else `Memory_write({verb:"add"})`
+  and reply *"Saved."*
+- *"update X to Y"* / *"my X is now Y"* — `Memory_query` on the subject.
+  `Memory_write({verb:"add", content:"Y", replace_ids:[<every prior
+  matching row's id>]})` — one atomic call. Reply *"Updated."* Never
+  separate add + delete.
+- *"forget X"* — `Memory_query` on the subject. `Memory_write({verb:"delete", id:<id>})`
+  for every matching row. Reply *"Deleted: <content>."*
+
+The same delete-the-losers discipline applies as in step 3 above: never
+leave drifted siblings behind after an explicit user instruction.
 
 ## Tier selection — by confidence
 
@@ -165,17 +242,19 @@ drift this protocol is meant to prevent.
 --- END MEMORY PROTOCOL ---'''
 
 [core_memory_block]
-description = "Built-in core memory — `tier=core` rows from the memory store, always inlined. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
+description = "Built-in always-on memory — `tier=core` rows from the memory store, injected into every owner-user session's system prompt. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
 vars = ["core_facts"]
 text = '''
 
-# Core memory
+# Always-on memory
 
-Universal facts about the user and how they want to work — `tier=core`
-rows from the memory store, inlined unconditionally. Trust these as
-current truth.
+Memory rows the engine pulls from the `ling-mem` store and injects into
+every owner-user session's system prompt. Trust as current truth unless
+contradicted by something the user just said in chat. Replaced (never
+appended to) each time the system prompt is rebuilt — content is always
+the current `tier=core` snapshot, never a running log.
 
-## Core facts
+## Rows
 
 {core_facts}
 
@@ -229,9 +308,12 @@ goal → semantic tier, not core.
 
 ### Explicit user imperatives — always act immediately, no confirmation
 
-- *"remember X"* / *"记住 X"* → `Memory_write({verb: "add", ...})` (use `tier: "core"` only if it's a stable universal — see the rules above). Reply *"Saved."* in one line.
-- *"forget X"* / *"delete the fact about Y"* → `Memory_query({verb: "search", ...})`, then `Memory_write({verb: "delete", id: ...})`. Reply *"Deleted: <content>."* so the user can see what went. No pre-confirmation — if it was wrong, the user says so and you re-add. For bulk forget (*"forget everything about X"*), iterate the search→delete loop or direct the user to the dashboard / `ling-mem forget` CLI; bulk forget is not on the model tool surface.
-- *"update my X to Y"* → `Memory_query({verb: "search", ...})` + `Memory_write({verb: "update", id: ..., content: "..."})`. Reply *"Updated."*
+For *"remember X"*, *"forget X"*, and *"update X to Y"* (and their non-
+English equivalents) — **follow `[memory_protocol]` § "Explicit user
+imperatives"** as the single source of truth. Key shape for the
+update path: `Memory_write({verb:"add", content:"Y", replace_ids:[...]})` —
+atomic add+delete, NOT `verb:"update"` (which is reserved for mechanical
+rephrasing of the same fact).
 
 ## Retrieval is visible — every fact you use, the user sees
 
@@ -297,28 +379,27 @@ path component**, lowercase, no segment concatenation, no Cargo crate
 names. Example: workspace root `/Users/x/workspace/rust/some-app` →
 `project/some-app` (NOT `project/rust-some-app`).
 
-## Usage rules for the core block above
+## Usage rules for the always-on block above
 
-- Apply the core facts as current truth; no need to query for them.
+- Apply the rows as current truth; no need to query for them.
 - Project-specific rules belong in that project's user-curated
   `CLAUDE.md` / `AGENTS.md` — memory does not author those files.
 - Scoped facts and semantic retrieval live in the rest of the memory
   store (`Memory_query` / `Memory_write` without `tier: "core"`).
-- Keep core tiny. Every `tier=core` row pollutes every unrelated
+- Keep `tier=core` tiny. Every row here pollutes every unrelated
   session, so the bar is *stable universal*, not "useful sometimes".
---- END CORE MEMORY ---'''
+--- END ALWAYS-ON MEMORY ---'''
 
 [core_memory_block_empty]
 description = "Bootstrap hint when the memory store has no `tier=core` rows yet. Includes the same mid-chat save + retrieval-visibility rules as the populated block."
 vars = []
 text = '''
 
-# Core memory
+# Always-on memory
 
-The memory store has no `tier=core` rows yet — the unconditional
-identity / working-style block is empty. As stable universals about
-the user come up, save them as core rows so they reach every future
-session.
+The memory store has no `tier=core` rows yet — the always-on block is
+empty. As stable universals about the user come up, save them as core
+rows so they reach every future session.
 
 - Identity: who the user is (name, role, timezone, languages, core
   preferences). Universal across projects.
@@ -362,10 +443,13 @@ not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source,
 docs); those are user-curated, and the agent reads the source directly
 when it needs the content.
 
-**Explicit imperatives act immediately, no pre-confirmation:**
-*"remember X"* → save, reply *"Saved."*;
-*"forget X"* → `Memory_query({verb: "search"})` + `Memory_write({verb: "delete"})`, reply *"Deleted: <content>."*;
-*"update X to Y"* → `Memory_query({verb: "search"})` + `Memory_write({verb: "update"})`, reply *"Updated."*
+**Explicit imperatives act immediately, no pre-confirmation.** For
+*"remember X"*, *"forget X"*, and *"update X to Y"* (and their non-
+English equivalents), follow **`[memory_protocol]` § "Explicit user
+imperatives"** as the single source of truth. Key shape for the
+update path: `Memory_write({verb:"add", content:"Y", replace_ids:[...]})` —
+atomic add+delete, NOT `verb:"update"` (which is reserved for mechanical
+rephrasing of the same fact).
 
 
 ## Retrieval is visible — every fact you use, the user sees

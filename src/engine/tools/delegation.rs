@@ -214,6 +214,15 @@ impl Tools {
                 if let Some(ref extra_args) = args.args {
                     content.push_str(&format!("\n\nSkill arguments: {}", extra_args));
                 }
+                // NOTE: tool registration + active_skill mutation happens
+                // at the engine's tool-dispatch layer, AFTER this result
+                // is returned. See `engine/tool_exec.rs` post-`Skill`
+                // hook: it calls `engine.activate_skill(_,
+                // ActivationMode::ToolInvocation)` so the skill's tool
+                // defs land in `engine.tools.skill_tools` for the next
+                // turn. This method runs inside the `Tools` struct,
+                // which has no engine back-reference — the dispatch
+                // layer is the right home for engine state mutation.
                 Ok(ToolResult::Success(content))
             }
             None => {

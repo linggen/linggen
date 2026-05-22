@@ -17,6 +17,7 @@ import type {
 import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from './utils/message';
 import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
+import { MemoryRecallMessage } from './MemoryRecallMessage';
 import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
@@ -138,6 +139,12 @@ const ChatMessageRow = React.memo<{
     if (el) userMsgRefs.current.set(userMsgIndex, el);
     else userMsgRefs.current.delete(userMsgIndex);
   }, [userMsgIndex, userMsgRefs]);
+  // Auto-recall messages get their own collapsible chip. Backend
+  // persists them with from_id="memory" (runtime.rs::push_user_turn_with_recall),
+  // so the role is "agent" — branch on `from` instead.
+  if (msg.from === 'memory') {
+    return <MemoryRecallMessage text={msg.text} />;
+  }
   const phase = isUser ? undefined : getMessagePhase(msg);
   const messageClass = isUser
     ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-slate-100 rounded-md px-2.5 py-1.5'

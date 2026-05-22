@@ -571,6 +571,18 @@ pub(crate) async fn chat_handler(
             crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type);
         policy.apply(&mut engine);
 
+        // Skill- and mission-created sessions don't write to the user's
+        // biographical memory and shouldn't have the core block + memory
+        // protocol injected into their system prompt. The owner-vs-consumer
+        // policy is too coarse to express this — every owner-machine session
+        // gets `include_memory=true` by default — so we narrow it here once
+        // the live creator is known. Matches the encoder gate in
+        // `consolidation::maybe_fire_consolidation`.
+        if session_creator != "user" {
+            engine.prompt_profile.include_memory = false;
+            engine.cached_system_prompt = None;
+        }
+
         let model_label = engine.model_id.clone();
         state_clone
             .send_agent_status(

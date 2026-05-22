@@ -118,7 +118,8 @@ fn memory_capability() -> Capability {
                         "clear_host":    {"type": "boolean", "description": "verb=update only. Clear host to null."},
                         "occurred_at":   {"type": "string", "description": "verb=add only. RFC-3339 timestamp of the described event (e.g. \"2026-04-27T16:00:00Z\"). **Omit entirely if unknown** — do not pass empty strings, partial dates, or null. Date-only \"YYYY-MM-DD\" is also accepted (interpreted as midnight UTC)."},
                         "source_session":{"type": "string", "description": "verb=add only. Opaque session id the fact was extracted from."},
-                        "skip_dedup":    {"type": "boolean", "description": "verb=add only. Skip server-side merge-into-near-duplicate. Set to true when running your own dedup pass."}
+                        "skip_dedup":    {"type": "boolean", "description": "verb=add only. Skip server-side merge-into-near-duplicate. Set to true when running your own dedup pass."},
+                        "replace_ids":   {"type": "array", "items": {"type": "string"}, "description": "verb=add only. **Atomic contradiction resolution.** Pass the ids of every conflicting prior row the user picked against via AskUser. The daemon inserts the new row AND deletes every id in this list in the same call — both tables are searched, you don't need to know each loser's tier. Use this whenever you're resolving a same-subject conflict (see `[memory_protocol]`). Never call add then delete separately for resolution."}
                     },
                     "required": ["verb"]
                 }),

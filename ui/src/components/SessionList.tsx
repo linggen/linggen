@@ -9,7 +9,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   MessageSquare, Bot, Sparkles, Plus, Search, X, Trash2,
   Play, Pause, ChevronDown, ChevronRight, Settings, RefreshCw,
-  CheckSquare, Loader2,
+  CheckSquare, Loader2, MoreHorizontal, Pencil,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission } from '../types';
@@ -134,9 +134,32 @@ export const SessionList: React.FC<{
   const [newSessionIds, setNewSessionIds] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Per-row action menu (3-dot) + inline rename. Only one row's menu or
+  // input is open at a time; opening either closes the other.
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Focus search
   useEffect(() => { if (showSearch) searchRef.current?.focus(); }, [showSearch]);
+
+  // Auto-focus + select-all when entering rename mode
+  useEffect(() => {
+    if (!renamingId) return;
+    const el = renameInputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [renamingId]);
+
+  // Close action menu on any outside click
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const close = () => setMenuOpenId(null);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [menuOpenId]);
 
   // Fetch missions
   useEffect(() => {
@@ -299,6 +322,23 @@ export const SessionList: React.FC<{
     await useSessionStore.getState().removeSessions(ids);
     exitSelectMode();
   }, [selectedIds, exitSelectMode]);
+
+  const startRename = useCallback((session: SessionInfo) => {
+    setRenameText(session.title || '');
+    setRenamingId(session.id);
+    setMenuOpenId(null);
+  }, []);
+
+  const commitRename = useCallback(async (id: string) => {
+    const trimmed = renameText.trim();
+    setRenamingId(null);
+    if (!trimmed) return;
+    await useSessionStore.getState().renameSession(id, trimmed);
+  }, [renameText]);
+
+  const cancelRename = useCallback(() => {
+    setRenamingId(null);
+  }, []);
 
   const handleToggleMission = useCallback(async (missionId: string, enabled: boolean) => {
     try {
@@ -488,10 +528,26 @@ export const SessionList: React.FC<{
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <span className={cn('text-xs font-medium truncate block',
-                      isActive && !selectMode ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-300')}>
-                      {session.title || session.id.slice(0, 12)}
-                    </span>
+                    {renamingId === session.id ? (
+                      <input
+                        ref={renameInputRef}
+                        type="text"
+                        value={renameText}
+                        onChange={(e) => setRenameText(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); commitRename(session.id); }
+                          else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                        }}
+                        onBlur={() => commitRename(session.id)}
+                        className="w-full text-xs font-medium bg-white dark:bg-slate-800 border border-blue-400 dark:border-blue-500 rounded px-1 py-px outline-none focus:ring-1 focus:ring-blue-400 text-slate-700 dark:text-slate-200"
+                      />
+                    ) : (
+                      <span className={cn('text-xs font-medium truncate block',
+                        isActive && !selectMode ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-300')}>
+                        {session.title || session.id.slice(0, 12)}
+                      </span>
+                    )}
                     <div className="flex items-center gap-1.5 mt-0.5">
                       {session.project_name && (
                         <span className="text-[10px] px-1 py-px rounded bg-slate-200/60 dark:bg-white/5 text-slate-500 truncate max-w-[80px]">
@@ -505,14 +561,48 @@ export const SessionList: React.FC<{
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0 relative">
                     <span className="text-[11px] text-slate-400 tabular-nums">{relativeTime(session.created_at)}</span>
-                    {!selectMode && onDeleteSession && (
-                      <button onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id); }}
-                        className="p-0.5 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500 transition-all"
-                        title="Delete session">
-                        <Trash2 size={11} />
+                    {!selectMode && renamingId !== session.id && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMenuOpenId(menuOpenId === session.id ? null : session.id);
+                        }}
+                        className="p-0.5 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-all"
+                        title="More actions"
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpenId === session.id}>
+                        <MoreHorizontal size={12} />
                       </button>
+                    )}
+                    {menuOpenId === session.id && (
+                      <div
+                        role="menu"
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="absolute top-full right-0 mt-1 z-30 min-w-[110px] py-1 rounded-md shadow-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-800">
+                        <button
+                          role="menuitem"
+                          onClick={(e) => { e.stopPropagation(); startRename(session); }}
+                          className="w-full flex items-center gap-2 px-2.5 py-1 text-[11px] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5">
+                          <Pencil size={11} />
+                          Rename
+                        </button>
+                        {onDeleteSession && (
+                          <button
+                            role="menuitem"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenId(null);
+                              onDeleteSession(session.id);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 text-[11px] text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10">
+                            <Trash2 size={11} />
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

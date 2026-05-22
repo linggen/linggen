@@ -101,9 +101,13 @@ impl EpisodicRow {
 /// never touches the engine lock.
 ///
 /// No-ops (cheap, no spawn) when: not an owner session
-/// (`include_memory == false` — consumer/mission never consolidate the
-/// user's biography), the turn count isn't a positive multiple of the
-/// interval, or there is no real session id to key the overlap guard.
+/// (`include_memory == false` — consumer never consolidates the user's
+/// biography), the session was created by a skill or mission scheduler
+/// (their transcripts are task-bound and not about the user — the
+/// mission→user promotion in `promote_mission_session_to_user` keeps
+/// the human-takeover case eligible), the turn count isn't a positive
+/// multiple of the interval, or there is no real session id to key the
+/// overlap guard.
 pub(super) fn maybe_fire_consolidation(ctx: &ChatRunCtx, engine: &AgentEngine) {
     if !engine.prompt_profile.include_memory {
         return;
@@ -115,6 +119,18 @@ pub(super) fn maybe_fire_consolidation(ctx: &ChatRunCtx, engine: &AgentEngine) {
     let Some(session_id) = ctx.session_id.clone() else {
         return;
     };
+    let creator = ctx
+        .state
+        .manager
+        .global_sessions
+        .get_session_meta(&session_id)
+        .ok()
+        .flatten()
+        .map(|m| m.creator)
+        .unwrap_or_else(|| "user".to_string());
+    if creator != "user" {
+        return;
+    }
 
     let recent_transcript = snapshot_recent_exchange(engine, interval);
     let state = ctx.state.clone();

@@ -46,7 +46,34 @@ pub(crate) struct CoreContent {
 #[derive(Deserialize)]
 struct CoreRow {
     content: String,
+    /// Row id — surfaced in the rendered line so the agent can act on
+    /// duplicates / conflicts directly (`ling-mem delete <id>`,
+    /// `Memory_write({verb:"add", replace_ids:[<id>], ...})`). Without
+    /// this, the agent sees content-only bullets and has to round-trip
+    /// through `Memory_query` just to learn the ids. Optional so a
+    /// malformed row degrades to a content-only line instead of failing
+    /// to parse the whole batch.
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, rename = "type")]
+    row_type: Option<String>,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
 }
+
+/// Footer instruction appended after the rows when there are ≥2 of them.
+/// Same intent as CC's `recall.sh` footer (so linggen and CC speak one
+/// reconcile-on-recall protocol), but (a) rephrased to use the
+/// linggen-native `Memory_*` tools instead of the `ling-mem` CLI — in
+/// owner sessions the agent dispatches through the memory capability,
+/// never shelling out — and (b) carrying the "don't ambush" gate inline
+/// so the rule and its scope live in one place instead of forcing the
+/// model to reconcile a footer instruction against a separate user
+/// preference row. Single-row blocks skip the footer — nothing to dedup
+/// or compare against.
+pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — `Memory_write({verb:\"delete\", id:\"<id>\"})` for exact dups, AskUser + `Memory_write({verb:\"add\", content:\"<resolved>\", replace_ids:[\"<loser_id_1>\", ...], ...})` for conflicts (one atomic call, never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
 
 /// Query `tier=core` rows from `ling-mem` and render them as a bullet
 /// list. Returns `None` when there are no core rows (or the binary is
@@ -59,12 +86,35 @@ pub(crate) fn load_core() -> Option<CoreContent> {
         return None;
     }
 
-    let facts = rows
+    let bullets = rows
         .iter()
-        .map(|r| format!("- {}", r.content.trim()))
+        .map(render_row)
         .collect::<Vec<_>>()
         .join("\n");
+    let facts = if rows.len() > 1 {
+        format!("{bullets}{RECONCILE_FOOTER}")
+    } else {
+        bullets
+    };
     Some(CoreContent { facts })
+}
+
+/// `- (type, host, YYYY-MM-DD, id=<id>): content` — matches the line
+/// shape `recall.sh` prints, so a row reads the same in linggen's core
+/// block and in CC's recall context.
+fn render_row(r: &CoreRow) -> String {
+    let row_type = r.row_type.as_deref().unwrap_or("fact");
+    let host = r.host.as_deref().unwrap_or("unknown");
+    let date = r
+        .created_at
+        .as_deref()
+        .map(|s| &s[..s.len().min(10)])
+        .unwrap_or("");
+    let content = r.content.trim();
+    match r.id.as_deref() {
+        Some(id) => format!("- ({row_type}, {host}, {date}, id={id}): {content}"),
+        None => format!("- ({row_type}, {host}, {date}): {content}"),
+    }
 }
 
 /// Spawn `ling-mem list --tier core` and bound the wait by `timeout`.
