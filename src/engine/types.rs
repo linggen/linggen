@@ -133,6 +133,10 @@ pub struct EngineConfig {
     /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
     /// on the `AgentEngine` still takes precedence over this.
     pub compact_threshold_default: Option<f32>,
+    /// Aggregate quality floor for per-turn auto-recall. If the best hit's
+    /// cosine score is below this, the whole recall is dropped (no model
+    /// injection, no widget). See `config::AgentConfig`. Default 0.5.
+    pub memory_inject_min_score: f32,
 }
 
 impl EngineConfig {
@@ -160,6 +164,7 @@ impl EngineConfig {
             consolidate_every_n_turns: config.agent.consolidate_every_n_turns,
             episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
+            memory_inject_min_score: config.agent.memory_inject_min_score,
         }
     }
 

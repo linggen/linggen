@@ -140,7 +140,9 @@ pub(super) async fn persist_and_emit_last_assistant_text(
 
 /// One row surfaced by per-turn auto-recall. Carries the id so the
 /// agent can act on duplicates / conflicts directly via `Memory_write`,
-/// and the UI can deep-link a row to the memory dashboard.
+/// and the UI can deep-link a row to the memory dashboard. Score is the
+/// raw cosine similarity from the embedding store so the UI can render
+/// match strength and the engine can gate on quality.
 #[derive(Debug, Clone)]
 pub(super) struct RecallRow {
     pub id: String,
@@ -148,15 +150,18 @@ pub(super) struct RecallRow {
     pub host: String,
     pub date: String,
     pub content: String,
+    pub score: f32,
 }
 
 impl RecallRow {
     /// One-line rendering for injection into the model's context. Matches
-    /// CC's `recall.sh` shape so a row reads the same in linggen and CC.
+    /// CC's `recall.sh` shape so a row reads the same in linggen and CC,
+    /// with an added `score=0.NN` field — the UI parses it for a badge
+    /// and the model can use it to gauge confidence.
     fn to_line(&self) -> String {
         format!(
-            "From memory ({}, {}, {}, id={}): {}",
-            self.r#type, self.host, self.date, self.id, self.content
+            "From memory ({}, {}, {}, score={:.2}, id={}): {}",
+            self.r#type, self.host, self.date, self.score, self.id, self.content
         )
     }
 }
@@ -187,15 +192,20 @@ async fn auto_recall_memory(
     state: &Arc<ServerState>,
     prompt: &str,
     session_id: Option<&str>,
+    inject_min_top_score: f32,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
-    const FETCH_LIMIT: usize = 8;
-    const TOP_K: usize = 3;
+    // Fetch wide so the project-scope filter has headroom before the
+    // TOP_K cap kicks in.
+    const FETCH_LIMIT: usize = 30;
+    const TOP_K: usize = 10;
     const MIN_PROMPT_CHARS: usize = 8;
-    /// Cosine similarity floor — calibrated for MiniLM-L6-v2 (strong matches
-    /// land in [0.30, 0.45]; noise sits below 0.25). Override per-process with
-    /// `LINGGEN_RECALL_MIN_SCORE`.
+    /// Per-row cosine similarity floor — calibrated for MiniLM-L6-v2
+    /// (strong matches land in [0.30, 0.45]; noise sits below 0.25).
+    /// Override per-process with `LINGGEN_RECALL_MIN_SCORE`. The
+    /// stricter aggregate "is the top hit useful?" gate is `inject_min_top_score`
+    /// (configurable via Settings → General → Memory Inject Score).
     const DEFAULT_MIN_SCORE: f32 = 0.30;
 
     let trimmed = prompt.trim();
@@ -298,14 +308,32 @@ async fn auto_recall_memory(
         if content.is_empty() {
             continue;
         }
-        hits.push(RecallRow { id, r#type: typ, host, date, content });
+        let score = row
+            .get("score")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(0.0);
+        hits.push(RecallRow { id, r#type: typ, host, date, content, score });
     }
 
     if hits.is_empty() {
-        None
-    } else {
-        Some(hits)
+        return None;
     }
+    // Aggregate quality gate: even though every row passed `min_score`,
+    // the user's turn may have nothing to do with memory at all. If the
+    // single best match is below `inject_min_top_score`, drop the whole
+    // batch so we don't burn tokens or distract the agent with weak
+    // hits — and don't surface a "N memories recalled" widget the user
+    // would ignore.
+    let top_score = hits.first().map(|h| h.score).unwrap_or(0.0);
+    if top_score < inject_min_top_score {
+        tracing::debug!(
+            "auto-recall: top score {:.3} below inject threshold {:.3}; dropping {} hits",
+            top_score, inject_min_top_score, hits.len()
+        );
+        return None;
+    }
+    Some(hits)
 }
 
 /// Push the user message onto the engine's chat history with auto-recall
@@ -321,7 +349,13 @@ pub(super) async fn push_user_turn_with_recall(
     // the "🧠 N memories recalled" widget appears in a skill session that
     // shouldn't touch memory at all.
     let recalled = if engine.prompt_profile.include_memory {
-        auto_recall_memory(&ctx.state, &ctx.clean_msg, ctx.session_id.as_deref()).await
+        auto_recall_memory(
+            &ctx.state,
+            &ctx.clean_msg,
+            ctx.session_id.as_deref(),
+            engine.cfg.memory_inject_min_score,
+        )
+        .await
     } else {
         None
     };
@@ -398,4 +432,27 @@ pub(super) async fn send_thinking_status(
             ctx.session_id.clone(),
         )
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecallRow;
+
+    /// The injected line shape is a contract with `MemoryRecallMessage.tsx`
+    /// (regex on the UI side parses these tokens). Keep them in lockstep.
+    #[test]
+    fn recall_row_to_line_includes_score_in_expected_shape() {
+        let row = RecallRow {
+            id: "abc12345-aaaa-bbbb-cccc-deadbeef0000".into(),
+            r#type: "fact".into(),
+            host: "linggen".into(),
+            date: "2026-05-20".into(),
+            content: "User prefers ~150-word replies.".into(),
+            score: 0.7150189,
+        };
+        assert_eq!(
+            row.to_line(),
+            "From memory (fact, linggen, 2026-05-20, score=0.72, id=abc12345-aaaa-bbbb-cccc-deadbeef0000): User prefers ~150-word replies."
+        );
+    }
 }

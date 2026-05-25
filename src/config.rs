@@ -152,6 +152,15 @@ pub struct AgentConfig {
     /// See `memory-spec.md` §2.
     #[serde(default = "default_dream_catchup_hours")]
     pub dream_catchup_hours: u64,
+
+    /// Aggregate quality floor for per-turn auto-recall. If the highest-
+    /// scoring hit is below this cosine similarity, drop the whole recall
+    /// — nothing is injected into the model context and no widget is
+    /// shown. The per-row noise cut (`LINGGEN_RECALL_MIN_SCORE`, default
+    /// 0.30) still applies first; this is a stricter "is the top match
+    /// actually useful?" gate. Range 0.0–1.0. Default 0.5.
+    #[serde(default = "default_memory_inject_min_score")]
+    pub memory_inject_min_score: f32,
 }
 
 fn default_memory_nudge_interval() -> usize {
@@ -168,6 +177,10 @@ fn default_episodic_ttl_days() -> u64 {
 
 fn default_dream_catchup_hours() -> u64 {
     24
+}
+
+fn default_memory_inject_min_score() -> f32 {
+    0.5
 }
 
 impl AgentConfig {
@@ -397,6 +410,12 @@ impl Config {
                 "Agent dream_catchup_hours must be greater than 0 (a 0-hour catch-up would re-trigger the dream mission every turn)"
             );
         }
+        let s = self.agent.memory_inject_min_score;
+        if !(0.0..=1.0).contains(&s) || s.is_nan() {
+            anyhow::bail!(
+                "Agent memory_inject_min_score must be between 0.0 and 1.0 (got {s})"
+            );
+        }
         // Warn (log) if default_models references non-existent model IDs.
         for dm in &self.routing.default_models {
             if !seen_ids.contains(&dm) {
@@ -440,6 +459,7 @@ impl Default for Config {
                 consolidate_every_n_turns: default_consolidate_every_n_turns(),
                 episodic_ttl_days: default_episodic_ttl_days(),
                 dream_catchup_hours: default_dream_catchup_hours(),
+                memory_inject_min_score: default_memory_inject_min_score(),
             },
             logging: LoggingConfig {
                 level: None,

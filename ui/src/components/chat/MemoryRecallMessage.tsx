@@ -7,12 +7,14 @@
  * can see exactly what context the model received that turn.
  *
  * Content shape (one row per line, format mirrors CC's `recall.sh`):
- *   From memory (<type>, <host>, <YYYY-MM-DD>, id=<uuid>): <content>
+ *   From memory (<type>, <host>, <YYYY-MM-DD>, score=0.NN, id=<uuid>): <content>
  *   ...
  *   Note: ... (optional reconcile footer when ≥2 rows)
  *
  * Lines that don't match the prefix become a free-text trailer (the
- * footer, or any future format the backend emits).
+ * footer, or any future format the backend emits). The `score=` field
+ * is parsed-or-defaulted: pre-score backend output still renders cleanly
+ * (badge just hides).
  */
 import React, { useMemo, useState } from 'react';
 import { Brain, ChevronDown, ChevronRight } from 'lucide-react';
@@ -21,6 +23,7 @@ interface ParsedRow {
   type: string;
   host: string;
   date: string;
+  score: number | null;
   id: string;
   content: string;
 }
@@ -30,7 +33,9 @@ interface ParsedRecall {
   trailer: string;
 }
 
-const ROW_RE = /^From memory \(([^,]+), ([^,]+), ([^,]+), id=([^)]+)\): (.+)$/;
+// `score=0.NN` is optional so old persisted messages from before the score
+// field was added still parse. New backend output always includes it.
+const ROW_RE = /^From memory \(([^,]+), ([^,]+), ([^,]+)(?:, score=([0-9.]+))?, id=([^)]+)\): (.+)$/;
 
 function parseRecallText(text: string): ParsedRecall {
   const rows: ParsedRow[] = [];
@@ -40,12 +45,27 @@ function parseRecallText(text: string): ParsedRecall {
     if (!trimmed) continue;
     const m = trimmed.match(ROW_RE);
     if (m) {
-      rows.push({ type: m[1], host: m[2], date: m[3], id: m[4], content: m[5] });
+      const score = m[4] != null ? Number.parseFloat(m[4]) : null;
+      rows.push({
+        type: m[1],
+        host: m[2],
+        date: m[3],
+        score: Number.isFinite(score) ? score : null,
+        id: m[5],
+        content: m[6],
+      });
     } else {
       trailerLines.push(trimmed);
     }
   }
   return { rows, trailer: trailerLines.join('\n') };
+}
+
+// Map cosine score → badge tint. >=0.6 strong, >=0.45 ok, else weak.
+function scoreTone(score: number): string {
+  if (score >= 0.6) return 'text-emerald-500 dark:text-emerald-400';
+  if (score >= 0.45) return 'text-amber-500 dark:text-amber-400';
+  return 'text-slate-400 dark:text-slate-500';
 }
 
 export const MemoryRecallMessage: React.FC<{ text: string }> = ({ text }) => {
@@ -85,6 +105,17 @@ export const MemoryRecallMessage: React.FC<{ text: string }> = ({ text }) => {
                   <span>{row.host}</span>
                   <span>·</span>
                   <span>{row.date}</span>
+                  {row.score != null && (
+                    <>
+                      <span>·</span>
+                      <span
+                        className={`font-mono ${scoreTone(row.score)}`}
+                        title={`Cosine similarity (higher = stronger match). Anything below the Memory Inject Score (Settings → General) is dropped before injection.`}
+                      >
+                        {row.score.toFixed(2)}
+                      </span>
+                    </>
+                  )}
                   <span>·</span>
                   <button
                     onClick={(e) => {
