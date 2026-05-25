@@ -62,7 +62,23 @@ pub struct SessionMeta {
     /// pass. None = no hint. Set via the same endpoint as `compact_threshold`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_focus: Option<String>,
+    /// True once the session title has been "locked" — either auto-derived
+    /// from user input crossing the threshold OR explicitly set by the
+    /// user via the rename UI. When true, the auto-rename routine stays
+    /// silent.
+    ///
+    /// Defaults to **true** for legacy sessions (missing field in the YAML
+    /// on disk → deserialized as true), so the rollout doesn't retro-
+    /// rename anything created before this feature shipped. Only fresh
+    /// user-creator sessions explicitly set `title_locked: false` at
+    /// creation to opt into the auto-rename pool. Skill / mission
+    /// sessions also create with `true` because their titles are
+    /// canonical (skill name / mission name) and shouldn't be rewritten.
+    #[serde(default = "default_true")]
+    pub title_locked: bool,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -199,6 +215,10 @@ impl SessionStore {
         let content = fs::read_to_string(&yaml_path)?;
         let mut meta: SessionMeta = serde_yml::from_str(&content)?;
         meta.title = new_title.to_string();
+        // Any explicit rename — user via the API, or the chat auto-rename
+        // hook — locks the title so the placeholder-overwrite path stays
+        // silent afterwards.
+        meta.title_locked = true;
         let yaml = serde_yml::to_string(&meta)?;
         fs::write(yaml_path, yaml)?;
         Ok(())
@@ -404,7 +424,7 @@ mod tests {
             skill: None,
             creator: "user".into(),
             cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-            compact_threshold: None, compact_focus: None,
+            compact_threshold: None, compact_focus: None, title_locked: false,
         };
         store.add_session(&meta).unwrap();
 
@@ -418,6 +438,10 @@ mod tests {
             .unwrap();
         let sessions = store.list_sessions().unwrap();
         assert_eq!(sessions[0].title, "Renamed");
+        // rename_session locks the title so the auto-rename hook stays
+        // silent on subsequent turns.
+        let reloaded = store.get_session_meta("sess-1000-abcd1234").unwrap().unwrap();
+        assert!(reloaded.title_locked);
 
         store.remove_session("sess-1000-abcd1234").unwrap();
         assert_eq!(store.list_sessions().unwrap().len(), 0);
@@ -435,7 +459,7 @@ mod tests {
                     skill: None,
                     creator: "user".into(),
                     cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                    compact_threshold: None, compact_focus: None,
+                    compact_threshold: None, compact_focus: None, title_locked: false,
                 })
                 .unwrap();
         }
@@ -454,7 +478,7 @@ mod tests {
             skill: None,
             creator: "user".into(),
             cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-            compact_threshold: None, compact_focus: None,
+            compact_threshold: None, compact_focus: None, title_locked: false,
         };
         store.add_session(&meta).unwrap();
 
@@ -494,7 +518,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
 
@@ -543,7 +567,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
         store
@@ -576,7 +600,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
         store
@@ -609,7 +633,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());
         assert!(store
@@ -620,7 +644,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());
         assert!(store
@@ -631,7 +655,7 @@ mod tests {
                 skill: None,
                 creator: "user".into(),
                 cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None,
+                compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());
     }

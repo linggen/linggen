@@ -88,12 +88,17 @@ async fn ensure_session(
         user_id: req.user_id.clone(),
         compact_threshold: None,
         compact_focus: None,
+        // The title here is already derived from the user message via
+        // `auto_session_title`, so it's a real title — lock it.
+        title_locked: true,
     };
 
     if let Some(sid) = req.session_id.clone() {
         let exists = matches!(global_sessions.get_session_meta(&sid), Ok(Some(_)));
         if !exists {
             let _ = global_sessions.add_session(&make_meta(sid.clone()));
+        } else {
+            maybe_auto_rename(state, &sid, &req.message).await;
         }
         return Some(sid);
     }
@@ -112,6 +117,41 @@ async fn ensure_session(
         mission_id: req.mission_id.clone(),
     });
     Some(new_id)
+}
+
+/// If the session was created with a placeholder title (UI's time-based
+/// "Chat May 22, 3:20 PM" or "New Chat"), replace it with a title derived
+/// from the user's first substantive message and lock it.
+///
+/// Best-effort: any read/write failure is swallowed — chat must not block
+/// on a cosmetic rename.
+async fn maybe_auto_rename(state: &Arc<ServerState>, session_id: &str, message: &str) {
+    let store = &state.manager.global_sessions;
+    let Ok(Some(meta)) = store.get_session_meta(session_id) else {
+        return;
+    };
+    if meta.title_locked {
+        return;
+    }
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    // Strip the optional `@agent ` routing prefix so the rename reflects
+    // the actual user intent, not the routing token.
+    let body = parse_explicit_target_prefix(trimmed)
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    if body.trim().is_empty() {
+        return;
+    }
+    let new_title = auto_session_title(body);
+    if new_title == meta.title {
+        return;
+    }
+    if store.rename_session(session_id, &new_title).is_ok() {
+        let _ = state.events_tx.send(ServerEvent::StateUpdated);
+    }
 }
 
 /// Resolve the effective `(target_agent_id, clean_message)` pair.
@@ -656,7 +696,7 @@ pub(crate) async fn chat_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_explicit_target_prefix;
+    use super::{auto_session_title, parse_explicit_target_prefix};
 
     #[test]
     fn parse_explicit_target_prefix_accepts_valid_mention() {
@@ -674,5 +714,29 @@ mod tests {
     fn parse_explicit_target_prefix_rejects_invalid_agent_token() {
         let parsed = parse_explicit_target_prefix("@coder! please review");
         assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn auto_title_short_message_kept_whole() {
+        assert_eq!(auto_session_title("fix login bug"), "fix login bug");
+    }
+
+    #[test]
+    fn auto_title_truncates_long_word_run() {
+        let t = auto_session_title("one two three four five six seven eight nine");
+        assert_eq!(t, "one two three four five six...");
+    }
+
+    #[test]
+    fn auto_title_ellipses_long_phrase() {
+        let long = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff";
+        let t = auto_session_title(long);
+        assert!(t.ends_with("..."));
+        assert!(t.chars().count() <= 50);
+    }
+
+    #[test]
+    fn auto_title_empty_falls_back() {
+        assert_eq!(auto_session_title("   "), "New Chat");
     }
 }

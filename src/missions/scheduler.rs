@@ -226,6 +226,8 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         user_id: None,
         compact_threshold: None,
         compact_focus: None,
+        // Mission sessions carry the mission name as canonical title.
+        title_locked: true,
     };
     match store.add_session(&meta) {
         Ok(_) => Some(session_id),

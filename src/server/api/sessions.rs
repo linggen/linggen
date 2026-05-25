@@ -104,12 +104,13 @@ pub(crate) async fn create_session(
     let cwd = cwd_str
         .as_deref()
         .map(|p| canonical_project_root(p).to_string_lossy().to_string());
+    let is_skill = req.skill.is_some();
     let meta = crate::state_fs::sessions::SessionMeta {
         id: id.clone(),
         title: req.title,
         created_at: crate::util::now_ts_secs(),
         skill: req.skill.clone(),
-        creator: if req.skill.is_some() {
+        creator: if is_skill {
             "skill".into()
         } else {
             "user".into()
@@ -122,6 +123,11 @@ pub(crate) async fn create_session(
         user_id: req.user_id,
         compact_threshold: None,
         compact_focus: None,
+        // Skill sessions carry the skill name as canonical title; lock it.
+        // User-created chats arrive with a time-based placeholder ("Chat May
+        // 22, 3:20 PM") that should be overwritten by the auto-rename hook
+        // once the user's first message lands.
+        title_locked: is_skill,
     };
 
     match state.manager.global_sessions.add_session(&meta) {
@@ -170,6 +176,9 @@ pub(crate) async fn resolve_session_api(
         user_id: None,
         compact_threshold: None,
         compact_focus: None,
+        // "New Chat" is a placeholder — the auto-rename hook will replace
+        // it from the user's first message.
+        title_locked: false,
     };
     let _ = store.add_session(&meta);
     Json(serde_json::json!({
