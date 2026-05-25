@@ -61,6 +61,22 @@ impl AgentEngine {
     pub(crate) fn system_prompt(&self) -> String {
         use crate::prompts::keys;
 
+        // Mission short-circuit: when the scheduler dispatched a mission,
+        // its body IS the system prompt. No agent persona / identity / spec
+        // body / skill metadata is prepended — mission authors write the
+        // full runbook in `mission.md`. See `doc/mission-spec.md` →
+        // "Body IS the system prompt". Tools come from the mission's
+        // `allowed-tools`; permission from `permission`; everything else
+        // the LLM needs to know is in the mission body.
+        if let Some(mission) = &self.active_mission {
+            let resolved = if let Some(ref dir) = mission.mission_dir {
+                mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
+            } else {
+                mission.body.clone()
+            };
+            return resolved;
+        }
+
         // Personality is injected first — it's the agent's voice regardless of context.
         let personality = self
             .spec
@@ -171,24 +187,9 @@ impl AgentEngine {
             }
         }
 
-        // Mission frame — analogous to active_skill, used when the scheduler
-        // dispatches a mission. The body is the agent's instructions for this
-        // run, written in the same step-by-step style as a SKILL.md.
-        if let Some(mission) = &self.active_mission {
-            let resolved_content = if let Some(ref dir) = mission.mission_dir {
-                mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
-            } else {
-                mission.body.clone()
-            };
-            prompt.push_str(&self.prompt_store.render_or_fallback(
-                keys::SYSTEM_ACTIVE_MISSION_FRAME,
-                &[
-                    ("name", mission.name.as_str()),
-                    ("description", mission.description.as_str()),
-                    ("content", &resolved_content),
-                ],
-            ));
-        }
+        // Note: the `active_mission` branch lives at the top of this
+        // function — when a mission is active, the body short-circuits
+        // the whole agent-persona path. We don't re-inject it here.
 
         prompt
     }

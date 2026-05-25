@@ -17,7 +17,10 @@ const MAX_TRIGGERS_PER_DAY: u32 = 100;
 /// name under `~/.linggen/missions/`. Firing it does NOT run a generic
 /// `ling` agent prompt — the worklist/TTL is engine-owned, so a static
 /// mission body can't carry it. Instead it invokes the engine's global
-/// consolidate+evict pass directly (see [`dispatch_dream_mission`]).
+/// Id of the built-in `dream` mission (memory consolidation). Treated
+/// like any other mission by `dispatch_mission_prompt`; only the
+/// turn-seam catch-up resolves this name to keep its eligibility check
+/// from drifting away from the on-disk mission directory.
 const DREAM_MISSION_ID: &str = "dream";
 
 /// Per-mission tracking state.
@@ -250,185 +253,6 @@ pub async fn dispatch_mission_prompt_public(
     dispatch_mission_prompt(state, root, project_path, mission, session_id).await;
 }
 
-/// Run the built-in `dream` mission: the engine's global consolidate +
-/// evict pass. Not a generic agent prompt — the TTL/worklist is
-/// engine-owned (locked contract), which a static mission body can't
-/// carry. We still create the mission session, emit the same events, and
-/// write a `MissionRunEntry` so it shows up in mission history exactly
-/// like any mission (the audit trail the user asked for); the heavy
-/// lifting is `run_consolidate_evict`, which spawns its own `ling-mem`
-/// CONSOLIDATE subagent with its own run record.
-async fn dispatch_dream_mission(
-    state: Arc<ServerState>,
-    root: std::path::PathBuf,
-    project_path: &str,
-    mission: &Mission,
-    pre_session_id: Option<String>,
-) {
-    use crate::server::AgentStatusKind;
-    use std::sync::atomic::Ordering;
-
-    let agent_id = MISSION_AGENT_ID;
-    let mission_run_id = format!(
-        "mission-run-{}-{}",
-        crate::util::now_ts_secs(),
-        &uuid::Uuid::new_v4().to_string()[..8]
-    );
-
-    // Shared overlap guard: both the cron fire and the turn-seam catch-up
-    // funnel through here. `swap(true)` — if it was already true, another
-    // dream run owns it; record a skip and bail WITHOUT clearing (the
-    // owner clears). Only the acquirer clears, at the end.
-    if state.dream_running.swap(true, Ordering::SeqCst) {
-        info!("dream mission: already running, skipping this trigger");
-        record_mission_run(&state, mission, &mission_run_id, None, "skipped", true);
-        return;
-    }
-
-    let has_pre_session = pre_session_id.is_some();
-    let session_id = pre_session_id.or_else(|| create_mission_session(mission));
-
-    if !has_pre_session {
-        if let Some(ref sid) = session_id {
-            let evt_cwd = mission
-                .cwd
-                .clone()
-                .or_else(|| mission.project.clone())
-                .unwrap_or_default();
-            let _ = state.events_tx.send(ServerEvent::SessionCreated {
-                session_id: sid.clone(),
-                title: mission_session_title(mission),
-                creator: "mission".into(),
-                project: Some(evt_cwd.clone()),
-                project_name: std::path::Path::new(&evt_cwd)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string()),
-                skill: None,
-                mission_id: Some(mission.id.clone()),
-            });
-            // Persist a kickoff line so the session chat documents what ran.
-            let global_store = crate::state_fs::SessionStore::with_sessions_dir(
-                crate::paths::global_sessions_dir(),
-            );
-            let _ = global_store.add_chat_message(
-                sid,
-                &crate::state_fs::sessions::ChatMsg {
-                    agent_id: agent_id.to_string(),
-                    from_id: "user".to_string(),
-                    to_id: agent_id.to_string(),
-                    content: "Memory dream: consolidate past-TTL episodic memories and evict the rest.".to_string(),
-                    timestamp: crate::util::now_ts_secs(),
-                    is_observation: false,
-                },
-            );
-        }
-    }
-
-    let _ = state.events_tx.send(ServerEvent::MissionTriggered {
-        mission_id: mission.id.clone(),
-        agent_id: agent_id.to_string(),
-        project_root: project_path.to_string(),
-        session_id: session_id.clone(),
-    });
-    state
-        .send_agent_status(
-            agent_id.to_string(),
-            AgentStatusKind::Working,
-            Some("Memory consolidation".to_string()),
-            None,
-            session_id.clone(),
-        )
-        .await;
-
-    // TTL policy is owned by `ling-mem` — the daemon's `/api/config`
-    // exposes `episodic_ttl_days`, set from its own dashboard. Fetch
-    // live each run so a change in the ling-mem console takes effect
-    // without restarting Linggen. Falls back to the engine config's
-    // legacy default if the daemon is unreachable.
-    let ling_mem_url = state
-        .manager
-        .get_config_snapshot()
-        .await
-        .agent
-        .ling_mem_url
-        .clone();
-    let episodic_ttl_days = fetch_episodic_ttl_days(&ling_mem_url)
-        .await
-        .unwrap_or_else(|| crate::config::Config::default().agent.episodic_ttl_days);
-
-    // The consolidate+evict subagent is keyed to this mission session so
-    // its run record / events are auditable under the mission.
-    let sid_for_call = session_id
-        .clone()
-        .unwrap_or_else(|| mission_run_id.clone());
-    let result = crate::server::run_consolidate_evict(
-        &state,
-        &state.manager,
-        &sid_for_call,
-        agent_id,
-        &root,
-        episodic_ttl_days,
-    )
-    .await;
-
-    let status = match &result {
-        Ok((promoted, deleted)) => {
-            info!("dream mission: consolidate ok (promoted={promoted} deleted={deleted})");
-            "completed"
-        }
-        Err(e) => {
-            warn!("dream mission: consolidate failed: {e}");
-            "failed"
-        }
-    };
-
-    record_mission_run_full(
-        &state,
-        mission,
-        &mission_run_id,
-        session_id.as_deref(),
-        status,
-        false,
-        None,
-        None,
-    );
-    state
-        .send_agent_status(
-            agent_id.to_string(),
-            AgentStatusKind::Idle,
-            None,
-            None,
-            session_id.clone(),
-        )
-        .await;
-
-    // Release the shared guard — only the acquirer reaches here.
-    state.dream_running.store(false, Ordering::SeqCst);
-}
-
-/// GET `<ling_mem_url>/api/config` and pull `episodic_ttl_days` out of
-/// the response. ling-mem owns the TTL policy; the engine just reads it
-/// each dream run. Tolerates two envelope shapes that the daemon has
-/// used: `{ episodic_ttl_days: N }` and `{ data: { episodic_ttl_days: N } }`.
-/// Returns `None` on any failure (timeout, non-200, missing field) so
-/// the caller can fall back to a baked-in default.
-async fn fetch_episodic_ttl_days(ling_mem_url: &str) -> Option<u64> {
-    let url = format!("{}/api/config", ling_mem_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let body: serde_json::Value = resp.json().await.ok()?;
-    let pluck = |obj: &serde_json::Value| -> Option<u64> {
-        obj.get("episodic_ttl_days").and_then(|v| v.as_u64())
-    };
-    pluck(&body).or_else(|| body.get("data").and_then(pluck))
-}
-
 /// Resolve a mission's working dir the same way the scheduler loop does:
 /// `cwd` → legacy `project` → current dir, with `~`/`$VAR` expansion.
 fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
@@ -452,9 +276,9 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 /// but cron is missed when the machine is off/asleep; this re-triggers it
 /// the next time Linggen is used if it hasn't run within
 /// `dream_catchup_hours`. Cheap + non-blocking: spawns, reads run
-/// history, compares, and only then dispatches. Overlap with the cron
-/// fire is prevented by the shared `dream_running` guard in
-/// [`dispatch_dream_mission`].
+/// history, compares, and only then calls `dispatch_mission_prompt_public`.
+/// Overlap with the cron fire is prevented by the generic mission
+/// busy-skip in the scheduler tick.
 pub(crate) fn maybe_fire_dream_catchup(state: Arc<ServerState>) {
     tokio::spawn(async move {
         // Respect user intent: a missing or disabled `dream` mission means
@@ -515,13 +339,6 @@ async fn dispatch_mission_prompt(
     pre_session_id: Option<String>,
 ) {
     use crate::server::AgentStatusKind;
-
-    // The built-in memory mission is engine-driven, not a generic agent
-    // prompt — branch before any agent/prompt setup.
-    if mission.id == DREAM_MISSION_ID {
-        dispatch_dream_mission(state, root, project_path, mission, pre_session_id).await;
-        return;
-    }
 
     let agent_id = MISSION_AGENT_ID;
 

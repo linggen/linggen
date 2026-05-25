@@ -56,43 +56,11 @@ const WORKLIST_CONTENT_CHARS: usize = 500;
 const LING_MEM_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of one per-session encode tick — how many rows were written to
-/// episodic. Only logged. (Promote/delete counts belong to the `dream`
-/// mission's consolidate path, which returns its own tuple.)
+/// episodic. Only logged. Consolidation runs separately as a mission;
+/// it doesn't share this counter.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct TickOutcome {
     pub encoded: u32,
-}
-
-/// Minimal projection of an episodic `ling-mem` row — only the fields the
-/// past-TTL filter and the consolidate worklist need. Unknown fields
-/// (notably the embedding `vector`) are ignored by serde.
-#[derive(Debug, Deserialize)]
-struct EpisodicRow {
-    id: String,
-    content: String,
-    #[serde(rename = "type")]
-    fact_type: String,
-    #[serde(default)]
-    contexts: Vec<String>,
-    // RFC-3339 strings — kept as `String` so we don't need chrono's
-    // `serde` feature (not enabled in this crate). Parsed in `decay_ts`.
-    created_at: String,
-    #[serde(default)]
-    updated_at: Option<String>,
-}
-
-impl EpisodicRow {
-    /// The decay clock — `updated_at` if the row was ever touched, else
-    /// `created_at` (a touch resets retention, `memory-spec.md` §2). Must
-    /// match `linggen-memory`'s `evict` clock exactly. An unparseable
-    /// stamp is treated as epoch (always past-TTL) so a malformed row is
-    /// surfaced to the consolidator rather than silently retained forever.
-    fn decay_ts(&self) -> DateTime<Utc> {
-        let raw = self.updated_at.as_deref().unwrap_or(&self.created_at);
-        DateTime::parse_from_rfc3339(raw)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
-    }
 }
 
 /// Inspect the just-completed turn and, if this session hit a
@@ -258,72 +226,20 @@ async fn run_encode(
     let task = build_encode_task(session_id, recent_transcript);
     // Encoder runs post-turn with the user reachable — keeps AskUser
     // via the standard `ling-mem` spec for contradiction reconcile.
-    let summary = run_ling_mem_subagent(
-        state, manager, ws_root, agent_id, session_id, "ling-mem", task,
-    )
-    .await
-    .map_err(|e| e.context("ling-mem encode subagent"))?;
+    let summary = run_ling_mem_subagent(state, manager, ws_root, agent_id, session_id, task)
+        .await
+        .map_err(|e| e.context("ling-mem encode subagent"))?;
     parse_encoded(&summary)
 }
 
 /// **Consolidate + evict phase.** Terminally promote/delete the past-TTL
-/// worklist, then a deterministic evict backstop. **Global** (the
-/// worklist is every past-TTL episodic row, not session-scoped);
-/// `session_id` keys the run record / overlap guard / logs only.
-///
-/// Empty worklist → nothing is past-TTL, so there is also nothing to
-/// evict: no subagent spawn, returns `(0, 0, 0)`.
-pub(crate) async fn run_consolidate_evict(
-    state: &Arc<ServerState>,
-    manager: &Arc<AgentManager>,
-    session_id: &str,
-    agent_id: &str,
-    ws_root: &PathBuf,
-    episodic_ttl_days: u64,
-) -> anyhow::Result<(u32, u32)> {
-    // The engine owns TTL policy: one absolute cutoff drives both the
-    // worklist selection and the evict backstop.
-    let cutoff = Utc::now() - ChronoDuration::days(episodic_ttl_days as i64);
-    // Worklist selection + the deterministic evict backstop still talk
-    // to the binary (engine-direct, no subagent), so we keep
-    // resolve_ling_mem for those two callers.
-    let (bin, data_dir) = resolve_ling_mem(state).await;
-
-    let worklist = select_past_ttl_worklist(&bin, &data_dir, cutoff)
-        .await
-        .map_err(|e| e.context("listing episodic rows for consolidation"))?;
-    if worklist.is_empty() {
-        return Ok((0, 0));
-    }
-
-    let task = build_consolidate_task(&cutoff, &worklist);
-    // Dream is unattended — no user, no AskUser. Headless variant of
-    // the spec strips that tool so uncertainty resolves to *skip*, not
-    // *prompt at 3am*.
-    let summary = run_ling_mem_subagent(
-        state, manager, ws_root, agent_id, session_id, "ling-mem-autonomous", task,
-    )
-    .await
-    .map_err(|e| e.context("ling-mem-autonomous consolidate subagent"))?;
-    let (promoted, deleted) = parse_consolidated(&summary)?;
-
-    // Deterministic backstop: evict whatever past-TTL rows the subagent
-    // didn't terminally handle. Same cutoff. Failures here are non-fatal —
-    // the rows simply age out on a later run.
-    if let Err(e) = run_ling_mem(&bin, &data_dir, &["evict", "--before", &cutoff.to_rfc3339()]).await
-    {
-        tracing::warn!(session_id = %session_id, error = %e, "evict backstop failed (non-fatal)");
-    }
-
-    Ok((promoted, deleted))
-}
-
 /// Resolve the `ling-mem` binary + data dir. `ling-mem` is installed by
 /// linggen itself (see `linggensite/public/install.sh`) — alongside `ling`
 /// in `/usr/local/bin` (preferred) or `~/.local/bin` (fallback). The
 /// resolver also accepts a `$PATH` match for hand-installed copies. The
 /// task prompt directs the subagent to this absolute path so commands
 /// resolve regardless of `PATH` (resolvability, not a security lock).
+#[allow(dead_code)]
 async fn resolve_ling_mem(_state: &Arc<ServerState>) -> (PathBuf, PathBuf) {
     let bin = crate::engine::capability_tools::resolve_binary(None, "ling-mem");
     let data_dir = crate::paths::linggen_home().to_path_buf();
@@ -343,17 +259,14 @@ async fn run_ling_mem_subagent(
     ws_root: &PathBuf,
     agent_id: &str,
     session_id: &str,
-    target_agent: &str,
     task: String,
 ) -> anyhow::Result<String> {
-    // Build an AskUserBridge from ServerState so a target spec that
-    // includes AskUser (the per-session encoder, `ling-mem`) can route
-    // its widget through the same pending_ask_user map the parent uses.
-    // The autonomous dream spec (`ling-mem-autonomous`) intentionally
-    // omits AskUser from its tool list — the bridge is harmless when
-    // unused. Bridge is ServerState-scoped so it outlives the parent's
-    // turn (encoder runs post-turn). Subagent AskUser already times out
-    // at 5 min (tools/mod.rs::ask_user) — no deadlock risk.
+    // The encoder runs post-turn with the user reachable, so wire an
+    // AskUserBridge through ServerState. The widget surfaces in the
+    // SubagentPane tab keyed to the encoder's agent_id. Subagent AskUser
+    // already times out at 5 min (tools/mod.rs::ask_user) — no deadlock
+    // risk. (The dream mission no longer uses this function — it runs as
+    // a generic mission with no AskUser by mission policy.)
     let ask_user_bridge = Some(Arc::new(crate::engine::tools::AskUserBridge {
         events_tx: state.events_tx.clone(),
         pending: state.pending_ask_user.clone(),
@@ -364,7 +277,7 @@ async fn run_ling_mem_subagent(
         manager.clone(),
         ws_root.clone(),
         agent_id.to_string(), // caller_id
-        target_agent.to_string(),
+        "ling-mem".to_string(),
         task,
         None, // parent_run_id
         0,    // delegation_depth
@@ -388,67 +301,6 @@ async fn run_ling_mem_subagent(
         }
         other => anyhow::bail!("subagent returned {other:?}"),
     }
-}
-
-/// `ling-mem list --episodic --format json`, then keep only rows whose
-/// decay clock is older than `cutoff`. The binary stays policy-free; the
-/// engine applies the TTL.
-async fn select_past_ttl_worklist(
-    bin: &Path,
-    data_dir: &Path,
-    cutoff: DateTime<Utc>,
-) -> anyhow::Result<Vec<EpisodicRow>> {
-    let stdout = run_ling_mem(bin, data_dir, &["list", "--episodic", "--format", "json"]).await?;
-    let rows = parse_episodic_rows(&stdout)?;
-    Ok(rows.into_iter().filter(|r| r.decay_ts() < cutoff).collect())
-}
-
-/// Accept either a JSON array or newline-delimited JSON objects (the CLI
-/// has used both shapes for list output).
-fn parse_episodic_rows(stdout: &str) -> anyhow::Result<Vec<EpisodicRow>> {
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    if let Ok(rows) = serde_json::from_str::<Vec<EpisodicRow>>(trimmed) {
-        return Ok(rows);
-    }
-    let mut rows = Vec::new();
-    for line in trimmed.lines().filter(|l| !l.trim().is_empty()) {
-        rows.push(
-            serde_json::from_str::<EpisodicRow>(line)
-                .map_err(|e| anyhow::anyhow!("episodic row parse failed: {e}; line: {line}"))?,
-        );
-    }
-    Ok(rows)
-}
-
-/// Run one `ling-mem` subcommand deterministically (no LLM). Always
-/// pins `--data-dir` so it never depends on env or cwd.
-async fn run_ling_mem(bin: &Path, data_dir: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let output = tokio::time::timeout(
-        LING_MEM_TIMEOUT,
-        tokio::process::Command::new(bin)
-            .arg("--data-dir")
-            .arg(data_dir)
-            .args(args)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("`ling-mem {}` timed out", args.join(" ")))?
-    .map_err(|e| anyhow::anyhow!("spawning `ling-mem {}`: {e}", args.join(" ")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "`ling-mem {}` exited {}: {}",
-            args.join(" "),
-            output.status,
-            stderr.trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// ENCODE-phase task. The subagent talks to memory through the
@@ -492,50 +344,6 @@ fn build_encode_task(session_id: &str, recent_transcript: &str) -> String {
     )
 }
 
-/// CONSOLIDATE-phase task. The engine already selected the past-TTL
-/// worklist (the binary stays policy-free for selection); the subagent
-/// only makes the terminal promote/delete call per row via `Memory_*`.
-fn build_consolidate_task(cutoff: &DateTime<Utc>, worklist: &[EpisodicRow]) -> String {
-    let worklist_block = worklist
-        .iter()
-        .map(|r| {
-            let ctx = if r.contexts.is_empty() {
-                String::new()
-            } else {
-                format!(" contexts={}", r.contexts.join(","))
-            };
-            let content: String = r.content.chars().take(WORKLIST_CONTENT_CHARS).collect();
-            let ellipsis = if r.content.chars().count() > WORKLIST_CONTENT_CHARS {
-                "…"
-            } else {
-                ""
-            };
-            format!(
-                "- id={} type={}{}\n  content: {}{}",
-                r.id, r.fact_type, ctx, content, ellipsis
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        "Phase: CONSOLIDATE.\n\
-         \n\
-         These episodic rows are older than the {cutoff} TTL cutoff. The \
-         engine already selected them — do NOT list episodic yourself. \
-         For EACH: promote (write to semantic with `Memory_write({{verb: \
-         \"add\", host: \"linggen\", …}})`, then \
-         `Memory_write({{verb: \"delete\", tier: \"episodic\", id: <id>}})`) \
-         or delete only (`Memory_write({{verb: \"delete\", tier: \"episodic\", \
-         id: <id>}})`).\n\
-         <worklist>\n{worklist_block}\n</worklist>\n\
-         \n\
-         Then emit your single CONSOLIDATED status line and stop.",
-        cutoff = cutoff.to_rfc3339(),
-        worklist_block = worklist_block,
-    )
-}
-
 /// Parse the ENCODE contract line: `ENCODED encoded=<n>` or
 /// `ENCODE_FAILED <reason>`.
 fn parse_encoded(summary: &str) -> anyhow::Result<u32> {
@@ -550,24 +358,6 @@ fn parse_encoded(summary: &str) -> anyhow::Result<u32> {
         anyhow::bail!("encode reported failure:{}", reason);
     }
     Ok(field(line, "encoded"))
-}
-
-/// Parse the CONSOLIDATE contract line:
-/// `CONSOLIDATED promoted=<n> deleted=<n>` or `CONSOLIDATE_FAILED <reason>`.
-fn parse_consolidated(summary: &str) -> anyhow::Result<(u32, u32)> {
-    let line = summary
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|l| l.starts_with("CONSOLIDATED") || l.starts_with("CONSOLIDATE_FAILED"))
-        .ok_or_else(|| {
-            anyhow::anyhow!("subagent emitted no CONSOLIDATED/CONSOLIDATE_FAILED line")
-        })?;
-
-    if let Some(reason) = line.strip_prefix("CONSOLIDATE_FAILED") {
-        anyhow::bail!("consolidate reported failure:{}", reason);
-    }
-    Ok((field(line, "promoted"), field(line, "deleted")))
 }
 
 /// Read `key=<u32>` out of a status line; missing/garbage → 0.
@@ -595,74 +385,4 @@ mod tests {
         assert!(parse_encoded("did stuff, forgot the line").is_err());
     }
 
-    #[test]
-    fn parse_consolidated_reads_counts() {
-        let (p, d) = parse_consolidated("noise\nCONSOLIDATED promoted=2 deleted=4").unwrap();
-        assert_eq!((p, d), (2, 4));
-    }
-
-    #[test]
-    fn parse_consolidated_zeroed_ok() {
-        let (p, d) = parse_consolidated("CONSOLIDATED promoted=0 deleted=0").unwrap();
-        assert_eq!((p, d), (0, 0));
-    }
-
-    #[test]
-    fn parse_consolidated_failure_and_missing_are_err() {
-        assert!(parse_consolidated("CONSOLIDATE_FAILED store unreadable").is_err());
-        assert!(parse_consolidated("I did some stuff but forgot the line").is_err());
-    }
-
-
-    #[test]
-    fn parse_episodic_rows_handles_array_and_ndjson() {
-        let now = Utc::now().to_rfc3339();
-        let array = format!(
-            r#"[{{"id":"a","content":"x","type":"fact","contexts":[],"created_at":"{now}"}}]"#
-        );
-        assert_eq!(parse_episodic_rows(&array).unwrap().len(), 1);
-
-        let ndjson = format!(
-            "{{\"id\":\"a\",\"content\":\"x\",\"type\":\"fact\",\"created_at\":\"{now}\"}}\n\
-             {{\"id\":\"b\",\"content\":\"y\",\"type\":\"learned\",\"created_at\":\"{now}\"}}"
-        );
-        assert_eq!(parse_episodic_rows(&ndjson).unwrap().len(), 2);
-
-        assert_eq!(parse_episodic_rows("  ").unwrap().len(), 0);
-    }
-
-    #[test]
-    fn decay_ts_prefers_updated_at() {
-        let created = Utc::now() - ChronoDuration::days(10);
-        let updated = Utc::now() - ChronoDuration::days(1);
-        let row = EpisodicRow {
-            id: "x".into(),
-            content: "c".into(),
-            fact_type: "fact".into(),
-            contexts: vec![],
-            created_at: created.to_rfc3339(),
-            updated_at: Some(updated.to_rfc3339()),
-        };
-        // Round-trips through RFC-3339, so compare at second precision.
-        assert_eq!(row.decay_ts().timestamp(), updated.timestamp());
-
-        let row2 = EpisodicRow {
-            updated_at: None,
-            ..row
-        };
-        assert_eq!(row2.decay_ts().timestamp(), created.timestamp());
-    }
-
-    #[test]
-    fn decay_ts_unparseable_is_epoch() {
-        let row = EpisodicRow {
-            id: "x".into(),
-            content: "c".into(),
-            fact_type: "fact".into(),
-            contexts: vec![],
-            created_at: "not-a-timestamp".into(),
-            updated_at: None,
-        };
-        assert_eq!(row.decay_ts(), DateTime::<Utc>::UNIX_EPOCH);
-    }
 }

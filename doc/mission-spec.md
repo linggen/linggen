@@ -106,9 +106,13 @@ permission:
 | `permission.paths` | no | Extra narrow path grants (like skill's `permission.paths`) |
 | `permission.warning` | no | Displayed in the UI before enabling |
 
-### Why body == SKILL.md
+### Body IS the system prompt
 
-The mission body is the agent's prompt, written in the same step-by-step style as `SKILL.md`. This is deliberate: a mission IS an auto-run skill, minus the interactive parts. Copying SKILL.md format lets skill authors write missions without learning a second format.
+A mission body is **the entire system prompt** for the run. No agent spec from `agents/<name>.md` is loaded on top — the mission is a self-contained instruction document. Tools come from `allowed-tools`, permission from `permission`, and the prompt body tells the LLM exactly what to do.
+
+This is deliberate: missions are headless, scheduled, and rarely shared. The cost of one extra "agent persona" file per mission isn't earned. Authors write the runbook directly in `mission.md`; readers find all behaviour in one place.
+
+The body should look like a SKILL.md body in structure — step-by-step instructions, explicit tool calls, output contract — but it stands on its own, without inheriting a persona block.
 
 ## Execution flow
 
@@ -388,6 +392,6 @@ Mission permission no longer has a single top-level `mode` — every path declar
 | `mode: script` | remove `mode`, move command to `entry:`, clear body |
 | `mode: app` | **dropped — no migration path**; authors convert to an external reminder |
 | top-level `prompt` | markdown body below frontmatter |
-| `agent_id` | *(removed — always `ling`)* |
+| `agent_id` | *(removed — mission body IS the agent's system prompt; no `agents/<name>.md` is loaded for missions)* |
 
 Note: the parser no longer auto-converts the old shape. Mission files still using the legacy `permission_tier` or single `permission.mode` will load with **no permission grants** and likely fail the first time they try to touch the filesystem. Rewrite them to the per-path shape.

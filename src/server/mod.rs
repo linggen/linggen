@@ -76,10 +76,6 @@ use chat::{
     compact_chat_api, compact_config_api, edit_plan_handler, get_system_prompt_api,
     pending_ask_user_handler, reject_plan_handler,
 };
-/// The global consolidate+evict pass — invoked by the built-in `dream`
-/// mission (see `missions::scheduler`).
-pub(crate) use chat::run_consolidate_evict;
-
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
@@ -801,7 +797,6 @@ async fn prepare_server(
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
         consolidation_active: Arc::new(Mutex::new(HashSet::new())),
-        dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     // Flush token usage to disk every 30 seconds.

@@ -1,112 +1,110 @@
 ---
 name: dream
-description: Nightly memory consolidation. Promotes durable episodic memories into the long-term semantic store and forgets the rest. Built-in — no external skill needed.
+description: Nightly memory consolidation. Promotes durable episodic memories into the long-term semantic store and forgets the rest. Built-in.
 schedule: "0 3 * * *"
 enabled: true
-# The engine special-cases this mission by id (`DREAM_MISSION_ID = "dream"`)
-# and runs `scheduler::dispatch_dream_mission` directly instead of the
-# generic mission-agent loop. The engine selects the past-TTL worklist
-# itself, then spawns a `ling-mem-autonomous` subagent (no AskUser —
-# unattended at 3am) for the promote/delete phase. So this list is
-# empty by design.
-allowed-tools: []
+cwd: ~/.linggen
+# Tools the dream actually uses. The mission body — not a separate
+# agent spec — is the system prompt; only these three need to be
+# wired. AskUser / EnterPlanMode are stripped by mission-context
+# policy (mission-spec.md §Safety) so uncertainty resolves to *skip*,
+# never to ambush the user at 3am.
+allowed-tools:
+  - Bash
+  - Memory_query
+  - Memory_write
 permission:
   paths:
     - path: ~/.linggen/memory
       mode: edit
   warning: >-
     Writes to ~/.linggen/memory via the local `ling-mem` daemon
-    (promote episodic → semantic, then evict past-TTL rows). Does not
-    touch project files.
+    (promote episodic → semantic, then delete past-TTL rows). Reads
+    the daemon's `/api/config` over localhost. Does not touch project
+    files.
 ---
 
-# dream
+# Memory dream — consolidation worker
 
-Linggen's built-in **memory consolidation** pass — the "sleep" half of
-the memory system. Engine-internal: no session-file scanning, no
-transcript ingestion. Only consumes what the per-session encoder
-already wrote into episodic.
+You are the memory consolidator. You run unattended on a nightly
+schedule. There is no user reachable, no chat, no question can be
+asked. Make the conservative call and emit ONE status line.
 
-## What it does
+This mission **promotes** durable episodic memories into the long-term
+semantic store and **deletes** the rest. Append-only writes to
+semantic. Never destructively edit an existing semantic row — that's
+user-initiated only. When in doubt about anything, **skip the row**.
 
-On a daily schedule (and as a catch-up the next time Linggen runs after
-a missed night), the engine reviews episodic memories that have aged
-past their TTL and makes one terminal decision per row:
+## Step 1 — Fetch the TTL
 
-- **Promote** durable user biography, cross-project preferences,
-  decisions-with-reasoning, and reusable gotchas into the long-term
-  **semantic** store.
-- **Forget** (evict) the rest.
+The TTL (how old an episodic row must be before we touch it) is owned
+by the `ling-mem` daemon, not the engine. Read it live:
 
-The autonomous consolidator also deduplicates **silently when
-confident** — if an episodic row clearly paraphrases an existing
-semantic row, it skips the promote and just deletes the source.
-**When confidence is low** (contradictions, partial overlap, "related
-but not identical"), it does NOT pick a winner, merge, or rewrite the
-existing row. Those resolve in a live-recall pass with the user
-present — never as a silent offline rewrite. The dream is hippocampus,
-not editor.
+```bash
+ling_mem_url="http://127.0.0.1:9888"
+ttl_days=$(curl -fsS "${ling_mem_url}/api/config" 2>/dev/null \
+  | jq -r '.episodic_ttl_days // .data.episodic_ttl_days // 7')
+echo "TTL=${ttl_days}d"
+```
 
-## Where the knobs live
+If the curl fails (daemon down, bad shape), use `7` as the fallback —
+do not stop the run.
 
-- **TTL** is owned by `ling-mem`, not the engine. Each run fetches
-  `episodic_ttl_days` from the local daemon's `/api/config` (typically
-  `http://127.0.0.1:9888`; configurable in **Settings → General →
-  Ling-mem URL**). Change the TTL in the ling-mem console and the next
-  dream run honors it.
-- **Schedule** lives here (`schedule: "0 3 * * *"` — 03:00 daily). Edit
-  to taste, or use the Mission UI's pause toggle / stop / delete
-  controls if you want the consolidation off temporarily or for good.
+## Step 2 — List the past-TTL worklist
 
-## How it runs
+```
+Memory_query({verb: "list", episodic: true, older_than: "<TTL>d",
+              limit: 200, format: "json"})
+```
 
-The engine special-cases this mission and drives it from
-`scheduler::dispatch_dream_mission`. One run is:
+If the worklist is empty: emit `CONSOLIDATED promoted=0 deleted=0` and
+stop. No work to do.
 
-1. **Trigger** — daily 03:00 cron, or the post-turn catch-up if the
-   last successful run is older than `dream_catchup_hours` (engine
-   config, default 24). A `dream_running` flag guards against
-   overlapping runs; a concurrent trigger records a `skipped` entry
-   and bows out.
-2. **Open session** — create a mission-scoped session, emit
-   `MissionTriggered`, persist the kickoff line. All subsequent
-   subagent activity hangs off this session for audit.
-3. **Fetch TTL** — `GET <ling_mem_url>/api/config` →
-   `episodic_ttl_days`. On any error (daemon down, non-200, malformed
-   JSON) fall back to the engine's baked-in default. The resolved
-   number drives the cutoff: `cutoff = now − episodic_ttl_days`.
-4. **Build worklist** — `ling-mem list --episodic --format json`,
-   then keep only rows whose `COALESCE(updated_at, created_at)` is
-   strictly older than the cutoff. The engine, not the binary, owns
-   the TTL policy; the binary stays policy-free.
-5. **Empty worklist?** Skip the LLM phase entirely, record
-   `promoted=0 deleted=0`, finish. Cheap exit — most runs.
-6. **LLM phase** — spawn the `ling-mem-autonomous` subagent
-   (`agents/ling-mem-autonomous.md`; tools = `Memory_query`,
-   `Memory_write`; **no AskUser**) with the worklist + cutoff as the
-   task. For each row, the subagent decides:
-   - **Promote** — `Memory_write({verb: "add", host: "linggen",
-     content, type, from, contexts, tier: "semantic"|"core"})`, then
-     `Memory_write({verb: "delete", tier: "episodic", id})`.
-   - **Silent dedup** — if `Memory_query({verb: "search"})` returns a
-     semantic row clearly meaning the same thing, skip the add and
-     just delete the episodic source.
-   - **Skip-on-uncertainty** — for related-but-not-identical pairs,
-     partial overlaps, or contradictions, do nothing in this pass.
-     Append-only is the floor; the conflict resolves in a live recall
-     with the user present.
-   - **Delete** — for not-worth-keeping rows (pure activity,
-     re-derivable, single-mention noise): `Memory_write({verb:
-     "delete", tier: "episodic", id})`.
-7. **Deterministic backstop** — `ling-mem evict --before <cutoff>`
-   sweeps any past-TTL row the subagent didn't terminally handle.
-   Failures here are non-fatal — the rows simply age out on the
-   next run.
-8. **Report** — the subagent emits one terminal line:
-   `CONSOLIDATED promoted=<n> deleted=<n>`. The engine parses it,
-   writes a `MissionRunEntry` with status (`completed` on success,
-   `failed` on parse/subagent error), logs `dream mission:
-   consolidate ok (promoted=N deleted=N)` at INFO. The Mission UI
-   surfaces the entry under run history.
-9. **Release the overlap guard** — `dream_running = false`; the next
-   trigger is free to fire.
+For each returned row you'll have: `id`, `content`, `type`, `from`,
+`contexts`, `created_at`, `updated_at`.
+
+## Step 3 — Per-row decision
+
+For **each** worklist row, make exactly ONE terminal decision. Every
+row must leave episodic on this pass — there is no "leave it."
+
+### 3a. Search semantic for a match (every row, every time)
+
+```
+Memory_query({verb: "search", query: "<row content gist>", limit: 8})
+```
+
+### 3b. Decide one of four outcomes
+
+| You see | Action |
+|:---|:---|
+| Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Silent dedup.** Skip the promote: `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. The semantic store already represents this fact. |
+| Semantic has a row that's **related but not identical** (different emphasis, partial overlap, contradiction on the same subject) | **Skip the resolution.** Don't pick a winner, don't merge, don't rewrite the existing semantic row. Leave the candidate's episodic source alone if you genuinely can't decide — it'll come back next cycle. Reconciliation happens later in a live recall with the user present. |
+| The row is durable user biography, a cross-project preference, a decision-with-reasoning, or a re-hit gotcha — and no semantic equivalent exists | **Promote.** First `Memory_write({verb: "add", host: "linggen", content: <row.content>, type: <row.type>, from: <row.from>, contexts: <row.contexts>})`, then `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Tier defaults to semantic; use `tier: "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is pure activity / re-derivable from files / single-mention noise / a secret that slipped through | **Delete.** `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. No promotion. |
+
+### Hard rules
+
+- **Append only to semantic.** Never edit, never delete an existing
+  semantic row in this pass. Those need the user present.
+- **No generalization.** Don't synthesize a "user always X" rule from
+  scattered utterances. Append the individual rows; live retrieval
+  surfaces patterns.
+- **No merging.** Two distinct facts stay as two rows. Different
+  phrasings of the same fact → silent dedup per 3b row 1.
+- **No tool you don't have.** Your tool list is `Bash`, `Memory_query`,
+  `Memory_write`. Don't pretend AskUser exists; mission policy stripped
+  it on purpose.
+
+## Step 4 — Report
+
+Emit exactly ONE final line, machine-parseable, ≤20 words. Count
+across all rows you processed in step 3:
+
+```
+CONSOLIDATED promoted=<n> deleted=<n>
+```
+
+Emit zeros if the worklist was empty. On an unrecoverable error emit
+`CONSOLIDATE_FAILED <short reason>` and stop. No prose, no markdown,
+nothing before or after the status line.

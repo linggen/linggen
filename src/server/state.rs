@@ -59,17 +59,6 @@ pub struct ServerState {
     /// a daemon restart clears it, which is correct: no tick survives a
     /// restart, so none can still be "running".
     pub consolidation_active: Arc<Mutex<HashSet<String>>>,
-
-    /// `true` while the built-in `dream` consolidation mission is running.
-    /// Both trigger paths — the scheduler's cron fire and the turn-seam
-    /// catch-up — funnel through `dispatch_dream_mission`, which gates on
-    /// this so a cron run and a catch-up (or two catch-ups) never overlap.
-    /// The scheduler's own per-mission `running` flag is loop-local and
-    /// invisible to the catch-up, hence this shared flag. In-memory only —
-    /// a daemon restart clears it (no run survives a restart). A panic
-    /// mid-run leaves it set until restart (accepted; mirrors
-    /// `consolidation_active`).
-    pub dream_running: Arc<std::sync::atomic::AtomicBool>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveStatusRecord {
