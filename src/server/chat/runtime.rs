@@ -192,7 +192,7 @@ async fn auto_recall_memory(
     state: &Arc<ServerState>,
     prompt: &str,
     session_id: Option<&str>,
-    inject_min_top_score: f32,
+    min_score: f32,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
@@ -201,12 +201,6 @@ async fn auto_recall_memory(
     const FETCH_LIMIT: usize = 30;
     const TOP_K: usize = 10;
     const MIN_PROMPT_CHARS: usize = 8;
-    /// Per-row cosine similarity floor — calibrated for MiniLM-L6-v2
-    /// (strong matches land in [0.30, 0.45]; noise sits below 0.25).
-    /// Override per-process with `LINGGEN_RECALL_MIN_SCORE`. The
-    /// stricter aggregate "is the top hit useful?" gate is `inject_min_top_score`
-    /// (configurable via Settings → General → Memory Inject Score).
-    const DEFAULT_MIN_SCORE: f32 = 0.30;
 
     let trimmed = prompt.trim();
     if trimmed.chars().count() < MIN_PROMPT_CHARS {
@@ -221,11 +215,12 @@ async fn auto_recall_memory(
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
         .and_then(|m| m.project_name);
 
-    let min_score: f32 = std::env::var("LINGGEN_RECALL_MIN_SCORE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_MIN_SCORE);
-
+    // `min_score` is the per-row cosine floor — comes from
+    // `AgentConfig.memory_inject_min_score` (Settings → General → Memory
+    // Inject Score, default 0.5). Hand it straight to ling-mem so weak
+    // rows never make it back across the wire. There is no separate
+    // aggregate gate: if ling-mem returns any rows, every one passes
+    // the user's floor.
     let args = serde_json::json!({
         "verb": "search",
         "query": trimmed,
@@ -317,23 +312,10 @@ async fn auto_recall_memory(
     }
 
     if hits.is_empty() {
-        return None;
+        None
+    } else {
+        Some(hits)
     }
-    // Aggregate quality gate: even though every row passed `min_score`,
-    // the user's turn may have nothing to do with memory at all. If the
-    // single best match is below `inject_min_top_score`, drop the whole
-    // batch so we don't burn tokens or distract the agent with weak
-    // hits — and don't surface a "N memories recalled" widget the user
-    // would ignore.
-    let top_score = hits.first().map(|h| h.score).unwrap_or(0.0);
-    if top_score < inject_min_top_score {
-        tracing::debug!(
-            "auto-recall: top score {:.3} below inject threshold {:.3}; dropping {} hits",
-            top_score, inject_min_top_score, hits.len()
-        );
-        return None;
-    }
-    Some(hits)
 }
 
 /// Push the user message onto the engine's chat history with auto-recall

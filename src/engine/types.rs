@@ -133,9 +133,10 @@ pub struct EngineConfig {
     /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
     /// on the `AgentEngine` still takes precedence over this.
     pub compact_threshold_default: Option<f32>,
-    /// Aggregate quality floor for per-turn auto-recall. If the best hit's
-    /// cosine score is below this, the whole recall is dropped (no model
-    /// injection, no widget). See `config::AgentConfig`. Default 0.5.
+    /// Per-row cosine similarity floor for per-turn auto-recall. Rows
+    /// below this score are dropped by ling-mem before reaching the
+    /// engine; nothing weaker is injected or shown. See
+    /// `config::AgentConfig`. Default 0.5.
     pub memory_inject_min_score: f32,
 }
 

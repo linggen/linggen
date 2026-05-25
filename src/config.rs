@@ -153,12 +153,11 @@ pub struct AgentConfig {
     #[serde(default = "default_dream_catchup_hours")]
     pub dream_catchup_hours: u64,
 
-    /// Aggregate quality floor for per-turn auto-recall. If the highest-
-    /// scoring hit is below this cosine similarity, drop the whole recall
-    /// — nothing is injected into the model context and no widget is
-    /// shown. The per-row noise cut (`LINGGEN_RECALL_MIN_SCORE`, default
-    /// 0.30) still applies first; this is a stricter "is the top match
-    /// actually useful?" gate. Range 0.0–1.0. Default 0.5.
+    /// Per-row cosine similarity floor for per-turn auto-recall. Rows
+    /// scoring below this are filtered out by ling-mem before the result
+    /// crosses the wire — they're never injected into the model context
+    /// and never shown in the widget. When no rows pass, the recall is a
+    /// silent no-op. Range 0.0–1.0. Default 0.5.
     #[serde(default = "default_memory_inject_min_score")]
     pub memory_inject_min_score: f32,
 }
