@@ -340,11 +340,21 @@ async fn dispatch_dream_mission(
         )
         .await;
 
-    // TTL policy is engine-owned. Read the live config; fall back to the
-    // built-in default if it can't be loaded.
-    let episodic_ttl_days = crate::config::Config::load_with_path()
-        .map(|(c, _)| c.agent.episodic_ttl_days)
-        .unwrap_or_else(|_| crate::config::Config::default().agent.episodic_ttl_days);
+    // TTL policy is owned by `ling-mem` — the daemon's `/api/config`
+    // exposes `episodic_ttl_days`, set from its own dashboard. Fetch
+    // live each run so a change in the ling-mem console takes effect
+    // without restarting Linggen. Falls back to the engine config's
+    // legacy default if the daemon is unreachable.
+    let ling_mem_url = state
+        .manager
+        .get_config_snapshot()
+        .await
+        .agent
+        .ling_mem_url
+        .clone();
+    let episodic_ttl_days = fetch_episodic_ttl_days(&ling_mem_url)
+        .await
+        .unwrap_or_else(|| crate::config::Config::default().agent.episodic_ttl_days);
 
     // The consolidate+evict subagent is keyed to this mission session so
     // its run record / events are auditable under the mission.
@@ -394,6 +404,29 @@ async fn dispatch_dream_mission(
 
     // Release the shared guard — only the acquirer reaches here.
     state.dream_running.store(false, Ordering::SeqCst);
+}
+
+/// GET `<ling_mem_url>/api/config` and pull `episodic_ttl_days` out of
+/// the response. ling-mem owns the TTL policy; the engine just reads it
+/// each dream run. Tolerates two envelope shapes that the daemon has
+/// used: `{ episodic_ttl_days: N }` and `{ data: { episodic_ttl_days: N } }`.
+/// Returns `None` on any failure (timeout, non-200, missing field) so
+/// the caller can fall back to a baked-in default.
+async fn fetch_episodic_ttl_days(ling_mem_url: &str) -> Option<u64> {
+    let url = format!("{}/api/config", ling_mem_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let pluck = |obj: &serde_json::Value| -> Option<u64> {
+        obj.get("episodic_ttl_days").and_then(|v| v.as_u64())
+    };
+    pluck(&body).or_else(|| body.get("data").and_then(pluck))
 }
 
 /// Resolve a mission's working dir the same way the scheduler loop does:

@@ -138,6 +138,10 @@ pub struct EngineConfig {
     /// engine; nothing weaker is injected or shown. See
     /// `config::AgentConfig`. Default 0.6.
     pub memory_inject_min_score: f32,
+    /// Base URL of the local `ling-mem` HTTP daemon. The engine's
+    /// built-in `Memory_*` dispatcher and the dream mission's TTL
+    /// fetch use this. See `config::AgentConfig::ling_mem_url`.
+    pub ling_mem_url: String,
 }
 
 impl EngineConfig {
@@ -166,6 +170,7 @@ impl EngineConfig {
             episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
+            ling_mem_url: config.agent.ling_mem_url.trim_end_matches('/').to_string(),
         }
     }
 

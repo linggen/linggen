@@ -256,9 +256,13 @@ async fn run_encode(
     }
     let _ = state; // memory daemon is reached through Memory_* tools now
     let task = build_encode_task(session_id, recent_transcript);
-    let summary = run_ling_mem_subagent(state, manager, ws_root, agent_id, session_id, task)
-        .await
-        .map_err(|e| e.context("ling-mem encode subagent"))?;
+    // Encoder runs post-turn with the user reachable — keeps AskUser
+    // via the standard `ling-mem` spec for contradiction reconcile.
+    let summary = run_ling_mem_subagent(
+        state, manager, ws_root, agent_id, session_id, "ling-mem", task,
+    )
+    .await
+    .map_err(|e| e.context("ling-mem encode subagent"))?;
     parse_encoded(&summary)
 }
 
@@ -293,9 +297,14 @@ pub(crate) async fn run_consolidate_evict(
     }
 
     let task = build_consolidate_task(&cutoff, &worklist);
-    let summary = run_ling_mem_subagent(state, manager, ws_root, agent_id, session_id, task)
-        .await
-        .map_err(|e| e.context("ling-mem consolidate subagent"))?;
+    // Dream is unattended — no user, no AskUser. Headless variant of
+    // the spec strips that tool so uncertainty resolves to *skip*, not
+    // *prompt at 3am*.
+    let summary = run_ling_mem_subagent(
+        state, manager, ws_root, agent_id, session_id, "ling-mem-autonomous", task,
+    )
+    .await
+    .map_err(|e| e.context("ling-mem-autonomous consolidate subagent"))?;
     let (promoted, deleted) = parse_consolidated(&summary)?;
 
     // Deterministic backstop: evict whatever past-TTL rows the subagent
@@ -309,18 +318,14 @@ pub(crate) async fn run_consolidate_evict(
     Ok((promoted, deleted))
 }
 
-/// Resolve the `ling-mem` binary + data dir. `ling-mem` lives at
-/// `$SKILL_DIR/bin/ling-mem` (memory skill install) with a `$PATH`
-/// fallback; the task prompt directs the subagent to this absolute path
-/// so commands resolve regardless of PATH (resolvability, not a security
-/// lock — see the module/contract docs on the boundary).
-async fn resolve_ling_mem(state: &Arc<ServerState>) -> (PathBuf, PathBuf) {
-    let skill_dir = state
-        .skill_manager
-        .active_provider("memory")
-        .await
-        .and_then(|s| s.skill_dir);
-    let bin = crate::engine::capability_tools::resolve_binary(skill_dir.as_deref(), "ling-mem");
+/// Resolve the `ling-mem` binary + data dir. `ling-mem` is installed by
+/// linggen itself (see `linggensite/public/install.sh`) — alongside `ling`
+/// in `/usr/local/bin` (preferred) or `~/.local/bin` (fallback). The
+/// resolver also accepts a `$PATH` match for hand-installed copies. The
+/// task prompt directs the subagent to this absolute path so commands
+/// resolve regardless of `PATH` (resolvability, not a security lock).
+async fn resolve_ling_mem(_state: &Arc<ServerState>) -> (PathBuf, PathBuf) {
+    let bin = crate::engine::capability_tools::resolve_binary(None, "ling-mem");
     let data_dir = crate::paths::linggen_home().to_path_buf();
     (bin, data_dir)
 }
@@ -338,14 +343,17 @@ async fn run_ling_mem_subagent(
     ws_root: &PathBuf,
     agent_id: &str,
     session_id: &str,
+    target_agent: &str,
     task: String,
 ) -> anyhow::Result<String> {
-    // Build an AskUserBridge from ServerState so the subagent's AskUser
-    // tool can emit events + receive responses through the same
-    // pending_ask_user map the parent uses. The bridge is ServerState-
-    // scoped, so it outlives the parent's turn (the encoder runs
-    // post-turn). Subagent AskUser already times out at 5 min
-    // (tools/mod.rs::ask_user) — no deadlock risk.
+    // Build an AskUserBridge from ServerState so a target spec that
+    // includes AskUser (the per-session encoder, `ling-mem`) can route
+    // its widget through the same pending_ask_user map the parent uses.
+    // The autonomous dream spec (`ling-mem-autonomous`) intentionally
+    // omits AskUser from its tool list — the bridge is harmless when
+    // unused. Bridge is ServerState-scoped so it outlives the parent's
+    // turn (encoder runs post-turn). Subagent AskUser already times out
+    // at 5 min (tools/mod.rs::ask_user) — no deadlock risk.
     let ask_user_bridge = Some(Arc::new(crate::engine::tools::AskUserBridge {
         events_tx: state.events_tx.clone(),
         pending: state.pending_ask_user.clone(),
@@ -356,7 +364,7 @@ async fn run_ling_mem_subagent(
         manager.clone(),
         ws_root.clone(),
         agent_id.to_string(), // caller_id
-        "ling-mem".to_string(),
+        target_agent.to_string(),
         task,
         None, // parent_run_id
         0,    // delegation_depth

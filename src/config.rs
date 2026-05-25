@@ -160,6 +160,15 @@ pub struct AgentConfig {
     /// silent no-op. Range 0.0–1.0. Default 0.6.
     #[serde(default = "default_memory_inject_min_score")]
     pub memory_inject_min_score: f32,
+
+    /// Base URL of the local `ling-mem` HTTP daemon. The engine's built-in
+    /// `Memory_query` / `Memory_write` tools dispatch here, and the `dream`
+    /// mission reads `episodic_ttl_days` from `<url>/api/config`. Default
+    /// is the daemon's own default port — change only if you ran `ling-mem
+    /// start` against a different `--port`, or pointed it at a remote
+    /// host. Trailing slash optional; no path segment.
+    #[serde(default = "default_ling_mem_url")]
+    pub ling_mem_url: String,
 }
 
 fn default_memory_nudge_interval() -> usize {
@@ -180,6 +189,10 @@ fn default_dream_catchup_hours() -> u64 {
 
 fn default_memory_inject_min_score() -> f32 {
     0.6
+}
+
+fn default_ling_mem_url() -> String {
+    "http://127.0.0.1:9888".to_string()
 }
 
 impl AgentConfig {
@@ -415,6 +428,15 @@ impl Config {
                 "Agent memory_inject_min_score must be between 0.0 and 1.0 (got {s})"
             );
         }
+        let url = self.agent.ling_mem_url.trim();
+        if url.is_empty() {
+            anyhow::bail!("Agent ling_mem_url must not be empty");
+        }
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            anyhow::bail!(
+                "Agent ling_mem_url must start with http:// or https:// (got {url})"
+            );
+        }
         // Warn (log) if default_models references non-existent model IDs.
         for dm in &self.routing.default_models {
             if !seen_ids.contains(&dm) {
@@ -459,6 +481,7 @@ impl Default for Config {
                 episodic_ttl_days: default_episodic_ttl_days(),
                 dream_catchup_hours: default_dream_catchup_hours(),
                 memory_inject_min_score: default_memory_inject_min_score(),
+                ling_mem_url: default_ling_mem_url(),
             },
             logging: LoggingConfig {
                 level: None,

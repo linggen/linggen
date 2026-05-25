@@ -22,6 +22,7 @@ use crate::engine::capabilities;
 use crate::skills::{CapabilityImpl, SkillManager};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -37,45 +38,90 @@ const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 /// omitted. Matches the ships-with-the-memory-skill binary name.
 const DEFAULT_AUTOSTART: &str = "ling-mem start";
 
-/// Dispatch a capability-tool call to the active provider's daemon.
+/// Built-in URL bindings for the `memory` capability. Memory ships with
+/// linggen itself (the `ling-mem` binary is installed by the linggen
+/// installer alongside `ling`), so there is no skill to consult — the
+/// dispatcher uses these paths directly against `ling_mem_url`.
 ///
-/// The tool's schema + tier already live in `engine::capabilities`.
-/// This function's only job is to resolve `tool_name → url` via the
-/// active skill's `implements:` block, POST, and return the unwrapped
-/// response payload.
+/// Mirrors what `shared-memory`'s SKILL.md used to expose; the skill is
+/// no longer the source of truth on Linggen. Keep this table in sync
+/// with the daemon's HTTP surface (`/api/memory/*`).
+fn builtin_memory_tools() -> HashMap<String, String> {
+    [
+        ("Memory_query.get", "/api/memory/get"),
+        ("Memory_query.search", "/api/memory/search"),
+        ("Memory_query.list", "/api/memory/list"),
+        ("Memory_write.add", "/api/memory/add"),
+        ("Memory_write.update", "/api/memory/update"),
+        ("Memory_write.delete", "/api/memory/delete"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+/// Synthesize a `CapabilityImpl` for the engine-built-in `memory`
+/// capability. Avoids the `active_provider` + `implements:` round-trip
+/// that the skill-backed path needs — the binding table lives in
+/// `builtin_memory_tools()` and the autostart command is `ling-mem
+/// start` (resolved via `$PATH`).
+fn builtin_memory_impl(ling_mem_url: &str) -> CapabilityImpl {
+    CapabilityImpl {
+        base_url: ling_mem_url.to_string(),
+        autostart: Some(DEFAULT_AUTOSTART.to_string()),
+        healthcheck: "/health".to_string(),
+        tools: builtin_memory_tools(),
+    }
+}
+
+/// Dispatch a capability-tool call.
+///
+/// For the `memory` capability, the URL bindings + autostart command
+/// are engine-built-in; `ling_mem_url` is the daemon base URL (from
+/// `AgentConfig.ling_mem_url`). For any other capability, the dispatcher
+/// falls back to the active provider skill's `implements:` block — same
+/// behaviour as before.
 pub(crate) async fn dispatch(
     skills: &SkillManager,
+    ling_mem_url: &str,
     tool_name: &str,
     mut args: Value,
 ) -> Result<Value> {
     let (cap_name, _contract) = capabilities::capability_for_tool(tool_name)
         .ok_or_else(|| anyhow!("{tool_name} is not a capability tool"))?;
 
-    let provider = skills.active_provider(cap_name).await.ok_or_else(|| {
-        anyhow!(
-            "No provider installed for capability `{cap_name}`. Install a skill \
-             that declares `provides: [{cap_name}]` (e.g. the memory skill) \
-             from the marketplace, then retry."
-        )
-    })?;
-
-    let impl_block = provider
-        .implements
-        .as_ref()
-        .and_then(|m| m.get(cap_name))
-        .ok_or_else(|| {
+    // Resolve (impl_block, skill_dir, provider_label).
+    //   - memory   → engine-built-in, no skill required.
+    //   - other    → active provider skill's `implements:` block.
+    let (impl_block, provider_skill_dir, provider_label) = if cap_name == "memory" {
+        (builtin_memory_impl(ling_mem_url), None, "<built-in>".to_string())
+    } else {
+        let provider = skills.active_provider(cap_name).await.ok_or_else(|| {
             anyhow!(
-                "Skill `{}` claims `provides: [{cap_name}]` but declares no \
-                 `implements: {cap_name}:` block — can't dispatch {tool_name}.",
-                provider.name
+                "No provider installed for capability `{cap_name}`. Install a skill \
+                 that declares `provides: [{cap_name}]` from the marketplace, then retry."
             )
         })?;
+        let block = provider
+            .implements
+            .as_ref()
+            .and_then(|m| m.get(cap_name))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Skill `{}` claims `provides: [{cap_name}]` but declares no \
+                     `implements: {cap_name}:` block — can't dispatch {tool_name}.",
+                    provider.name
+                )
+            })?;
+        let name = provider.name.clone();
+        (block, provider.skill_dir.clone(), name)
+    };
 
     // Verb-dispatched tools (e.g. Memory_query / Memory_write): the model
     // passes a `verb` field which selects the underlying endpoint. The
-    // skill's `implements.tools` map is keyed `<tool_name>.<verb>` for
-    // these. We strip `verb` from the body before POST so the daemon
-    // sees its original schema, not a `verb` field it doesn't expect.
+    // tool table is keyed `<tool_name>.<verb>` for these. We strip `verb`
+    // from the body before POST so the daemon sees its original schema.
     let lookup_key = match args.get("verb").and_then(|v| v.as_str()) {
         Some(verb) => {
             let key = format!("{tool_name}.{verb}");
@@ -89,9 +135,8 @@ pub(crate) async fn dispatch(
 
     let path = impl_block.tools.get(&lookup_key).ok_or_else(|| {
         anyhow!(
-            "Skill `{}` does not expose `{lookup_key}` in its `implements.{cap_name}.tools` \
-             map — add it or use a different provider.",
-            provider.name
+            "`{provider_label}` does not expose `{lookup_key}` in its `{cap_name}` \
+             tool table — add it or use a different provider.",
         )
     })?;
 
@@ -169,12 +214,11 @@ pub(crate) async fn dispatch(
     let result = match post_to_daemon(&url, &args).await {
         Ok(value) => Ok(value),
         Err(DispatchError::NoDaemon) => {
-            autostart(provider.skill_dir.as_deref(), impl_block.autostart.as_deref())
+            autostart(provider_skill_dir.as_deref(), impl_block.autostart.as_deref())
                 .await
                 .with_context(|| {
                     format!(
-                        "autostarting skill `{}` after first HTTP attempt to {url} failed",
-                        provider.name
+                        "autostarting `{provider_label}` after first HTTP attempt to {url} failed",
                     )
                 })?;
             post_to_daemon(&url, &args).await.map_err(Into::into)

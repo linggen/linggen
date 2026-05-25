@@ -148,6 +148,16 @@ export const GeneralTab: React.FC<{
             />
             <p className="text-[11px] text-slate-400 mt-0.5">Per-row cosine score floor for per-turn auto-recall. Any row below this is dropped — never injected, never shown. Raise for stricter, fewer hits; lower to let weaker matches through. Range 0–1. Default 0.6.</p>
           </div>
+          <div className="col-span-2">
+            <label className={labelCls}>Ling-mem URL</label>
+            <input
+              className={inputCls}
+              value={config.agent.ling_mem_url ?? 'http://127.0.0.1:9888'}
+              onChange={(e) => onChange({ ...config, agent: { ...config.agent, ling_mem_url: e.target.value } })}
+              placeholder="http://127.0.0.1:9888"
+            />
+            <p className="text-[11px] text-slate-400 mt-0.5">Base URL of the local <code>ling-mem</code> HTTP daemon. The engine's built-in <code>Memory_query</code> / <code>Memory_write</code> tools dispatch here, and the <code>dream</code> mission fetches <code>episodic_ttl_days</code> from <code>&lt;url&gt;/api/config</code>. Only change if you ran <code>ling-mem start</code> on a non-default port or pointed it at a remote host.</p>
+          </div>
         </div>
       </section>
 

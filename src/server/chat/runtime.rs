@@ -193,6 +193,7 @@ async fn auto_recall_memory(
     prompt: &str,
     session_id: Option<&str>,
     min_score: f32,
+    ling_mem_url: &str,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
@@ -207,9 +208,10 @@ async fn auto_recall_memory(
         return None;
     }
 
-    if state.skill_manager.active_provider("memory").await.is_none() {
-        return None;
-    }
+    // Memory is engine-built-in now; no `active_provider("memory")`
+    // gate. If the daemon isn't up, the dispatch call's autostart
+    // (`ling-mem start`) will spin it up; if even that fails, the
+    // dispatch errors out and recall silently bails below.
 
     let project_name: Option<String> = session_id
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
@@ -230,6 +232,7 @@ async fn auto_recall_memory(
 
     let dispatch = crate::engine::capability_tools::dispatch(
         &state.skill_manager,
+        ling_mem_url,
         "Memory_query",
         args,
     );
@@ -336,6 +339,7 @@ pub(super) async fn push_user_turn_with_recall(
             &ctx.clean_msg,
             ctx.session_id.as_deref(),
             engine.cfg.memory_inject_min_score,
+            &engine.cfg.ling_mem_url,
         )
         .await
     } else {

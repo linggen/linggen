@@ -1151,7 +1151,8 @@ async fn capability_dispatch(
             .into_response();
     }
 
-    match capability_tools::dispatch(&state.skill_manager, &tool_name, args).await {
+    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    match capability_tools::dispatch(&state.skill_manager, &ling_mem_url, &tool_name, args).await {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {
             let msg = format!("{:#}", e);
