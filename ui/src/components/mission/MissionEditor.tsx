@@ -20,11 +20,25 @@ export const MissionEditor: React.FC<{
   const [selectedCwd, setSelectedCwd] = useState(editing?.cwd || editing?.project || '');
   const [entry, setEntry] = useState(editing?.entry || '');
 
-  const [permissionMode, setPermissionMode] = useState<'read' | 'edit' | 'admin'>(
-    (editing?.permission?.mode as 'read' | 'edit' | 'admin') || 'admin',
-  );
+  // Default mode is the most-common one across the stored per-path
+  // grants (or "admin" when there are no paths yet). Saving propagates
+  // it to every path in `permission_paths` via the backend's
+  // `build_permission` helper.
+  const initialMode = (() => {
+    const grants = editing?.permission?.paths;
+    if (!grants || grants.length === 0) return 'admin' as const;
+    const counts = new Map<string, number>();
+    for (const g of grants) counts.set(g.mode, (counts.get(g.mode) ?? 0) + 1);
+    const [winner] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const mode = winner?.[0];
+    return mode === 'read' || mode === 'edit' || mode === 'admin' ? mode : 'admin';
+  })();
+  const [permissionMode, setPermissionMode] = useState<'read' | 'edit' | 'admin'>(initialMode);
+  // Render paths as bare path strings, one per line — the per-path
+  // mode is collapsed into the dropdown above. Without this map() the
+  // `{path, mode}` objects render as `[object Object]`.
   const [permissionPathsText, setPermissionPathsText] = useState(
-    (editing?.permission?.paths || []).join('\n'),
+    (editing?.permission?.paths || []).map(g => g.path).join('\n'),
   );
   const [permissionWarning, setPermissionWarning] = useState(editing?.permission?.warning || '');
 
@@ -242,8 +256,8 @@ export const MissionEditor: React.FC<{
             Prompt body {scriptOnly && <span className="text-amber-600 dark:text-amber-400">(empty — this is a script-only mission)</span>}
           </label>
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
-            placeholder="Step-by-step instructions for the agent. Leave empty for a script-only mission." rows={8}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+            placeholder="Step-by-step instructions for the agent. Leave empty for a script-only mission." rows={20}
+            className="w-full px-3 py-2 text-sm font-mono leading-relaxed rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 resize-y min-h-[420px] focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
 
         <div className="flex items-center gap-3 pt-2">

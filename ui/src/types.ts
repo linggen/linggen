@@ -321,12 +321,13 @@ export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'general'
 
 export type MissionTab = 'list' | 'create' | 'edit' | 'runs' | 'agent';
 
-/** Permission block — mirrors SkillPermission. See doc/mission-spec.md. */
+/** Permission block — mirrors SkillPermission. See doc/mission-spec.md.
+ *  The backend returns per-path grants `{path, mode}` (no top-level
+ *  mode). The editor displays paths bare and uses a separate dropdown
+ *  for the default mode applied at save time. */
 export interface MissionPermission {
-  /** Path-mode ceiling: "read" | "edit" | "admin". */
-  mode: string;
-  /** Extra narrow path grants. */
-  paths?: string[];
+  /** Per-path grants — each entry carries its own mode. */
+  paths?: Array<{ path: string; mode: string }>;
   /** Warning shown in UI before enabling. */
   warning?: string | null;
 }

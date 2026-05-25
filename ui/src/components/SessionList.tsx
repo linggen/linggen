@@ -130,6 +130,7 @@ export const SessionList: React.FC<{
   const [missionsOpen, setMissionsOpen] = useState(false);
   const [missions, setMissions] = useState<CronMission[]>([]);
   const [triggeringMission, setTriggeringMission] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const [newSessionIds, setNewSessionIds] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
@@ -359,10 +360,21 @@ export const SessionList: React.FC<{
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/5">
         <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Sessions</span>
         <div className="flex items-center gap-1">
-          <button onClick={() => { useSessionStore.getState().fetchAllSessions(); }}
-            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          <button
+            onClick={async () => {
+              // Visible 1s spin so the click is acknowledged even when
+              // the fetch returns instantly. Matches the mission-trigger
+              // pattern in handleTriggerMission.
+              setRefreshing(true);
+              const minSpin = new Promise(res => setTimeout(res, 1000));
+              try { await useSessionStore.getState().fetchAllSessions(); }
+              catch { /* fetchAllSessions logs its own errors */ }
+              finally { await minSpin; setRefreshing(false); }
+            }}
+            disabled={refreshing}
+            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:hover:bg-transparent"
             title="Refresh sessions">
-            <RefreshCw size={13} />
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
           </button>
           <button onClick={() => setShowSearch(!showSearch)}
             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
