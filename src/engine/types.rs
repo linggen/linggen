@@ -136,7 +136,7 @@ pub struct EngineConfig {
     /// Per-row cosine similarity floor for per-turn auto-recall. Rows
     /// below this score are dropped by ling-mem before reaching the
     /// engine; nothing weaker is injected or shown. See
-    /// `config::AgentConfig`. Default 0.5.
+    /// `config::AgentConfig`. Default 0.6.
     pub memory_inject_min_score: f32,
 }
 
