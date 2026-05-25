@@ -118,8 +118,12 @@ export const SubagentPane: React.FC<Props> = ({
     }
   }, [entries, activeId, askUserEntry]);
 
-  if (!visible || entries.length === 0) return null;
-
+  // `active` and `useAutoScroll` MUST be computed before any early
+  // return so the hook-call order stays stable across renders. When
+  // entries is empty (e.g. mid-session-switch, while paneVisible
+  // hasn't yet flipped) returning null before useAutoScroll would
+  // skip a hook and trip React #300 ("Rendered fewer hooks than
+  // expected") on the next render.
   const active =
     entries.find((e) => e.subagentId === activeId) ?? entries[entries.length - 1];
 
@@ -132,13 +136,15 @@ export const SubagentPane: React.FC<Props> = ({
   // hook identity when the active tab changes via `key={active.subagentId}`
   // on the scroll container so the hook resets cleanly.
   const autoScroll = useAutoScroll(
-    { length: active.toolSteps?.length ?? 0 },
+    { length: active?.toolSteps?.length ?? 0 },
     {
-      isGenerating: active.status === 'running',
-      text: active.resultText || '',
-      liveText: active.currentActivity || '',
+      isGenerating: active?.status === 'running',
+      text: active?.resultText || '',
+      liveText: active?.currentActivity || '',
     },
   );
+
+  if (!visible || entries.length === 0 || !active) return null;
 
   return (
     <div className="flex flex-col h-full min-h-0 border-l border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-[#0b0b0b]">
