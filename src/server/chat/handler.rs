@@ -30,17 +30,79 @@ pub(super) fn parse_explicit_target_prefix(message: &str) -> Option<(&str, &str)
     Some((candidate, body))
 }
 
-/// Generate a session title from the first few words of the user's message.
+/// Lead-in filler the auto-titler strips before picking words. Matched
+/// case-insensitively at a word boundary so "hide" is never read as
+/// "hi" + "de". Longest match wins so "i want to" beats bare "i".
+const TITLE_FILLER: &[&str] = &[
+    // greetings / interjections
+    "hi", "hello", "hey", "yo", "hiya", "sup", "greetings",
+    // politeness / acks
+    "ok", "okay", "please", "pls", "plz", "thanks", "thx", "btw", "anyway", "so", "well", "just",
+    // soft asks (longer phrases first so they take precedence over shorter prefixes)
+    "i would like to", "i'd like to", "i want to", "i need to",
+    "could you please", "would you please", "can you please",
+    "do you know", "do you", "did you", "can you", "could you", "would you",
+    "will you", "should you", "are you", "is it", "is there", "is the",
+    "let's", "lets", "let me",
+];
+
+/// Skip leading filler tokens + punctuation so the title reflects the
+/// substantive part of the message instead of "hi, do you …".
+fn strip_leading_filler(message: &str) -> String {
+    let mut s = message.trim().to_string();
+    loop {
+        let trimmed = s
+            .trim_start_matches(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ';' | ':' | '—' | '-')
+            })
+            .to_string();
+        s = trimmed;
+        let lower = s.to_lowercase();
+        let mut matched_len = 0usize;
+        for phrase in TITLE_FILLER {
+            if !lower.starts_with(phrase) {
+                continue;
+            }
+            // Require a word boundary after the match so "hide" doesn't
+            // get stripped to "de".
+            let after = lower[phrase.len()..].chars().next();
+            let boundary = after.is_none_or(|c| !c.is_alphanumeric() && c != '\'');
+            if boundary && phrase.len() > matched_len {
+                matched_len = phrase.len();
+            }
+        }
+        if matched_len == 0 {
+            break;
+        }
+        s = s[matched_len..].to_string();
+    }
+    s
+}
+
+/// Generate a session title from the first ~3 substantive words of the
+/// user's message, after stripping greetings / soft-ask leads (`hi,`,
+/// `can you`, `i want to`, …) and leading punctuation. Falls back to
+/// the raw message when stripping leaves nothing.
 fn auto_session_title(message: &str) -> String {
-    let words: Vec<&str> = message.split_whitespace().collect();
+    const MAX_WORDS: usize = 3;
+    const MAX_CHARS: usize = 30;
+
+    let stripped = strip_leading_filler(message);
+    let source = if stripped.split_whitespace().next().is_some() {
+        stripped
+    } else {
+        message.trim().to_string()
+    };
+
+    let words: Vec<&str> = source.split_whitespace().collect();
     if words.is_empty() {
         return "New Chat".to_string();
     }
-    let first: String = words.iter().take(6).copied().collect::<Vec<_>>().join(" ");
-    if first.chars().count() > 50 {
-        let s: String = first.chars().take(47).collect();
+    let first: String = words.iter().take(MAX_WORDS).copied().collect::<Vec<_>>().join(" ");
+    if first.chars().count() > MAX_CHARS {
+        let s: String = first.chars().take(MAX_CHARS - 3).collect();
         format!("{}...", s.trim_end())
-    } else if words.len() > 6 {
+    } else if words.len() > MAX_WORDS {
         format!("{first}...")
     } else {
         first
@@ -717,26 +779,55 @@ mod tests {
     }
 
     #[test]
-    fn auto_title_short_message_kept_whole() {
+    fn auto_title_three_word_short_kept_whole() {
         assert_eq!(auto_session_title("fix login bug"), "fix login bug");
     }
 
     #[test]
-    fn auto_title_truncates_long_word_run() {
-        let t = auto_session_title("one two three four five six seven eight nine");
-        assert_eq!(t, "one two three four five six...");
+    fn auto_title_truncates_long_run_to_three_words() {
+        let t = auto_session_title("one two three four five six");
+        assert_eq!(t, "one two three...");
     }
 
     #[test]
-    fn auto_title_ellipses_long_phrase() {
-        let long = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff";
-        let t = auto_session_title(long);
-        assert!(t.ends_with("..."));
-        assert!(t.chars().count() <= 50);
+    fn auto_title_strips_leading_greeting() {
+        // "hi, do you know my cat" → drop "hi,", drop "do you know" → "my cat"
+        assert_eq!(
+            auto_session_title("hi, do you know my cat"),
+            "my cat"
+        );
     }
 
     #[test]
-    fn auto_title_empty_falls_back() {
+    fn auto_title_strips_polite_lead() {
+        assert_eq!(
+            auto_session_title("please add a button to the toolbar"),
+            "add a button..."
+        );
+    }
+
+    #[test]
+    fn auto_title_strips_soft_ask() {
+        assert_eq!(
+            auto_session_title("i want to debug a stack overflow"),
+            "debug a stack..."
+        );
+    }
+
+    #[test]
+    fn auto_title_word_boundary_keeps_real_words() {
+        // "hide" must not get its "hi" prefix stripped.
+        assert_eq!(auto_session_title("hide the sidebar on mobile"), "hide the sidebar...");
+    }
+
+    #[test]
+    fn auto_title_falls_back_when_strip_empties() {
+        // Pure filler — fall back to the raw message instead of "New Chat".
+        assert_eq!(auto_session_title("hi"), "hi");
+    }
+
+    #[test]
+    fn auto_title_empty_returns_placeholder() {
         assert_eq!(auto_session_title("   "), "New Chat");
     }
 }
