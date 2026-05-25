@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Target, Plus, Trash2, Check, X } from 'lucide-react';
+import { ArrowLeft, Target, Plus, Trash2, Check, X, Pause, Play } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { AgentInfo, CronMission } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
@@ -29,7 +29,7 @@ const MissionNav: React.FC<{
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
   onCreate: () => void;
-}> = ({ missions, selection, onSelectMission, onToggleEnabled: _onToggleEnabled, onDelete, onCreate }) => {
+}> = ({ missions, selection, onSelectMission, onToggleEnabled, onDelete, onCreate }) => {
   const enabledCount = missions.filter(m => m.enabled).length;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -114,13 +114,28 @@ const MissionNav: React.FC<{
                       </button>
                     </>
                   ) : (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(mission.id); }}
-                      className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500"
-                      title="Delete"
-                    >
-                      <Trash2 size={11} />
-                    </button>
+                    <>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleEnabled(mission.id, !mission.enabled); }}
+                        className={cn(
+                          'p-1 rounded transition-colors',
+                          mission.enabled
+                            ? 'hover:bg-amber-100 dark:hover:bg-amber-500/10 text-slate-400 hover:text-amber-500'
+                            : 'hover:bg-green-100 dark:hover:bg-green-500/10 text-slate-400 hover:text-green-500',
+                        )}
+                        title={mission.enabled ? 'Pause — schedule kept, no runs fire' : 'Resume — re-enable the schedule'}
+                        aria-label={mission.enabled ? 'Pause mission' : 'Resume mission'}
+                      >
+                        {mission.enabled ? <Pause size={11} /> : <Play size={11} />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(mission.id); }}
+                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500"
+                        title="Delete"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

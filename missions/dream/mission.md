@@ -23,9 +23,9 @@ permission:
 # dream
 
 Linggen's built-in **memory consolidation** pass — the "sleep" half of
-the memory system. Engine-internal: no `shared-memory` skill required,
-no session-file scanning, no transcript ingestion. Only consumes what
-the per-session encoder already wrote into episodic.
+the memory system. Engine-internal: no session-file scanning, no
+transcript ingestion. Only consumes what the per-session encoder
+already wrote into episodic.
 
 ## What it does
 
@@ -54,20 +54,59 @@ not editor.
   `http://127.0.0.1:9888`; configurable in **Settings → General →
   Ling-mem URL**). Change the TTL in the ling-mem console and the next
   dream run honors it.
-- **Schedule** lives here (`schedule: "0 3 * * *"` — 03:00 daily) — edit
-  to taste, or set `enabled: false` to pause.
+- **Schedule** lives here (`schedule: "0 3 * * *"` — 03:00 daily). Edit
+  to taste, or use the Mission UI's pause toggle / stop / delete
+  controls if you want the consolidation off temporarily or for good.
 
-## Turning it off
+## How it runs
 
-Three off-switches, in increasing order of finality:
+The engine special-cases this mission and drives it from
+`scheduler::dispatch_dream_mission`. One run is:
 
-- **Stop a run** from the mission UI if it ever misbehaves — the
-  schedule keeps running, the next cycle re-arms.
-- **Pause** by flipping `enabled: false` (or the toggle in the mission
-  UI). Schedule preserved; nothing fires until you re-enable.
-- **Delete the mission** to permanently disable automatic long-term
-  memory curation. Episodic memories will still be captured and
-  recalled — they'll just age out without being promoted. Supported
-  choice, not a bug; nothing is lost the daemon can't still hold. The
-  install sentinel (`~/.linggen/missions/.builtin-missions-installed`)
-  prevents future daemon starts from re-seeding it.
+1. **Trigger** — daily 03:00 cron, or the post-turn catch-up if the
+   last successful run is older than `dream_catchup_hours` (engine
+   config, default 24). A `dream_running` flag guards against
+   overlapping runs; a concurrent trigger records a `skipped` entry
+   and bows out.
+2. **Open session** — create a mission-scoped session, emit
+   `MissionTriggered`, persist the kickoff line. All subsequent
+   subagent activity hangs off this session for audit.
+3. **Fetch TTL** — `GET <ling_mem_url>/api/config` →
+   `episodic_ttl_days`. On any error (daemon down, non-200, malformed
+   JSON) fall back to the engine's baked-in default. The resolved
+   number drives the cutoff: `cutoff = now − episodic_ttl_days`.
+4. **Build worklist** — `ling-mem list --episodic --format json`,
+   then keep only rows whose `COALESCE(updated_at, created_at)` is
+   strictly older than the cutoff. The engine, not the binary, owns
+   the TTL policy; the binary stays policy-free.
+5. **Empty worklist?** Skip the LLM phase entirely, record
+   `promoted=0 deleted=0`, finish. Cheap exit — most runs.
+6. **LLM phase** — spawn the `ling-mem-autonomous` subagent
+   (`agents/ling-mem-autonomous.md`; tools = `Memory_query`,
+   `Memory_write`; **no AskUser**) with the worklist + cutoff as the
+   task. For each row, the subagent decides:
+   - **Promote** — `Memory_write({verb: "add", host: "linggen",
+     content, type, from, contexts, tier: "semantic"|"core"})`, then
+     `Memory_write({verb: "delete", tier: "episodic", id})`.
+   - **Silent dedup** — if `Memory_query({verb: "search"})` returns a
+     semantic row clearly meaning the same thing, skip the add and
+     just delete the episodic source.
+   - **Skip-on-uncertainty** — for related-but-not-identical pairs,
+     partial overlaps, or contradictions, do nothing in this pass.
+     Append-only is the floor; the conflict resolves in a live recall
+     with the user present.
+   - **Delete** — for not-worth-keeping rows (pure activity,
+     re-derivable, single-mention noise): `Memory_write({verb:
+     "delete", tier: "episodic", id})`.
+7. **Deterministic backstop** — `ling-mem evict --before <cutoff>`
+   sweeps any past-TTL row the subagent didn't terminally handle.
+   Failures here are non-fatal — the rows simply age out on the
+   next run.
+8. **Report** — the subagent emits one terminal line:
+   `CONSOLIDATED promoted=<n> deleted=<n>`. The engine parses it,
+   writes a `MissionRunEntry` with status (`completed` on success,
+   `failed` on parse/subagent error), logs `dream mission:
+   consolidate ok (promoted=N deleted=N)` at INFO. The Mission UI
+   surfaces the entry under run history.
+9. **Release the overlap guard** — `dream_running = false`; the next
+   trigger is free to fire.
