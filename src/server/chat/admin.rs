@@ -111,8 +111,8 @@ pub(crate) async fn get_system_prompt_api(
             if let Ok(Some(mission)) = state.manager.missions.get_mission(mission_id) {
                 // Mirror what mission_scheduler does at dispatch time:
                 // - inject the mission body via active_mission
-                // - apply allowed-tools / allow-skills so the `tools` array
-                //   and system-prompt skill list reflect the real run.
+                // - apply allowed-tools so the `tools` array and
+                //   system-prompt reflect the real run.
                 engine.active_mission = Some(crate::engine::ActiveMission {
                     name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
                     description: mission.description.clone(),
@@ -122,12 +122,6 @@ pub(crate) async fn get_system_prompt_api(
                 if !mission.allowed_tools.is_empty() {
                     engine.cfg.mission_allowed_tools =
                         Some(mission.allowed_tools.iter().cloned().collect());
-                }
-                let has_concrete_skills = !mission.allow_skills.is_empty()
-                    && !mission.allow_skills.iter().any(|s| s == "*");
-                if has_concrete_skills {
-                    engine.cfg.consumer_allowed_skills =
-                        Some(mission.allow_skills.iter().cloned().collect());
                 }
             }
         }

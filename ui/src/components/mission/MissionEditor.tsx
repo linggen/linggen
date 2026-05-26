@@ -42,8 +42,6 @@ export const MissionEditor: React.FC<{
   );
   const [permissionWarning, setPermissionWarning] = useState(editing?.permission?.warning || '');
 
-  const [allowSkillsText, setAllowSkillsText] = useState((editing?.allow_skills || []).join(', '));
-  const [requiresText, setRequiresText] = useState((editing?.requires || []).join(', '));
   const [allowedToolsText, setAllowedToolsText] = useState((editing?.allowed_tools || []).join(', '));
 
   const [models, setModels] = useState<{ id: string; model: string; provider: string }[]>([]);
@@ -80,8 +78,6 @@ export const MissionEditor: React.FC<{
         permission_mode: permissionMode,
         permission_paths: permPaths,
         permission_warning: permissionWarning || undefined,
-        allow_skills: splitList(allowSkillsText),
-        requires: splitList(requiresText),
         allowed_tools: splitList(allowedToolsText),
       };
       const result = editing
@@ -214,24 +210,6 @@ export const MissionEditor: React.FC<{
         </div>
 
         <div>
-          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">
-            Allow skills <span className="text-slate-400 font-normal">(via Skill tool — empty removes Skill, * allows any)</span>
-          </label>
-          <input type="text" value={allowSkillsText} onChange={e => setAllowSkillsText(e.target.value)}
-            placeholder="memory, linggen"
-            className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-        </div>
-
-        <div>
-          <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">
-            Requires <span className="text-slate-400 font-normal">(capabilities — validated at load)</span>
-          </label>
-          <input type="text" value={requiresText} onChange={e => setRequiresText(e.target.value)}
-            placeholder="memory"
-            className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-        </div>
-
-        <div>
           <label className="text-[12px] font-medium text-slate-600 dark:text-slate-400 mb-1.5 block">Model <span className="text-slate-400">(optional)</span></label>
           <select value={model} onChange={e => setModel(e.target.value)}
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/30">
@@ -256,8 +234,8 @@ export const MissionEditor: React.FC<{
             Prompt body {scriptOnly && <span className="text-amber-600 dark:text-amber-400">(empty — this is a script-only mission)</span>}
           </label>
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
-            placeholder="Step-by-step instructions for the agent. Leave empty for a script-only mission." rows={20}
-            className="w-full px-3 py-2 text-sm font-mono leading-relaxed rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 resize-y min-h-[420px] focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+            placeholder="Step-by-step instructions for the agent. Leave empty for a script-only mission." rows={36}
+            className="w-full px-3 py-2 text-sm font-mono leading-relaxed rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black/20 resize-y min-h-[720px] focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
 
         <div className="flex items-center gap-3 pt-2">

@@ -2,26 +2,37 @@
 name: dream
 description: Nightly memory consolidation. Promotes durable episodic memories into the long-term semantic store and forgets the rest. Built-in.
 schedule: "0 3 * * *"
+# If the 3am cron is missed (machine off/asleep), the post-turn
+# catch-up re-triggers this mission the next time Linggen is used,
+# but only when it hasn't completed in the last 24 hours.
+catchup_hours: 24
 enabled: true
+# Run under the memory-specialist agent rather than the default
+# `ling` persona. ling-mem's system prompt is tuned for ENCODE /
+# CONSOLIDATE phases — see agents/ling-mem.md.
+agent: ling-mem
 cwd: ~/.linggen
-# Tools the dream actually uses. The mission body — not a separate
-# agent spec — is the system prompt; only these three need to be
-# wired. AskUser / EnterPlanMode are stripped by mission-context
-# policy (mission-spec.md §Safety) so uncertainty resolves to *skip*,
-# never to ambush the user at 3am.
+# The dream is unattended (cron at 3am, or a turn-seam catch-up the
+# user didn't request). It has no chat partner, so AskUser is not
+# in the tool list — uncertainty must resolve to "skip the row" per
+# the mission body. The body itself IS the system prompt for the
+# run (see mission-spec.md §Body IS the system prompt).
 allowed-tools:
   - Bash
   - Memory_query
   - Memory_write
+# No filesystem grants: the dream talks only to the local `ling-mem`
+# daemon on 127.0.0.1 (HTTP). The daemon — a separate process owned
+# by the user — is what actually writes to ~/.linggen/memory. The
+# agent never opens a file there, so no path grant is needed. Bash
+# is here for the one curl/jq call in Step 1; `Memory_*` route over
+# HTTP via the engine's capability dispatcher.
 permission:
-  paths:
-    - path: ~/.linggen/memory
-      mode: edit
   warning: >-
-    Writes to ~/.linggen/memory via the local `ling-mem` daemon
-    (promote episodic → semantic, then delete past-TTL rows). Reads
-    the daemon's `/api/config` over localhost. Does not touch project
-    files.
+    Talks to the local ling-mem daemon on 127.0.0.1 only. Promotes
+    or deletes rows via /api/memory/* and reads /api/config. Touches
+    no files directly; the daemon process is what mutates
+    ~/.linggen/memory/.
 ---
 
 # Memory dream — consolidation worker

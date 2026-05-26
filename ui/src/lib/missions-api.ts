@@ -13,8 +13,6 @@ export interface MissionCreateArgs {
   permission_mode?: string;
   permission_paths?: string[];
   permission_warning?: string;
-  allow_skills?: string[];
-  requires?: string[];
   allowed_tools?: string[];
 }
 
@@ -39,8 +37,6 @@ export function createMission(args: MissionCreateArgs): Promise<CronMission | nu
     permission_mode: args.permission_mode || 'admin',
     permission_paths: args.permission_paths || [],
     permission_warning: args.permission_warning || null,
-    allow_skills: args.allow_skills || [],
-    requires: args.requires || [],
     allowed_tools: args.allowed_tools || [],
   });
 }

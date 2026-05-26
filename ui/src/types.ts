@@ -350,11 +350,6 @@ export interface CronMission {
   /** Optional pre-agent script (path relative to mission dir, or inline bash). */
   entry?: string | null;
 
-  /** Whitelist for Skill tool. Empty → Skill tool absent. ["*"] → any skill. */
-  allow_skills?: string[];
-  /** Capability names required — validated at load. */
-  requires?: string[];
-
   /** Explicit tool allowlist. Empty → unrestricted. */
   allowed_tools?: string[];
   /** Permission block (mode + paths + warning). */

@@ -145,14 +145,6 @@ pub struct AgentConfig {
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u64,
 
-    /// Catch-up threshold (hours) for the built-in `dream` consolidation
-    /// mission. The mission has a daily cron, but cron is missed when the
-    /// machine is off/asleep; on each completed turn, if `dream` has not
-    /// run in this many hours it is triggered as a catch-up. Default 24.
-    /// See `memory-spec.md` §2.
-    #[serde(default = "default_dream_catchup_hours")]
-    pub dream_catchup_hours: u64,
-
     /// Per-row cosine similarity floor for per-turn auto-recall. Rows
     /// scoring below this are filtered out by ling-mem before the result
     /// crosses the wire — they're never injected into the model context
@@ -181,10 +173,6 @@ fn default_consolidate_every_n_turns() -> usize {
 
 fn default_episodic_ttl_days() -> u64 {
     7
-}
-
-fn default_dream_catchup_hours() -> u64 {
-    24
 }
 
 fn default_memory_inject_min_score() -> f32 {
@@ -417,11 +405,6 @@ impl Config {
                 "Agent episodic_ttl_days must be greater than 0 (a 0-day TTL evicts episodic memory before it can be consolidated)"
             );
         }
-        if self.agent.dream_catchup_hours == 0 {
-            anyhow::bail!(
-                "Agent dream_catchup_hours must be greater than 0 (a 0-hour catch-up would re-trigger the dream mission every turn)"
-            );
-        }
         let s = self.agent.memory_inject_min_score;
         if !(0.0..=1.0).contains(&s) || s.is_nan() {
             anyhow::bail!(
@@ -479,7 +462,6 @@ impl Default for Config {
                 compact_threshold: None,
                 consolidate_every_n_turns: default_consolidate_every_n_turns(),
                 episodic_ttl_days: default_episodic_ttl_days(),
-                dream_catchup_hours: default_dream_catchup_hours(),
                 memory_inject_min_score: default_memory_inject_min_score(),
                 ling_mem_url: default_ling_mem_url(),
             },
