@@ -2,7 +2,7 @@
 //!
 //! Lets the engine query for installed skills (by name, by capability,
 //! by metadata listing) without knowing how they're loaded or stored.
-//! `extensions::skills::SkillManager` is the production implementer;
+//! `extensions::skills::SkillLoader` is the production implementer;
 //! tests can stub against a smaller in-memory impl.
 //!
 //! Returns `engine::skill::Skill` records — owned shapes the engine
@@ -25,7 +25,7 @@ pub trait SkillRegistry: Send + Sync {
     /// Return the active provider for the given capability, if any.
     /// "Active" is the registry's choice — typically the first installed
     /// skill that `provides:` the capability and has an `implements:`
-    /// block for it. See `extensions::skills::SkillManager::active_provider`.
+    /// block for it. See `extensions::skills::SkillLoader::active_provider`.
     async fn active_provider(&self, capability: &str) -> Option<Skill>;
 
     /// `(name, description)` for every installed skill exposed to the

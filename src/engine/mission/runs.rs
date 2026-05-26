@@ -10,7 +10,7 @@
 //!   - Mission runs are disk-persistent and survive restarts —
 //!     that's how the scheduler decides whether a catch-up is due.
 //!
-//! `extensions::missions::MissionStore` is the production
+//! `extensions::missions::MissionLoader` is the production
 //! implementer. The methods are synchronous because the underlying
 //! I/O is local-disk and small (the JSONL is bounded per mission);
 //! async would just add a layer with no real concurrency win.

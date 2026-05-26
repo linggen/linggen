@@ -310,6 +310,62 @@ pub(crate) async fn delete_mission(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct MissionFileQuery {
+    id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MissionFileWriteRequest {
+    id: String,
+    content: String,
+}
+
+/// GET /api/mission-file?id=<id> — raw mission.md content.
+/// Powers the Web UI's raw-markdown mission editor (CM6Editor + live preview).
+pub(crate) async fn get_mission_file(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<MissionFileQuery>,
+) -> impl IntoResponse {
+    match state.manager.missions.read_mission_raw(&query.id) {
+        Ok(Some(content)) => Json(serde_json::json!({
+            "id": query.id,
+            "content": content,
+        }))
+        .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "Mission not found".to_string()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read mission file: {}", e),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/mission-file — upsert a mission by raw mission.md content.
+/// The mission id is taken from the request body and used as the directory
+/// name under `~/.linggen/missions/<id>/mission.md`. Frontmatter `name`
+/// is decorative — the id is the source of truth for routing.
+pub(crate) async fn upsert_mission_file(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<MissionFileWriteRequest>,
+) -> impl IntoResponse {
+    let id = req.id.trim();
+    if id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "id is required".to_string()).into_response();
+    }
+    if id.contains('/') || id.contains('\\') || id == "." || id == ".." {
+        return (StatusCode::BAD_REQUEST, "invalid mission id".to_string()).into_response();
+    }
+    match state.manager.missions.write_mission_raw(id, &req.content) {
+        Ok(mission) => {
+            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+            Json(mission).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 pub(crate) struct TriggerMissionRequest {
     #[serde(default)]
     project_root: Option<String>,

@@ -47,8 +47,9 @@ use api::marketplace::{
     marketplace_install, marketplace_move_to_global, marketplace_uninstall,
 };
 use api::missions::{
-    create_mission, delete_mission, get_mission_run_output, get_mission_session_state,
-    list_mission_runs, list_missions, trigger_mission, update_mission,
+    create_mission, delete_mission, get_mission_file, get_mission_run_output,
+    get_mission_session_state, list_mission_runs, list_missions, trigger_mission,
+    update_mission, upsert_mission_file,
 };
 use api::permissions::{get_session_permission, update_session_permission};
 use api::rooms::{
@@ -759,7 +760,7 @@ struct ServerHandle {
 
 async fn prepare_server(
     manager: Arc<AgentManager>,
-    skill_manager: Arc<crate::extensions::skills::SkillManager>,
+    skills: Arc<crate::extensions::skills::SkillLoader>,
     host: &str,
     port: u16,
     dev_mode: bool,
@@ -781,7 +782,7 @@ async fn prepare_server(
         port,
         active_peer_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         events_tx,
-        skill_manager,
+        skills,
         prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
@@ -962,6 +963,7 @@ async fn prepare_server(
         .route("/api/missions/{id}/runs", get(list_mission_runs))
         .route("/api/missions/{id}/runs/{run_id}/output", get(get_mission_run_output))
         .route("/api/missions/{id}/trigger", post(trigger_mission))
+        .route("/api/mission-file", get(get_mission_file).post(upsert_mission_file))
         // Chat & plan (also accessible via named WebRTC RPC)
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))
@@ -1092,14 +1094,14 @@ async fn prepare_server(
 
 pub async fn start_server(
     manager: Arc<AgentManager>,
-    skill_manager: Arc<crate::extensions::skills::SkillManager>,
+    skills: Arc<crate::extensions::skills::SkillLoader>,
     host: &str,
     port: u16,
     dev_mode: bool,
     idle_shutdown_secs: Option<u64>,
     agent_events_rx: mpsc::UnboundedReceiver<(crate::engine::agent::AgentEvent, Option<String>)>,
 ) -> anyhow::Result<()> {
-    let handle = prepare_server(manager, skill_manager, host, port, dev_mode, idle_shutdown_secs, agent_events_rx).await?;
+    let handle = prepare_server(manager, skills, host, port, dev_mode, idle_shutdown_secs, agent_events_rx).await?;
     handle.task.await??;
     Ok(())
 }
@@ -1127,7 +1129,7 @@ async fn capability_dispatch(
         return (StatusCode::NOT_FOUND, format!("Unknown capability tool '{}'", tool_name)).into_response();
     };
 
-    let Some(skill) = state.skill_manager.get_skill(&skill_name).await else {
+    let Some(skill) = state.skills.get_skill(&skill_name).await else {
         return (StatusCode::NOT_FOUND, format!("Skill '{}' not found", skill_name)).into_response();
     };
 
@@ -1147,7 +1149,7 @@ async fn capability_dispatch(
     }
 
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    match capability_tools::dispatch(state.skill_manager.as_ref(), &ling_mem_url, &tool_name, args).await {
+    match capability_tools::dispatch(state.skills.as_ref(), &ling_mem_url, &tool_name, args).await {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {
             let msg = format!("{:#}", e);
@@ -1171,7 +1173,7 @@ async fn serve_app_file(
     };
 
     // Look up the skill.
-    let skill = state.skill_manager.get_skill(&skill_name).await;
+    let skill = state.skills.get_skill(&skill_name).await;
     let Some(skill) = skill else {
         return build_err(404, &format!("Skill '{}' not found", skill_name));
     };

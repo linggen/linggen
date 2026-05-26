@@ -103,7 +103,7 @@ pub(crate) async fn get_system_prompt_api(
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
         if let Some(ref skill_name) = meta.skill {
-            if let Some(skill) = state.manager.skill_manager.get_skill(skill_name).await {
+            if let Some(skill) = state.manager.skills.get_skill(skill_name).await {
                 engine.activate_skill(skill, ActivationMode::Export).await;
             }
         }

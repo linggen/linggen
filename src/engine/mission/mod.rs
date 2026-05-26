@@ -6,9 +6,9 @@
 //! - `runs` — `MissionRunStore` trait. Run-history persistence
 //!   contract.
 //!
-//! Mirrors `engine::agent` (`spec` + `registry` + concrete `RunStore`)
-//! and `engine::skill_registry`. Disk loading lives in
-//! `extensions::missions`; that module's `MissionStore` is the
+//! Mirrors `engine::agent` (`record` + `registry` + concrete `RunStore`)
+//! and `engine::skill` (`record` + `registry`). Disk loading lives in
+//! `extensions::missions`; that module's `MissionLoader` is the
 //! production impl for both traits.
 
 pub mod record;

@@ -206,7 +206,7 @@ pub async fn build_page_state(
         }
 
         // Skills — admin sees all, others see allowed_skills only
-        let skills = state.skill_manager.list_skills().await;
+        let skills = state.skills.list_skills().await;
         let skills = if let Some(ref cfg) = room_cfg {
             let allowed: std::collections::HashSet<&str> = cfg.allowed_skills.iter().map(|s| s.as_str()).collect();
             skills.into_iter().filter(|s| allowed.contains(s.name.as_str())).collect::<Vec<_>>()

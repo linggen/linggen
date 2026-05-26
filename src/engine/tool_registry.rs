@@ -77,7 +77,7 @@ impl ToolRegistry {
                  — tool context was not set"
             )
         })?;
-        let skills = manager.skill_manager.clone();
+        let skills = manager.skills.clone();
         // Memory tools are engine-built-in (no skill); other capabilities
         // ignore this URL. Pull from the live config snapshot so config
         // edits (Settings → General → Ling-mem URL) reach the next dispatch.

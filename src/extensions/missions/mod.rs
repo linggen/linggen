@@ -112,7 +112,7 @@ struct LegacyFrontmatter {
 // MissionDraft — builder used by CRUD to avoid unreadable positional args
 // ---------------------------------------------------------------------------
 
-/// Input to `MissionStore::create_mission` / `update_mission`.
+/// Input to `MissionLoader::create_mission` / `update_mission`.
 /// All fields optional; update applies only what's `Some`.
 #[derive(Debug, Default, Clone)]
 pub struct MissionDraft {
@@ -384,15 +384,15 @@ fn name_to_filename(name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// MissionStore — global mission storage at ~/.linggen/missions/
+// MissionLoader — global mission storage at ~/.linggen/missions/
 // ---------------------------------------------------------------------------
 
-pub struct MissionStore {
+pub struct MissionLoader {
     dir: PathBuf,
     cache: std::sync::Mutex<Vec<Mission>>,
 }
 
-impl MissionStore {
+impl MissionLoader {
     pub fn new() -> Self {
         let store = Self {
             dir: crate::paths::global_missions_dir(),
@@ -732,7 +732,7 @@ impl MissionStore {
 }
 
 #[async_trait]
-impl MissionRegistry for MissionStore {
+impl MissionRegistry for MissionLoader {
     async fn list(&self) -> Result<Vec<Mission>> {
         self.list_all_missions()
     }
@@ -742,7 +742,7 @@ impl MissionRegistry for MissionStore {
     }
 }
 
-impl MissionRunStore for MissionStore {
+impl MissionRunStore for MissionLoader {
     fn append(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
         self.append_mission_run(mission_id, entry)
     }
@@ -774,9 +774,9 @@ impl MissionRunStore for MissionStore {
 mod tests {
     use super::*;
 
-    fn temp_store() -> (MissionStore, tempfile::TempDir) {
+    fn temp_store() -> (MissionLoader, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let store = MissionStore::with_dir(dir.path().to_path_buf());
+        let store = MissionLoader::with_dir(dir.path().to_path_buf());
         (store, dir)
     }
 

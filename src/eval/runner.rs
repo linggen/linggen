@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::eval::grader::run_grader;
 use crate::eval::report::save_transcript;
 use crate::eval::{EvalConfig, EvalResult, EvalTaskDef};
-use crate::extensions::skills::SkillManager;
+use crate::extensions::skills::SkillLoader;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -111,15 +111,15 @@ pub async fn run_single_task(
         copy_dir_recursive(&agents_src, &agents_dst)?;
     }
 
-    // 5. Create SkillManager, AgentManager (store is shared across tasks)
+    // 5. Create SkillLoader, AgentManager (store is shared across tasks)
     let (config, _config_path) =
         Config::load_with_path().unwrap_or_else(|_| (Config::default(), None));
-    let skill_manager = Arc::new(SkillManager::new());
-    let agent_loader = Arc::new(crate::extensions::agents::AgentSpecLoader::new());
+    let skills = Arc::new(SkillLoader::new());
+    let agent_loader = Arc::new(crate::extensions::agents::AgentLoader::new());
     let (manager, _rx) = AgentManager::new(
         config.clone(),
         None,
-        skill_manager.clone(),
+        skills.clone(),
         agent_loader,
         crate::engine::InterfaceMode::Web,
     );

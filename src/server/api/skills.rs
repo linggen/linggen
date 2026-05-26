@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::{canonical_project_root, ProjectQuery};
 
 pub(crate) async fn list_skills(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    let skills: Vec<Skill> = state.skill_manager.list_skills().await;
+    let skills: Vec<Skill> = state.skills.list_skills().await;
     Json(skills).into_response()
 }
 
@@ -24,7 +24,7 @@ pub(crate) async fn reload_skills(
 ) -> impl IntoResponse {
     let project_root = body.get("project_root").and_then(|v| v.as_str());
     let root_path = project_root.map(std::path::Path::new);
-    if let Err(err) = state.skill_manager.load_all(root_path).await {
+    if let Err(err) = state.skills.load_all(root_path).await {
         tracing::warn!("Failed to reload skills: {err}");
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
@@ -206,7 +206,7 @@ pub(crate) async fn upsert_skill_file_api(
     if let Err(err) = std::fs::write(&full_path, &req.content) {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
-    if let Err(err) = state.skill_manager.load_all(Some(&root)).await {
+    if let Err(err) = state.skills.load_all(Some(&root)).await {
         tracing::warn!("Failed to reload skills after write: {}", err);
     }
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
@@ -229,7 +229,7 @@ pub(crate) async fn delete_skill_file_api(
     if let Err(err) = std::fs::remove_file(&full_path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
-    if let Err(err) = state.skill_manager.load_all(Some(&root)).await {
+    if let Err(err) = state.skills.load_all(Some(&root)).await {
         tracing::warn!("Failed to reload skills after delete: {}", err);
     }
     let _ = state.events_tx.send(ServerEvent::StateUpdated);

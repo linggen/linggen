@@ -1,10 +1,10 @@
 use crate::config::Config;
 use crate::engine::agent::locks::LockManager;
 use crate::engine::agent::registry::AgentRegistry;
-use crate::engine::agent::spec::{AgentSpec, AgentSpecFile};
+use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
-use crate::extensions::agents::AgentSpecLoader;
-use crate::extensions::skills::SkillManager;
+use crate::extensions::agents::AgentLoader;
+use crate::extensions::skills::SkillLoader;
 use crate::provider::models::ModelManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use anyhow::Result;
@@ -20,7 +20,7 @@ use tracing::{info, warn};
 pub mod locks;
 pub mod registry;
 pub mod runs;
-pub mod spec;
+pub mod record;
 
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
@@ -35,11 +35,11 @@ pub struct AgentManager {
     pub projects: Mutex<HashMap<String, Arc<ProjectContext>>>,
     pub locks: Mutex<LockManager>,
     pub models: RwLock<Arc<ModelManager>>,
-    pub missions: Arc<crate::extensions::missions::MissionStore>,
-    pub skill_manager: Arc<SkillManager>,
+    pub missions: Arc<crate::extensions::missions::MissionLoader>,
+    pub skills: Arc<SkillLoader>,
     /// Disk loader for agent specs. Implements `AgentRegistry`; the
     /// engine consults it whenever an agent needs to be resolved by id.
-    pub agents: Arc<AgentSpecLoader>,
+    pub agents: Arc<AgentLoader>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
     /// Per-session agent engines. Each session gets its own engine — no lock contention.
@@ -359,22 +359,19 @@ impl AgentManager {
         if apply_delegation_depth {
             engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         }
-        engine.load_skill_tools(self.skill_manager.as_ref()).await;
-        engine.load_available_skills_metadata(self.skill_manager.as_ref()).await;
-        if let Ok(specs) = self.list_agent_specs(project_root).await {
-            engine.available_agents_metadata = specs
-                .iter()
-                .map(|s| (s.spec.name.clone(), s.spec.description.clone()))
-                .collect();
-        }
+        engine.load_skill_tools(self.skills.as_ref()).await;
+        engine.load_available_skills_metadata(self.skills.as_ref()).await;
+        engine
+            .load_available_agents_metadata(self.agents.as_ref(), project_root)
+            .await;
         Ok(engine)
     }
 
     pub fn new(
         config: Config,
         config_dir: Option<PathBuf>,
-        skill_manager: Arc<SkillManager>,
-        agents: Arc<AgentSpecLoader>,
+        skills: Arc<SkillLoader>,
+        agents: Arc<AgentLoader>,
         interface_mode: InterfaceMode,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>) {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -386,8 +383,8 @@ impl AgentManager {
                 projects: Mutex::new(HashMap::new()),
                 locks: Mutex::new(LockManager::new()),
                 models: RwLock::new(models),
-                missions: Arc::new(crate::extensions::missions::MissionStore::new()),
-                skill_manager,
+                missions: Arc::new(crate::extensions::missions::MissionLoader::new()),
+                skills,
                 agents,
                 working_places: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),

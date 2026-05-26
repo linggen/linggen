@@ -96,7 +96,7 @@ impl Tools {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("RunApp requires AgentManager context"))?;
 
-        let skill = manager.skill_manager.get_skill(&args.skill).await;
+        let skill = manager.skills.get_skill(&args.skill).await;
 
         match skill {
             Some(skill) => {
@@ -191,7 +191,7 @@ impl Tools {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Skill tool requires AgentManager context"))?;
 
-        let skill = manager.skill_manager.get_skill(&args.skill).await;
+        let skill = manager.skills.get_skill(&args.skill).await;
 
         match skill {
             Some(skill) => {
@@ -226,7 +226,7 @@ impl Tools {
                 Ok(ToolResult::Success(content))
             }
             None => {
-                let available = manager.skill_manager.list_skills().await;
+                let available = manager.skills.list_skills().await;
                 let names: Vec<String> = available
                     .iter()
                     .filter(|s| !s.disable_model_invocation)

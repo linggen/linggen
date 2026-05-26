@@ -504,7 +504,7 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
         tracing::info!("Session-bound skill '{}' blocked by policy", skill_name);
         return;
     }
-    let Some(skill) = ctx.manager.skill_manager.get_skill(&skill_name).await else {
+    let Some(skill) = ctx.manager.skills.get_skill(&skill_name).await else {
         return;
     };
     tracing::info!("Session-bound skill activated: {}", skill.name);
@@ -546,7 +546,7 @@ async fn dispatch_turn(
         run_skill_dispatch(ctx, engine).await;
         return;
     }
-    if let Some((skill_name, remaining)) = manager.skill_manager.match_trigger(clean_msg).await {
+    if let Some((skill_name, remaining)) = manager.skills.match_trigger(clean_msg).await {
         run_trigger_dispatch(ctx, engine, &skill_name, &remaining).await;
         return;
     }

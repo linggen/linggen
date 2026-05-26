@@ -352,8 +352,8 @@ async fn main() -> Result<()> {
                 tracing::warn!("Failed to seed built-in missions: {e}");
             }
 
-            let skill_manager = Arc::new(extensions::skills::SkillManager::new());
-            let agent_loader = Arc::new(extensions::agents::AgentSpecLoader::new());
+            let skills = Arc::new(extensions::skills::SkillLoader::new());
+            let agent_loader = Arc::new(extensions::agents::AgentLoader::new());
             let config_dir = config_path
                 .as_ref()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -362,16 +362,16 @@ async fn main() -> Result<()> {
             let (manager, rx) = engine::agent::AgentManager::new(
                 config,
                 config_dir,
-                skill_manager.clone(),
+                skills.clone(),
                 agent_loader,
                 interface_mode,
             );
 
-            let _ = skill_manager.load_all(Some(&ws_root)).await;
+            let _ = skills.load_all(Some(&ws_root)).await;
 
             // Auto-install built-in skills if none found
-            if skill_manager.list_skills().await.is_empty() {
-                let sm = skill_manager.clone();
+            if skills.list_skills().await.is_empty() {
+                let sm = skills.clone();
                 let ws = ws_root.clone();
                 let missions = manager.missions.clone();
                 tokio::spawn(async move {
@@ -424,7 +424,7 @@ async fn main() -> Result<()> {
                 }
                 tracing::info!("------------------------------");
 
-                server::start_server(manager, skill_manager, &host, port, cli.dev, cli.idle_shutdown_secs, rx).await?;
+                server::start_server(manager, skills, &host, port, cli.dev, cli.idle_shutdown_secs, rx).await?;
             }
         }
 

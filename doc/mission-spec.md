@@ -349,7 +349,7 @@ Both subsystems are first-class — engine boot treats them symmetrically.
 | `engine/mission/record.rs` | `Mission`, `MissionRunEntry`, `MissionPermission` runtime records |
 | `engine/mission/registry.rs` | `MissionRegistry` trait (spec lookup contract) |
 | `engine/mission/runs.rs` | `MissionRunStore` trait (run-history persistence contract) |
-| `extensions/missions/mod.rs` | `MissionStore` — disk CRUD, frontmatter parse/serialize, run history; impls both engine traits |
+| `extensions/missions/mod.rs` | `MissionLoader` — disk CRUD, frontmatter parse/serialize, run history; impls both engine traits |
 | `extensions/missions/scheduler.rs` | Cron evaluation, tick loop, entry execution, session creation, agent dispatch |
 | `server/api/missions.rs` | HTTP endpoints for management and manual trigger |
 | `engine/permission/` | Path-mode enforcement; `manifest.rs` owns the YAML grant grammar shared with skills |

@@ -83,7 +83,7 @@ pub(crate) async fn marketplace_install(
     .await
     {
         Ok(msg) => {
-            let _ = state.skill_manager.load_all(project_root_path).await;
+            let _ = state.skills.load_all(project_root_path).await;
             state.manager.session_engines.lock().await.clear();
             // Reload missions in case install script created one.
             state.manager.missions.reload();
@@ -105,7 +105,7 @@ pub(crate) async fn marketplace_uninstall(
 
     // Look up the skill's actual source to resolve the correct directory.
     // This handles Compat (Codex/Claude) skills that aren't in ~/.linggen/skills/.
-    let target_dir = if let Some(skill) = state.skill_manager.get_skill(&req.name).await {
+    let target_dir = if let Some(skill) = state.skills.get_skill(&req.name).await {
         match marketplace::skill_dir_for_source(&req.name, &skill.source, project_root_path) {
             Ok(d) => d,
             Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
@@ -121,7 +121,7 @@ pub(crate) async fn marketplace_uninstall(
 
     match marketplace::delete_skill(&req.name, &target_dir) {
         Ok(msg) => {
-            let _ = state.skill_manager.load_all(project_root_path).await;
+            let _ = state.skills.load_all(project_root_path).await;
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
@@ -148,14 +148,14 @@ pub(crate) async fn marketplace_move_to_global(
 ) -> impl IntoResponse {
     let project_root_path = req.project_root.as_deref().map(Path::new);
 
-    let skill = match state.skill_manager.get_skill(&req.name).await {
+    let skill = match state.skills.get_skill(&req.name).await {
         Some(s) => s,
         None => return (StatusCode::NOT_FOUND, "Skill not found").into_response(),
     };
 
     match marketplace::move_skill_to_global(&req.name, &skill.source, project_root_path) {
         Ok(msg) => {
-            let _ = state.skill_manager.load_all(project_root_path).await;
+            let _ = state.skills.load_all(project_root_path).await;
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }
@@ -202,7 +202,7 @@ pub(crate) async fn builtin_skills_install(
     .await
     {
         Ok(msg) => {
-            let _ = state.skill_manager.load_all(None).await;
+            let _ = state.skills.load_all(None).await;
             state.manager.missions.reload();
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()

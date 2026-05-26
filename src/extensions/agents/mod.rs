@@ -5,13 +5,13 @@
 //! the two directories (project overrides global by `agent_id`).
 //! Production implementer of `engine::agent::AgentRegistry`.
 //!
-//! Mirrors `extensions::skills::SkillManager`: a thin, stateless
+//! Mirrors `extensions::skills::SkillLoader`: a thin, stateless
 //! adapter that owns the `---` frontmatter splitter and the
 //! directory-walking rules. The engine never touches `std::fs` for
 //! agent loading — it goes through this module.
 
 use crate::engine::agent::registry::AgentRegistry;
-use crate::engine::agent::spec::{AgentSpec, AgentSpecFile};
+use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -155,19 +155,19 @@ fn load_specs_for_project(project_root: &Path) -> Result<Vec<AgentSpecFile>> {
 
 /// Production loader. Stateless — every call re-reads from disk so
 /// edits to `agents/*.md` show up without a restart, matching the
-/// behavior of `SkillManager` (which has its own caching layer but
+/// behavior of `SkillLoader` (which has its own caching layer but
 /// also supports refresh).
 #[derive(Default)]
-pub struct AgentSpecLoader;
+pub struct AgentLoader;
 
-impl AgentSpecLoader {
+impl AgentLoader {
     pub fn new() -> Self {
         Self
     }
 }
 
 #[async_trait]
-impl AgentRegistry for AgentSpecLoader {
+impl AgentRegistry for AgentLoader {
     async fn list(&self, project_root: &Path) -> Result<Vec<AgentSpecFile>> {
         let project_root = crate::util::resolve_path(project_root);
         load_specs_for_project(&project_root)

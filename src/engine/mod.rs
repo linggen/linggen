@@ -15,7 +15,6 @@ pub mod render;
 pub mod session_policy;
 pub mod skill;
 pub mod skill_activation;
-pub mod skill_registry;
 pub mod skill_tool;
 mod streaming;
 pub mod tool_registry;

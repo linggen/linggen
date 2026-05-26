@@ -2,7 +2,7 @@
 //!
 //! Lets the engine query for installed agent specs (by id, by listing)
 //! without knowing how they're loaded or stored.
-//! `extensions::agents::AgentSpecLoader` is the production implementer;
+//! `extensions::agents::AgentLoader` is the production implementer;
 //! tests can stub against a smaller in-memory impl.
 //!
 //! Returns `engine::agent::AgentSpecFile` records — owned shapes the
@@ -12,7 +12,7 @@
 //! `<project>/agents/` (project, high priority). See
 //! `extensions::agents` for the layering rule.
 
-use crate::engine::agent::spec::AgentSpecFile;
+use crate::engine::agent::record::AgentSpecFile;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::Path;

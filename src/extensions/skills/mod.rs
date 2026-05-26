@@ -340,12 +340,12 @@ struct SkillFrontmatter {
     implements: Option<std::collections::HashMap<String, CapabilityImpl>>,
 }
 
-pub struct SkillManager {
+pub struct SkillLoader {
     skills: Mutex<HashMap<String, Skill>>,
     triggers: Mutex<HashMap<String, String>>,
 }
 
-impl SkillManager {
+impl SkillLoader {
     pub fn new() -> Self {
         Self {
             skills: Mutex::new(HashMap::new()),
@@ -511,16 +511,16 @@ impl SkillManager {
     }
 }
 
-/// `SkillRegistry` impl — the engine reaches `SkillManager` only through
+/// `SkillRegistry` impl — the engine reaches `SkillLoader` only through
 /// this trait so it never imports an extension type.
 #[async_trait::async_trait]
-impl crate::engine::skill_registry::SkillRegistry for SkillManager {
+impl crate::engine::skill::registry::SkillRegistry for SkillLoader {
     async fn get(&self, name: &str) -> Option<Skill> {
         self.get_skill(name).await
     }
 
     async fn active_provider(&self, capability: &str) -> Option<Skill> {
-        SkillManager::active_provider(self, capability).await
+        SkillLoader::active_provider(self, capability).await
     }
 
     async fn list_metadata(&self) -> Vec<(String, String)> {
@@ -633,8 +633,8 @@ fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
 mod tests {
     use super::*;
 
-    fn make_manager() -> SkillManager {
-        SkillManager::new()
+    fn make_manager() -> SkillLoader {
+        SkillLoader::new()
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use crate::provider::models::ModelManager;
 use crate::engine::agent::AgentManager;
-use crate::engine::agent::spec::AgentSpec;
+use crate::engine::agent::record::AgentSpec;
 use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;
 use crate::message::ChatMessage;
 use crate::engine::skill::Skill;
-use crate::engine::skill_registry::SkillRegistry;
+use crate::engine::skill::registry::SkillRegistry;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -573,6 +573,24 @@ impl AgentEngine {
     /// for all locally-installed skills that are not `disable_model_invocation`.
     pub async fn load_available_skills_metadata(&mut self, skills: &dyn SkillRegistry) {
         self.available_skills_metadata = skills.list_metadata().await;
+    }
+
+    /// Populate `available_agents_metadata` with (name, description) pairs
+    /// for every agent visible to `project_root`. Parallel to
+    /// `load_available_skills_metadata` — the engine consults
+    /// `AgentRegistry` rather than reaching into `AgentManager.agents`
+    /// directly so the lookup can be stubbed in tests.
+    pub async fn load_available_agents_metadata(
+        &mut self,
+        agents: &dyn crate::engine::agent::registry::AgentRegistry,
+        project_root: &std::path::Path,
+    ) {
+        if let Ok(specs) = agents.list(project_root).await {
+            self.available_agents_metadata = specs
+                .into_iter()
+                .map(|s| (s.spec.name, s.spec.description))
+                .collect();
+        }
     }
 
     pub(crate) async fn is_cancelled(&self) -> bool {

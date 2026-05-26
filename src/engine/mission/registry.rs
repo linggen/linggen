@@ -6,7 +6,7 @@
 //! surface is narrower than `AgentRegistry`: a flat `list` plus a
 //! `get` by id.
 //!
-//! `extensions::missions::MissionStore` is the production
+//! `extensions::missions::MissionLoader` is the production
 //! implementer; tests can stub against a smaller in-memory impl.
 //! Returns owned `Mission` records — cloning is cheap and avoids
 //! threading a borrow through async tasks.

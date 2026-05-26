@@ -625,7 +625,7 @@ async fn dispatch_mission_prompt(
         if let Some(ref sid) = session_id {
             if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
                 if let Some(ref skill_name) = meta.skill {
-                    if let Some(skill) = state.skill_manager.get_skill(skill_name).await {
+                    if let Some(skill) = state.skills.get_skill(skill_name).await {
                         if let Some(ref perm) = skill.permission {
                             crate::engine::permission::apply_grants(
                                 perm,

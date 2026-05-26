@@ -20,7 +20,7 @@
 
 use crate::engine::capabilities;
 use crate::engine::skill::CapabilityImpl;
-use crate::engine::skill_registry::SkillRegistry;
+use crate::engine::skill::registry::SkillRegistry;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;

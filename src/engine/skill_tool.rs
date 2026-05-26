@@ -74,7 +74,7 @@ pub struct SkillToolDef {
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
     /// Name of the skill that declared this tool. Set at skill-load time so
-    /// dispatch can resolve the daemon (via `SkillManager`) without another
+    /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
     #[serde(skip)]
     pub skill_name: Option<String>,

@@ -94,7 +94,7 @@ pub(crate) async fn create_session(
     // of the user's home dir.
     let mut cwd_str: Option<String> = None;
     if let Some(ref skill_name) = req.skill {
-        if let Some(skill) = state.manager.skill_manager.get_skill(skill_name).await {
+        if let Some(skill) = state.manager.skills.get_skill(skill_name).await {
             if let Some(ref c) = skill.cwd {
                 cwd_str = Some(c.clone());
             }
