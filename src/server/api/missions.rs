@@ -394,19 +394,14 @@ pub(crate) async fn trigger_mission(
     let root = crate::util::resolve_path(std::path::Path::new(&raw_cwd));
     let project_path = root.to_string_lossy().to_string();
 
-    let _ = state.events_tx.send(ServerEvent::MissionTriggered {
-        mission_id: mission.id.clone(),
-        agent_id: mission.agent_id.clone(),
-        project_root: project_path.clone(),
-        session_id: None,
-    });
-
     state
         .manager
         .update_agent_activity(&project_path, &mission.agent_id)
         .await;
 
-    // Pre-create the session so we can return its ID immediately
+    // Pre-create the session BEFORE emitting `MissionTriggered`. The UI
+    // needs the session id immediately so the new session row appears in
+    // the sidebar at click time, not at completion time.
     let session_id = crate::extensions::missions::scheduler::create_mission_session(&mission);
 
     // Persist a short kickoff user message so the UI has something to show
@@ -428,6 +423,19 @@ pub(crate) async fn trigger_mission(
             },
         );
     }
+
+    // Now emit MissionTriggered with the real session id, and a
+    // `StateUpdated` to nudge the session list to refresh. The UI
+    // listens for both: MissionTriggered tells the active workspace to
+    // route into this session; StateUpdated triggers a sessions re-fetch
+    // so the new row shows up in the sidebar immediately.
+    let _ = state.events_tx.send(ServerEvent::MissionTriggered {
+        mission_id: mission.id.clone(),
+        agent_id: mission.agent_id.clone(),
+        project_root: project_path.clone(),
+        session_id: session_id.clone(),
+    });
+    let _ = state.events_tx.send(ServerEvent::StateUpdated);
 
     let state_clone = state.clone();
     let session_id_clone = session_id.clone();

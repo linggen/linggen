@@ -43,6 +43,22 @@ semantic store and **deletes** the rest. Append-only writes to
 semantic. Never destructively edit an existing semantic row — that's
 user-initiated only. When in doubt about anything, **skip the row**.
 
+## Report progress as you go
+
+Speak up while you work — don't go silent for minutes and then emit
+one final line. Every status line is a single line, plain text, no
+markdown. The supervisor (and the human reading the session
+afterwards) needs to see the run advancing:
+
+- After listing the worklist: `START worklist=<n>`
+- After each row decision: `ROW <id> <action>` where `<action>` is one
+  of `promote`, `dedup`, `delete`, `skip`. Keep it to one line per row.
+- Every ~20 rows or so on a long run: `PROGRESS processed=<k>/<n>` —
+  a sanity tick.
+- At the end, the final summary line (see Step 3).
+
+Don't add prose. Don't summarize mid-run. Just the status lines.
+
 ## Step 1 — List the past-TTL worklist
 
 The TTL (how old an episodic row must be before we touch it) is owned
@@ -50,10 +66,13 @@ by the `ling-mem` daemon. The dream never names a number — it asks
 the daemon for "everything past the configured TTL" via `past_ttl:
 true`, and the daemon resolves the cutoff against its own config.
 
-```
-Memory_query({verb: "list", episodic: true, past_ttl: true,
-              limit: 200, format: "json"})
-```
+**Invoke** (actual tool call, not text):
+
+- tool: `Memory_query`
+- args: `{ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 200 }`
+
+Emit `START worklist=<n>` after the call returns, where `<n>` is the
+row count.
 
 If the worklist is empty: emit `CONSOLIDATED promoted=0 deleted=0` and
 stop. No work to do.
@@ -76,10 +95,10 @@ Memory_query({verb: "search", query: "<row content gist>", limit: 8})
 
 | You see | Action |
 |:---|:---|
-| Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Silent dedup.** Skip the promote: `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. The semantic store already represents this fact. |
-| Semantic has a row that's **related but not identical** (different emphasis, partial overlap, contradiction on the same subject) | **Skip the resolution.** Don't pick a winner, don't merge, don't rewrite the existing semantic row. Leave the candidate's episodic source alone if you genuinely can't decide — it'll come back next cycle. Reconciliation happens later in a live recall with the user present. |
-| The row is durable user biography, a cross-project preference, a decision-with-reasoning, or a re-hit gotcha — and no semantic equivalent exists | **Promote.** First `Memory_write({verb: "add", host: "linggen", content: <row.content>, type: <row.type>, from: <row.from>, contexts: <row.contexts>})`, then `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Tier defaults to semantic; use `tier: "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
-| The row is pure activity / re-derivable from files / single-mention noise / a secret that slipped through | **Delete.** `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. No promotion. |
+| Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Silent dedup.** Skip the promote: `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> dedup`. The semantic store already represents this fact. |
+| Semantic has a row that's **related but not identical** (different emphasis, partial overlap, contradiction on the same subject) | **Skip the resolution.** Don't pick a winner, don't merge, don't rewrite the existing semantic row. Emit `ROW <row.id> skip`. Leave the candidate's episodic source alone — it'll come back next cycle. Reconciliation happens later in a live recall with the user present. |
+| The row is durable user biography, a cross-project preference, a decision-with-reasoning, or a re-hit gotcha — and no semantic equivalent exists | **Promote.** First `Memory_write({verb: "add", host: "linggen", content: <row.content>, type: <row.type>, from: <row.from>, contexts: <row.contexts>})`, then `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> promote`. Tier defaults to semantic; use `tier: "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is pure activity / re-derivable from files / single-mention noise / a secret that slipped through | **Delete.** `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> delete`. No promotion. |
 
 ### Hard rules
 
