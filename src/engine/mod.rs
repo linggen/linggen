@@ -77,7 +77,20 @@ impl AgentEngine {
             .collect()
     }
 
-    pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+    /// Pre-loop setup: load session permissions, emit "working" status,
+    /// sync world state, validate the task, push the start-of-loop
+    /// context record, prime context-window/token estimates, and
+    /// construct the initial `LoopState`.
+    ///
+    /// Extracted from the head of `run_agent_loop` so the loop body
+    /// proper reads as a tight iteration over model turns. Mutates
+    /// `self` (sets `session_id`, `session_dir`, `session_permissions`,
+    /// `context_window_tokens`, `accumulated_token_estimate`,
+    /// `native_tool_mode`, plus the builtins' progress channel).
+    async fn initialize_loop(
+        &mut self,
+        session_id: Option<&str>,
+    ) -> Result<LoopState> {
         self.session_id = session_id.map(|s| s.to_string());
 
         // Load session permissions from permission.json (or initialize defaults).
@@ -241,7 +254,7 @@ impl AgentEngine {
         // Initialize accumulated token estimate from current messages.
         self.accumulated_token_estimate = Self::estimate_tokens_for_messages(&messages);
 
-        let mut state = LoopState {
+        let state = LoopState {
             messages,
             allowed_tools,
             read_paths,
@@ -257,6 +270,15 @@ impl AgentEngine {
             progress_rx,
         };
         self.native_tool_mode = use_native_tools;
+        Ok(state)
+    }
+
+    pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+        let mut state = self.initialize_loop(session_id).await?;
+        let log_run = self
+            .run_id
+            .clone()
+            .unwrap_or_else(|| "root".to_string());
 
         let mut interrupted_by_user = false;
         for _ in 0..self.cfg.max_iters {
@@ -671,29 +693,42 @@ impl AgentEngine {
             }
         }
 
+        self.emit_loop_limit_bailout(interrupted_by_user, session_id)
+            .await;
+        Ok(AgentOutcome::None)
+    }
+
+    /// Tail of `run_agent_loop`: clear `active_skill` and (unless the
+    /// user pre-empted the run with a new message) emit the
+    /// loop-limit bailout message + context record.
+    async fn emit_loop_limit_bailout(
+        &mut self,
+        interrupted_by_user: bool,
+        session_id: Option<&str>,
+    ) {
         self.active_skill = None;
 
         // Only emit the bailout message when we actually hit the iteration
         // limit.  If the loop exited because the user sent a new message,
         // silently yield so the next chat round can start cleanly.
-        if !interrupted_by_user {
-            let fallback = self.prompt_store.render_or_fallback(
-                crate::prompts::keys::BAILOUT_LOOP_LIMIT,
-                &[],
-            );
-            self.push_context_record(
-                ContextType::Status,
-                Some("loop_limit_reached".to_string()),
-                self.agent_id.clone(),
-                Some("user".to_string()),
-                fallback.clone(),
-                serde_json::json!({ "max_iters": self.cfg.max_iters }),
-            );
-            let _ = self
-                .persist_assistant_message(&fallback, session_id)
-                .await;
+        if interrupted_by_user {
+            return;
         }
-        Ok(AgentOutcome::None)
+        let fallback = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::BAILOUT_LOOP_LIMIT,
+            &[],
+        );
+        self.push_context_record(
+            ContextType::Status,
+            Some("loop_limit_reached".to_string()),
+            self.agent_id.clone(),
+            Some("user".to_string()),
+            fallback.clone(),
+            serde_json::json!({ "max_iters": self.cfg.max_iters }),
+        );
+        let _ = self
+            .persist_assistant_message(&fallback, session_id)
+            .await;
     }
 
     /// Execute a list of model actions with batching (delegation, parallel, sequential).
