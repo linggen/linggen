@@ -5,6 +5,7 @@ pub(crate) mod capability_tools;
 mod context;
 pub(crate) mod core_memory;
 pub mod memory;
+pub mod mission;
 pub mod patch;
 pub mod permission;
 mod plan;

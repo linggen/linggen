@@ -1,19 +1,20 @@
 pub mod scheduler;
 
 use anyhow::{bail, Result};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-/// The agent that always runs missions.
-pub const MISSION_AGENT_ID: &str = "ling";
-
-// ---------------------------------------------------------------------------
-// Permission block — same grammar as skills. See `engine/permission/manifest.rs`.
-// ---------------------------------------------------------------------------
-
-pub use crate::engine::permission::Grants as MissionPermission;
+// Records + lookup contracts live in `engine::mission`. Re-exported
+// here so existing callers (`extensions::missions::Mission`, etc.)
+// keep working without churning every import site.
+pub use crate::engine::mission::record::{
+    Mission, MissionPermission, MissionRunEntry, MISSION_AGENT_ID,
+};
+pub use crate::engine::mission::registry::MissionRegistry;
+pub use crate::engine::mission::runs::MissionRunStore;
 
 // ---------------------------------------------------------------------------
 // Frontmatter — new (skill-shaped) format
@@ -105,75 +106,6 @@ struct LegacyFrontmatter {
     policy: Option<String>,
     #[serde(default)]
     created_at: u64,
-}
-
-// ---------------------------------------------------------------------------
-// Mission — runtime representation
-// ---------------------------------------------------------------------------
-
-/// A cron-scheduled mission stored as `~/.linggen/missions/<id>/mission.md`.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Mission {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub description: String,
-
-    pub schedule: String,
-    pub enabled: bool,
-    /// Hours since last successful run before the post-turn seam fires a
-    /// catch-up. `None` = opt out (only the cron `schedule` triggers it).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catchup_hours: Option<u64>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_tools: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission: Option<MissionPermission>,
-
-    /// Mission agent prompt — the body of the `.md` file.
-    pub prompt: String,
-
-    /// Engine agent that runs this mission. Comes from frontmatter `agent:`,
-    /// defaults to "ling" via the parser. Used as session identity, event
-    /// `agent_id`, and the lookup key into the `agents/` registry.
-    #[serde(default = "default_mission_agent")]
-    pub agent_id: String,
-
-    /// Legacy project scoping. Prefer `cwd` for new missions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-
-    pub created_at: u64,
-}
-
-fn default_mission_agent() -> String {
-    MISSION_AGENT_ID.to_string()
-}
-
-/// A single entry in a mission's run history (`<id>/runs.jsonl`).
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MissionRunEntry {
-    pub run_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    pub triggered_at: u64,
-    pub status: String,
-    pub skipped: bool,
-    /// Set when an entry script ran; None for agent-only missions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry_exit_code: Option<i32>,
-    /// Per-run scratch dir (where entry output and agent temp files live).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_dir: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +570,28 @@ impl MissionStore {
         Ok(())
     }
 
+    /// Read the raw `mission.md` content for a mission, or `None` if no
+    /// such file exists. Used by the raw-markdown editor in the Web UI.
+    pub fn read_mission_raw(&self, mission_id: &str) -> Result<Option<String>> {
+        let path = self.mission_path(mission_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        Ok(Some(fs::read_to_string(&path)?))
+    }
+
+    /// Validate and write `mission.md` content for a mission. The mission
+    /// id is taken from the filesystem layout (`<dir>/<id>/mission.md`)
+    /// rather than the frontmatter `name`, matching how `scan_disk`
+    /// already reads them back. Creates the mission dir if absent.
+    pub fn write_mission_raw(&self, mission_id: &str, content: &str) -> Result<Mission> {
+        let mission = parse_mission_md(mission_id, content)?;
+        fs::create_dir_all(self.mission_dir(mission_id))?;
+        fs::write(self.mission_path(mission_id), content)?;
+        self.reload();
+        Ok(mission)
+    }
+
     pub fn list_all_missions(&self) -> Result<Vec<Mission>> {
         Ok(self.cache.lock().unwrap().clone())
     }
@@ -774,6 +728,44 @@ impl MissionStore {
             .into_iter()
             .find(|e| !e.skipped && e.status == "completed")
             .map(|e| e.triggered_at)
+    }
+}
+
+#[async_trait]
+impl MissionRegistry for MissionStore {
+    async fn list(&self) -> Result<Vec<Mission>> {
+        self.list_all_missions()
+    }
+
+    async fn get(&self, mission_id: &str) -> Result<Option<Mission>> {
+        self.get_mission(mission_id)
+    }
+}
+
+impl MissionRunStore for MissionStore {
+    fn append(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
+        self.append_mission_run(mission_id, entry)
+    }
+
+    fn list(&self, mission_id: &str) -> Result<Vec<MissionRunEntry>> {
+        self.list_mission_runs(mission_id)
+    }
+
+    fn list_paginated(
+        &self,
+        mission_id: &str,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<MissionRunEntry>> {
+        self.list_mission_runs_paginated(mission_id, limit, offset)
+    }
+
+    fn remove_by_session(&self, mission_id: &str, session_id: &str) -> Result<()> {
+        self.remove_run_by_session(mission_id, session_id)
+    }
+
+    fn last_successful_run_at(&self, mission_id: &str) -> Option<u64> {
+        Self::last_successful_run_at(self, mission_id)
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{Mission, MissionRunEntry};
+use crate::engine::mission::record::{Mission, MissionRunEntry};
 use crate::server::{ServerEvent, ServerState};
 use chrono::Local;
 use std::collections::HashMap;
