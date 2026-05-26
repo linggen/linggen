@@ -27,9 +27,9 @@ Two sibling subsystems in the linggen engine, discovered and loaded the same way
 
 **Skill = capability provider.** User-invocable, can ask questions, may render UI, registers capability bindings (`provides:` + `implements:`).
 
-**Mission = headless scheduled task.** Cron-triggered, never asks the user. Consumes tools and capabilities that skills register. No interactive channel — no `AskUser`, no `EnterPlanMode`, no in-mission Web UI.
+**Mission = scheduled task.** Cron-triggered. Consumes tools and capabilities that skills register. Renders no UI of its own — the agent communicates through the session transcript (visible after the run via the mission's run history). Whether a mission can ask the user is up to its `allowed-tools`: a scheduled overnight mission like `dream` omits `AskUser` because there's nobody to answer; a manually-triggered or catch-up mission may list `AskUser` if its author wants it to.
 
-A mission looks like a `SKILL.md` with a `schedule:` field and none of the interactive affordances. It uses capability tools (like `Memory_*`) that installed skills have registered. It can also delegate to another skill via the `Skill` tool when needed, but that's the exception — typically missions just use tools directly.
+A mission looks like a `SKILL.md` with a `schedule:` field. It uses capability tools (like `Memory_*`) that installed skills have registered. It can also delegate to another skill via the `Skill` tool when needed, but that's the exception — typically missions just use tools directly.
 
 ## File layout
 
@@ -57,14 +57,12 @@ description: >-
 
 # Schedule
 schedule: "0 3 * * *"
+catchup_hours: 24                  # optional — fire from the post-turn seam if last run is older than this
 enabled: true
+agent: ling-mem                    # optional — engine agent to run this mission (default: ling)
 cwd: ~/.linggen                    # working directory for entry + agent
 model: <optional override>
 entry: scripts/collect.sh          # optional pre-agent script (relative to mission dir)
-
-# Autonomy
-allow-skills: []                   # whitelist for Skill tool — empty means mission calls no skill directly
-requires: [memory]                 # optional — capabilities that must be registered at load
 
 # Tools (SKILL.md shape)
 allowed-tools:
@@ -74,7 +72,6 @@ allowed-tools:
   - Bash
   - Glob
   - Grep
-  - Task
   - Memory_query
   - Memory_write
 permission:
@@ -95,24 +92,23 @@ permission:
 | `name` | yes | Mission id (matches directory name) |
 | `description` | yes | Short human-readable summary — shown in UI |
 | `schedule` | yes | Cron expression (5-field standard) |
+| `catchup_hours` | no | If set, the post-turn seam fires the mission when its last non-skipped run is older than this many hours. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off |
+| `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
 | `cwd` | yes | Working directory for entry script + agent |
 | `model` | no | Model override |
 | `entry` | no | Pre-agent script — path relative to mission dir, or inline `bash -c "..."` |
-| `allow-skills` | no | Whitelist of skill names callable via `Skill`. Empty/omitted → `Skill` tool absent. `"*"` → any installed skill |
-| `requires` | no | Capability names that must be resolvable at load time — else mission disabled with reason |
-| `allowed-tools` | yes | Explicit tool list. `AskUser` / `EnterPlanMode` always stripped |
-| `permission.mode` | yes | Capability ceiling on `cwd` and `paths` |
-| `permission.paths` | no | Extra narrow path grants (like skill's `permission.paths`) |
+| `allowed-tools` | yes | Explicit tool list. Authors omit `AskUser` / `EnterPlanMode` for unattended missions where there's no one to respond. The `Skill` tool is never available to missions — missions do not delegate to skills |
+| `permission.paths` | no | Per-path grants, each with its own `mode`. Same shape as `SkillPermission` — see `permission-spec.md`. Omitting `permission` or leaving `paths` empty means the mission has no filesystem grants and will fail the first write/edit it attempts |
 | `permission.warning` | no | Displayed in the UI before enabling |
 
 ### Body IS the system prompt
 
-A mission body is **the entire system prompt** for the run. No agent spec from `agents/<name>.md` is loaded on top — the mission is a self-contained instruction document. Tools come from `allowed-tools`, permission from `permission`, and the prompt body tells the LLM exactly what to do.
+A mission body is **the entire system prompt** for the run. The `agent:` referenced in frontmatter contributes the routing identity (events, session attribution) and the model/config default — but its persona block is **not** concatenated onto the body. The mission stands alone as a self-contained instruction document. Tools come from `allowed-tools`, permission from `permission`, and the prompt body tells the LLM exactly what to do.
 
-This is deliberate: missions are headless, scheduled, and rarely shared. The cost of one extra "agent persona" file per mission isn't earned. Authors write the runbook directly in `mission.md`; readers find all behaviour in one place.
+This keeps missions scrutable: readers find all behaviour in one place, instead of cross-referencing an `agents/<name>.md` persona to know what the mission will do.
 
-The body should look like a SKILL.md body in structure — step-by-step instructions, explicit tool calls, output contract — but it stands on its own, without inheriting a persona block.
+The body should look like a SKILL.md body in structure — step-by-step instructions, explicit tool calls, output contract.
 
 ## Execution flow
 
@@ -187,65 +183,38 @@ No seconds field. No `@reboot` or non-standard extensions.
 
 ## Permission model
 
-Missions run without a human in the loop. Their permission model is the same path-mode model used by user sessions:
+Missions run without a human in the loop. Their permission model is the same per-path mode model used by skills and user sessions:
 
-- **`permission.mode`** sets the capability ceiling on the mission `cwd` and every path in `permission.paths`.
-- If the mission changes cwd, the effective mode is recomputed from those grants.
+- **`permission.paths`** is a list of `{path, mode}` grants — same shape as `SkillPermission`. Each path declares its own mode.
+- No implicit grant on `cwd`. If the mission needs write access to its working directory, list `cwd` explicitly in `permission.paths`.
 - If a mission needs more permission than its grants allow, it records a permission-needed failure/pause. It does not prompt the user during scheduled execution and does not silently widen access.
 
 See `permission-spec.md` for the full model.
 
-### Path-mode ceiling (`permission.mode`)
+### Per-path mode
 
 | Mode | Typical use |
 |:-----|:------------|
 | **read** | Monitoring, analysis missions |
-| **edit** | Build / test / maintenance missions |
+| **edit** (alias `write`) | Build / test / maintenance missions |
 | **admin** | Trusted automation (memory, backups, system tasks) |
 
-The mode applies to `cwd` plus every path under `permission.paths`. Skill grants loaded via `Skill` invocation compose via longest-path-match — a mission with `admin` on `~/.linggen` can safely invoke a skill that declares narrower `admin` on `~/.linggen/memory` without widening anything.
+Grants compose via longest-path-match. When a mission invokes a skill via the `Skill` tool, the skill inherits the mission's grants and cannot widen them — narrower skill-declared grants overlay on the matching prefix.
 
 ### Hardcoded deny floor
 
 The engine's hardcoded deny floor (`sudo`, `rm -rf /`, forkbomb, etc.) applies to missions exactly as it applies to interactive sessions. There is no `linggen.toml` permission rule layer to inherit from. See `permission-spec.md`.
 
-## Capability resolution
+## Tools missions can use
 
-Missions consume tools and capabilities; skills register them.
+Missions and skills are independent subsystems — a mission **cannot** delegate to a skill, and the `Skill` tool is not part of any mission's tool surface. A mission lists what it needs in `allowed-tools` and the engine resolves each name against:
 
-- Skills declare `provides: [memory]` and `implements: { memory: { base_url: ..., tools: ... } }`. When a skill is installed, the engine registers its capability tools globally — any session (user, skill, mission) can call them.
-- Missions list the capability tools they need (e.g. `Memory_write` (verb=add), `Memory_query` (verb=search)) directly in `allowed-tools`. They do **not** invoke the skill — they use the tools the skill registered.
-- The `dream` mission uses `Memory_*` tools because the `ling-mem` skill registered them. `ling-mem` is the skill (slash command + capability provider); `linggen-memory` is the GitHub repo / Cargo crate that builds the `ling-mem` binary.
+1. **Built-in engine tools** — `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, etc.
+2. **Built-in capability tools** — e.g. `Memory_query` / `Memory_write`. These ship with the engine and dispatch directly to the daemon URL in `agent.ling_mem_url` (see `engine/capability_tools.rs` and `engine/capabilities.rs`). The `ling-mem` daemon is installed alongside `ling` by the Linggen installer; no skill is consulted.
 
-Missions never declare `implements:` themselves — the binding lives with the skill that registered the capability. If a capability isn't registered by any installed skill, `requires:` catches it at load; otherwise the tool call fails at runtime.
+If a listed tool name doesn't resolve to either bucket, the call fails at runtime with `unknown tool: <name>`. There is no separate `requires:` field — `allowed-tools` is the complete contract.
 
-### Skill invocation via `Skill` tool
-
-Separate from capability tools, a mission can delegate a whole sub-task to another skill via the `Skill` tool. This is the exception, not the rule. `allow-skills` gates it:
-
-| Value | Effect |
-|:------|:-------|
-| omitted or `[]` | `Skill` tool absent from the effective set — mission calls no skill directly |
-| `[skiller, ...]` | `Skill` tool added; only these skills invokable |
-| `"*"` | `Skill` tool added; any installed skill invokable |
-
-For the `dream` mission: `allow-skills: []`. It uses `Memory_*` tools directly, no skill invocation.
-
-Invoked skills (when `allow-skills` is non-empty) inherit the **mission's** permission grants (mode + paths), not the skill's own defaults. A skill can't widen the mission's access by being called.
-
-## Skill-bundled missions
-
-Skills can ship missions as assets. The install script places them under `~/.linggen/missions/<name>/`:
-
-```
-skills/ling-mem/
-├── SKILL.md
-├── install.sh                  # copies assets/mission.md → ~/.linggen/missions/dream/mission.md
-└── assets/
-    └── mission.md              # the dream mission
-```
-
-Co-installation guarantees the dependency — the skill and its mission version together. This is the recommended pattern for domain-specific missions (memory → dream, backup → nightly-snapshot, etc.). For standalone missions authored by hand, `requires:` declares the dependency explicitly.
+The `dream` mission lists `Bash`, `Memory_query`, `Memory_write` — all built-ins. It runs without any installed skill being present.
 
 ## Session per run
 
@@ -272,6 +241,12 @@ Background task evaluates all enabled missions against their cron schedules ever
 ### Deduplication
 
 The scheduler tracks the last fire minute per mission. A cron match only fires once per minute window — prevents double-firing on the same tick.
+
+### Catch-up fires
+
+Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. After every owner-session user turn, a non-blocking sweep walks all enabled missions whose last non-skipped run is older than their `catchup_hours` and triggers them — same dispatch path as a normal cron fire. Catch-up overlaps are prevented by the same busy-skip used for cron. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
+
+The built-in `dream` consolidation mission uses `catchup_hours: 24`: missed 3am fires re-run opportunistically the next time the user sends a turn.
 
 ## Run history
 
@@ -305,8 +280,8 @@ Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `sess
 | Max triggers per mission | 100 per day | Caps runaway cost |
 | Max concurrent missions | No hard limit | Busy-skip throttles naturally |
 | `max_iters` | Per agent config | Bounds each triggered run |
-| Path-mode grants | Required | Missions only run within their configured `cwd` and `permission.paths` |
-| No interactive tools | — | `AskUser`/`EnterPlanMode` stripped regardless of `allowed-tools` |
+| Path-mode grants | Required | Filesystem access is limited to the `{path, mode}` entries in `permission.paths`. No implicit grant on `cwd` |
+| Interactive tools | Author opt-in | `AskUser` / `EnterPlanMode` only available when listed in `allowed-tools`. Scheduled cron missions should omit them; manually-triggered missions may include them when a user is reachable |
 | Hardcoded deny floor | Enforced | Engine-baked deny patterns block dangerous commands in every mode |
 | Entry script failure | Skips agent | Prevents garbage-in agent work |
 
@@ -316,7 +291,7 @@ Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `sess
 create → enabled → (triggers run on schedule, each run creates a session) → disabled → delete
 ```
 
-- **Create** — user defines via Web UI, CLI, or hand-authored file. Skill-bundled missions created by `install.sh`.
+- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (e.g. `dream`) are installed by the Linggen installer alongside the engine.
 - **Enable / disable** — toggle without deleting. Disabled missions keep config and history.
 - **Delete** — removes the directory. Sessions created by past runs are preserved (they live in the global session store).
 - **Edit** — update frontmatter or body. Takes effect on next tick. Entry script changes take effect on next run.
@@ -327,14 +302,14 @@ create → enabled → (triggers run on schedule, each run creates a session) �
 
 - **List** — all missions with status, schedule, last run, next run.
 - **Editor** — edit frontmatter fields + body. Body shown as markdown with step headings.
-- **Permissions panel** — mode + paths + allow-skills + requires. Warnings from `permission.warning` surfaced before enable.
+- **Permissions panel** — `permission.paths` (per-path mode). Warnings from `permission.warning` surfaced before enable.
 - **Agent tab** — read-only view of the mission body (prompt).
 - **Run history** — list of `MissionRunEntry`; clicking a row opens the session read-only.
 - **Manual trigger** — "Run now" button. Same permission bubble as scheduled runs.
 
-### No in-mission UI
+### In-run UI
 
-Missions do not render UI during execution. They have no chat partner to render for. Skills invoked from missions also do not render (the skill's app launcher is ignored when called from a mission context).
+Missions render no UI of their own; the run shows up in the mission's run history and opens as a read-only session transcript. If the mission lists `AskUser` in `allowed-tools` and a user is reachable (manual trigger, catch-up run, or any path where a chat surface is bound), the question routes to the session's chat panel like any other agent question. Skill app launchers invoked from a mission are ignored — missions don't open windows.
 
 ## API operations
 
@@ -361,7 +336,7 @@ Missions and skills are sibling subsystems inside linggen. They share shape (mar
 | Entry file | `SKILL.md` | `mission.md` |
 | Trigger | User invocation or `Skill` tool call | Cron / manual trigger |
 | Registers capabilities | Yes (`provides` + `implements`) | No (consumer only) |
-| Interactive (`AskUser`, UI) | Yes | No |
+| Interactive (`AskUser`, UI) | Yes | Opt-in via `allowed-tools`; no skill-style app launcher |
 | Stored under | `skills/<name>/` | `missions/<name>/` |
 | Manager module | `skills/` | `project_store/missions.rs` |
 
@@ -371,11 +346,12 @@ Both subsystems are first-class — engine boot treats them symmetrically.
 
 | Module | Responsibility |
 |:-------|:---------------|
-| `project_store/missions.rs` | Mission CRUD on disk, frontmatter parse/serialize, run history |
-| `server/mission_scheduler.rs` | Cron evaluation, tick loop, entry execution, session creation, agent dispatch |
-| `server/missions_api.rs` | HTTP endpoints for management and manual trigger |
-| `engine/permission.rs` | Path-mode enforcement shared with interactive sessions |
-| `skills/` | Capability registration — mission resolves tools through the same registry |
+| `extensions/missions/mod.rs` | Mission CRUD on disk, frontmatter parse/serialize, run history |
+| `extensions/missions/scheduler.rs` | Cron evaluation, tick loop, entry execution, session creation, agent dispatch |
+| `server/api/missions.rs` | HTTP endpoints for management and manual trigger |
+| `engine/permission/` | Path-mode enforcement; `manifest.rs` owns the YAML grant grammar shared with skills |
+| `extensions/skills/` | Capability registration — mission resolves tools through the same registry |
+| `extensions/{frontmatter,script,scope}.rs` | Helpers both skills and missions use (YAML splitter, bash launcher, tool-scope) |
 
 ## Migration from old format
 

@@ -73,7 +73,7 @@ Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. De
 - **`agent_manager/`** — Agent lifecycle, run records, cancellation. `models.rs` handles multi-provider dispatch (Ollama, OpenAI-compatible). `routing.rs` implements model selection policies with fallback chains.
 - **`ollama.rs`** / **`openai.rs`** — Provider API clients (streaming and non-streaming).
 - **`project_store/`** — Persistent state using filesystem JSON files.
-- **`skills/`** — Skill discovery, loading, and marketplace integration.
+- **`extensions/`** — Markdown-frontmatter artifacts the engine loads. `skills/` (interactive runtime), `missions/` (scheduled headless runtime), and shared helpers (`frontmatter.rs`, `script.rs`, `scope.rs`, `marketplace.rs`).
 - **`state_fs/`** — Filesystem-backed session state (`.linggen/sessions/`).
 - **`check.rs`** — Bash command safety validation (allowlist, not yet wired up).
 - **`eval/`** — Evaluation framework: task runner, grader, report generation.
