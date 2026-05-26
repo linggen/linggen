@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::LazyLock;
 use std::time::Duration;
 use zip::ZipArchive;
 
@@ -117,38 +115,6 @@ pub struct ClawHubSecurity {
     #[serde(default, alias = "hasScanResult")]
     pub has_scan_result: bool,
 }
-
-// ---------------------------------------------------------------------------
-// Skill audit report (source-agnostic)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillAuditReport {
-    /// Total number of files in the skill
-    pub file_count: usize,
-    /// List of all file paths in the ZIP
-    pub files: Vec<String>,
-    /// Files flagged as potentially risky
-    pub flagged_files: Vec<AuditFlag>,
-    /// Risky patterns found in text files
-    pub risky_patterns: Vec<AuditFlag>,
-    /// ClawHub scan result (only if source is clawhub)
-    #[serde(default)]
-    pub clawhub_scan: Option<ClawHubScanResult>,
-    /// Overall risk level: "clean", "warning", "danger"
-    pub risk_level: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditFlag {
-    pub file: String,
-    pub reason: String,
-    pub severity: String, // "info", "warning", "danger"
-}
-
-// ---------------------------------------------------------------------------
-// Registry response envelope
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // HTTP client / community search
@@ -921,139 +887,6 @@ pub(crate) fn extract_all_skills_from_zip(
     }
 
     Ok(installed)
-}
-
-// ---------------------------------------------------------------------------
-// Skill audit (source-agnostic)
-// ---------------------------------------------------------------------------
-
-/// Risky patterns to scan for in skill files (pre-compiled).
-struct RiskyPattern {
-    re: Regex,
-    reason: &'static str,
-    severity: &'static str,
-}
-
-static RISKY_PATTERNS: LazyLock<Vec<RiskyPattern>> = LazyLock::new(|| {
-    let defs: &[(&str, &str, &str)] = &[
-        ("curl.*\\|.*sh", "Pipe to shell execution", "danger"),
-        ("curl.*\\|.*bash", "Pipe to shell execution", "danger"),
-        ("wget.*\\|.*sh", "Pipe to shell execution", "danger"),
-        ("eval\\s*\\(", "Dynamic code evaluation", "danger"),
-        ("eval\\s+\"", "Dynamic code evaluation", "danger"),
-        ("exec\\s*\\(", "Process execution", "warning"),
-        ("base64.*decode", "Base64 decode (possible obfuscation)", "warning"),
-        ("\\$\\{?GITHUB_TOKEN", "GitHub token access", "warning"),
-        ("\\$\\{?ANTHROPIC_API_KEY", "API key access", "warning"),
-        ("\\$\\{?OPENAI_API_KEY", "API key access", "warning"),
-        ("\\$\\{?AWS_SECRET", "AWS credential access", "danger"),
-        ("\\$\\{?SSH_", "SSH credential access", "warning"),
-        ("/etc/passwd", "System file access", "danger"),
-        ("rm\\s+-rf\\s+/", "Root filesystem deletion", "danger"),
-        ("chmod\\s+777", "Overly permissive file permissions", "warning"),
-        ("nc\\s+-", "Netcat (possible reverse shell)", "danger"),
-        ("\\bsudo\\b", "Sudo usage", "warning"),
-    ];
-    defs.iter()
-        .filter_map(|(pat, reason, severity)| {
-            Regex::new(pat).ok().map(|re| RiskyPattern { re, reason, severity })
-        })
-        .collect()
-});
-
-/// Suspicious file extensions that shouldn't normally be in a skill.
-const SUSPICIOUS_EXTENSIONS: &[&str] = &[
-    ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
-    ".pyc", ".class", ".jar", ".war",
-];
-
-/// Audit a downloaded skill ZIP before extraction.
-pub fn audit_skill_zip(zip_path: &Path) -> Result<SkillAuditReport> {
-    let file = fs::File::open(zip_path)?;
-    let mut archive = ZipArchive::new(file)?;
-
-    let mut files = Vec::new();
-    let mut flagged_files = Vec::new();
-    let mut risky_patterns = Vec::new();
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
-
-        if entry.is_dir() {
-            continue;
-        }
-
-        files.push(name.clone());
-
-        // Check for suspicious file extensions
-        let lower = name.to_lowercase();
-        for ext in SUSPICIOUS_EXTENSIONS {
-            if lower.ends_with(ext) {
-                flagged_files.push(AuditFlag {
-                    file: name.clone(),
-                    reason: format!("Suspicious file type: {}", ext),
-                    severity: "warning".into(),
-                });
-            }
-        }
-
-        // Check file size (flag files > 1MB)
-        if entry.size() > 1_048_576 {
-            flagged_files.push(AuditFlag {
-                file: name.clone(),
-                reason: format!("Large file: {} bytes", entry.size()),
-                severity: "info".into(),
-            });
-        }
-
-        // Scan text files for risky patterns
-        let is_text = lower.ends_with(".sh")
-            || lower.ends_with(".bash")
-            || lower.ends_with(".py")
-            || lower.ends_with(".js")
-            || lower.ends_with(".ts")
-            || lower.ends_with(".md")
-            || lower.ends_with(".yaml")
-            || lower.ends_with(".yml")
-            || lower.ends_with(".toml")
-            || lower.ends_with(".json");
-
-        if is_text && entry.size() < 524_288 {
-            let mut content = String::new();
-            if std::io::Read::read_to_string(&mut entry, &mut content).is_ok() {
-                for rp in RISKY_PATTERNS.iter() {
-                    if rp.re.is_match(&content) {
-                        risky_patterns.push(AuditFlag {
-                            file: name.clone(),
-                            reason: rp.reason.to_string(),
-                            severity: rp.severity.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let has_danger = flagged_files.iter().chain(risky_patterns.iter()).any(|f| f.severity == "danger");
-    let has_warning = flagged_files.iter().chain(risky_patterns.iter()).any(|f| f.severity == "warning");
-    let risk_level = if has_danger {
-        "danger"
-    } else if has_warning {
-        "warning"
-    } else {
-        "clean"
-    }
-    .to_string();
-
-    Ok(SkillAuditReport {
-        file_count: files.len(),
-        files,
-        flagged_files,
-        risky_patterns,
-        clawhub_scan: None,
-        risk_level,
-    })
 }
 
 // ---------------------------------------------------------------------------

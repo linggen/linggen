@@ -1,11 +1,8 @@
 pub mod actions;
 pub mod agent;
-pub(crate) mod capabilities;
-pub(crate) mod capability_tools;
 mod context;
 pub mod memory;
 pub mod mission;
-pub mod patch;
 pub mod permission;
 mod plan;
 pub mod prompt;
