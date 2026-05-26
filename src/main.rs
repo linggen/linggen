@@ -4,14 +4,13 @@ mod config;
 mod credentials;
 mod engine;
 mod eval;
+mod extensions;
 mod logging;
 mod message;
-mod missions;
 mod paths;
 mod prompts;
 mod provider;
 mod server;
-mod skills;
 mod state_fs;
 mod telemetry;
 mod util;
@@ -354,7 +353,7 @@ async fn main() -> Result<()> {
                 tracing::warn!("Failed to seed built-in missions: {e}");
             }
 
-            let skill_manager = Arc::new(skills::SkillManager::new());
+            let skill_manager = Arc::new(extensions::skills::SkillManager::new());
             let config_dir = config_path
                 .as_ref()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -444,10 +443,10 @@ async fn main() -> Result<()> {
 async fn auto_install_builtin_skills() -> Result<()> {
     let target = crate::paths::global_skills_dir();
     let zip_url =
-        skills::marketplace::build_github_zip_url("linggen", "skills", "main");
-    let client = skills::marketplace::http_client()?;
-    let temp_zip = skills::marketplace::download_to_temp(&client, &zip_url).await?;
-    let result = skills::marketplace::extract_all_skills_from_zip(&temp_zip, &target);
+        extensions::marketplace::build_github_zip_url("linggen", "skills", "main");
+    let client = extensions::marketplace::http_client()?;
+    let temp_zip = extensions::marketplace::download_to_temp(&client, &zip_url).await?;
+    let result = extensions::marketplace::extract_all_skills_from_zip(&temp_zip, &target);
     let _ = std::fs::remove_file(&temp_zip);
     result?;
     // Run install scripts for all newly installed skills.
@@ -455,7 +454,7 @@ async fn auto_install_builtin_skills() -> Result<()> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Err(e) = skills::run_install_script(&path) {
+                if let Err(e) = extensions::skills::run_install_script(&path) {
                     tracing::warn!(skill = %path.display(), err = %e, "Install script failed");
                 }
             }

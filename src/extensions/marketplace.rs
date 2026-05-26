@@ -342,7 +342,7 @@ pub async fn install_skill(
     match result {
         Ok(_) => {
             // Run install script if declared in frontmatter.
-            if let Err(e) = super::run_install_script(target_dir) {
+            if let Err(e) = super::skills::run_install_script(target_dir) {
                 tracing::warn!(skill = %name, err = %e, "Install script failed");
             }
             Ok(format!(
@@ -397,7 +397,7 @@ async fn install_skill_inner(
 
     result?;
     // Run install script if declared in frontmatter.
-    if let Err(e) = super::run_install_script(target_dir) {
+    if let Err(e) = super::skills::run_install_script(target_dir) {
         tracing::warn!(skill = %name, err = %e, "Install script failed");
     }
     Ok(format!(
@@ -459,7 +459,7 @@ pub async fn install_from_clawhub(
     copy_dir_all(&extracted_dir, target_dir)?;
 
     // Run install script if declared in frontmatter.
-    if let Err(e) = super::run_install_script(target_dir) {
+    if let Err(e) = super::skills::run_install_script(target_dir) {
         tracing::warn!(skill = %slug, err = %e, "Install script failed");
     }
     Ok(format!(
@@ -495,12 +495,12 @@ pub fn skill_target_dir(name: &str, scope: SkillScope, project_root: Option<&Pat
 /// Compat sources (Claude, Codex) correctly.
 pub fn skill_dir_for_source(
     name: &str,
-    source: &super::SkillSource,
+    source: &super::skills::SkillSource,
     project_root: Option<&Path>,
 ) -> Result<PathBuf> {
     match source {
-        super::SkillSource::Global => Ok(crate::paths::global_skills_dir().join(name)),
-        super::SkillSource::Project => {
+        super::skills::SkillSource::Global => Ok(crate::paths::global_skills_dir().join(name)),
+        super::skills::SkillSource::Project => {
             let root = project_root
                 .ok_or_else(|| anyhow::anyhow!("Project root required for project-scoped skill"))?;
             // Check all project skill dirs to find which one actually contains this skill.
@@ -513,7 +513,7 @@ pub fn skill_dir_for_source(
             // Fallback to the canonical location.
             Ok(root.join(".linggen/skills").join(name))
         }
-        super::SkillSource::Compat { label } => {
+        super::skills::SkillSource::Compat { label } => {
             // Find the matching compat dir by label.
             for (dir, compat_label) in crate::paths::compat_skills_dirs() {
                 if compat_label == label.as_str() {
@@ -528,7 +528,7 @@ pub fn skill_dir_for_source(
 /// Move a project skill to the global `~/.linggen/skills/` directory.
 pub fn move_skill_to_global(
     name: &str,
-    source: &super::SkillSource,
+    source: &super::skills::SkillSource,
     project_root: Option<&Path>,
 ) -> Result<String> {
     let src_dir = skill_dir_for_source(name, source, project_root)?;

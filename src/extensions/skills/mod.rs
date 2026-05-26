@@ -1,8 +1,8 @@
-pub mod marketplace;
+pub use crate::extensions::marketplace;
 
 use crate::engine::skill_tool::{SkillParamDef, SkillToolDef};
 use anyhow::Result;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -187,7 +187,7 @@ struct GitHubContentEntry {
 }
 
 async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInRemote>> {
-    let client = crate::skills::marketplace::http_client()?;
+    let client = super::marketplace::http_client()?;
 
     // List repo contents
     let entries: Vec<GitHubContentEntry> = client
@@ -230,13 +230,9 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
     let skill_md = skill_dir.join("SKILL.md");
     let text = std::fs::read_to_string(&skill_md)?;
 
-    if !text.starts_with("---") {
+    let Some(yaml) = crate::extensions::frontmatter::split(&text).0 else {
         return Ok(None);
-    }
-    let parts: Vec<&str> = text.splitn(3, "---").collect();
-    if parts.len() < 3 {
-        return Ok(None);
-    }
+    };
 
     #[derive(Deserialize)]
     struct InstallMeta {
@@ -244,7 +240,7 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
         install: Option<String>,
     }
 
-    let meta: InstallMeta = match serde_yml::from_str(parts[1]) {
+    let meta: InstallMeta = match serde_yml::from_str(yaml) {
         Ok(m) => m,
         Err(_) => return Ok(None),
     };
@@ -263,11 +259,12 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
 
     tracing::info!(skill_dir = %skill_dir.display(), script = %script_path.display(), "Running skill install script");
 
-    let output = std::process::Command::new("bash")
-        .arg(&script_path)
-        .env("SKILL_DIR", skill_dir)
-        .current_dir(skill_dir)
-        .output()?;
+    let output = crate::extensions::script::sync_command(
+        crate::extensions::script::Invocation::File(&script_path),
+        skill_dir,
+        &[("SKILL_DIR", skill_dir.as_os_str())],
+    )
+    .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -284,22 +281,7 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
 
 /// Extract `name` and `description` from YAML frontmatter in a SKILL.md file.
 fn parse_frontmatter_meta(text: &str) -> Option<(String, String)> {
-    if !text.starts_with("---") {
-        return None;
-    }
-    let parts: Vec<&str> = text.splitn(3, "---").collect();
-    if parts.len() < 3 {
-        return None;
-    }
-
-    #[derive(Deserialize)]
-    struct Meta {
-        name: String,
-        description: String,
-    }
-
-    let meta: Meta = serde_yml::from_str(parts[1]).ok()?;
-    Some((meta.name, meta.description))
+    crate::extensions::frontmatter::parse_meta(text)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -371,58 +353,10 @@ fn default_capability_healthcheck() -> String {
     "/api/health".to_string()
 }
 
-/// One path grant in a permission block. Each path declares its own mode
-/// — there is no top-level default. `mode` is "read", "edit"/"write", or
-/// "admin" (case-sensitive). E.g. `{path: ~/.linggen, mode: write}`.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PathGrant {
-    pub path: String,
-    pub mode: String,
-}
-
-/// Parse a SKILL.md mode string into the engine's PermissionMode. "write"
-/// is accepted as an alias for "edit" because users naturally write "write"
-/// in YAML even though the engine's internal vocabulary says "edit".
-fn parse_mode_str(m: &str) -> crate::engine::permission::PermissionMode {
-    use crate::engine::permission::PermissionMode;
-    match m {
-        "edit" | "write" => PermissionMode::Edit,
-        "admin" => PermissionMode::Admin,
-        _ => PermissionMode::Read,
-    }
-}
-
-/// Permission request declared by a skill. See permission-spec.md → Skill invocation.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SkillPermission {
-    /// Per-path grants. Each entry has its own mode; the engine grants
-    /// each path its declared mode independently. Empty list = no grants.
-    #[serde(default)]
-    pub paths: Vec<PathGrant>,
-    /// Warning message shown to user before approval.
-    #[serde(default)]
-    pub warning: Option<String>,
-}
-
-impl SkillPermission {
-    /// Walk `paths` and yield `(path, parsed_mode)` pairs.
-    pub fn iter_grants(
-        &self,
-    ) -> impl Iterator<Item = (&str, crate::engine::permission::PermissionMode)> + '_ {
-        self.paths
-            .iter()
-            .map(|g| (g.path.as_str(), parse_mode_str(&g.mode)))
-    }
-
-    /// Human-readable summary used in approval prompts: `~/foo (write), /tmp (read)`.
-    pub fn display_paths(&self) -> String {
-        self.paths
-            .iter()
-            .map(|g| format!("{} ({})", g.path, g.mode))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
+/// Permission grant types live in `engine::permission` — re-exported here
+/// for back-compat with call sites that import `skills::PathGrant` /
+/// `skills::SkillPermission`.
+pub use crate::engine::permission::{Grants as SkillPermission, PathGrant};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Skill {
@@ -501,24 +435,7 @@ pub enum SkillSource {
     Compat { label: String },
 }
 
-/// Deserialize `allowed-tools` as either a single string ("Bash") or a list (["Bash", "Read"]).
-fn deserialize_string_or_vec<'de, D>(deserializer: D) -> std::result::Result<Option<Vec<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrVec {
-        Str(String),
-        Vec(Vec<String>),
-    }
-    let opt: Option<StringOrVec> = Option::deserialize(deserializer)?;
-    Ok(match opt {
-        Some(StringOrVec::Str(s)) => Some(s.split(',').map(|s| s.trim().to_string()).collect()),
-        Some(StringOrVec::Vec(v)) => Some(v),
-        None => None,
-    })
-}
+use crate::extensions::frontmatter::deserialize_string_or_vec;
 
 #[derive(Debug, Deserialize)]
 struct SkillFrontmatter {
@@ -747,15 +664,16 @@ fn source_priority(src: &SkillSource) -> u8 {
 /// Parse a SKILL.md text into a [`Skill`]. Pure function — no I/O. Use
 /// [`load_skill_from_path`] when you have a filesystem path.
 pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
-    if !text.starts_with("---") {
-        anyhow::bail!("Skill must start with YAML frontmatter");
-    }
-    let parts: Vec<&str> = text.splitn(3, "---").collect();
-    if parts.len() < 3 {
-        anyhow::bail!("Skill missing closing frontmatter delimiter");
-    }
-    let frontmatter: SkillFrontmatter = serde_yml::from_str(parts[1])?;
-    let content = parts[2].trim().to_string();
+    let (yaml_opt, body) = crate::extensions::frontmatter::split(text);
+    let yaml = match yaml_opt {
+        Some(y) => y,
+        None if text.starts_with("---") => {
+            anyhow::bail!("Skill missing closing frontmatter delimiter")
+        }
+        None => anyhow::bail!("Skill must start with YAML frontmatter"),
+    };
+    let frontmatter: SkillFrontmatter = serde_yml::from_str(yaml)?;
+    let content = body.trim().to_string();
 
     // Skills with an `app` automatically receive the built-in PageUpdate
     // data tool — the agent calls it to refresh the dashboard UI. Skills

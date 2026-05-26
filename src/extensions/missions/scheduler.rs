@@ -1,4 +1,4 @@
-use crate::missions::{self, Mission, MissionRunEntry, MISSION_AGENT_ID};
+use super::{Mission, MissionRunEntry};
 use crate::server::{ServerEvent, ServerState};
 use chrono::Local;
 use std::collections::HashMap;
@@ -12,16 +12,6 @@ const CHECK_INTERVAL_SECS: u64 = 10;
 
 /// Maximum triggers per mission per day to prevent runaway cost.
 const MAX_TRIGGERS_PER_DAY: u32 = 100;
-
-/// The built-in memory-consolidation mission. Its id is its directory
-/// name under `~/.linggen/missions/`. Firing it does NOT run a generic
-/// `ling` agent prompt — the worklist/TTL is engine-owned, so a static
-/// mission body can't carry it. Instead it invokes the engine's global
-/// Id of the built-in `dream` mission (memory consolidation). Treated
-/// like any other mission by `dispatch_mission_prompt`; only the
-/// turn-seam catch-up resolves this name to keep its eligibility check
-/// from drifting away from the on-disk mission directory.
-const DREAM_MISSION_ID: &str = "dream";
 
 /// Per-mission tracking state.
 struct MissionState {
@@ -100,10 +90,6 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                 continue;
             }
 
-            // Missions are a first-class subsystem — no "mission" skill is
-            // required. Per-mission dependencies are declared in `requires:`
-            // and checked at dispatch by find_missing_requires.
-
             // Working dir: `cwd` → legacy `project` → env cwd, with
             // `~`/`$VAR` expansion (so the agent's Bash tool can spawn in it).
             let (root, project_path) = mission_root(mission);
@@ -139,7 +125,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
 
             state
                 .manager
-                .update_agent_activity(&project_path, MISSION_AGENT_ID)
+                .update_agent_activity(&project_path, &mission.agent_id)
                 .await;
 
             let state_clone = state.clone();
@@ -172,7 +158,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
 
 /// Check if a cron expression matches the current time (within the current minute).
 fn cron_matches_now(schedule: &str, now: &chrono::DateTime<Local>) -> bool {
-    let cron_schedule = match missions::parse_cron(schedule) {
+    let cron_schedule = match super::parse_cron(schedule) {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -194,6 +180,19 @@ fn cron_matches_now(schedule: &str, now: &chrono::DateTime<Local>) -> bool {
 fn mission_session_title(mission: &Mission) -> String {
     let label = mission.name.as_deref().unwrap_or(&mission.id);
     format!("{} session", label)
+}
+
+/// User-side "go" message for a mission run.
+///
+/// The mission body is the full system prompt (injected via `ActiveMission`);
+/// the kickoff just gives the agent loop a user turn to react to. Kept short
+/// on purpose — output shape, tools, and step-by-step instructions all live
+/// in the body, so we don't repeat them here. Shared between the cron path
+/// (`dispatch_mission_prompt`) and the manual-trigger API
+/// (`api::missions::trigger_mission`).
+pub fn mission_kickoff_message(mission: &Mission) -> String {
+    let label = mission.name.as_deref().unwrap_or(&mission.id);
+    format!("Run the \"{}\" mission per your system prompt.", label)
 }
 
 /// Create a new session for a mission run in the global session store.
@@ -271,62 +270,73 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
     (root, project_path)
 }
 
-/// Turn-seam catch-up for the built-in `dream` mission. Called from the
-/// post-turn seam (owner sessions only). The mission has a daily cron,
-/// but cron is missed when the machine is off/asleep; this re-triggers it
-/// the next time Linggen is used if it hasn't run within
-/// `dream_catchup_hours`. Cheap + non-blocking: spawns, reads run
-/// history, compares, and only then calls `dispatch_mission_prompt_public`.
-/// Overlap with the cron fire is prevented by the generic mission
-/// busy-skip in the scheduler tick.
-pub(crate) fn maybe_fire_dream_catchup(state: Arc<ServerState>) {
+/// Turn-seam catch-up. Called from the post-turn seam (owner sessions only).
+/// Scans all enabled missions whose `catchup_hours` is set, and fires any
+/// whose last non-skipped run is older than that threshold (or which has
+/// never run). Used to recover from missed cron fires when the machine was
+/// off/asleep — the user's next turn re-triggers the work opportunistically.
+///
+/// Per mission, opt in by setting `catchup_hours: <n>` in the mission's
+/// frontmatter. Omit the field to leave the mission cron-only.
+///
+/// Cheap + non-blocking: spawns once per call, walks missions, calls
+/// `dispatch_mission_prompt_public` for each overdue one. Overlap with the
+/// regular cron fire is prevented by the generic mission busy-skip in the
+/// scheduler tick.
+pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
     tokio::spawn(async move {
-        // Respect user intent: a missing or disabled `dream` mission means
-        // the user opted out of auto-consolidation — no catch-up.
-        let mission = match state.manager.missions.get_mission(DREAM_MISSION_ID) {
-            Ok(Some(m)) if m.enabled => m,
-            Ok(_) => return,
+        let missions = match state.manager.missions.list_enabled_missions() {
+            Ok(m) => m,
             Err(e) => {
-                debug!("dream catch-up: get_mission failed: {e}");
+                debug!("catchup: list_enabled_missions failed: {e}");
                 return;
             }
         };
 
-        // Last *attempt* (completed or failed; skipped doesn't count) by
-        // trigger time. None ⇒ never run ⇒ overdue.
-        let last_run_secs = match state.manager.missions.list_mission_runs(DREAM_MISSION_ID) {
-            Ok(runs) => runs
-                .iter()
-                .filter(|r| !r.skipped)
-                .map(|r| r.triggered_at)
-                .max(),
-            Err(e) => {
-                debug!("dream catch-up: list_mission_runs failed: {e}");
-                return;
-            }
-        };
-
-        let catchup_hours = crate::config::Config::load_with_path()
-            .map(|(c, _)| c.agent.dream_catchup_hours)
-            .unwrap_or_else(|_| crate::config::Config::default().agent.dream_catchup_hours);
-        let threshold_secs = catchup_hours.saturating_mul(3600);
         let now = crate::util::now_ts_secs();
 
-        let overdue = match last_run_secs {
-            None => true,
-            Some(last) => now.saturating_sub(last) >= threshold_secs,
-        };
-        if !overdue {
-            return;
-        }
+        for mission in missions {
+            let Some(catchup_hours) = mission.catchup_hours else {
+                continue;
+            };
+            if catchup_hours == 0 {
+                // 0 would re-fire every turn — treat as opt-out.
+                continue;
+            }
 
-        info!(
-            "dream catch-up: last run {:?}s ago (threshold {}h) — triggering",
-            last_run_secs.map(|l| now.saturating_sub(l)),
-            catchup_hours
-        );
-        let (root, project_path) = mission_root(&mission);
-        dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None).await;
+            // Last *attempt* (completed or failed; skipped doesn't count).
+            // None ⇒ never run ⇒ overdue.
+            let last_run_secs = match state.manager.missions.list_mission_runs(&mission.id) {
+                Ok(runs) => runs
+                    .iter()
+                    .filter(|r| !r.skipped)
+                    .map(|r| r.triggered_at)
+                    .max(),
+                Err(e) => {
+                    debug!("catchup: list_mission_runs failed for '{}': {e}", mission.id);
+                    continue;
+                }
+            };
+
+            let threshold_secs = catchup_hours.saturating_mul(3600);
+            let overdue = match last_run_secs {
+                None => true,
+                Some(last) => now.saturating_sub(last) >= threshold_secs,
+            };
+            if !overdue {
+                continue;
+            }
+
+            info!(
+                "catchup: mission '{}' last run {:?}s ago (threshold {}h) — triggering",
+                mission.id,
+                last_run_secs.map(|l| now.saturating_sub(l)),
+                catchup_hours
+            );
+            let (root, project_path) = mission_root(&mission);
+            dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None)
+                .await;
+        }
     });
 }
 
@@ -340,7 +350,7 @@ async fn dispatch_mission_prompt(
 ) {
     use crate::server::AgentStatusKind;
 
-    let agent_id = MISSION_AGENT_ID;
+    let agent_id = mission.agent_id.as_str();
 
     // Mission-level run id. Used for the per-run output dir, the
     // MISSION_RUN_ID env var, and the MissionRunEntry.run_id.
@@ -349,25 +359,6 @@ async fn dispatch_mission_prompt(
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
-
-    // Fast-fail: requires-check. A missing capability → no point running.
-    if let Some(missing) = find_missing_requires(&state, mission).await {
-        warn!(
-            "Mission scheduler: mission '{}' requires '{}' which is not registered — skipping",
-            mission.id, missing
-        );
-        record_mission_run_full(
-            &state,
-            mission,
-            &mission_run_id,
-            None,
-            "failed",
-            false,
-            None,
-            None,
-        );
-        return;
-    }
 
     // Create the per-run output directory. Entry script writes here; agent
     // reads files from here. See doc/mission-spec.md → Entry script contract.
@@ -520,11 +511,9 @@ async fn dispatch_mission_prompt(
 
     // The mission body is injected into the system prompt via active_mission
     // (below). The user turn is a short kickoff so the agent starts executing
-    // against the instructions it already has in context.
-    let message = format!(
-        "Run the \"{}\" mission now per the instructions in your system prompt. Report results in your final message.",
-        mission.name.clone().unwrap_or_else(|| mission.id.clone())
-    );
+    // against the instructions it already has in context — see
+    // `mission_kickoff_message` for why this is short.
+    let message = mission_kickoff_message(mission);
 
     // Persist the mission prompt as a "user" message so it appears in the session chat.
     // Skip if the trigger API already persisted it (pre-created session).
@@ -625,11 +614,9 @@ async fn dispatch_mission_prompt(
 
         // Per-path grants from the mission's permission block. No implicit
         // cwd grant — mission authors list cwd in `permission.paths` if they
-        // want it granted (matches SkillPermission semantics).
+        // want it granted (matches the skill permission semantics).
         if let Some(ref perm) = mission.permission {
-            for (path, mode) in perm.iter_grants() {
-                engine.session_permissions.set_path_mode(path, mode);
-            }
+            crate::engine::permission::apply_grants(perm, &mut engine.session_permissions);
         }
 
         // If the session binds a skill, apply its declared permission grants.
@@ -640,11 +627,10 @@ async fn dispatch_mission_prompt(
                 if let Some(ref skill_name) = meta.skill {
                     if let Some(skill) = state.skill_manager.get_skill(skill_name).await {
                         if let Some(ref perm) = skill.permission {
-                            for (path, mode) in perm.iter_grants() {
-                                engine
-                                    .session_permissions
-                                    .set_path_mode(path, mode);
-                            }
+                            crate::engine::permission::apply_grants(
+                                perm,
+                                &mut engine.session_permissions,
+                            );
                         }
                     }
                 }
@@ -795,73 +781,22 @@ async fn dispatch_mission_prompt(
     ));
 }
 
-/// Apply the mission's `allowed-tools` and `allow-skills` to the engine.
+/// Apply the mission's `allowed-tools` to the engine.
+///
+/// Missions and skills are independent: a mission cannot delegate to a skill
+/// via the `Skill` tool, and the `Skill` tool is not auto-injected into the
+/// allowlist. If a mission omits `allowed-tools`, the engine treats it as
+/// "unrestricted" — every built-in tool is callable. Otherwise the listed
+/// names are the full set.
 ///
 /// Pure computation in `compute_mission_tool_scope` so it's unit-testable;
-/// this wrapper mutates the engine.
+/// this wrapper just mutates the engine config.
 fn apply_mission_tool_scope(engine: &mut crate::engine::AgentEngine, mission: &Mission) {
-    let scope = compute_mission_tool_scope(&mission.allowed_tools, &mission.allow_skills);
-    engine.cfg.mission_allowed_tools = scope.mission_allowed_tools;
-    engine.cfg.consumer_allowed_skills = scope.consumer_allowed_skills;
+    engine.cfg.mission_allowed_tools = compute_mission_tool_scope(&mission.allowed_tools);
     engine.cfg.bash_allow_prefixes = None; // frontmatter controls bash, not tier
 }
 
-/// Resolved tool scope derived from frontmatter.
-#[derive(Debug, PartialEq)]
-struct MissionToolScope {
-    mission_allowed_tools: Option<std::collections::HashSet<String>>,
-    consumer_allowed_skills: Option<std::collections::HashSet<String>>,
-}
-
-/// Compute the effective tool + skill restrictions for a mission.
-///
-/// - `allowed-tools` becomes the explicit tool allowlist. Empty → unrestricted.
-/// - `allow-skills`:
-///     - `[]` (empty) — `Skill` tool not added; skills unreachable.
-///     - `["*"]` — `Skill` tool available, no whitelist gate.
-///     - `[name, …]` — `Skill` tool available + `consumer_allowed_skills` gate.
-///
-/// The whitelist gate is independent of `allowed-tools`: a mission with
-/// concrete `allow-skills` always sets `consumer_allowed_skills` so the Skill
-/// tool cannot invoke unlisted skills, even when `allowed-tools` is empty
-/// (unrestricted). Otherwise `allow-skills: [memory]` with no `allowed-tools`
-/// would silently allow any skill — a real hazard.
-fn compute_mission_tool_scope(
-    allowed_tools: &[String],
-    allow_skills: &[String],
-) -> MissionToolScope {
-    use std::collections::HashSet;
-
-    let star = allow_skills.iter().any(|s| s == "*");
-    let has_concrete_skills = !allow_skills.is_empty() && !star;
-
-    let mut mission_allowed_tools: Option<HashSet<String>> =
-        if allowed_tools.is_empty() {
-            None
-        } else {
-            Some(allowed_tools.iter().cloned().collect())
-        };
-
-    // Ensure `Skill` is in the allowlist when the mission declares any
-    // skills — but only if an allowlist exists. An empty `allowed_tools`
-    // means unrestricted, so `Skill` is already implicitly available.
-    if (has_concrete_skills || star) && mission_allowed_tools.is_some() {
-        if let Some(ref mut set) = mission_allowed_tools {
-            set.insert("Skill".to_string());
-        }
-    }
-
-    let consumer_allowed_skills = if has_concrete_skills {
-        Some(allow_skills.iter().cloned().collect())
-    } else {
-        None
-    };
-
-    MissionToolScope {
-        mission_allowed_tools,
-        consumer_allowed_skills,
-    }
-}
+use crate::extensions::scope::compute_tool_scope as compute_mission_tool_scope;
 
 fn record_mission_run(
     state: &Arc<ServerState>,
@@ -898,30 +833,6 @@ fn record_mission_run_full(
         .manager
         .missions
         .append_mission_run(&mission.id, &entry);
-}
-
-/// Check `mission.requires` against registered skill capabilities. Returns
-/// the name of the first missing capability, or `None` if everything resolves.
-async fn find_missing_requires(
-    state: &Arc<ServerState>,
-    mission: &Mission,
-) -> Option<String> {
-    if mission.requires.is_empty() {
-        return None;
-    }
-    let all_skills = state.skill_manager.list_skills().await;
-    for cap in &mission.requires {
-        let resolved = all_skills.iter().any(|s| {
-            s.provides
-                .as_ref()
-                .map(|p| p.iter().any(|c| c == cap))
-                .unwrap_or(false)
-        });
-        if !resolved {
-            return Some(cap.clone());
-        }
-    }
-    None
 }
 
 /// Run the mission's entry script, pulling mission_dir and last_run_at from
@@ -986,23 +897,23 @@ async fn execute_entry_script(
     // If `entry` resolves to a real file inside the mission dir, run it directly.
     // Otherwise treat entry as an inline bash command.
     let script_candidate = mission_dir.join(entry);
-
-    let mut cmd = tokio::process::Command::new("bash");
-    cmd.current_dir(cwd)
-        .env("MISSION_ID", mission_id)
-        .env("MISSION_DIR", &mission_dir_abs)
-        .env("MISSION_CWD", cwd)
-        .env("MISSION_OUTPUT_DIR", output_dir)
-        .env("MISSION_LAST_RUN_AT", last_run_at)
-        .env("MISSION_RUN_ID", mission_run_id)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    if script_candidate.is_file() {
-        cmd.arg(&script_candidate);
+    let invocation = if script_candidate.is_file() {
+        crate::extensions::script::Invocation::File(&script_candidate)
     } else {
-        cmd.arg("-c").arg(entry);
-    }
+        crate::extensions::script::Invocation::Inline(entry)
+    };
+
+    let env: [(&str, &std::ffi::OsStr); 6] = [
+        ("MISSION_ID", mission_id.as_ref()),
+        ("MISSION_DIR", mission_dir_abs.as_os_str()),
+        ("MISSION_CWD", cwd.as_os_str()),
+        ("MISSION_OUTPUT_DIR", output_dir.as_os_str()),
+        ("MISSION_LAST_RUN_AT", last_run_at.as_ref()),
+        ("MISSION_RUN_ID", mission_run_id.as_ref()),
+    ];
+
+    let mut cmd = crate::extensions::script::async_command(invocation, cwd, &env);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     info!(
         "Mission scheduler: running entry for '{}' (output_dir={})",
@@ -1151,50 +1062,19 @@ mod tests {
 
     #[test]
     fn tool_scope_empty_means_unrestricted() {
-        let s = compute_mission_tool_scope(&[], &[]);
-        assert!(s.mission_allowed_tools.is_none(), "empty allowed_tools → no restriction");
-        assert!(s.consumer_allowed_skills.is_none(), "no allow-skills → no gate");
+        // Empty `allowed-tools` → no restriction. Every built-in is callable.
+        assert!(compute_mission_tool_scope(&[]).is_none());
     }
 
     #[test]
-    fn tool_scope_star_adds_skill_no_whitelist() {
-        let s = compute_mission_tool_scope(&v(&["Read", "Bash"]), &v(&["*"]));
-        let set = s.mission_allowed_tools.unwrap();
-        assert!(set.contains("Skill"), "star should add Skill to allowlist");
+    fn tool_scope_lists_become_allowlist() {
+        // Explicit list → that's the full set.
+        let set = compute_mission_tool_scope(&v(&["Read", "Bash"])).unwrap();
         assert!(set.contains("Read"));
-        assert!(s.consumer_allowed_skills.is_none(), "star disables whitelist gate");
-    }
-
-    #[test]
-    fn tool_scope_concrete_skills_gate_and_add_skill() {
-        let s = compute_mission_tool_scope(&v(&["Read"]), &v(&["memory", "linggen"]));
-        let set = s.mission_allowed_tools.unwrap();
-        assert!(set.contains("Skill"));
-        assert!(set.contains("Read"));
-        let gate = s.consumer_allowed_skills.unwrap();
-        assert!(gate.contains("memory"));
-        assert!(gate.contains("linggen"));
-    }
-
-    #[test]
-    fn tool_scope_concrete_skills_gate_without_tool_list() {
-        // Regression: when allowed_tools is empty (unrestricted), a concrete
-        // allow-skills list still gates the Skill tool. Previously this path
-        // silently skipped the gate, allowing any skill to be called.
-        let s = compute_mission_tool_scope(&[], &v(&["memory"]));
-        assert!(s.mission_allowed_tools.is_none(), "still unrestricted");
-        let gate = s.consumer_allowed_skills.expect("gate must still apply");
-        assert!(gate.contains("memory"));
-        assert_eq!(gate.len(), 1);
-    }
-
-    #[test]
-    fn tool_scope_empty_allow_skills_no_skill_tool() {
-        // allow-skills: [] means Skill tool stays out of the allowlist.
-        let s = compute_mission_tool_scope(&v(&["Read", "Bash"]), &[]);
-        let set = s.mission_allowed_tools.unwrap();
-        assert!(!set.contains("Skill"), "empty allow-skills → no Skill tool");
-        assert!(s.consumer_allowed_skills.is_none());
+        assert!(set.contains("Bash"));
+        assert_eq!(set.len(), 2);
+        // Skill is not auto-injected — missions don't delegate to skills.
+        assert!(!set.contains("Skill"));
     }
 }
 

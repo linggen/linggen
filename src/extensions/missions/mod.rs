@@ -10,52 +10,10 @@ use std::path::PathBuf;
 pub const MISSION_AGENT_ID: &str = "ling";
 
 // ---------------------------------------------------------------------------
-// Permission block (mirrors skills::SkillPermission)
+// Permission block — same grammar as skills. See `engine/permission/manifest.rs`.
 // ---------------------------------------------------------------------------
 
-/// Permission request declared in mission frontmatter.
-///
-/// Same shape as `SkillPermission`: each path declares its own mode. There
-/// is no implicit cwd grant — missions list every path they need (including
-/// cwd if they want it granted). See `doc/mission-spec.md` → Permission model.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct MissionPermission {
-    /// Per-path grants. Each entry has its own mode.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub paths: Vec<crate::skills::PathGrant>,
-    /// Human-readable warning surfaced in the UI before enabling.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub warning: Option<String>,
-}
-
-impl MissionPermission {
-    /// Walk `paths` and yield `(path, parsed_mode)` pairs — same shape as
-    /// `SkillPermission::iter_grants`. Defined locally to keep the parser
-    /// helper internal to the skills module.
-    pub fn iter_grants(
-        &self,
-    ) -> impl Iterator<Item = (&str, crate::engine::permission::PermissionMode)> + '_ {
-        use crate::engine::permission::PermissionMode;
-        self.paths.iter().map(|g| {
-            let mode = match g.mode.as_str() {
-                "edit" | "write" => PermissionMode::Edit,
-                "admin" => PermissionMode::Admin,
-                _ => PermissionMode::Read,
-            };
-            (g.path.as_str(), mode)
-        })
-    }
-
-    /// Human-readable summary used in mission approval prompts:
-    /// `"~/foo (write), /tmp (read)"`.
-    pub fn display_paths(&self) -> String {
-        self.paths
-            .iter()
-            .map(|g| format!("{} ({})", g.path, g.mode))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
+pub use crate::engine::permission::Grants as MissionPermission;
 
 // ---------------------------------------------------------------------------
 // Frontmatter — new (skill-shaped) format
@@ -78,22 +36,24 @@ struct MissionFrontmatter {
     schedule: String,
     #[serde(default)]
     enabled: bool,
+    /// Hours since last run before the post-turn seam fires a catch-up.
+    /// Omit / None to opt out — only scheduled cron runs apply.
+    #[serde(
+        rename = "catchup_hours",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    catchup_hours: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    /// Agent that runs the mission. Defaults to "ling" via the parser.
+    /// Must match an agent registered in `agents/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     entry: Option<String>,
-
-    // Autonomy
-    #[serde(
-        rename = "allow-skills",
-        default,
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    allow_skills: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    requires: Vec<String>,
 
     // Capabilities (SKILL.md shape)
     #[serde(
@@ -162,6 +122,10 @@ pub struct Mission {
 
     pub schedule: String,
     pub enabled: bool,
+    /// Hours since last successful run before the post-turn seam fires a
+    /// catch-up. `None` = opt out (only the cron `schedule` triggers it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catchup_hours: Option<u64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -171,11 +135,6 @@ pub struct Mission {
     pub entry: Option<String>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allow_skills: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requires: Vec<String>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<MissionPermission>,
@@ -183,7 +142,9 @@ pub struct Mission {
     /// Mission agent prompt — the body of the `.md` file.
     pub prompt: String,
 
-    /// Always "ling". Kept as a field for UI display compat.
+    /// Engine agent that runs this mission. Comes from frontmatter `agent:`,
+    /// defaults to "ling" via the parser. Used as session identity, event
+    /// `agent_id`, and the lookup key into the `agents/` registry.
     #[serde(default = "default_mission_agent")]
     pub agent_id: String,
 
@@ -227,11 +188,11 @@ pub struct MissionDraft {
     pub description: Option<String>,
     pub schedule: Option<String>,
     pub enabled: Option<bool>,
+    pub catchup_hours: Option<Option<u64>>,
     pub cwd: Option<Option<String>>,
     pub model: Option<Option<String>>,
+    pub agent: Option<String>,
     pub entry: Option<Option<String>>,
-    pub allow_skills: Option<Vec<String>>,
-    pub requires: Option<Vec<String>>,
     pub allowed_tools: Option<Vec<String>>,
     pub permission: Option<Option<MissionPermission>>,
     pub prompt: Option<String>,
@@ -300,19 +261,7 @@ pub fn parse_cron(schedule: &str) -> Result<cron::Schedule> {
 // Markdown serialisation
 // ---------------------------------------------------------------------------
 
-/// Split `---\n<yaml>\n---\n<body>` into (yaml_str, body). Returns (None, full)
-/// if no frontmatter block present.
-fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
-    if !content.starts_with("---") {
-        return (None, content);
-    }
-    let Some(end) = content[3..].find("\n---") else {
-        return (None, content);
-    };
-    let yaml = &content[3..3 + end];
-    let body = &content[3 + end + 4..];
-    (Some(yaml.trim()), body)
-}
+use crate::extensions::frontmatter::split as split_frontmatter;
 
 /// True if the YAML has legacy markers: a `permission_tier:` field, or a
 /// top-level `mode:` line. `line.starts_with("mode:")` only matches at
@@ -350,15 +299,14 @@ fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         description: fm.description,
         schedule: fm.schedule,
         enabled: fm.enabled,
+        catchup_hours: fm.catchup_hours,
         cwd: fm.cwd,
         model: fm.model,
         entry: fm.entry,
-        allow_skills: fm.allow_skills,
-        requires: fm.requires,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
         prompt: body,
-        agent_id: MISSION_AGENT_ID.to_string(),
+        agent_id: fm.agent.unwrap_or_else(|| MISSION_AGENT_ID.to_string()),
         project: fm.project,
         created_at: fm.created_at,
     })
@@ -371,11 +319,10 @@ fn default_mission(id: String, prompt: String) -> Mission {
         description: String::new(),
         schedule: String::new(),
         enabled: false,
+        catchup_hours: None,
         cwd: None,
         model: None,
         entry: None,
-        allow_skills: Vec::new(),
-        requires: Vec::new(),
         allowed_tools: Vec::new(),
         permission: None,
         prompt,
@@ -419,11 +366,10 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         description: String::new(),
         schedule: fm.schedule,
         enabled: fm.enabled,
+        catchup_hours: None,
         cwd: fm.project.clone(),
         model: fm.model,
         entry: fm.entry,
-        allow_skills: Vec::new(),
-        requires: Vec::new(),
         allowed_tools: Vec::new(),
         permission,
         prompt,
@@ -435,16 +381,23 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
 
 /// Convert a mission to its `.md` file content in the new format.
 fn mission_to_md(mission: &Mission) -> String {
+    // Only serialize `agent:` when it isn't the default; keeps mission.md
+    // files clean for the common case.
+    let agent_fm = if mission.agent_id == MISSION_AGENT_ID {
+        None
+    } else {
+        Some(mission.agent_id.clone())
+    };
     let fm = MissionFrontmatter {
         name: mission.name.clone(),
         description: mission.description.clone(),
         schedule: mission.schedule.clone(),
         enabled: mission.enabled,
+        catchup_hours: mission.catchup_hours,
         cwd: mission.cwd.clone(),
         model: mission.model.clone(),
+        agent: agent_fm,
         entry: mission.entry.clone(),
-        allow_skills: mission.allow_skills.clone(),
-        requires: mission.requires.clone(),
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),
         project: mission.project.clone(),
@@ -592,15 +545,17 @@ impl MissionStore {
             description: draft.description.clone().unwrap_or_default(),
             schedule: schedule.to_string(),
             enabled: draft.enabled.unwrap_or(true),
+            catchup_hours: draft.catchup_hours.clone().flatten(),
             cwd: draft.cwd.clone().flatten(),
             model: draft.model.clone().flatten(),
             entry,
-            allow_skills: draft.allow_skills.clone().unwrap_or_default(),
-            requires: draft.requires.clone().unwrap_or_default(),
             allowed_tools: draft.allowed_tools.clone().unwrap_or_default(),
             permission: draft.permission.clone().flatten(),
             prompt,
-            agent_id: MISSION_AGENT_ID.to_string(),
+            agent_id: draft
+                .agent
+                .clone()
+                .unwrap_or_else(|| MISSION_AGENT_ID.to_string()),
             project: draft.project.clone().flatten(),
             created_at: crate::util::now_ts_secs(),
         };
@@ -641,20 +596,20 @@ impl MissionStore {
         if let Some(e) = draft.enabled {
             mission.enabled = e;
         }
+        if let Some(ch) = draft.catchup_hours {
+            mission.catchup_hours = ch;
+        }
         if let Some(cwd) = draft.cwd {
             mission.cwd = cwd;
         }
         if let Some(m) = draft.model {
             mission.model = m;
         }
+        if let Some(a) = draft.agent {
+            mission.agent_id = a;
+        }
         if let Some(e) = draft.entry {
             mission.entry = e;
-        }
-        if let Some(s) = draft.allow_skills {
-            mission.allow_skills = s;
-        }
-        if let Some(r) = draft.requires {
-            mission.requires = r;
         }
         if let Some(t) = draft.allowed_tools {
             mission.allowed_tools = t;
@@ -884,11 +839,9 @@ mod tests {
             prompt: Some("Clean up old files\n\nRemove build artifacts.".into()),
             model: Some(Some("gpt-4".into())),
             cwd: Some(Some("/tmp/proj".into())),
-            allow_skills: Some(vec!["memory".into()]),
-            requires: Some(vec!["memory".into()]),
             allowed_tools: Some(vec!["Read".into(), "Bash".into()]),
             permission: Some(Some(MissionPermission {
-                paths: vec![crate::skills::PathGrant {
+                paths: vec![crate::extensions::skills::PathGrant {
                     path: "~/.linggen".into(),
                     mode: "admin".into(),
                 }],
@@ -903,8 +856,6 @@ mod tests {
         assert_eq!(loaded.prompt, "Clean up old files\n\nRemove build artifacts.");
         assert_eq!(loaded.model, Some("gpt-4".to_string()));
         assert_eq!(loaded.cwd, Some("/tmp/proj".to_string()));
-        assert_eq!(loaded.allow_skills, vec!["memory".to_string()]);
-        assert_eq!(loaded.requires, vec!["memory".to_string()]);
         assert_eq!(loaded.allowed_tools, vec!["Read".to_string(), "Bash".to_string()]);
         let perm = loaded.permission.as_ref().unwrap();
         assert_eq!(perm.paths.len(), 1);
@@ -913,6 +864,40 @@ mod tests {
         assert_eq!(perm.warning.as_deref(), Some("test warn"));
         assert!(loaded.enabled);
         assert_eq!(loaded.created_at, created.created_at);
+    }
+
+    #[test]
+    fn test_agent_and_catchup_hours_roundtrip() {
+        let (store, _dir) = temp_store();
+        let draft = MissionDraft {
+            name: Some("Memory Worker".into()),
+            schedule: Some("0 3 * * *".into()),
+            prompt: Some("Body".into()),
+            agent: Some("ling-mem".into()),
+            catchup_hours: Some(Some(24)),
+            ..Default::default()
+        };
+        store.create_mission(draft).unwrap();
+
+        let loaded = store.get_mission("memory-worker").unwrap().unwrap();
+        assert_eq!(loaded.agent_id, "ling-mem");
+        assert_eq!(loaded.catchup_hours, Some(24));
+
+        // Default agent ("ling") and missing catchup_hours must round-trip
+        // as their defaults — and `mission_to_md` must not emit them.
+        let plain = store
+            .create_mission(draft_min("Plain", "0 * * * *", "p"))
+            .unwrap();
+        let plain_md =
+            std::fs::read_to_string(store.mission_path(&plain.id)).unwrap();
+        assert!(!plain_md.contains("agent:"), "default agent must not be serialized");
+        assert!(
+            !plain_md.contains("catchup_hours:"),
+            "missing catchup_hours must not be serialized"
+        );
+        let plain_loaded = store.get_mission(&plain.id).unwrap().unwrap();
+        assert_eq!(plain_loaded.agent_id, MISSION_AGENT_ID);
+        assert_eq!(plain_loaded.catchup_hours, None);
     }
 
     #[test]
