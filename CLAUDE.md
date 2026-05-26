@@ -67,13 +67,12 @@ Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. De
 ### Rust Backend (`src/`)
 
 - **`main.rs`** — CLI entry point (clap). Subcommands: `stop`, `status`, `doctor`, `eval`, `init`, `install`, `update`, `skills`. No subcommand → daemon + open browser.
-- **`config.rs`** — Config loading from `linggen.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpec` (parsed from markdown frontmatter).
-- **`engine/`** — Core agent execution engine. `mod.rs` is the main loop. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
+- **`config.rs`** — Config loading from `linggen.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpecRef` (linggen.toml binding for an agent markdown file).
+- **`engine/`** — Core agent execution engine. `mod.rs` is the main loop. `agent/` owns agent lifecycle, run records, cancellation, and the `AgentSpec`/`AgentSpecFile` runtime records plus the `AgentRegistry` trait. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
+- **`provider/`** — Wire-format clients (`ollama.rs`, `openai.rs`, `anthropic.rs`), `models.rs` for multi-provider dispatch + streaming + fallback error classification, and `routing.rs` for model selection policies with fallback chains. `proxy_provider.rs` dispatches to a room-shared backend.
 - **`server/`** — Axum HTTP server. `chat_api.rs` handles chat/run endpoints. `projects_api.rs` for project/session CRUD. `workspace_api.rs` serves file tree. `config_api.rs` for runtime config. `mission_scheduler.rs` for cron mission scheduling. `rtc/` handles WebRTC transport.
-- **`agent_manager/`** — Agent lifecycle, run records, cancellation. `models.rs` handles multi-provider dispatch (Ollama, OpenAI-compatible). `routing.rs` implements model selection policies with fallback chains.
-- **`ollama.rs`** / **`openai.rs`** — Provider API clients (streaming and non-streaming).
 - **`project_store/`** — Persistent state using filesystem JSON files.
-- **`extensions/`** — Markdown-frontmatter artifacts the engine loads. `skills/` (interactive runtime), `missions/` (scheduled headless runtime), and shared helpers (`frontmatter.rs`, `script.rs`, `scope.rs`, `marketplace.rs`).
+- **`extensions/`** — Markdown-frontmatter artifacts the engine loads. `agents/` (disk loader for `agents/*.md`, `AgentRegistry` impl), `skills/` (interactive runtime), `missions/` (scheduled headless runtime), and shared helpers (`frontmatter.rs`, `script.rs`, `scope.rs`, `marketplace.rs`).
 - **`state_fs/`** — Filesystem-backed session state (`.linggen/sessions/`).
 - **`check.rs`** — Bash command safety validation (allowlist, not yet wired up).
 - **`eval/`** — Evaluation framework: task runner, grader, report generation.

@@ -62,7 +62,7 @@ Messages are queued per-agent and checked at each iteration boundary via an inte
 - Run status persisted (`running` → `cancelled`).
 - User can also cancel via message queue (model decides to stop gracefully).
 
-**Implementation**: `agent_manager/mod.rs` → `is_run_cancelled()`, `cancel_run_tree()`
+**Implementation**: `engine/agent/mod.rs` → `is_run_cancelled()`, `cancel_run_tree()`
 
 ## Context management
 

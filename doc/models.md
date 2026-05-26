@@ -127,9 +127,9 @@ model: gpt-5.4
 
 - `credentials.rs`: credential store, resolution, API endpoints.
 - `config.rs`: `ModelConfig`, `RoutingConfig`, routing policy definitions.
-- `agent_manager/models.rs`: multi-provider dispatch, streaming, fallback error classification.
-- `agent_manager/routing.rs`: model routing, complexity signal, policy resolution.
+- `provider/models.rs`: multi-provider dispatch, streaming, fallback error classification.
+- `provider/routing.rs`: model routing, complexity signal, policy resolution.
 - `engine/mod.rs`: `stream_with_fallback()` — auto-retry with model fallback.
-- `ollama.rs`: Ollama API client.
-- `openai.rs`: OpenAI-compatible API client (used by all cloud providers).
-- `codex_auth.rs`: ChatGPT OAuth token management.
+- `provider/ollama.rs`: Ollama API client.
+- `provider/openai.rs`: OpenAI-compatible API client (used by all cloud providers).
+- `provider/codex_auth.rs`: ChatGPT OAuth token management.

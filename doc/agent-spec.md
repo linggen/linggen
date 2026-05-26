@@ -94,7 +94,7 @@ Each execution is an `AgentRunRecord`:
 - `parent_run_id` (for delegated runs)
 - `status`, `detail`, `started_at`, `ended_at`
 
-**Implementation**: `agent_manager/mod.rs`
+**Implementation**: `engine/agent/mod.rs`
 
 ## Delegation (fork)
 
