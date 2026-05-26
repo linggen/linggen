@@ -196,10 +196,10 @@ pub(super) async fn process_inference_request(
             // Stream chunks back
             while let Some(item) = stream.next().await {
                 let chunk_json = match item {
-                    Ok(crate::agent_manager::models::StreamChunk::Token(text)) => {
+                    Ok(crate::provider::models::StreamChunk::Token(text)) => {
                         serde_json::json!({ "chunk": { "type": "token", "text": text } })
                     }
-                    Ok(crate::agent_manager::models::StreamChunk::Usage(usage)) => {
+                    Ok(crate::provider::models::StreamChunk::Usage(usage)) => {
                         // Track token usage for budget enforcement (in-memory + persistent)
                         if let Some(total) = usage.total_tokens {
                             tokens_used
@@ -216,7 +216,7 @@ pub(super) async fn process_inference_request(
                             "total_tokens": usage.total_tokens,
                         }})
                     }
-                    Ok(crate::agent_manager::models::StreamChunk::ToolCall(tc)) => {
+                    Ok(crate::provider::models::StreamChunk::ToolCall(tc)) => {
                         serde_json::json!({ "chunk": { "type": "tool_call",
                             "index": tc.index,
                             "id": tc.id,

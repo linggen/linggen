@@ -381,10 +381,24 @@ pub(crate) async fn list_agent_files_api(
     match state.manager.list_agent_specs(&root).await {
         Ok(entries) => {
             let home_dir = dirs::home_dir().unwrap_or_default();
+            let global_agents_dir = crate::paths::global_agents_dir();
             let items: Vec<AgentFileListItem> = entries
                 .into_iter()
                 .map(|entry| {
-                    let path = if let Ok(rel) = entry.spec_path.strip_prefix(&root) {
+                    // Global agents (`~/.linggen/agents/...`) must be labeled
+                    // with the `~/` form so `get_agent_file_api` resolves them
+                    // via `resolve_agent_path`'s home branch instead of
+                    // prefixing `agents/` and 404-ing. Check global FIRST —
+                    // when project_root happens to be HOME, the project-strip
+                    // would otherwise win and produce an unresolvable
+                    // `.linggen/agents/...` path.
+                    let path = if entry.spec_path.starts_with(&global_agents_dir) {
+                        if let Ok(rel) = entry.spec_path.strip_prefix(&home_dir) {
+                            format!("~/{}", rel.to_string_lossy())
+                        } else {
+                            entry.spec_path.to_string_lossy().to_string()
+                        }
+                    } else if let Ok(rel) = entry.spec_path.strip_prefix(&root) {
                         rel.to_string_lossy().to_string()
                     } else if let Ok(rel) = entry.spec_path.strip_prefix(&home_dir) {
                         format!("~/{}", rel.to_string_lossy())

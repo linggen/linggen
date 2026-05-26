@@ -1,4 +1,4 @@
-use crate::agent_manager::models::{StreamChunk, TokenUsage};
+use crate::provider::models::{StreamChunk, TokenUsage};
 use crate::message::{ChatMessage, ToolCallFunction, ToolCallMessage};
 use anyhow::Result;
 use futures_util::Stream;
@@ -278,7 +278,7 @@ impl OllamaClient {
         let reader = tokio_util::io::StreamReader::new(stream);
         let lines = FramedRead::new(reader, LinesCodec::new());
 
-        use crate::agent_manager::models::ToolCallChunk;
+        use crate::provider::models::ToolCallChunk;
 
         // Use map + flat_map instead of filter_map so that a single Ollama
         // response line can yield multiple StreamChunks (e.g. parallel tool calls).

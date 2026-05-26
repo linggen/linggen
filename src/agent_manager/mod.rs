@@ -1,5 +1,5 @@
 use crate::agent_manager::locks::LockManager;
-use crate::agent_manager::models::ModelManager;
+use crate::provider::models::ModelManager;
 use crate::config::{AgentSpec, Config};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
 use crate::extensions::skills::SkillManager;
@@ -15,9 +15,6 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 pub mod locks;
-pub mod models;
-pub mod proxy_provider;
-pub mod routing;
 pub mod runs;
 
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
@@ -280,10 +277,10 @@ impl AgentManager {
         }
 
         // 4. Routing policy
-        if let Some(id) = routing::resolve_model(
+        if let Some(id) = crate::provider::routing::resolve_model(
             &config.routing,
             None,
-            &routing::ComplexitySignal {
+            &crate::provider::routing::ComplexitySignal {
                 estimated_tokens: None,
                 tool_depth: None,
                 _skill_model_hint: None,

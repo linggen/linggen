@@ -1,12 +1,18 @@
-//! Provider implementations: API clients + provider-specific auth flows.
+//! Provider implementations + model dispatch.
 //!
-//! Each submodule is a thin wire-format layer that maps the engine's generic
-//! [`crate::message::ChatMessage`] to one provider's chat-completions API.
-//! The higher-level routing/fallback logic lives in
-//! [`crate::agent_manager::models`].
+//! Wire-format clients (`anthropic`, `ollama`, `openai`) map the engine's
+//! generic [`crate::message::ChatMessage`] to one provider's
+//! chat-completions API. `models` defines the shared types they speak
+//! (`ChatRequest`, `StreamChunk`, `TokenUsage`, `ToolCallChunk`) plus
+//! `ModelManager` — the multi-provider dispatcher. `routing` owns model
+//! selection policy + fallback chains. `proxy_provider` is the dispatcher
+//! variant used for proxy/relay sessions.
 
 pub mod anthropic;
 pub mod claude_auth;
 pub mod codex_auth;
+pub mod models;
 pub mod ollama;
 pub mod openai;
+pub mod proxy_provider;
+pub mod routing;

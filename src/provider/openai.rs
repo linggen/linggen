@@ -1,4 +1,4 @@
-use crate::agent_manager::models::{StreamChunk, TokenUsage};
+use crate::provider::models::{StreamChunk, TokenUsage};
 use anyhow::Result;
 use futures_util::Stream;
 use reqwest::Client;
@@ -530,7 +530,7 @@ impl OpenAiClient {
         let lines =
             tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new());
 
-        use crate::agent_manager::models::ToolCallChunk;
+        use crate::provider::models::ToolCallChunk;
         use futures_util::StreamExt;
         let is_responses_api = self.uses_responses_api();
         // Use map + flat_map so a single SSE line can yield multiple

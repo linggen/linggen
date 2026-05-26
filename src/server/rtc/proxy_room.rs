@@ -30,7 +30,7 @@ struct ProxyRoomInfo {
     model_ids: Vec<String>,
     /// The proxy client — kept alive so the WebRTC connection persists,
     /// and needed to re-register models after per-room disconnect.
-    client: Arc<crate::agent_manager::proxy_provider::ProxyModelClient>,
+    client: Arc<crate::provider::proxy_provider::ProxyModelClient>,
 }
 
 /// Status of a single proxy room connection (returned by the API).
@@ -57,7 +57,7 @@ impl ProxyRoomConnections {
         room_name: String,
         owner_name: String,
         model_ids: Vec<String>,
-        client: Arc<crate::agent_manager::proxy_provider::ProxyModelClient>,
+        client: Arc<crate::provider::proxy_provider::ProxyModelClient>,
     ) {
         self.rooms.write().await.insert(instance_id, ProxyRoomInfo {
             room_name, owner_name, model_ids, client,
@@ -116,7 +116,7 @@ async fn rebuild_model_manager(state: &ServerState) {
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
-    let mut new_mm = crate::agent_manager::models::ModelManager::new(local_configs);
+    let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
 
     // Preserve health tracker state (rate-limit backoffs, etc.)
     new_mm.health = Arc::clone(&old_mm.health);
@@ -189,7 +189,7 @@ pub async fn connect_proxy_room(
     // Create the proxy model client with request demuxing
     let disconnect_rx = conn.disconnect_rx;
     let proxy_client = Arc::new(
-        crate::agent_manager::proxy_provider::ProxyModelClient::new(
+        crate::provider::proxy_provider::ProxyModelClient::new(
             conn.request_tx,
             conn.response_rx,
         )
@@ -212,7 +212,7 @@ pub async fn connect_proxy_room(
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
-    let mut new_mm = crate::agent_manager::models::ModelManager::new(local_configs);
+    let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
     new_mm.health = Arc::clone(&old_mm.health);
 
     // Re-register existing proxy rooms
@@ -293,7 +293,7 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
-    let mut new_mm = crate::agent_manager::models::ModelManager::new(configs);
+    let mut new_mm = crate::provider::models::ModelManager::new(configs);
     new_mm.health = Arc::clone(&old_mm.health);
     *model_lock = Arc::new(new_mm);
 

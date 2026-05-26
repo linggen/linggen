@@ -590,7 +590,7 @@ impl AgentEngine {
                 let mut result = String::new();
                 while let Some(chunk) = stream.next().await {
                     match chunk {
-                        Ok(crate::agent_manager::models::StreamChunk::Token(t)) => {
+                        Ok(crate::provider::models::StreamChunk::Token(t)) => {
                             result.push_str(&t)
                         }
                         Ok(_) => {}

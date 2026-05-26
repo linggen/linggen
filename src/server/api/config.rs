@@ -65,7 +65,7 @@ pub(crate) async fn update_config_api(
 pub(crate) async fn get_models_health(
     State(state): State<Arc<ServerState>>,
 ) -> impl IntoResponse {
-    use crate::agent_manager::models::ModelHealthStatus;
+    use crate::provider::models::ModelHealthStatus;
 
     let models_guard = state.manager.models.read().await;
     let health_records = models_guard.health.get_all().await;
@@ -198,7 +198,7 @@ pub(crate) async fn start_codex_auth_login(
                 // Rebuild ModelManager so it picks up the fresh token
                 let config = manager.get_config_snapshot().await;
                 let new_models = std::sync::Arc::new(
-                    crate::agent_manager::models::ModelManager::new(config.models.clone()),
+                    crate::provider::models::ModelManager::new(config.models.clone()),
                 );
                 *manager.models.write().await = new_models;
                 // Clear all session engines so they use the new models

@@ -27,7 +27,7 @@
 //!   { arguments_delta }`, keyed by the same `chunk_index` as the opener.
 //! - `message_start` / `message_delta` usage → `StreamChunk::Usage`.
 
-use crate::agent_manager::models::{StreamChunk, ToolCallChunk, TokenUsage};
+use crate::provider::models::{StreamChunk, ToolCallChunk, TokenUsage};
 use crate::provider::claude_auth::{self, ANTHROPIC_OAUTH_BETA, ANTHROPIC_VERSION};
 use crate::message::ChatMessage;
 use anyhow::{Context, Result};

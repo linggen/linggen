@@ -1,4 +1,4 @@
-use crate::agent_manager::models::ModelManager;
+use crate::provider::models::ModelManager;
 use crate::agent_manager::AgentManager;
 use crate::config::AgentSpec;
 use crate::engine::permission;
@@ -302,7 +302,7 @@ pub struct AgentEngine {
     /// Set runtime-only via the same endpoint.
     pub compact_focus: Option<String>,
     /// Token usage from the most recent API response.
-    pub last_token_usage: Option<crate::agent_manager::models::TokenUsage>,
+    pub last_token_usage: Option<crate::provider::models::TokenUsage>,
     /// Cached stable portion of the system prompt.
     pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
     /// Running token estimate accumulated incrementally during the loop.
@@ -381,7 +381,7 @@ pub(crate) struct ParsedToolCall {
 /// Result of streaming model output, including early-detected first action.
 pub(crate) struct StreamResult {
     pub full_text: String,
-    pub token_usage: Option<crate::agent_manager::models::TokenUsage>,
+    pub token_usage: Option<crate::provider::models::TokenUsage>,
     /// First action detected mid-stream (avoids re-parsing it later).
     pub first_action: Option<(super::actions::ModelAction, usize)>,
     /// Tool calls from native function calling (empty in legacy mode).

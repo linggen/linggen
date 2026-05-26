@@ -162,7 +162,7 @@ impl AgentEngine {
         model_id: &str,
         messages: &[ChatMessage],
     ) -> Result<StreamResult> {
-        use crate::agent_manager::models::StreamChunk;
+        use crate::provider::models::StreamChunk;
         let mut stream = self
             .model_manager
             .chat_text_stream(model_id, messages)
@@ -238,7 +238,7 @@ impl AgentEngine {
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
     ) -> Result<StreamResult> {
-        use crate::agent_manager::models::StreamChunk;
+        use crate::provider::models::StreamChunk;
 
         let mut stream = self
             .model_manager
