@@ -231,7 +231,7 @@ async fn auto_recall_memory(
     });
 
     let dispatch = crate::engine::capability_tools::dispatch(
-        &state.skill_manager,
+        state.skill_manager.as_ref(),
         ling_mem_url,
         "Memory_query",
         args,

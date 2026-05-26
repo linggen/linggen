@@ -5,7 +5,8 @@ use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;
 use crate::message::ChatMessage;
-use crate::extensions::skills::Skill;
+use crate::engine::skill::Skill;
+use crate::engine::skill_registry::SkillRegistry;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -557,12 +558,12 @@ impl AgentEngine {
     /// tool, session-bound, or trigger-prefix paths. User sessions that
     /// never activate a skill stay clean: only built-ins + active
     /// capabilities visible to the model.
-    pub async fn load_skill_tools(&mut self, skill_manager: &crate::extensions::skills::SkillManager) {
+    pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
         if self.spec.is_none() { return };
 
         self.tools.active_capabilities.clear();
         for cap in super::capabilities::CAPABILITIES.iter() {
-            if skill_manager.active_provider(&cap.name).await.is_some() {
+            if skills.active_provider(&cap.name).await.is_some() {
                 self.tools.active_capabilities.insert(cap.name.clone());
             }
         }
@@ -570,16 +571,8 @@ impl AgentEngine {
 
     /// Populate `available_skills_metadata` with (name, description) pairs
     /// for all locally-installed skills that are not `disable_model_invocation`.
-    pub async fn load_available_skills_metadata(
-        &mut self,
-        skill_manager: &crate::extensions::skills::SkillManager,
-    ) {
-        let all_skills = skill_manager.list_skills().await;
-        self.available_skills_metadata = all_skills
-            .into_iter()
-            .filter(|s| !s.disable_model_invocation)
-            .map(|s| (s.name, s.description))
-            .collect();
+    pub async fn load_available_skills_metadata(&mut self, skills: &dyn SkillRegistry) {
+        self.available_skills_metadata = skills.list_metadata().await;
     }
 
     pub(crate) async fn is_cancelled(&self) -> bool {

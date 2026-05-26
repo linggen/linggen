@@ -82,7 +82,7 @@ impl ToolRegistry {
         // ignore this URL. Pull from the live config snapshot so config
         // edits (Settings → General → Ling-mem URL) reach the next dispatch.
         let ling_mem_url = manager.get_config_snapshot().await.agent.ling_mem_url;
-        let value = capability_tools::dispatch(&skills, &ling_mem_url, name, args.clone()).await?;
+        let value = capability_tools::dispatch(skills.as_ref(), &ling_mem_url, name, args.clone()).await?;
         Ok(ToolResult::Success(value.to_string()))
     }
 

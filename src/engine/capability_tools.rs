@@ -19,7 +19,8 @@
 //!   implementation
 
 use crate::engine::capabilities;
-use crate::extensions::skills::{CapabilityImpl, SkillManager};
+use crate::engine::skill::CapabilityImpl;
+use crate::engine::skill_registry::SkillRegistry;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -82,7 +83,7 @@ fn builtin_memory_impl(ling_mem_url: &str) -> CapabilityImpl {
 /// falls back to the active provider skill's `implements:` block — same
 /// behaviour as before.
 pub(crate) async fn dispatch(
-    skills: &SkillManager,
+    skills: &dyn SkillRegistry,
     ling_mem_url: &str,
     tool_name: &str,
     mut args: Value,
@@ -422,7 +423,7 @@ pub(crate) fn resolve_binary(skill_dir: Option<&Path>, binary_name: &str) -> Pat
 /// engine modules (permission prompts, UIs) can render stable info.
 #[allow(dead_code)]
 pub(crate) fn resolve_binding<'a>(
-    skill: &'a crate::extensions::skills::Skill,
+    skill: &'a crate::engine::skill::Skill,
     capability: &str,
 ) -> Option<&'a CapabilityImpl> {
     skill.implements.as_ref().and_then(|m| m.get(capability))

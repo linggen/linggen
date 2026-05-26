@@ -478,8 +478,8 @@ impl AgentManager {
         if apply_delegation_depth {
             engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         }
-        engine.load_skill_tools(&self.skill_manager).await;
-        engine.load_available_skills_metadata(&self.skill_manager).await;
+        engine.load_skill_tools(self.skill_manager.as_ref()).await;
+        engine.load_available_skills_metadata(self.skill_manager.as_ref()).await;
         if let Ok(specs) = self.list_agent_specs(project_root).await {
             engine.available_agents_metadata = specs
                 .iter()
