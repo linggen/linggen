@@ -3,6 +3,7 @@ pub use builtin::builtin_tier;
 
 mod file_tools;
 pub(crate) mod json_schema;
+pub(crate) mod memory_tool;
 mod search_exec;
 mod write_tools;
 mod delegation;

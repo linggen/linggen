@@ -82,6 +82,7 @@ fn memory_capability() -> Capability {
                         "outcome":  {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "**DEFAULT: do not pass.** Filter by outcome. Almost no rows have `outcome=neutral`; passing it returns 0 rows even when the store has data. Pass only when the user explicitly asked to see only positive / negative outcomes."},
                         "since":    {"type": "string", "description": "RFC-3339 lower bound on effective timestamp. Omit to skip."},
                         "until":    {"type": "string", "description": "RFC-3339 upper bound (verb=list only). Omit to skip."},
+                        "past_ttl": {"type": "boolean", "description": "verb=list only. When true, ask the daemon for rows that are past its configured episodic TTL (resolves the cutoff server-side using `episodic_ttl_days`). Used by the dream consolidator so the mission body doesn't have to know the TTL value. Mutually exclusive with `until` (an explicit `until` wins)."},
                         "sort":     {"type": "string", "enum": ["newest", "oldest"], "description": "verb=list only. Defaults to newest."},
                         "limit":    {"type": "integer", "description": "Max rows. Defaults to 10 for search, 50 for list."},
                         "offset":   {"type": "integer", "description": "verb=list only. Skip this many rows in sort order."}

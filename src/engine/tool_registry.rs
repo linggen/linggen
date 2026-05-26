@@ -1,5 +1,3 @@
-use super::capabilities;
-use super::capability_tools;
 use super::skill_tool::{SkillToolDef, SkillToolKind};
 use super::tools::{self, ToolCall, ToolResult, Tools};
 use crate::engine::agent::AgentManager;
@@ -14,9 +12,9 @@ use tracing::debug;
 pub struct ToolRegistry {
     pub builtins: Tools,
     pub skill_tools: HashMap<String, SkillToolDef>,
-    /// Capabilities with an active `provides:` skill installed. Populated
-    /// by `load_skill_tools` at session init. Drives tool-list filtering
-    /// (model only sees Memory_* when memory is active) and tier lookup.
+    /// LEGACY — kept for the old capability path. Memory_* are now
+    /// regular built-in tools (see `engine/tools/memory_tool.rs`); this
+    /// set is no longer consulted on the hot path. Removed in PR2.
     pub active_capabilities: HashSet<String>,
 }
 
@@ -30,23 +28,14 @@ impl ToolRegistry {
     }
 
     pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
-        // 1. Built-in engine tools (Read, Edit, Bash, ...).
+        // 1. Built-in engine tools (Read, Edit, Bash, Memory_query,
+        //    Memory_write, ...). Memory_* used to be routed through the
+        //    `memory` capability layer; they're now plain built-ins.
         if tools::canonical_tool_name(&call.tool).is_some() {
             return self.builtins.execute(call).await;
         }
 
-        // 2. Capability tools (engine-defined contract; backend lives in
-        //    the active `provides: [<cap>]` skill's `implements:` block).
-        if capabilities::is_capability_tool(&call.tool) {
-            debug!(
-                "Capability tool: {} args={}",
-                call.tool,
-                tools::summarize_tool_args(&call.tool, &call.args)
-            );
-            return self.dispatch_via_skill_http(&call.tool, &call.args).await;
-        }
-
-        // 3. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
+        // 2. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
         //    tool). Schema + dispatch target live on the SkillToolDef.
         if let Some(skill_tool) = self.skill_tools.get(&call.tool) {
             debug!(
@@ -65,35 +54,24 @@ impl ToolRegistry {
         anyhow::bail!("unknown tool: {}", call.tool)
     }
 
-    /// POST the tool args to the owning skill's daemon and return the
-    /// response as a `ToolResult::Success(json_string)`. Used for both
-    /// engine-defined capability tools and skill-declared HTTP tools —
-    /// `capability_tools::dispatch` resolves the URL from the active
-    /// provider's `implements:` block and handles autostart + retry-once.
+    /// Stub for skill-declared HTTP tools. No production skill uses the
+    /// Http kind today; in the old code path this was wired through
+    /// `capability_tools::dispatch`. PR2 will either fold HTTP skill
+    /// tools back in via a direct reqwest POST or drop the kind entirely.
+    /// For now, surface a clear error if a skill ever declares one.
     async fn dispatch_via_skill_http(&self, name: &str, args: &Value) -> Result<ToolResult> {
-        let manager = self.builtins.get_manager().ok_or_else(|| {
-            anyhow!(
-                "Tool '{name}' requires a running AgentManager context \
-                 — tool context was not set"
-            )
-        })?;
-        let skills = manager.skills.clone();
-        // Memory tools are engine-built-in (no skill); other capabilities
-        // ignore this URL. Pull from the live config snapshot so config
-        // edits (Settings → General → Ling-mem URL) reach the next dispatch.
-        let ling_mem_url = manager.get_config_snapshot().await.agent.ling_mem_url;
-        let value = capability_tools::dispatch(skills.as_ref(), &ling_mem_url, name, args.clone()).await?;
-        Ok(ToolResult::Success(value.to_string()))
+        let _ = args;
+        Err(anyhow!(
+            "Skill HTTP tool '{name}' dispatch is temporarily unavailable — \
+             the capability-routing path was removed; re-add via a direct POST helper if needed."
+        ))
     }
 
     /// Resolve a tool name to its canonical form. Returns the name if it
-    /// is a known built-in, a registered capability tool, or a registered
+    /// is a known built-in (now including Memory_*) or a registered
     /// skill tool.
     pub fn canonical_tool_name<'a>(&self, tool: &'a str) -> Option<&'a str> {
         if tools::canonical_tool_name(tool).is_some() {
-            return Some(tool);
-        }
-        if capabilities::is_capability_tool(tool) {
             return Some(tool);
         }
         if self.skill_tools.contains_key(tool) {
@@ -126,9 +104,9 @@ impl ToolRegistry {
         allowed.map_or(true, |set| set.contains(name))
     }
 
-    /// Merge built-in, capability, and skill tool schemas, filtered by the
-    /// allowed set. Capability schemas come from `engine::capabilities`;
-    /// only capabilities with an active provider are emitted.
+    /// Merge built-in and skill tool schemas, filtered by the allowed
+    /// set. Built-ins now include Memory_query / Memory_write directly
+    /// (the old capability layer is gone — see PR2).
     pub fn tool_schema_json(&self, allowed_tools: Option<&HashSet<String>>) -> String {
         let mut tools_arr = tools::full_tool_schema_entries();
         tools_arr.retain(|entry| {
@@ -138,18 +116,6 @@ impl ToolRegistry {
                 .map(|name| Self::is_allowed(allowed_tools, name))
                 .unwrap_or(false)
         });
-
-        // Capability tools: only those from active capabilities are emitted
-        // (each capability's tools dispatch through a single active provider).
-        for (cap_name, tool) in capabilities::all_capability_tools() {
-            if !self.active_capabilities.contains(cap_name) {
-                continue;
-            }
-            if !Self::is_allowed(allowed_tools, &tool.name) {
-                continue;
-            }
-            tools_arr.push(capabilities::legacy_schema_entry(tool));
-        }
 
         for (name, def) in &self.skill_tools {
             if !Self::is_allowed(allowed_tools, name) {
@@ -161,21 +127,11 @@ impl ToolRegistry {
         serde_json::json!({ "tools": tools_arr }).to_string()
     }
 
-    /// Build OpenAI-compatible tool definitions for native function calling.
-    /// Merges built-ins + active capability schemas + skill-unique schemas,
-    /// filtered by the allowed set.
+    /// Build OpenAI-compatible tool definitions for native function
+    /// calling. Built-ins (incl. Memory_*) + skill-unique tools, filtered
+    /// by the allowed set.
     pub fn oai_tool_definitions(&self, allowed: Option<&HashSet<String>>) -> Vec<serde_json::Value> {
         let mut defs = tools::json_schema::oai_tool_definitions(allowed);
-
-        for (cap_name, tool) in capabilities::all_capability_tools() {
-            if !self.active_capabilities.contains(cap_name) {
-                continue;
-            }
-            if !Self::is_allowed(allowed, &tool.name) {
-                continue;
-            }
-            defs.push(capabilities::oai_schema_entry(tool));
-        }
 
         for (name, def) in &self.skill_tools {
             if !Self::is_allowed(allowed, name) {

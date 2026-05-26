@@ -12,6 +12,7 @@
 
 use super::delegation::{RunAppArgs, SkillArgs, TaskArgs, WebFetchArgs, WebSearchArgs};
 use super::file_tools::{CaptureScreenshotArgs, ListFilesArgs, ReadFileArgs};
+use super::memory_tool::{MemoryQueryTool, MemoryWriteTool};
 use super::search_exec::{RunCommandArgs, SearchArgs};
 use super::write_tools::{EditFileArgs, LockPathsArgs, UnlockPathsArgs, WriteFileArgs};
 use super::{ToolCall, ToolResult, Tools};
@@ -76,6 +77,11 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(WebSearchTool),
             Arc::new(WebFetchTool),
             Arc::new(AskUserTool),
+            // Memory_query / Memory_write — engine-built-in (HTTP to
+            // `ling-mem`). Previously routed through the now-defunct
+            // `memory` capability abstraction.
+            Arc::new(MemoryQueryTool),
+            Arc::new(MemoryWriteTool),
         ]
     });
     &REGISTRY

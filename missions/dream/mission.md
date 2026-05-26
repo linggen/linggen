@@ -87,18 +87,16 @@ row must leave episodic on this pass — there is no "leave it."
 
 ### 2a. Search semantic for a match (every row, every time)
 
-```
-Memory_query({verb: "search", query: "<row content gist>", limit: 8})
-```
+Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "limit": 8 }`.
 
 ### 2b. Decide one of four outcomes
 
 | You see | Action |
 |:---|:---|
-| Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Silent dedup.** Skip the promote: `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> dedup`. The semantic store already represents this fact. |
+| Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Silent dedup.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Emit `ROW <row.id> dedup`. The semantic store already represents this fact. |
 | Semantic has a row that's **related but not identical** (different emphasis, partial overlap, contradiction on the same subject) | **Skip the resolution.** Don't pick a winner, don't merge, don't rewrite the existing semantic row. Emit `ROW <row.id> skip`. Leave the candidate's episodic source alone — it'll come back next cycle. Reconciliation happens later in a live recall with the user present. |
-| The row is durable user biography, a cross-project preference, a decision-with-reasoning, or a re-hit gotcha — and no semantic equivalent exists | **Promote.** First `Memory_write({verb: "add", host: "linggen", content: <row.content>, type: <row.type>, from: <row.from>, contexts: <row.contexts>})`, then `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> promote`. Tier defaults to semantic; use `tier: "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
-| The row is pure activity / re-derivable from files / single-mention noise / a secret that slipped through | **Delete.** `Memory_write({verb: "delete", tier: "episodic", id: <row.id>})`. Emit `ROW <row.id> delete`. No promotion. |
+| The row is durable user biography, a cross-project preference, a decision-with-reasoning, or a re-hit gotcha — and no semantic equivalent exists | **Promote.** First call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts> }`, then call `Memory_write` again with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Emit `ROW <row.id> promote`. Tier defaults to semantic; pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is pure activity / re-derivable from files / single-mention noise / a secret that slipped through | **Delete.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Emit `ROW <row.id> delete`. No promotion. |
 
 ### Hard rules
 
