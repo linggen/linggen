@@ -759,7 +759,7 @@ struct ServerHandle {
 
 async fn prepare_server(
     manager: Arc<AgentManager>,
-    skill_manager: Arc<crate::skills::SkillManager>,
+    skill_manager: Arc<crate::extensions::skills::SkillManager>,
     host: &str,
     port: u16,
     dev_mode: bool,
@@ -1008,7 +1008,7 @@ async fn prepare_server(
     // Spawn the cron mission scheduler.
     {
         let scheduler_state = state.clone();
-        tokio::spawn(crate::missions::scheduler::mission_scheduler_loop(scheduler_state));
+        tokio::spawn(crate::extensions::missions::scheduler::mission_scheduler_loop(scheduler_state));
     }
 
     // Spawn the agent_run sweeper. Reaps `Running` rows older than the
@@ -1092,7 +1092,7 @@ async fn prepare_server(
 
 pub async fn start_server(
     manager: Arc<AgentManager>,
-    skill_manager: Arc<crate::skills::SkillManager>,
+    skill_manager: Arc<crate::extensions::skills::SkillManager>,
     host: &str,
     port: u16,
     dev_mode: bool,

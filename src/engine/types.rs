@@ -5,7 +5,7 @@ use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;
 use crate::message::ChatMessage;
-use crate::skills::Skill;
+use crate::extensions::skills::Skill;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -557,7 +557,7 @@ impl AgentEngine {
     /// tool, session-bound, or trigger-prefix paths. User sessions that
     /// never activate a skill stay clean: only built-ins + active
     /// capabilities visible to the model.
-    pub async fn load_skill_tools(&mut self, skill_manager: &crate::skills::SkillManager) {
+    pub async fn load_skill_tools(&mut self, skill_manager: &crate::extensions::skills::SkillManager) {
         if self.spec.is_none() { return };
 
         self.tools.active_capabilities.clear();
@@ -572,7 +572,7 @@ impl AgentEngine {
     /// for all locally-installed skills that are not `disable_model_invocation`.
     pub async fn load_available_skills_metadata(
         &mut self,
-        skill_manager: &crate::skills::SkillManager,
+        skill_manager: &crate::extensions::skills::SkillManager,
     ) {
         let all_skills = skill_manager.list_skills().await;
         self.available_skills_metadata = all_skills

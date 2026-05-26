@@ -117,7 +117,7 @@ pub(super) async fn run_skill_dispatch(
 
 enum SlashResolution {
     /// Skill resolved and ready to activate.
-    Skill(crate::skills::Skill),
+    Skill(crate::extensions::skills::Skill),
     /// Either the `--web` app launcher fired (skill ran as an app, no agent
     /// loop), or the skill was blocked by user_invocable / policy checks
     /// (caller emitted the error and should `return`).
@@ -182,8 +182,8 @@ async fn resolve_slash_skill(
 /// skill that declares an `app:` block.
 async fn launch_skill_app(
     ctx: &ChatRunCtx,
-    skill: &crate::skills::Skill,
-    app: &crate::skills::AppConfig,
+    skill: &crate::extensions::skills::Skill,
+    app: &crate::extensions::skills::AppConfig,
     user_args: Option<&str>,
 ) {
     let launch_msg = format!("Launching app: {}", skill.name);

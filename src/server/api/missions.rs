@@ -1,4 +1,4 @@
-use crate::missions::{self, MissionDraft, MissionPermission, MISSION_AGENT_ID};
+use crate::extensions::missions::{self, MissionDraft, MissionPermission};
 use crate::server::{ServerEvent, ServerState};
 use axum::{
     extract::{Path, Query, State},
@@ -71,10 +71,6 @@ pub(crate) struct CreateMissionRequest {
     #[serde(default)]
     entry: Option<String>,
     #[serde(default)]
-    allow_skills: Option<Vec<String>>,
-    #[serde(default)]
-    requires: Option<Vec<String>>,
-    #[serde(default)]
     allowed_tools: Option<Vec<String>>,
 }
 
@@ -141,11 +137,10 @@ pub(crate) async fn create_mission(
         cwd: Some(req.cwd.clone()),
         model: Some(req.model),
         entry: Some(entry),
-        allow_skills: req.allow_skills,
-        requires: req.requires,
         allowed_tools: req.allowed_tools,
         permission: Some(permission),
         project: Some(req.cwd),
+        ..Default::default()
     };
 
     match state.manager.missions.create_mission(draft) {
@@ -166,7 +161,7 @@ fn build_permission(
     paths: Option<Vec<String>>,
     warning: Option<String>,
 ) -> Option<MissionPermission> {
-    use crate::skills::PathGrant;
+    use crate::extensions::skills::PathGrant;
     // Web UI still sends (mode, paths[]) as parallel fields. Apply the
     // single mode to every path to produce per-path grants. If both are
     // absent, return None — caller decides whether to materialize a
@@ -214,10 +209,6 @@ pub(crate) struct UpdateMissionRequest {
     mode: Option<String>,
     #[serde(default)]
     entry: Option<Option<String>>,
-    #[serde(default)]
-    allow_skills: Option<Vec<String>>,
-    #[serde(default)]
-    requires: Option<Vec<String>>,
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
 }
@@ -278,11 +269,10 @@ pub(crate) async fn update_mission(
         cwd: cwd_pair.clone(),
         model: req.model,
         entry: req.entry,
-        allow_skills: req.allow_skills,
-        requires: req.requires,
         allowed_tools: req.allowed_tools,
         permission: permission_update,
         project: cwd_pair,
+        ..Default::default()
     };
 
     match state.manager.missions.update_mission(&id, draft) {
@@ -350,18 +340,18 @@ pub(crate) async fn trigger_mission(
 
     let _ = state.events_tx.send(ServerEvent::MissionTriggered {
         mission_id: mission.id.clone(),
-        agent_id: MISSION_AGENT_ID.to_string(),
+        agent_id: mission.agent_id.clone(),
         project_root: project_path.clone(),
         session_id: None,
     });
 
     state
         .manager
-        .update_agent_activity(&project_path, MISSION_AGENT_ID)
+        .update_agent_activity(&project_path, &mission.agent_id)
         .await;
 
     // Pre-create the session so we can return its ID immediately
-    let session_id = crate::missions::scheduler::create_mission_session(&mission);
+    let session_id = crate::extensions::missions::scheduler::create_mission_session(&mission);
 
     // Persist a short kickoff user message so the UI has something to show
     // when it loads the session. The mission body lives in the system prompt
@@ -369,17 +359,13 @@ pub(crate) async fn trigger_mission(
     // mean the agent sees the instructions twice and the transcript is
     // cluttered with thousands of characters of redundant context.
     if let Some(ref sid) = session_id {
-        let mission_label = mission.name.clone().unwrap_or_else(|| mission.id.clone());
-        let message = format!(
-            "Run the \"{}\" mission now per the instructions in your system prompt. Report results in your final message.",
-            mission_label
-        );
+        let message = crate::extensions::missions::scheduler::mission_kickoff_message(&mission);
         let _ = state.manager.global_sessions.add_chat_message(
             sid,
             &crate::state_fs::sessions::ChatMsg {
-                agent_id: MISSION_AGENT_ID.to_string(),
+                agent_id: mission.agent_id.clone(),
                 from_id: "user".to_string(),
-                to_id: MISSION_AGENT_ID.to_string(),
+                to_id: mission.agent_id.clone(),
                 content: message,
                 timestamp: crate::util::now_ts_secs(),
                 is_observation: false,
@@ -391,7 +377,7 @@ pub(crate) async fn trigger_mission(
     let session_id_clone = session_id.clone();
 
     tokio::spawn(async move {
-        crate::missions::scheduler::dispatch_mission_prompt_public(
+        crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
             state_clone,
             root,
             &project_path,

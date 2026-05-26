@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::skills::marketplace::{self, SkillScope};
+use crate::extensions::skills::marketplace::{self, SkillScope};
 use anyhow::Result;
 use std::path::PathBuf;
 

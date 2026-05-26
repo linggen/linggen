@@ -19,7 +19,7 @@
 //!   implementation
 
 use crate::engine::capabilities;
-use crate::skills::{CapabilityImpl, SkillManager};
+use crate::extensions::skills::{CapabilityImpl, SkillManager};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -422,7 +422,7 @@ pub(crate) fn resolve_binary(skill_dir: Option<&Path>, binary_name: &str) -> Pat
 /// engine modules (permission prompts, UIs) can render stable info.
 #[allow(dead_code)]
 pub(crate) fn resolve_binding<'a>(
-    skill: &'a crate::skills::Skill,
+    skill: &'a crate::extensions::skills::Skill,
     capability: &str,
 ) -> Option<&'a CapabilityImpl> {
     skill.implements.as_ref().and_then(|m| m.get(capability))

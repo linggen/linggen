@@ -1,4 +1,4 @@
-use crate::skills::marketplace;
+use crate::extensions::skills::marketplace;
 use anyhow::{Context, Result};
 use rust_embed::Embed;
 use std::fs;
@@ -169,7 +169,7 @@ fn run_skill_install_scripts() {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            match crate::skills::run_install_script(&path) {
+            match crate::extensions::skills::run_install_script(&path) {
                 Ok(Some(_)) => {
                     ran.push(path.file_name().unwrap_or_default().to_string_lossy().to_string());
                 }

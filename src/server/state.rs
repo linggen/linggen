@@ -20,7 +20,7 @@ pub struct ServerState {
     /// `idle_shutdown_secs` is set. Bumped in `rtc::peer::create_peer_inner`.
     pub active_peer_count: Arc<std::sync::atomic::AtomicUsize>,
     pub events_tx: broadcast::Sender<ServerEvent>,
-    pub skill_manager: Arc<crate::skills::SkillManager>,
+    pub skill_manager: Arc<crate::extensions::skills::SkillManager>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
     /// Senders for interrupt messages keyed by queue_key. Used to inject user

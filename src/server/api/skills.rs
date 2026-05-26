@@ -1,7 +1,7 @@
 //! Skill listing + skill-file CRUD endpoints.
 
 use crate::server::{ServerEvent, ServerState};
-use crate::skills::Skill;
+use crate::extensions::skills::Skill;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,

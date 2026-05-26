@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::eval::grader::run_grader;
 use crate::eval::report::save_transcript;
 use crate::eval::{EvalConfig, EvalResult, EvalTaskDef};
-use crate::skills::SkillManager;
+use crate::extensions::skills::SkillManager;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;

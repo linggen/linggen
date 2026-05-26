@@ -1,6 +1,6 @@
 use crate::server::{ServerEvent, ServerState};
-use crate::skills::marketplace::{self, SkillScope};
-use crate::skills;
+use crate::extensions::skills::marketplace::{self, SkillScope};
+use crate::extensions::skills;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,

@@ -734,11 +734,13 @@ pub(crate) async fn chat_handler(
         // — reads what it needs from `engine` here, then spawns). No-op
         // for consumer/mission/sub-N sessions.
         super::consolidation::maybe_fire_consolidation(&ctx, &engine);
-        // Owner turns also catch up the `dream` consolidate+evict mission
-        // if its daily cron was missed (machine off/asleep). Cheap,
-        // non-blocking, guarded; no-op unless overdue.
+        // Owner turns also catch up any mission whose `catchup_hours` is set
+        // and whose last run is older than that threshold (e.g. the `dream`
+        // consolidate+evict mission, when its daily cron was missed because
+        // the machine was off/asleep). Cheap, non-blocking, guarded; no-op
+        // unless something is overdue.
         if engine.prompt_profile.include_memory {
-            crate::missions::scheduler::maybe_fire_dream_catchup(ctx.state.clone());
+            crate::extensions::missions::scheduler::maybe_fire_catchup_missions(ctx.state.clone());
         }
         state_clone
             .send_agent_status(

@@ -8,7 +8,7 @@
 use crate::engine::permission::{effective_mode_for_path, PermissionAction};
 use crate::engine::tools::{AskUserOption, AskUserQuestion};
 use crate::engine::AgentEngine;
-use crate::skills::Skill;
+use crate::extensions::skills::Skill;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

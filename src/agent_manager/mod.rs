@@ -2,7 +2,7 @@ use crate::agent_manager::locks::LockManager;
 use crate::agent_manager::models::ModelManager;
 use crate::config::{AgentSpec, Config};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
-use crate::skills::SkillManager;
+use crate::extensions::skills::SkillManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub struct AgentManager {
     pub projects: Mutex<HashMap<String, Arc<ProjectContext>>>,
     pub locks: Mutex<LockManager>,
     pub models: RwLock<Arc<ModelManager>>,
-    pub missions: Arc<crate::missions::MissionStore>,
+    pub missions: Arc<crate::extensions::missions::MissionStore>,
     pub skill_manager: Arc<SkillManager>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
@@ -504,7 +504,7 @@ impl AgentManager {
                 projects: Mutex::new(HashMap::new()),
                 locks: Mutex::new(LockManager::new()),
                 models: RwLock::new(models),
-                missions: Arc::new(crate::missions::MissionStore::new()),
+                missions: Arc::new(crate::extensions::missions::MissionStore::new()),
                 skill_manager,
                 working_places: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
