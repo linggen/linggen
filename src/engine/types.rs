@@ -1,5 +1,5 @@
 use crate::provider::models::ModelManager;
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::config::AgentSpec;
 use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
@@ -148,7 +148,7 @@ pub struct EngineConfig {
 impl EngineConfig {
     /// Build an `EngineConfig` from the global app `Config` plus the per-engine
     /// workspace root and interface mode. Centralizes the field mapping so the
-    /// three engine-construction sites in `agent_manager` stay in sync.
+    /// three engine-construction sites in `engine::agent` stay in sync.
     pub fn from_app_config(
         config: &crate::config::Config,
         ws_root: PathBuf,

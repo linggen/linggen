@@ -1,5 +1,5 @@
 use super::{AskUserBridge, ToolResult, Tools};
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use anyhow::Result;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -274,7 +274,7 @@ pub(crate) async fn run_delegation(
         .await?;
 
     manager
-        .send_event(crate::agent_manager::AgentEvent::Message {
+        .send_event(crate::engine::agent::AgentEvent::Message {
             from: caller_id.clone(),
             to: target_agent_id.clone(),
             content: format!("Delegated task: {}", task),
@@ -288,7 +288,7 @@ pub(crate) async fn run_delegation(
         .await;
 
     manager
-        .send_event(crate::agent_manager::AgentEvent::SubagentSpawned {
+        .send_event(crate::engine::agent::AgentEvent::SubagentSpawned {
             parent_id: caller_id.clone(),
             subagent_id: target_agent_id.clone(),
             task: task.clone(),
@@ -306,7 +306,7 @@ pub(crate) async fn run_delegation(
             let _ = manager
                 .finish_agent_run(
                     &run_id,
-                    crate::agent_manager::AgentRunStatus::Failed,
+                    crate::engine::agent::AgentRunStatus::Failed,
                     Some(err.to_string()),
                 )
                 .await;
@@ -351,13 +351,13 @@ pub(crate) async fn run_delegation(
     let last_text = engine.last_assistant_text.take();
 
     let (outcome, status, detail) = match run_result {
-        Ok(outcome) => (outcome, crate::agent_manager::AgentRunStatus::Completed, None),
+        Ok(outcome) => (outcome, crate::engine::agent::AgentRunStatus::Completed, None),
         Err(err) => {
             let msg = err.to_string();
             let status = if msg.to_lowercase().contains("cancel") {
-                crate::agent_manager::AgentRunStatus::Cancelled
+                crate::engine::agent::AgentRunStatus::Cancelled
             } else {
-                crate::agent_manager::AgentRunStatus::Failed
+                crate::engine::agent::AgentRunStatus::Failed
             };
             let _ = manager
                 .finish_agent_run(&run_id, status, Some(msg.clone()))
@@ -368,7 +368,7 @@ pub(crate) async fn run_delegation(
     let _ = manager.finish_agent_run(&run_id, status, detail).await;
 
     manager
-        .send_event(crate::agent_manager::AgentEvent::SubagentResult {
+        .send_event(crate::engine::agent::AgentEvent::SubagentResult {
             parent_id: caller_id,
             subagent_id: target_agent_id,
             outcome: outcome.clone(),

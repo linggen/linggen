@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod agent;
 pub(crate) mod capabilities;
 pub(crate) mod capability_tools;
 mod context;
@@ -129,7 +130,7 @@ impl AgentEngine {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             manager
-                .send_event(crate::agent_manager::AgentEvent::AgentStatus {
+                .send_event(crate::engine::agent::AgentEvent::AgentStatus {
                     agent_id,
                     status: "working".to_string(),
                     detail: Some("Running".to_string()),
@@ -281,7 +282,7 @@ impl AgentEngine {
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
                 manager
-                    .send_event(crate::agent_manager::AgentEvent::AgentStatus {
+                    .send_event(crate::engine::agent::AgentEvent::AgentStatus {
                         agent_id,
                         status: "thinking".to_string(),
                         detail: Some(format!("Thinking ({})", self.model_id)),
@@ -379,7 +380,7 @@ impl AgentEngine {
                     let _ = self.persist_assistant_message(&msg, session_id).await;
                     if let Some(manager) = self.tools.get_manager() {
                         let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
-                        manager.send_event(crate::agent_manager::AgentEvent::TextSegment {
+                        manager.send_event(crate::engine::agent::AgentEvent::TextSegment {
                             agent_id,
                             text: msg.clone(),
                             parent_id: self.parent_agent_id.clone(),
@@ -411,14 +412,14 @@ impl AgentEngine {
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::TextSegment {
+                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
                                 agent_id: agent_id.clone(),
                                 text: visible_text.clone(),
                                 parent_id: self.parent_agent_id.clone(),
                             }, self.session_id.clone())
                             .await;
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
+                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
                                 agent_id,
                                 block_id: uuid::Uuid::new_v4().to_string(),
                                 block_type: "text".to_string(),
@@ -525,14 +526,14 @@ impl AgentEngine {
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::TextSegment {
+                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
                                 agent_id: agent_id.clone(),
                                 text: raw.clone(),
                                 parent_id: self.parent_agent_id.clone(),
                             }, self.session_id.clone())
                             .await;
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
+                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
                                 agent_id,
                                 block_id: uuid::Uuid::new_v4().to_string(),
                                 block_type: "text".to_string(),
@@ -567,7 +568,7 @@ impl AgentEngine {
                             .unwrap_or_else(|| "unknown".to_string());
                         // Emit TextSegment for streaming display in UI.
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::TextSegment {
+                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
                                 agent_id: agent_id.clone(),
                                 text: text_before.clone(),
                                 parent_id: self.parent_agent_id.clone(),
@@ -575,7 +576,7 @@ impl AgentEngine {
                             .await;
                         // Also emit structured ContentBlockStart(text) for Web UI.
                         manager
-                            .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
+                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
                                 agent_id,
                                 block_id: uuid::Uuid::new_v4().to_string(),
                                 block_type: "text".to_string(),

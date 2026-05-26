@@ -73,9 +73,9 @@ pub(crate) async fn get_status_api(
 
     for r in &runs {
         match r.status {
-            crate::agent_manager::AgentRunStatus::Completed => completed += 1,
-            crate::agent_manager::AgentRunStatus::Failed => failed += 1,
-            crate::agent_manager::AgentRunStatus::Cancelled => cancelled += 1,
+            crate::engine::agent::AgentRunStatus::Completed => completed += 1,
+            crate::engine::agent::AgentRunStatus::Failed => failed += 1,
+            crate::engine::agent::AgentRunStatus::Cancelled => cancelled += 1,
             _ => {}
         }
         let secs = r.started_at;

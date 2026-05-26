@@ -108,7 +108,7 @@ impl AgentEngine {
             let run_id = if is_subagent { self.run_id.clone() } else { None };
             let parent_id = if is_subagent { self.parent_agent_id.clone() } else { None };
             manager
-                .send_event(crate::agent_manager::AgentEvent::Message {
+                .send_event(crate::engine::agent::AgentEvent::Message {
                     from: agent_id.clone(),
                     to: target.clone(),
                     content: content.to_string(),
@@ -144,7 +144,7 @@ impl AgentEngine {
 
                 // Nudge UI to refresh immediately.
                 manager
-                    .send_event(crate::agent_manager::AgentEvent::StateUpdated, self.session_id.clone())
+                    .send_event(crate::engine::agent::AgentEvent::StateUpdated, self.session_id.clone())
                     .await;
             }
         }
@@ -311,7 +311,7 @@ impl AgentEngine {
             None => (None, None),
         };
         let _ = manager
-            .send_event(crate::agent_manager::AgentEvent::ContextUsage {
+            .send_event(crate::engine::agent::AgentEvent::ContextUsage {
                 agent_id: self
                     .agent_id
                     .clone()

@@ -20,7 +20,7 @@ impl AgentEngine {
         tc_ids: &[String],
         batch_start: usize,
     ) -> Option<AgentOutcome> {
-        use crate::agent_manager::AgentManager;
+        use crate::engine::agent::AgentManager;
 
         // Helper to get the tc_id for a given action index.
         let tc_id_for = |idx: usize| -> Option<String> {

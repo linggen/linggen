@@ -1,4 +1,4 @@
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::config::Config;
 use crate::eval::grader::run_grader;
 use crate::eval::report::save_transcript;

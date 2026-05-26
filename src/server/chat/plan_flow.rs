@@ -1,4 +1,4 @@
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::engine::{AgentEngine, Plan, PlanStatus};
 use crate::server::chat::helpers::{
     emit_outcome_event, persist_and_emit_message, persist_message_only,

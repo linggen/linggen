@@ -31,7 +31,7 @@
 //! See `project_memory_recall_redesign` / `project_consolidator_contract`.
 
 use super::ChatRunCtx;
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::engine::{memory, AgentEngine};
 use crate::server::ServerState;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};

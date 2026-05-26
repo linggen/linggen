@@ -281,8 +281,8 @@ pub enum ServerEvent {
 impl ServerEvent {
     /// Convert a 1:1 `AgentEvent` variant into the corresponding `ServerEvent`.
     /// Returns `None` for variants that require special handling (AgentStatus, TaskUpdate).
-    pub(crate) fn from_agent_event(event: crate::agent_manager::AgentEvent, session_id: Option<String>) -> Option<Self> {
-        use crate::agent_manager::AgentEvent;
+    pub(crate) fn from_agent_event(event: crate::engine::agent::AgentEvent, session_id: Option<String>) -> Option<Self> {
+        use crate::engine::agent::AgentEvent;
         match event {
             AgentEvent::StateUpdated => Some(Self::StateUpdated),
             AgentEvent::Message { from, to, content, run_id, parent_id } => {

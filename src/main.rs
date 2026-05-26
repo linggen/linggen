@@ -1,4 +1,3 @@
-mod agent_manager;
 mod cli;
 mod config;
 mod credentials;
@@ -360,7 +359,7 @@ async fn main() -> Result<()> {
             let interface_mode = engine::InterfaceMode::Web;
 
             let (manager, rx) =
-                agent_manager::AgentManager::new(config, config_dir, skill_manager.clone(), interface_mode);
+                engine::agent::AgentManager::new(config, config_dir, skill_manager.clone(), interface_mode);
 
             let _ = skill_manager.load_all(Some(&ws_root)).await;
 

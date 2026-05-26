@@ -409,7 +409,7 @@ impl AgentEngine {
         let Some(manager) = self.tools.get_manager() else { return };
         let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
         manager
-            .send_event(crate::agent_manager::AgentEvent::ModelFallback {
+            .send_event(crate::engine::agent::AgentEvent::ModelFallback {
                 agent_id,
                 preferred_model: preferred.to_string(),
                 actual_model: actual.to_string(),
@@ -428,7 +428,7 @@ impl AgentEngine {
         let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
         while let Ok((tool, stream, line)) = progress_rx.try_recv() {
             manager
-                .send_event(crate::agent_manager::AgentEvent::ToolProgress {
+                .send_event(crate::engine::agent::AgentEvent::ToolProgress {
                     agent_id: agent_id.clone(),
                     tool,
                     line,

@@ -14,7 +14,7 @@ pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
 pub(crate) use delegation::{run_delegation, TaskArgs};
 
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

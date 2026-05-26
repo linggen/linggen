@@ -10,7 +10,7 @@ pub(crate) use state::ActiveStatusRecord;
 
 use events::*;
 
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use axum::{
     extract::State,
     http::Uri,
@@ -764,7 +764,7 @@ async fn prepare_server(
     port: u16,
     dev_mode: bool,
     idle_shutdown_secs: Option<u64>,
-    mut agent_events_rx: mpsc::UnboundedReceiver<(crate::agent_manager::AgentEvent, Option<String>)>,
+    mut agent_events_rx: mpsc::UnboundedReceiver<(crate::engine::agent::AgentEvent, Option<String>)>,
 ) -> anyhow::Result<ServerHandle> {
     info!("linggen server starting on {}:{}...", host, port);
 
@@ -848,7 +848,7 @@ async fn prepare_server(
             while let Some((event, session_id)) = agent_events_rx.recv().await {
                 match event {
                     // Special cases that need extra logic beyond a 1:1 mapping.
-                    crate::agent_manager::AgentEvent::AgentStatus {
+                    crate::engine::agent::AgentEvent::AgentStatus {
                         agent_id, status, detail, parent_id, run_id, parent_run_id,
                     } => {
                         state_clone
@@ -858,19 +858,19 @@ async fn prepare_server(
                             )
                             .await;
                     }
-                    crate::agent_manager::AgentEvent::TaskUpdate { .. } => {
+                    crate::engine::agent::AgentEvent::TaskUpdate { .. } => {
                         let _ = state_clone.events_tx.send(ServerEvent::StateUpdated);
                     }
                     // All other variants have a 1:1 ServerEvent equivalent.
                     other => {
                         // Intercept __cwd_changed__ progress events → WorkingFolderChanged
-                        if let crate::agent_manager::AgentEvent::ToolProgress {
+                        if let crate::engine::agent::AgentEvent::ToolProgress {
                             ref tool, ref line, ..
                         } = &other {
                             if tool == "__cwd_changed__" {
                                 // line = cwd, stream = "project|project_name"
                                 let cwd = line.clone();
-                                if let crate::agent_manager::AgentEvent::ToolProgress { stream, .. } = &other {
+                                if let crate::engine::agent::AgentEvent::ToolProgress { stream, .. } = &other {
                                     let parts: Vec<&str> = stream.splitn(2, '|').collect();
                                     let project = parts.first().filter(|s| !s.is_empty()).map(|s| s.to_string());
                                     let project_name = parts.get(1).filter(|s| !s.is_empty()).map(|s| s.to_string());
@@ -894,7 +894,7 @@ async fn prepare_server(
                             }
                         }
                         // Accumulate token usage from ContextUsage events.
-                        if let crate::agent_manager::AgentEvent::ContextUsage {
+                        if let crate::engine::agent::AgentEvent::ContextUsage {
                             actual_prompt_tokens: Some(prompt),
                             actual_completion_tokens: Some(completion),
                             ..
@@ -1097,7 +1097,7 @@ pub async fn start_server(
     port: u16,
     dev_mode: bool,
     idle_shutdown_secs: Option<u64>,
-    agent_events_rx: mpsc::UnboundedReceiver<(crate::agent_manager::AgentEvent, Option<String>)>,
+    agent_events_rx: mpsc::UnboundedReceiver<(crate::engine::agent::AgentEvent, Option<String>)>,
 ) -> anyhow::Result<()> {
     let handle = prepare_server(manager, skill_manager, host, port, dev_mode, idle_shutdown_secs, agent_events_rx).await?;
     handle.task.await??;

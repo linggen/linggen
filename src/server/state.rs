@@ -2,7 +2,7 @@
 //! the agent manager, event broadcaster, in-memory queues, and the
 //! per-status tracking used to dedupe agent-status updates.
 
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::server::rtc;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};

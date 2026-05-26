@@ -258,7 +258,7 @@ pub(crate) async fn get_agent_tree(
         .await
         .map(|runs| {
             runs.into_iter()
-                .filter(|run| run.status == crate::agent_manager::AgentRunStatus::Running)
+                .filter(|run| run.status == crate::engine::agent::AgentRunStatus::Running)
                 .map(|run| run.agent_id)
                 .collect()
         })

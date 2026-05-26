@@ -2,7 +2,7 @@
 //! emission. Used by every `chat::*` flow plus a handful of API handlers
 //! that need to persist or signal chat events.
 
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::engine::AgentOutcome;
 use crate::server::{ServerEvent, ServerState};
 use std::path::Path;

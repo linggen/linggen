@@ -1,4 +1,4 @@
-use crate::agent_manager::locks::LockManager;
+use crate::engine::agent::locks::LockManager;
 use crate::provider::models::ModelManager;
 use crate::config::{AgentSpec, Config};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
@@ -44,7 +44,7 @@ pub struct AgentManager {
     /// Pending plans awaiting user approval, keyed by "{project_root}|{session_id}|{agent_id}".
     pending_plans: Mutex<HashMap<String, Plan>>,
     /// In-memory run store — replaces file-based RunStore. Shared across all operations.
-    pub run_store: Arc<crate::agent_manager::RunStore>,
+    pub run_store: Arc<crate::engine::agent::RunStore>,
     /// Last activity time per agent, keyed by "{project_root}|{agent_id}".
     last_activity: Mutex<HashMap<String, Instant>>,
     /// Interface mode passed into every EngineConfig.
@@ -508,7 +508,7 @@ impl AgentManager {
                 tool_cancel_flags: std::sync::Mutex::new(HashMap::new()),
                 events: tx,
                 pending_plans: Mutex::new(HashMap::new()),
-                run_store: Arc::new(crate::agent_manager::RunStore::new()),
+                run_store: Arc::new(crate::engine::agent::RunStore::new()),
                 last_activity: Mutex::new(HashMap::new()),
                 interface_mode,
                 global_sessions: SessionStore::with_sessions_dir(crate::paths::global_sessions_dir()),
@@ -803,7 +803,7 @@ impl AgentManager {
         parent_run_id: Option<String>,
         detail: Option<String>,
     ) -> Result<String> {
-        use crate::agent_manager::{AgentRunRecord, AgentRunStatus};
+        use crate::engine::agent::{AgentRunRecord, AgentRunStatus};
 
         let project_root = project_root
             .canonicalize()
@@ -841,7 +841,7 @@ impl AgentManager {
     pub async fn finish_agent_run(
         &self,
         run_id: &str,
-        status: crate::agent_manager::AgentRunStatus,
+        status: crate::engine::agent::AgentRunStatus,
         detail: Option<String>,
     ) -> Result<()> {
         let ended_at = Some(crate::util::now_ts_secs());
@@ -870,7 +870,7 @@ impl AgentManager {
         &self,
         _project_root: &PathBuf,
         session_id: Option<&str>,
-    ) -> Result<Vec<crate::agent_manager::AgentRunRecord>> {
+    ) -> Result<Vec<crate::engine::agent::AgentRunRecord>> {
         Ok(self.run_store.list_runs(session_id))
     }
 
@@ -878,7 +878,7 @@ impl AgentManager {
         &self,
         run_id: &str,
         _project_root: Option<&str>,
-    ) -> Result<Option<crate::agent_manager::AgentRunRecord>> {
+    ) -> Result<Option<crate::engine::agent::AgentRunRecord>> {
         Ok(self.run_store.get_run(run_id))
     }
 
@@ -889,8 +889,8 @@ impl AgentManager {
     pub async fn cancel_run_tree(
         &self,
         run_id: &str,
-    ) -> Result<Vec<crate::agent_manager::AgentRunRecord>> {
-        use crate::agent_manager::AgentRunStatus;
+    ) -> Result<Vec<crate::engine::agent::AgentRunRecord>> {
+        use crate::engine::agent::AgentRunStatus;
 
         let mut stack = vec![run_id.to_string()];
         let mut seen = HashSet::new();
@@ -909,7 +909,7 @@ impl AgentManager {
             runs.push(run);
         }
 
-        let to_cancel: Vec<crate::agent_manager::AgentRunRecord> = runs
+        let to_cancel: Vec<crate::engine::agent::AgentRunRecord> = runs
             .into_iter()
             .filter(|run| run.status == AgentRunStatus::Running)
             .collect();

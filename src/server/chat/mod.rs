@@ -37,7 +37,7 @@ pub(crate) use admin::{
 pub(crate) use handler::chat_handler;
 pub(crate) use plan_flow::{approve_plan_handler, edit_plan_handler, reject_plan_handler};
 
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::server::{ServerEvent, ServerState};
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use crate::server::chat::helpers::{
     emit_queue_updated, persist_and_emit_to_store, queue_key, queue_preview,
 };

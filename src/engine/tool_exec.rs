@@ -391,7 +391,7 @@ impl AgentEngine {
                         // Notify UI so the mode badge updates.
                         if let Some(manager) = self.tools.get_manager() {
                             manager.send_event(
-                                crate::agent_manager::AgentEvent::StateUpdated,
+                                crate::engine::agent::AgentEvent::StateUpdated,
                                 self.session_id.clone(),
                             ).await;
                         }
@@ -489,7 +489,7 @@ impl AgentEngine {
             let compact_args = serde_json::to_string(&safe_args)
                 .unwrap_or_else(|_| "{}".to_string());
             let _ = manager
-                .send_event(crate::agent_manager::AgentEvent::ContentBlockStart {
+                .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
                     agent_id: from.clone(),
                     block_id: block_id.clone(),
                     block_type: "tool_use".to_string(),
@@ -629,7 +629,7 @@ impl AgentEngine {
                             }
                         });
                     manager
-                        .send_event(crate::agent_manager::AgentEvent::ContentBlockUpdate {
+                        .send_event(crate::engine::agent::AgentEvent::ContentBlockUpdate {
                             agent_id: agent_id.clone(),
                             block_id: block_id.clone(),
                             status: Some("done".to_string()),
@@ -642,10 +642,10 @@ impl AgentEngine {
                         }, self.session_id.clone())
                         .await;
                     manager
-                        .send_event(crate::agent_manager::AgentEvent::StateUpdated, self.session_id.clone())
+                        .send_event(crate::engine::agent::AgentEvent::StateUpdated, self.session_id.clone())
                         .await;
                     manager
-                        .send_event(crate::agent_manager::AgentEvent::AgentStatus {
+                        .send_event(crate::engine::agent::AgentEvent::AgentStatus {
                             agent_id,
                             status: "thinking".to_string(),
                             detail: Some(format!("Thinking ({})", self.model_id)),
@@ -772,7 +772,7 @@ impl AgentEngine {
                     // Emit structured ContentBlockUpdate (failed) for the Web UI.
                     let err_summary = format!("{}: {}", tool_failed_status, e);
                     manager
-                        .send_event(crate::agent_manager::AgentEvent::ContentBlockUpdate {
+                        .send_event(crate::engine::agent::AgentEvent::ContentBlockUpdate {
                             agent_id: agent_id.clone(),
                             block_id: block_id.clone(),
                             status: Some("failed".to_string()),
@@ -785,7 +785,7 @@ impl AgentEngine {
                         }, self.session_id.clone())
                         .await;
                     manager
-                        .send_event(crate::agent_manager::AgentEvent::AgentStatus {
+                        .send_event(crate::engine::agent::AgentEvent::AgentStatus {
                             agent_id,
                             status: "thinking".to_string(),
                             detail: Some(format!("Thinking ({})", self.model_id)),

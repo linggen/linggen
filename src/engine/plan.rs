@@ -67,7 +67,7 @@ impl AgentEngine {
                 .unwrap_or_else(|| "unknown".to_string());
             let plan = self.plan.clone().unwrap();
             manager
-                .send_event(crate::agent_manager::AgentEvent::PlanUpdate {
+                .send_event(crate::engine::agent::AgentEvent::PlanUpdate {
                     agent_id,
                     plan,
                 }, self.session_id.clone())

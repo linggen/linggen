@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 use super::ChatRunCtx;
 
 pub(super) async fn run_loop_with_tracking(
-    manager: &Arc<crate::agent_manager::AgentManager>,
+    manager: &Arc<crate::engine::agent::AgentManager>,
     root: &PathBuf,
     engine: &mut crate::engine::AgentEngine,
     agent_id: &str,
@@ -28,16 +28,16 @@ pub(super) async fn run_loop_with_tracking(
         match &result {
             Ok(_) => {
                 let _ = manager
-                    .finish_agent_run(&run_id, crate::agent_manager::AgentRunStatus::Completed, None)
+                    .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
                     .await;
             }
             Err(err) => {
                 let msg = err.to_string();
                 let status = if msg.to_lowercase().contains("cancel") {
-                    crate::agent_manager::AgentRunStatus::Cancelled
+                    crate::engine::agent::AgentRunStatus::Cancelled
                 } else {
                     tracing::error!("Agent loop failed: {}", msg);
-                    crate::agent_manager::AgentRunStatus::Failed
+                    crate::engine::agent::AgentRunStatus::Failed
                 };
                 let _ = manager.finish_agent_run(&run_id, status, Some(msg.clone())).await;
                 // AUTH_REQUIRED errors include the engine's "open Settings" hint

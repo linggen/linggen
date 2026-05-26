@@ -2,7 +2,7 @@ use super::capabilities;
 use super::capability_tools;
 use super::skill_tool::{SkillToolDef, SkillToolKind};
 use super::tools::{self, ToolCall, ToolResult, Tools};
-use crate::agent_manager::AgentManager;
+use crate::engine::agent::AgentManager;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};

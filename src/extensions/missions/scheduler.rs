@@ -687,7 +687,7 @@ async fn dispatch_mission_prompt(
             let _ = manager
                 .finish_agent_run(
                     &run_id,
-                    crate::agent_manager::AgentRunStatus::Completed,
+                    crate::engine::agent::AgentRunStatus::Completed,
                     None,
                 )
                 .await;
@@ -702,7 +702,7 @@ async fn dispatch_mission_prompt(
             let msg = err.to_string();
             let cancelled = msg.to_lowercase().contains("cancel");
             let run_status = if cancelled {
-                crate::agent_manager::AgentRunStatus::Cancelled
+                crate::engine::agent::AgentRunStatus::Cancelled
             } else {
                 warn!(
                     "Mission '{}' agent loop failed (run_id={}, session={}): {}",
@@ -711,7 +711,7 @@ async fn dispatch_mission_prompt(
                     session_id.as_deref().unwrap_or("-"),
                     msg
                 );
-                crate::agent_manager::AgentRunStatus::Failed
+                crate::engine::agent::AgentRunStatus::Failed
             };
             // Surface the engine error inside the session transcript so the
             // user sees *why* the mission failed — not just a red toast. The
