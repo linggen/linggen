@@ -283,7 +283,7 @@ pub struct AgentEngine {
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
-    pub prompt_profile: super::prompt_profile::PromptProfile,
+    pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
     pub session_dir: Option<PathBuf>,
     /// Ordered list of default model IDs from routing config (for fallback chain).
@@ -465,7 +465,7 @@ impl AgentEngine {
             plan: None,
             pending_images: Vec::new(),
             session_permissions: permission::SessionPermissions::default(),
-            prompt_profile: super::prompt_profile::PromptProfile::default(),
+            prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),
             auto_fallback: true,
@@ -561,12 +561,13 @@ impl AgentEngine {
     pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
         if self.spec.is_none() { return };
 
+        // The `active_capabilities` set is legacy. Memory_query and
+        // Memory_write are now plain built-in tools (see
+        // `engine/tools/memory_tool.rs`), surfaced unconditionally
+        // through the built-in registry. PR2 removes this field
+        // entirely along with `capabilities.rs` / `capability_tools.rs`.
+        let _ = skills;
         self.tools.active_capabilities.clear();
-        for cap in super::capabilities::CAPABILITIES.iter() {
-            if skills.active_provider(&cap.name).await.is_some() {
-                self.tools.active_capabilities.insert(cap.name.clone());
-            }
-        }
     }
 
     /// Populate `available_skills_metadata` with (name, description) pairs

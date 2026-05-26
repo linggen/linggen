@@ -27,7 +27,7 @@ pub struct SessionPolicy {
     /// When true, the agent never prompts the user for permissions.
     pub locked: bool,
     /// Prompt profile — which system prompt sections to include.
-    pub prompt_profile: super::prompt_profile::PromptProfile,
+    pub prompt_profile: super::prompt::profile::PromptProfile,
 }
 
 impl SessionPolicy {
@@ -37,7 +37,7 @@ impl SessionPolicy {
             allowed_tools: None,
             allowed_skills: None,
             locked: false,
-            prompt_profile: super::prompt_profile::PromptProfile::owner(),
+            prompt_profile: super::prompt::profile::PromptProfile::owner(),
         }
     }
 
@@ -48,7 +48,7 @@ impl SessionPolicy {
             allowed_tools: Some(room_cfg.allowed_tools.into_iter().collect()),
             allowed_skills: Some(room_cfg.allowed_skills.into_iter().collect()),
             locked: true,
-            prompt_profile: super::prompt_profile::PromptProfile::consumer(),
+            prompt_profile: super::prompt::profile::PromptProfile::consumer(),
         }
     }
 

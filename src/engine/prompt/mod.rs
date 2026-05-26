@@ -1,4 +1,17 @@
-use super::core_memory;
+//! System-prompt assembly + prompt-shape co-location.
+//!
+//! - `profile` — `PromptProfile` (owner/consumer prompt-set selector).
+//! - `core_block` — renders the `tier=core` rows from `ling-mem` into
+//!   the system prompt's always-on core block + owns the shared
+//!   `RECONCILE_FOOTER` instruction string.
+//!
+//! This submodule is purely organizational — prompt assembly is an
+//! internal engine concern, not an extension-type contract like
+//! `engine::skill` / `engine::agent` / `engine::mission`.
+
+pub mod core_block;
+pub mod profile;
+
 use super::memory;
 use super::types::*;
 use crate::engine::tools;
@@ -272,13 +285,13 @@ impl AgentEngine {
         // --- Core memory (owner only) ---
         // Core = `tier=core` rows from the memory store, inlined
         // unconditionally (no similarity gate). Pulled via the `ling-mem`
-        // CLI in `core_memory::load_core`. Empty / unreachable store ⇒
+        // CLI in `core_block::load_core`. Empty / unreachable store ⇒
         // the bootstrap block fires instead, telling the model how to
         // populate core. Semantic retrieval over the rest of the store
         // reaches the model through Memory_* tools registered when a
         // `provides: [memory]` skill is active — not through here.
         if self.prompt_profile.include_memory {
-            match core_memory::load_core() {
+            match core_block::load_core() {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
                     keys::CORE_MEMORY_BLOCK,
                     &[("core_facts", &c.facts)],
@@ -645,25 +658,21 @@ impl AgentEngine {
         Some(allowed)
     }
 
-    /// Capability tools (engine-defined contracts like the `Memory_*`
-    /// family) are cross-cutting — they live outside any single agent or
-    /// slash-invoked skill's declared tool list. Inject every tool from
-    /// every active capability into `allowed` when the session's prompt
-    /// profile opts in (owner sessions do; consumer / mission sessions
-    /// don't). Dispatch routes each call to the active provider's daemon
-    /// via `engine::capability_tools`.
+    /// Memory tools (`Memory_query` / `Memory_write`) are cross-cutting
+    /// — they live outside any single agent's declared tool list, so
+    /// owner sessions get them auto-injected. Mission / consumer
+    /// sessions opt out via `prompt_profile.include_memory == false`.
+    ///
+    /// PR1: these are now plain built-in tools (no `capability` layer);
+    /// the function name + comment will be renamed in PR2 once the
+    /// capability modules are deleted. Behavior unchanged from the
+    /// caller's perspective.
     fn inject_http_capability_tools(&self, allowed: &mut HashSet<String>) {
         if !self.prompt_profile.include_memory {
             return;
         }
-        for cap in super::capabilities::CAPABILITIES.iter() {
-            if !self.tools.active_capabilities.contains(&cap.name) {
-                continue;
-            }
-            for tool in &cap.tools {
-                allowed.insert(tool.name.clone());
-            }
-        }
+        allowed.insert("Memory_query".to_string());
+        allowed.insert("Memory_write".to_string());
     }
 
     pub(crate) fn is_tool_allowed(&self, allowed: &HashSet<String>, requested_tool: &str) -> bool {

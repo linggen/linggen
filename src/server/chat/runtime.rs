@@ -167,7 +167,7 @@ impl RecallRow {
 }
 
 /// Format a recall hit list into the block the model sees. Includes the
-/// same reconcile footer the always-on block uses (`core_memory.rs`),
+/// same reconcile footer the always-on block uses (`prompt/core_block.rs`),
 /// gated on `rows.len() > 1` — single-hit blocks have nothing to dedup
 /// or compare against.
 fn format_recall_for_model(rows: &[RecallRow]) -> String {
@@ -177,7 +177,7 @@ fn format_recall_for_model(rows: &[RecallRow]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     if rows.len() > 1 {
-        out.push_str(crate::engine::core_memory::RECONCILE_FOOTER);
+        out.push_str(crate::engine::prompt::core_block::RECONCILE_FOOTER);
     }
     out
 }

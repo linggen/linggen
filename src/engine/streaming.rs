@@ -136,7 +136,7 @@ pub(crate) fn check_context_staleness(
         }
     }
     // Core memory (`tier=core` rows from the store) is reloaded by
-    // `core_memory::load_core` whenever the stable-prompt cache is
+    // `core_block::load_core` whenever the stable-prompt cache is
     // rebuilt; nothing under `~/.linggen/memory/` is hashed here. Known
     // gap: a `Memory_write({tier:"core"})` issued by the model does not
     // by itself invalidate the cached prompt for the rest of the
