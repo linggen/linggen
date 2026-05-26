@@ -288,7 +288,7 @@ fn parse_frontmatter_meta(text: &str) -> Option<(String, String)> {
 /// for callers that import them through this module. Permission grant
 /// types live in `engine::permission`.
 pub use crate::engine::permission::{Grants as SkillPermission, PathGrant};
-pub use crate::engine::skill::{AppConfig, CapabilityImpl, Skill, SkillSource};
+pub use crate::engine::skill::{AppConfig, Skill, SkillSource};
 
 use crate::extensions::frontmatter::deserialize_string_or_vec;
 
@@ -334,10 +334,6 @@ struct SkillFrontmatter {
     cwd: Option<String>,
     #[serde(default)]
     install: Option<String>,
-    #[serde(default)]
-    provides: Option<Vec<String>>,
-    #[serde(default)]
-    implements: Option<std::collections::HashMap<String, CapabilityImpl>>,
 }
 
 pub struct SkillLoader {
@@ -487,28 +483,6 @@ impl SkillLoader {
         self.skills.lock().await.insert(skill.name.clone(), skill);
     }
 
-    /// Resolve a capability name (e.g. `"memory"`) to the single skill that
-    /// advertises `provides: [<capability>]`. Resolution is deterministic:
-    /// among skills claiming the capability, a Project-sourced skill beats
-    /// Compat, which beats Global; ties break alphabetically by name.
-    /// This way, a user's per-project override always wins over a globally
-    /// installed default, regardless of HashMap iteration order. Multi-
-    /// provider disambiguation (e.g. user-selected active slot) lands with
-    /// the marketplace UI; for now, installing two providers of the same
-    /// tier is resolved by name.
-    pub async fn active_provider(&self, capability: &str) -> Option<Skill> {
-        let skills = self.skills.lock().await;
-        skills
-            .values()
-            .filter(|s| {
-                s.provides
-                    .as_ref()
-                    .map(|list| list.iter().any(|c| c == capability))
-                    .unwrap_or(false)
-            })
-            .min_by_key(|s| (source_priority(&s.source), s.name.clone()))
-            .cloned()
-    }
 }
 
 /// `SkillRegistry` impl — the engine reaches `SkillLoader` only through
@@ -517,10 +491,6 @@ impl SkillLoader {
 impl crate::engine::skill::registry::SkillRegistry for SkillLoader {
     async fn get(&self, name: &str) -> Option<Skill> {
         self.get_skill(name).await
-    }
-
-    async fn active_provider(&self, capability: &str) -> Option<Skill> {
-        SkillLoader::active_provider(self, capability).await
     }
 
     async fn list_metadata(&self) -> Vec<(String, String)> {
@@ -583,8 +553,6 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         permission: frontmatter.permission,
         cwd: frontmatter.cwd,
         install: frontmatter.install,
-        provides: frontmatter.provides,
-        implements: frontmatter.implements,
         skill_dir: None,
     })
 }
@@ -662,78 +630,6 @@ This is the skill content."#;
         let err = parse_skill_text("---\nname: x\ndescription: y\n", SkillSource::Global)
             .unwrap_err();
         assert!(err.to_string().contains("closing frontmatter"));
-    }
-
-    #[test]
-    fn test_parse_skill_with_provides() {
-        let text = r#"---
-name: linggen-memory
-description: Semantic memory
-provides: [memory]
----
-Body."#;
-        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
-        assert_eq!(skill.provides.as_deref(), Some(&["memory".to_string()][..]));
-    }
-
-    #[test]
-    fn test_parse_skill_with_implements() {
-        let text = r#"---
-name: memory
-description: Semantic memory
-provides: [memory]
-implements:
-  memory:
-    base_url: http://127.0.0.1:9888
-    autostart: "ling-mem start"
-    healthcheck: /api/health
-    tools:
-      Memory_query.search: /api/memory/search
-      Memory_write.add:    /api/memory/add
----
-Body."#;
-        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
-        let impls = skill.implements.as_ref().expect("implements block parsed");
-        let mem = impls.get("memory").expect("memory binding present");
-        assert_eq!(mem.base_url, "http://127.0.0.1:9888");
-        assert_eq!(mem.autostart.as_deref(), Some("ling-mem start"));
-        assert_eq!(mem.healthcheck, "/api/health");
-        assert_eq!(mem.tools.get("Memory_query.search").map(String::as_str), Some("/api/memory/search"));
-        assert_eq!(mem.tools.get("Memory_write.add").map(String::as_str), Some("/api/memory/add"));
-    }
-
-    #[test]
-    fn test_parse_skill_implements_healthcheck_defaults() {
-        let text = r#"---
-name: mem-min
-description: Minimal implements block
-provides: [memory]
-implements:
-  memory:
-    base_url: http://127.0.0.1:9999
----
-Body."#;
-        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
-        let mem = skill.implements.unwrap().remove("memory").unwrap();
-        assert_eq!(mem.healthcheck, "/api/health");
-    }
-
-    #[tokio::test]
-    async fn test_active_provider_returns_matching_skill() {
-        let mgr = make_manager();
-        let text = r#"---
-name: mem-impl
-description: impl
-provides: [memory]
----
-Body."#;
-        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
-        mgr.skills.lock().await.insert(skill.name.clone(), skill);
-        assert_eq!(
-            mgr.active_provider("memory").await.map(|s| s.name),
-            Some("mem-impl".to_string())
-        );
-        assert!(mgr.active_provider("search").await.is_none());
     }
 
     #[test]

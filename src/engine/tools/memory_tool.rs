@@ -141,20 +141,39 @@ impl Tool for MemoryWriteTool {
 // HTTP dispatch — POST to <ling_mem_url>/api/memory/<verb>
 // ---------------------------------------------------------------------------
 
+/// Tool-trait wrapper: read `ling_mem_url` from the engine config and
+/// return the result as a `ToolResult::Success(json_string)`. The model
+/// only sees what the daemon returned in the `data` field of its
+/// `{ok, data}` envelope.
 async fn dispatch_memory(
     tools: &Tools,
     tool_name: &'static str,
-    mut args: Value,
+    args: Value,
 ) -> Result<ToolResult> {
-    // Resolve ling_mem_url from the live config snapshot — config edits
-    // (Settings → General → Ling-mem URL) reach the next dispatch.
     let manager = tools.get_manager().ok_or_else(|| {
-        anyhow!(
-            "{tool_name} requires a running AgentManager context — tool context not set"
-        )
+        anyhow!("{tool_name} requires a running AgentManager context — tool context not set")
     })?;
     let ling_mem_url = manager.get_config_snapshot().await.agent.ling_mem_url;
-    let ling_mem_url = ling_mem_url.trim_end_matches('/').to_string();
+    let value = call_memory_http(&ling_mem_url, tool_name, args).await?;
+    Ok(ToolResult::Success(value.to_string()))
+}
+
+/// Public entry point — POSTs `args` to `<ling_mem_url>/api/memory/<verb>`
+/// (verb taken from `args["verb"]` and stripped) and returns the daemon's
+/// `data` payload on success. Handles soft-empty cleanup, the
+/// `tier=episodic` → `episodic=true` wire translation, the default
+/// `host=linggen` on writes, and one autostart retry on
+/// `ConnectionRefused`/`Timeout`.
+///
+/// Used by the Tool impls above and by direct callers (auto-recall in
+/// the chat runtime, the `/api/tool-dispatch` admin endpoint) that need
+/// to talk to ling-mem outside an engine session.
+pub async fn call_memory_http(
+    ling_mem_url: &str,
+    tool_name: &str,
+    mut args: Value,
+) -> Result<Value> {
+    let ling_mem_url = ling_mem_url.trim_end_matches('/');
 
     // Verb → endpoint. Strip the verb from the body so the daemon sees
     // the same shape it accepts from the CLI.
@@ -166,8 +185,7 @@ async fn dispatch_memory(
     if let Some(obj) = args.as_object_mut() {
         obj.remove("verb");
     }
-    let endpoint = format!("/api/memory/{verb}");
-    let url = format!("{ling_mem_url}{endpoint}");
+    let url = format!("{ling_mem_url}/api/memory/{verb}");
 
     // Drop soft-empty fields the model often fills in. `until: ""` would
     // otherwise crash the daemon's RFC-3339 parse; empty arrays narrow
@@ -210,9 +228,7 @@ async fn dispatch_memory(
             autostart()
                 .await
                 .with_context(|| format!("autostarting ling-mem after first attempt to {url} failed"))?;
-            post_once(&url, &args)
-                .await
-                .map_err(anyhow::Error::from)?
+            post_once(&url, &args).await.map_err(anyhow::Error::from)?
         }
         Err(DispatchError::Other(e)) => return Err(e),
     };
@@ -233,7 +249,7 @@ async fn dispatch_memory(
     };
     tracing::info!("memory_tool dispatch ← {tool_name}: {summary}");
 
-    Ok(ToolResult::Success(value.to_string()))
+    Ok(value)
 }
 
 #[derive(Debug)]

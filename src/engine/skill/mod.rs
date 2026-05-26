@@ -14,5 +14,5 @@
 pub mod record;
 pub mod registry;
 
-pub use record::{AppConfig, CapabilityImpl, Skill, SkillSource};
+pub use record::{AppConfig, Skill, SkillSource};
 pub use registry::SkillRegistry;

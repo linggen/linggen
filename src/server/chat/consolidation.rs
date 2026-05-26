@@ -241,7 +241,10 @@ async fn run_encode(
 /// resolve regardless of `PATH` (resolvability, not a security lock).
 #[allow(dead_code)]
 async fn resolve_ling_mem(_state: &Arc<ServerState>) -> (PathBuf, PathBuf) {
-    let bin = crate::engine::capability_tools::resolve_binary(None, "ling-mem");
+    // `ling-mem` lives on `$PATH` after the installer drops it into
+    // `/usr/local/bin` or `~/.local/bin`. Use the bare name so the
+    // resolver finds either copy.
+    let bin = PathBuf::from("ling-mem");
     let data_dir = crate::paths::linggen_home().to_path_buf();
     (bin, data_dir)
 }

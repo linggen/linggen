@@ -558,16 +558,15 @@ impl AgentEngine {
     /// tool, session-bound, or trigger-prefix paths. User sessions that
     /// never activate a skill stay clean: only built-ins + active
     /// capabilities visible to the model.
+    /// No-op stub. Memory_query / Memory_write are now plain built-in
+    /// tools (see `engine/tools/memory_tool.rs`); there is no capability
+    /// activation set anymore. Kept as a public method until callers
+    /// stop invoking it.
     pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
-        if self.spec.is_none() { return };
-
-        // The `active_capabilities` set is legacy. Memory_query and
-        // Memory_write are now plain built-in tools (see
-        // `engine/tools/memory_tool.rs`), surfaced unconditionally
-        // through the built-in registry. PR2 removes this field
-        // entirely along with `capabilities.rs` / `capability_tools.rs`.
         let _ = skills;
-        self.tools.active_capabilities.clear();
+        if self.spec.is_none() { return };
+        // Reserved for future per-session tool wiring (e.g. dynamically
+        // installed skill-declared tools); currently nothing to do.
     }
 
     /// Populate `available_skills_metadata` with (name, description) pairs

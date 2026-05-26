@@ -534,19 +534,19 @@ pub fn effective_mode_for_path(path_modes: &[PathMode], target: &Path) -> Option
 /// Lookup order:
 /// 1. Built-in tools — `engine::tools::builtin_tier(name)`. Owns Read,
 ///    Write, Edit, Bash, Glob, Grep, capture_screenshot, Task, Skill,
-///    RunApp, lock_paths, unlock_paths, WebSearch, WebFetch, AskUser.
+///    RunApp, lock_paths, unlock_paths, WebSearch, WebFetch, AskUser,
+///    Memory_query, Memory_write.
 /// 2. Plan-mode tools (`EnterPlanMode`, `ExitPlanMode`, `UpdatePlan`) —
 ///    routed through actions.rs, not Tools::execute, but still need a
 ///    permission tier for the gate.
-/// 3. Capability tools (Memory_*, etc.) — `engine::capabilities::tool_tier`.
-/// 4. Unknown — `PermissionMode::Admin` (fail closed).
+/// 3. Unknown — `PermissionMode::Admin` (fail closed).
 pub fn tool_action_tier(tool: &str) -> PermissionMode {
     if let Some(tier) = crate::engine::tools::builtin_tier(tool) {
         return tier;
     }
     match tool {
         "EnterPlanMode" | "ExitPlanMode" | "UpdatePlan" => PermissionMode::Read,
-        _ => crate::engine::capabilities::tool_tier(tool).unwrap_or(PermissionMode::Admin),
+        _ => PermissionMode::Admin,
     }
 }
 

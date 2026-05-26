@@ -1106,50 +1106,46 @@ pub async fn start_server(
     Ok(())
 }
 
-/// Dispatch a capability tool on behalf of a skill's webpage.
+/// Dispatch a Memory_* tool on behalf of a skill's webpage.
 /// Route: POST /apps/{skill_name}/capability/{tool_name}
 ///
-/// The same pipeline the agent uses (`capability_tools::dispatch`) —
-/// URL resolution from `implements:`, autostart on first miss, envelope
-/// unwrap. The skill's webpage gets tier-stable tool names instead of
-/// hard-coding the skill daemon's URL paths, and the call rides the
-/// existing WebRTC fetch proxy in remote mode (control channel forwards
-/// `/apps/*` to the host's linggen server).
+/// Memory is engine-built-in (HTTP to `ling-mem`); this endpoint is a
+/// thin wrapper around `tools::memory_tool::call_memory_http` so skill
+/// webpages can call Memory_* without hardcoding the daemon URL. The
+/// call also rides the existing WebRTC fetch proxy in remote mode
+/// (control channel forwards `/apps/*` to the host's linggen server).
+///
+/// The pre-PR2 implementation gated this on the skill's frontmatter
+/// `provides: [memory]`. With memory now engine-built-in there is no
+/// `provides` list to consult — every installed skill can invoke
+/// Memory_* via this endpoint. Skills the user doesn't trust shouldn't
+/// be installed in the first place; the route name + skill_name still
+/// shows up in audit logs.
 async fn capability_dispatch(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path((skill_name, tool_name)): axum::extract::Path<(String, String)>,
     body: Option<axum::Json<serde_json::Value>>,
 ) -> Response {
-    use crate::engine::{capabilities, capability_tools};
     use axum::http::StatusCode;
 
-    let args = body.map(|axum::Json(v)| v).unwrap_or(serde_json::Value::Object(Default::default()));
+    let args = body
+        .map(|axum::Json(v)| v)
+        .unwrap_or(serde_json::Value::Object(Default::default()));
 
-    let Some((cap_name, _tool)) = capabilities::capability_for_tool(&tool_name) else {
-        return (StatusCode::NOT_FOUND, format!("Unknown capability tool '{}'", tool_name)).into_response();
-    };
-
-    let Some(skill) = state.skills.get_skill(&skill_name).await else {
-        return (StatusCode::NOT_FOUND, format!("Skill '{}' not found", skill_name)).into_response();
-    };
-
-    // Scope: a skill's webpage can only invoke its own tools. Prevents the
-    // discord skill's page from invoking Memory_write via this route.
-    let provides = skill
-        .provides
-        .as_ref()
-        .map(|v| v.iter().any(|c| c == cap_name))
-        .unwrap_or(false);
-    if !provides {
+    if tool_name != "Memory_query" && tool_name != "Memory_write" {
         return (
-            StatusCode::FORBIDDEN,
-            format!("Skill '{}' does not provide capability '{}'", skill_name, cap_name),
+            StatusCode::NOT_FOUND,
+            format!("Unknown built-in tool '{}' on /apps/*/capability/*", tool_name),
         )
             .into_response();
     }
 
+    if state.skills.get_skill(&skill_name).await.is_none() {
+        return (StatusCode::NOT_FOUND, format!("Skill '{}' not found", skill_name)).into_response();
+    }
+
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    match capability_tools::dispatch(state.skills.as_ref(), &ling_mem_url, &tool_name, args).await {
+    match crate::engine::tools::memory_tool::call_memory_http(&ling_mem_url, &tool_name, args).await {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {
             let msg = format!("{:#}", e);

@@ -2,9 +2,9 @@
 //!
 //! Built-in core memory (the `tier=core` rows the engine inlines into
 //! every owner session) lives in `core_memory.rs`. The rest of the
-//! memory store is dispatched through `capability_tools::dispatch`
-//! after being registered from the memory skill's `SKILL.md` `tools:`
-//! block.
+//! memory store is reached through the built-in `Memory_query` /
+//! `Memory_write` tools in `engine/tools/memory_tool.rs`, which POST
+//! to the local `ling-mem` daemon.
 //!
 //! The canonical Memory protocol (read-before-write, AskUser on
 //! contradiction, tier selection by confidence) is a single TOML block

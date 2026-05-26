@@ -288,8 +288,9 @@ impl AgentEngine {
         // CLI in `core_block::load_core`. Empty / unreachable store ⇒
         // the bootstrap block fires instead, telling the model how to
         // populate core. Semantic retrieval over the rest of the store
-        // reaches the model through Memory_* tools registered when a
-        // `provides: [memory]` skill is active — not through here.
+        // reaches the model through the built-in `Memory_query` /
+        // `Memory_write` tools (see `engine/tools/memory_tool.rs`) —
+        // not through here.
         if self.prompt_profile.include_memory {
             match core_block::load_core() {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
@@ -621,7 +622,7 @@ impl AgentEngine {
                 // justified and has been removed. Skills that legitimately
                 // need filesystem access must declare it through their own
                 // permission surface.
-                self.inject_http_capability_tools(&mut allowed);
+                self.inject_memory_tools(&mut allowed);
                 return Some(allowed);
             }
         }
@@ -653,7 +654,7 @@ impl AgentEngine {
 
         // Skill tool is always allowed so the model can discover/invoke skills.
         allowed.insert("Skill".to_string());
-        self.inject_http_capability_tools(&mut allowed);
+        self.inject_memory_tools(&mut allowed);
 
         Some(allowed)
     }
@@ -662,12 +663,9 @@ impl AgentEngine {
     /// — they live outside any single agent's declared tool list, so
     /// owner sessions get them auto-injected. Mission / consumer
     /// sessions opt out via `prompt_profile.include_memory == false`.
-    ///
-    /// PR1: these are now plain built-in tools (no `capability` layer);
-    /// the function name + comment will be renamed in PR2 once the
-    /// capability modules are deleted. Behavior unchanged from the
-    /// caller's perspective.
-    fn inject_http_capability_tools(&self, allowed: &mut HashSet<String>) {
+    /// Memory_* are plain built-in tools that talk HTTP to ling-mem; see
+    /// `engine/tools/memory_tool.rs`.
+    fn inject_memory_tools(&self, allowed: &mut HashSet<String>) {
         if !self.prompt_profile.include_memory {
             return;
         }

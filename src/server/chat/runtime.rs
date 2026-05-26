@@ -230,8 +230,7 @@ async fn auto_recall_memory(
         "min_score": min_score,
     });
 
-    let dispatch = crate::engine::capability_tools::dispatch(
-        state.skills.as_ref(),
+    let dispatch = crate::engine::tools::memory_tool::call_memory_http(
         ling_mem_url,
         "Memory_query",
         args,

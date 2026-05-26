@@ -12,10 +12,6 @@ use tracing::debug;
 pub struct ToolRegistry {
     pub builtins: Tools,
     pub skill_tools: HashMap<String, SkillToolDef>,
-    /// LEGACY — kept for the old capability path. Memory_* are now
-    /// regular built-in tools (see `engine/tools/memory_tool.rs`); this
-    /// set is no longer consulted on the hot path. Removed in PR2.
-    pub active_capabilities: HashSet<String>,
 }
 
 impl ToolRegistry {
@@ -23,7 +19,6 @@ impl ToolRegistry {
         Self {
             builtins,
             skill_tools: HashMap::new(),
-            active_capabilities: HashSet::new(),
         }
     }
 
@@ -55,15 +50,14 @@ impl ToolRegistry {
     }
 
     /// Stub for skill-declared HTTP tools. No production skill uses the
-    /// Http kind today; in the old code path this was wired through
-    /// `capability_tools::dispatch`. PR2 will either fold HTTP skill
-    /// tools back in via a direct reqwest POST or drop the kind entirely.
-    /// For now, surface a clear error if a skill ever declares one.
+    /// `Http` kind today; the capability-routing path was removed when
+    /// memory moved to built-in tools. Re-add via a direct reqwest POST
+    /// helper here if a real consumer appears, or drop the kind.
     async fn dispatch_via_skill_http(&self, name: &str, args: &Value) -> Result<ToolResult> {
         let _ = args;
         Err(anyhow!(
-            "Skill HTTP tool '{name}' dispatch is temporarily unavailable — \
-             the capability-routing path was removed; re-add via a direct POST helper if needed."
+            "Skill HTTP tool '{name}' dispatch is not implemented — \
+             re-add a direct POST helper if a skill needs HTTP-backed tools."
         ))
     }
 
