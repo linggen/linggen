@@ -1,6 +1,6 @@
 use crate::provider::models::ModelManager;
 use crate::engine::agent::AgentManager;
-use crate::config::AgentSpec;
+use crate::engine::agent::spec::AgentSpec;
 use crate::engine::permission;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;

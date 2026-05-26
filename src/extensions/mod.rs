@@ -8,6 +8,7 @@
 //! the `engine/permission/manifest.rs` module owns the permission grammar
 //! both share.
 
+pub mod agents;
 pub mod frontmatter;
 pub mod marketplace;
 pub mod missions;

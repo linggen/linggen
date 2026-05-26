@@ -353,13 +353,19 @@ async fn main() -> Result<()> {
             }
 
             let skill_manager = Arc::new(extensions::skills::SkillManager::new());
+            let agent_loader = Arc::new(extensions::agents::AgentSpecLoader::new());
             let config_dir = config_path
                 .as_ref()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()));
             let interface_mode = engine::InterfaceMode::Web;
 
-            let (manager, rx) =
-                engine::agent::AgentManager::new(config, config_dir, skill_manager.clone(), interface_mode);
+            let (manager, rx) = engine::agent::AgentManager::new(
+                config,
+                config_dir,
+                skill_manager.clone(),
+                agent_loader,
+                interface_mode,
+            );
 
             let _ = skill_manager.load_all(Some(&ws_root)).await;
 

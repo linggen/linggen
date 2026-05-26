@@ -1,8 +1,11 @@
+use crate::config::Config;
 use crate::engine::agent::locks::LockManager;
-use crate::provider::models::ModelManager;
-use crate::config::{AgentSpec, Config};
+use crate::engine::agent::registry::AgentRegistry;
+use crate::engine::agent::spec::{AgentSpec, AgentSpecFile};
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
+use crate::extensions::agents::AgentSpecLoader;
 use crate::extensions::skills::SkillManager;
+use crate::provider::models::ModelManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -15,7 +18,9 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 pub mod locks;
+pub mod registry;
 pub mod runs;
+pub mod spec;
 
 pub use runs::{AgentRunRecord, AgentRunStatus, RunStore};
 
@@ -32,6 +37,9 @@ pub struct AgentManager {
     pub models: RwLock<Arc<ModelManager>>,
     pub missions: Arc<crate::extensions::missions::MissionStore>,
     pub skill_manager: Arc<SkillManager>,
+    /// Disk loader for agent specs. Implements `AgentRegistry`; the
+    /// engine consults it whenever an agent needs to be resolved by id.
+    pub agents: Arc<AgentSpecLoader>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
     /// Per-session agent engines. Each session gets its own engine — no lock contention.
@@ -197,15 +205,6 @@ pub struct WorkingPlaceEntry {
     pub last_modified: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentSpecFile {
-    pub agent_id: String,
-    pub spec: AgentSpec,
-    pub spec_path: PathBuf,
-    #[serde(skip)]
-    pub system_prompt: String,
-}
-
 impl AgentManager {
     fn normalize_agent_id(agent_id: &str) -> String {
         agent_id.trim().to_lowercase()
@@ -213,10 +212,6 @@ impl AgentManager {
 
     fn canonical_project_root(project_root: &PathBuf) -> PathBuf {
         crate::util::resolve_path(project_root)
-    }
-
-    fn agent_specs_dir(project_root: &PathBuf) -> PathBuf {
-        project_root.join("agents")
     }
 
     fn model_override_for_agent(config: &Config, agent_id: &str) -> Option<String> {
@@ -298,119 +293,6 @@ impl AgentManager {
             .ok_or_else(|| anyhow::anyhow!("No models configured"))
     }
 
-    /// Load agent specs from a single directory.
-    fn load_agent_specs_from_dir(agents_dir: &std::path::Path) -> Vec<AgentSpecFile> {
-        if !agents_dir.exists() {
-            return Vec::new();
-        }
-
-        let mut paths: Vec<PathBuf> = match std::fs::read_dir(agents_dir) {
-            Ok(entries) => entries
-                .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|path| {
-                    path.is_file()
-                        && path
-                            .extension()
-                            .and_then(|ext| ext.to_str())
-                            .map(|ext| ext.eq_ignore_ascii_case("md"))
-                            .unwrap_or(false)
-                })
-                .collect(),
-            Err(err) => {
-                warn!("Cannot read agents directory {}: {}", agents_dir.display(), err);
-                return Vec::new();
-            }
-        };
-        paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
-        let mut seen = HashSet::new();
-        let mut specs = Vec::new();
-        for spec_path in paths {
-            let (spec, system_prompt) = match AgentSpec::from_markdown(&spec_path) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    warn!(
-                        "Skipping invalid agent spec {}: {}",
-                        spec_path.display(),
-                        err
-                    );
-                    continue;
-                }
-            };
-            let raw_name = spec.name.trim();
-            let fallback = spec_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("agent");
-            let agent_id = Self::normalize_agent_id(if raw_name.is_empty() {
-                fallback
-            } else {
-                raw_name
-            });
-            if agent_id.is_empty() {
-                warn!(
-                    "Skipping agent spec {}: resolved to empty agent id",
-                    spec_path.display()
-                );
-                continue;
-            }
-            if !seen.insert(agent_id.clone()) {
-                warn!(
-                    "Skipping agent spec {}: duplicate agent id '{}' in agents directory {}",
-                    spec_path.display(),
-                    agent_id,
-                    agents_dir.display()
-                );
-                continue;
-            }
-            specs.push(AgentSpecFile {
-                agent_id,
-                spec,
-                spec_path,
-                system_prompt,
-            });
-        }
-
-        specs
-    }
-
-    /// Load agent specs layered: global (`~/.linggen/agents/`) then project (`<project>/agents/`).
-    /// Project specs override global specs with the same `agent_id`.
-    /// If the project-level `agents/` dir doesn't exist, also searches one level deep
-    /// in subdirectories (e.g. `<project>/linggen/agents/`).
-    fn load_agent_specs_for_project(project_root: &PathBuf) -> Result<Vec<AgentSpecFile>> {
-        let mut merged: HashMap<String, AgentSpecFile> = HashMap::new();
-
-        // 1. Global agents (lower priority)
-        let global_dir = crate::paths::global_agents_dir();
-        for spec in Self::load_agent_specs_from_dir(&global_dir) {
-            merged.insert(spec.agent_id.clone(), spec);
-        }
-
-        // 2. Project agents (higher priority — overrides global)
-        let project_dir = Self::agent_specs_dir(project_root);
-        if project_dir.is_dir() {
-            for spec in Self::load_agent_specs_from_dir(&project_dir) {
-                merged.insert(spec.agent_id.clone(), spec);
-            }
-        }
-
-        let mut specs: Vec<AgentSpecFile> = merged.into_values().collect();
-        specs.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
-        Ok(specs)
-    }
-
-    fn find_agent_spec_for_project(
-        &self,
-        project_root: &PathBuf,
-        agent_id: &str,
-    ) -> Result<Option<AgentSpecFile>> {
-        let wanted = Self::normalize_agent_id(agent_id);
-        Ok(Self::load_agent_specs_for_project(project_root)?
-            .into_iter()
-            .find(|entry| entry.agent_id == wanted))
-    }
-
     fn make_run_id(&self, agent_id: &str) -> String {
         let mut counters = self.run_id_counters.lock().unwrap();
         let seq = counters.entry(agent_id.to_string()).or_insert(0);
@@ -439,7 +321,9 @@ impl AgentManager {
         apply_delegation_depth: bool,
     ) -> Result<AgentEngine> {
         let agent_spec = self
-            .find_agent_spec_for_project(project_root, normalized_id)?
+            .agents
+            .find(project_root, normalized_id)
+            .await?
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Agent '{}' not found in {}/agents",
@@ -490,6 +374,7 @@ impl AgentManager {
         config: Config,
         config_dir: Option<PathBuf>,
         skill_manager: Arc<SkillManager>,
+        agents: Arc<AgentSpecLoader>,
         interface_mode: InterfaceMode,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>) {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -503,6 +388,7 @@ impl AgentManager {
                 models: RwLock::new(models),
                 missions: Arc::new(crate::extensions::missions::MissionStore::new()),
                 skill_manager,
+                agents,
                 working_places: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
                 tool_cancel_flags: std::sync::Mutex::new(HashMap::new()),
@@ -689,8 +575,7 @@ impl AgentManager {
     }
 
     pub async fn list_agent_specs(&self, project_root: &PathBuf) -> Result<Vec<AgentSpecFile>> {
-        let project_root = Self::canonical_project_root(project_root);
-        Self::load_agent_specs_for_project(&project_root)
+        self.agents.list(project_root).await
     }
 
     pub async fn list_agents(&self, project_root: &PathBuf) -> Result<Vec<AgentSpec>> {
@@ -706,11 +591,7 @@ impl AgentManager {
         project_root: &PathBuf,
         agent_id: &str,
     ) -> bool {
-        let project_root = Self::canonical_project_root(project_root);
-        let Ok(found) = self.find_agent_spec_for_project(&project_root, agent_id) else {
-            return false;
-        };
-        found.is_some()
+        matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }
 
     pub async fn invalidate_agent_cache(
@@ -1103,28 +984,6 @@ impl AgentManager {
 #[cfg(test)]
 mod tests {
     use super::AgentManager;
-    use std::fs;
-    use std::path::PathBuf;
-
-    fn temp_root(prefix: &str) -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        dir.push(format!(
-            "linggen-{prefix}-{}-{ts}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&dir).expect("create temp root");
-        dir
-    }
-
-    fn valid_agent_md(name: &str) -> String {
-        format!(
-            "---\nname: {name}\ndescription: test agent\ntools: [Read]\npolicy: []\n---\n\nYou are {name}.\n"
-        )
-    }
 
     #[test]
     fn normalize_model_choice_treats_inherit_as_none() {
@@ -1141,30 +1000,5 @@ mod tests {
             AgentManager::normalize_model_choice(Some(" local_ollama ".to_string())),
             Some("local_ollama".to_string())
         );
-    }
-
-    #[test]
-    fn load_agent_specs_skips_invalid_files_and_duplicates() {
-        let root = temp_root("agent-specs");
-        let agents_dir = root.join("agents");
-        fs::create_dir_all(&agents_dir).expect("create agents dir");
-
-        fs::write(agents_dir.join("a.md"), valid_agent_md("alpha")).expect("write alpha");
-        fs::write(agents_dir.join("bad.md"), "this is not frontmatter").expect("write bad");
-        fs::write(agents_dir.join("z.md"), valid_agent_md("alpha")).expect("write duplicate");
-
-        let specs = AgentManager::load_agent_specs_for_project(&root).expect("load agent specs");
-        // "bad.md" (invalid frontmatter) should be skipped.
-        assert!(
-            !specs.iter().any(|s| s.spec_path.ends_with("bad.md")),
-            "invalid file should be skipped"
-        );
-        // "z.md" and "a.md" both define "alpha" — only one should survive (dedup by agent_id).
-        let alpha_specs: Vec<_> = specs.iter().filter(|s| s.agent_id == "alpha").collect();
-        assert_eq!(alpha_specs.len(), 1, "duplicate agent_id should be deduplicated");
-        // The winner is "a.md" (alphabetically first file wins: HashMap insert order, first inserted stays unless overwritten).
-        assert!(alpha_specs[0].spec_path.ends_with("a.md") || alpha_specs[0].spec_path.ends_with("z.md"));
-
-        let _ = fs::remove_dir_all(&root);
     }
 }

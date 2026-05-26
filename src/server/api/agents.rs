@@ -1,4 +1,4 @@
-use crate::config::AgentSpec;
+use crate::extensions::agents::parse_agent_markdown;
 use crate::server::chat::helpers::{emit_queue_updated, queue_key};
 use crate::server::{AgentStatusKind, ServerEvent, ServerState};
 use crate::state_fs::StateFile;
@@ -432,7 +432,7 @@ pub(crate) async fn get_agent_file_api(
         Ok(content) => content,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
-    let parsed = AgentSpec::from_markdown_content(&content);
+    let parsed = parse_agent_markdown(&content);
     Json(AgentFileResponse {
         path: rel,
         content,
@@ -451,7 +451,7 @@ pub(crate) async fn upsert_agent_file_api(
         Ok(path) => path,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let (spec, _) = match AgentSpec::from_markdown_content(&req.content) {
+    let (spec, _) = match parse_agent_markdown(&req.content) {
         Ok(parsed) => parsed,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };

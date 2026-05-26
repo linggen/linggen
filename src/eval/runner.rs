@@ -115,7 +115,14 @@ pub async fn run_single_task(
     let (config, _config_path) =
         Config::load_with_path().unwrap_or_else(|_| (Config::default(), None));
     let skill_manager = Arc::new(SkillManager::new());
-    let (manager, _rx) = AgentManager::new(config.clone(), None, skill_manager.clone(), crate::engine::InterfaceMode::Web);
+    let agent_loader = Arc::new(crate::extensions::agents::AgentSpecLoader::new());
+    let (manager, _rx) = AgentManager::new(
+        config.clone(),
+        None,
+        skill_manager.clone(),
+        agent_loader,
+        crate::engine::InterfaceMode::Web,
+    );
 
     // 6. Get or create agent
     let eval_session_id = format!("eval-{}", crate::util::now_ts_secs());
