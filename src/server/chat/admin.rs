@@ -123,6 +123,14 @@ pub(crate) async fn get_system_prompt_api(
                     engine.cfg.mission_allowed_tools =
                         Some(mission.allowed_tools.iter().cloned().collect());
                 }
+                // Mirror `scheduler::dispatch_mission_prompt_public`: mission
+                // sessions strip the core/memory_protocol blocks from the
+                // system prompt and invalidate any cached prompt. Without
+                // this, the "Copy System Prompt" debug export shows a
+                // prompt the actual run never had — making bugs look like
+                // they're elsewhere than they are.
+                engine.prompt_profile.include_memory = false;
+                engine.cached_system_prompt = None;
             }
         }
     }

@@ -291,6 +291,12 @@ impl AgentEngine {
         // reaches the model through the built-in `Memory_query` /
         // `Memory_write` tools (see `engine/tools/memory_tool.rs`) —
         // not through here.
+        tracing::info!(
+            "prompt build: include_memory={} active_mission={} agent={:?}",
+            self.prompt_profile.include_memory,
+            self.active_mission.is_some(),
+            self.spec.as_ref().map(|s| s.name.clone()),
+        );
         if self.prompt_profile.include_memory {
             match core_block::load_core() {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(

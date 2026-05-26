@@ -424,6 +424,71 @@ async fn dispatch_mission_prompt(
         return;
     }
 
+    // Worklist short-circuit. When the entry script prints
+    // `WORKLIST_SIZE=0`, there is genuinely no work to do — spawning
+    // the LLM at this point just risks the model misinterpreting the
+    // empty result as a failed query (observed with gpt-5.5: looped
+    // five times then emitted CONSOLIDATE_FAILED). Mirror what the
+    // mission body's "empty = success" branch would have done: write
+    // the success status into the session as the agent's reply, mark
+    // the run completed, and return.
+    if entry_exit_code.is_some() {
+        if let Some(status_line) = read_worklist_empty_marker(&output_dir).await {
+            // Reuse the pre-created session (the UI/trigger flow always
+            // pre-creates one with its kickoff message); only fall back
+            // to creating one if we're on a cron run that didn't.
+            // Without this we'd produce a phantom second session per
+            // UI-triggered empty-worklist run.
+            let sid = pre_session_id.clone().or_else(|| create_mission_session(mission));
+            if let Some(ref s) = sid {
+                // Kickoff message was already added by `trigger_mission`
+                // when the session was pre-created; only add it when we
+                // created the session here (cron / pre_session_id=None).
+                if pre_session_id.is_none() {
+                    let kickoff = mission_kickoff_message(mission);
+                    let _ = state.manager.global_sessions.add_chat_message(
+                        s,
+                        &crate::state_fs::sessions::ChatMsg {
+                            agent_id: agent_id.to_string(),
+                            from_id: "user".to_string(),
+                            to_id: agent_id.to_string(),
+                            content: kickoff,
+                            timestamp: crate::util::now_ts_secs(),
+                            is_observation: false,
+                        },
+                    );
+                }
+                let _ = state.manager.global_sessions.add_chat_message(
+                    s,
+                    &crate::state_fs::sessions::ChatMsg {
+                        agent_id: agent_id.to_string(),
+                        from_id: agent_id.to_string(),
+                        to_id: "user".to_string(),
+                        content: status_line.clone(),
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: false,
+                    },
+                );
+            }
+            tracing::info!(
+                "Mission scheduler: '{}' entry reported empty worklist — skipping LLM, emitted '{}'",
+                mission.id,
+                status_line
+            );
+            record_mission_run_full(
+                &state,
+                mission,
+                &mission_run_id,
+                sid.as_deref(),
+                "completed",
+                false,
+                entry_exit_code,
+                Some(output_dir.to_string_lossy().into_owned()),
+            );
+            return;
+        }
+    }
+
     // Script-only mission: entry ran successfully and there's no agent prompt.
     // No session, no agent loop — just record completion.
     if mission.prompt.trim().is_empty() {
@@ -593,8 +658,14 @@ async fn dispatch_mission_prompt(
     // shouldn't see the core block + memory protocol in their system prompt.
     // Mirrors the chat-handler gate for skill-creator sessions. Invalidate
     // the cached prompt so the next build excludes the memory sections.
+    let before = engine.prompt_profile.include_memory;
     engine.prompt_profile.include_memory = false;
     engine.cached_system_prompt = None;
+    tracing::info!(
+        "mission '{}' scheduler: prompt_profile.include_memory {} → false (cache cleared)",
+        mission.id,
+        before
+    );
     // Force Auto permission mode (legacy — kept for backward compat with old check flow).
     engine.cfg.tool_permission_mode = crate::config::ToolPermissionMode::Auto;
 
@@ -941,6 +1012,29 @@ async fn execute_entry_script(
         );
     }
     Ok(code)
+}
+
+/// Parse the entry script's stdout for a `WORKLIST_SIZE=<n>` marker.
+/// When the marker is present and `<n>` parses to zero, return the
+/// status line the mission body would have emitted on the empty-list
+/// branch (`CONSOLIDATED promoted=0 deleted=0`). Otherwise — marker
+/// absent, malformed, or non-zero — return `None`, letting the LLM
+/// path proceed as usual.
+///
+/// Looks at `<output_dir>/stdout.log` which `execute_entry_script`
+/// writes after the entry process exits.
+async fn read_worklist_empty_marker(output_dir: &std::path::Path) -> Option<String> {
+    let stdout = tokio::fs::read_to_string(output_dir.join("stdout.log")).await.ok()?;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("WORKLIST_SIZE=") {
+            return match rest.parse::<u32>() {
+                Ok(0) => Some("CONSOLIDATED promoted=0 deleted=0".to_string()),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -7,11 +7,22 @@ schedule: "0 3 * * *"
 # but only when it hasn't completed in the last 24 hours.
 catchup_hours: 24
 enabled: true
-# Run under the memory-specialist agent rather than the default
-# `ling` persona. ling-mem's system prompt is tuned for ENCODE /
-# CONSOLIDATE phases — see agents/ling-mem.md.
-agent: ling-mem
+# Run under the default `ling` agent. The ling-mem agent spec was
+# tuned for ENCODE/CONSOLIDATE phases and instructs the model to call
+# AskUser on contradictions — fine in interactive subagent calls,
+# disastrous in an unattended mission where AskUser isn't available.
+# ling has `tools: ["*"]` so the mission's `allowed-tools` below is
+# the only restriction that matters.
+agent: ling
 cwd: ~/.linggen
+# Pre-fetch the past-TTL worklist deterministically. The scheduler
+# runs this BEFORE the agent loop; if the worklist is empty, the
+# scheduler emits `CONSOLIDATED promoted=0 deleted=0` and skips the
+# LLM entirely. Avoids the gpt-5.5 empty-result loop and reserves
+# the LLM for actual per-row judgment work.
+# Contract: see scripts/fetch_worklist.sh — writes worklist.json to
+# $MISSION_OUTPUT_DIR and prints `WORKLIST_SIZE=<n>` to stdout.
+entry: scripts/fetch_worklist.sh
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not
 # in the tool list — uncertainty must resolve to "skip the row" per
@@ -36,12 +47,14 @@ permission:
 
 You are the memory consolidator. You run unattended on a nightly
 schedule. There is no user reachable, no chat, no question can be
-asked. Make the conservative call and emit ONE status line.
+asked. **`AskUser` is not in your tool list — do not attempt to call
+it.** Make the conservative call and emit ONE status line.
 
 This mission **promotes** durable episodic memories into the long-term
 semantic store and **deletes** the rest. Append-only writes to
 semantic. Never destructively edit an existing semantic row — that's
-user-initiated only. When in doubt about anything, **skip the row**.
+user-initiated only. When in doubt about anything, **skip the row**
+(emit `ROW <id> skip` in Step 2b and move on).
 
 ## Report progress as you go
 
@@ -69,13 +82,24 @@ true`, and the daemon resolves the cutoff against its own config.
 **Invoke** (actual tool call, not text):
 
 - tool: `Memory_query`
-- args: `{ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 200 }`
+- args: **EXACTLY** these four keys, nothing else:
+  `{ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 200 }`
+
+**Do NOT add `type`, `from`, `outcome`, `contexts`, or any other
+filter** — even with "default" values. They are filters, not required
+fields; including them with arbitrary defaults narrows the result to
+zero rows and breaks the sweep. The TTL bound from `past_ttl: true`
+is the only filter you want.
 
 Emit `START worklist=<n>` after the call returns, where `<n>` is the
 row count.
 
-If the worklist is empty: emit `CONSOLIDATED promoted=0 deleted=0` and
-stop. No work to do.
+**An empty result is the success case, not a failure.** When `n=0`,
+the daemon is telling you no episodic rows are past TTL — there is
+genuinely nothing to consolidate. Emit `CONSOLIDATED promoted=0
+deleted=0` and stop. **Never** emit `CONSOLIDATE_FAILED` for an
+empty list — `CONSOLIDATE_FAILED` is reserved for actual errors
+(daemon down, schema mismatch, etc.).
 
 For each returned row you'll have: `id`, `content`, `type`, `from`,
 `contexts`, `created_at`, `updated_at`.

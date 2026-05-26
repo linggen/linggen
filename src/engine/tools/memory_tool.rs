@@ -214,6 +214,26 @@ pub async fn call_memory_http(
         }
     }
 
+    // TTL-sweep guard: when the caller is doing a `past_ttl: true` list
+    // (the dream consolidator's worklist query), strip `type`, `from`,
+    // and `outcome` filters. Observed failure mode: `gpt-5.5` ignores
+    // the schema's "DEFAULT: do not pass" hints and fills these in with
+    // arbitrary defaults (`type=fact, from=derived, outcome=neutral`),
+    // which over-constrains the query to 0 rows. The dream is a
+    // bulk-eviction sweep — it wants every past-TTL episodic row
+    // regardless of type/origin/outcome. Keep `contexts` intact for
+    // callers that legitimately scope by tag.
+    if let Some(obj) = args.as_object_mut() {
+        let is_ttl_sweep = obj.get("past_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_ttl_sweep {
+            for k in ["type", "from", "outcome"] {
+                if obj.remove(k).is_some() {
+                    tracing::debug!("memory_tool: dropped over-constraining `{k}` on past_ttl sweep");
+                }
+            }
+        }
+    }
+
     let args_preview = serde_json::to_string(&args).unwrap_or_else(|_| "<unserializable>".into());
     let args_preview = if args_preview.len() > 200 {
         format!("{}…", &args_preview[..199])
