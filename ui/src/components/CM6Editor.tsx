@@ -8,6 +8,7 @@ import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import {
   livePreviewPlugin,
+  livePreviewTableField,
   livePreviewTheme,
   livePreviewLightTheme,
 } from './cm6-live-preview';
@@ -57,6 +58,9 @@ export const CM6Editor: React.FC<{
     exts.push(EditorView.lineWrapping);
     if (livePreview && isMarkdownFile) {
       exts.push(livePreviewPlugin);
+      // Block-decoration field for tables (must come from a StateField,
+      // not the plugin above).
+      exts.push(livePreviewTableField);
       exts.push(livePreviewTheme);
       if (!isDark) {
         exts.push(livePreviewLightTheme);

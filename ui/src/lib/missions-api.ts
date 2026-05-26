@@ -48,3 +48,18 @@ export function updateMission(id: string, updates: Record<string, any>): Promise
 export function deleteMission(id: string): Promise<void> {
   return apiDelete<void>(`/api/missions/${encodeURIComponent(id)}`);
 }
+
+/** Raw `mission.md` content. The UI edits the file directly via CodeMirror;
+ *  there is no structured form. The mission's frontmatter is the source of
+ *  truth for all metadata. */
+export function getMissionFile(id: string): Promise<{ id: string; content: string }> {
+  return apiGet<{ id: string; content: string }>(
+    `/api/mission-file?id=${encodeURIComponent(id)}`,
+  );
+}
+
+/** Upsert a mission by writing its raw `mission.md`. The backend validates
+ *  the frontmatter and reloads the schedule cache. */
+export function saveMissionFile(id: string, content: string): Promise<CronMission> {
+  return apiPost<CronMission>('/api/mission-file', { id, content });
+}

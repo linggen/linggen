@@ -17,22 +17,19 @@ cwd: ~/.linggen
 # in the tool list — uncertainty must resolve to "skip the row" per
 # the mission body. The body itself IS the system prompt for the
 # run (see mission-spec.md §Body IS the system prompt).
+#
+# Bash is intentionally absent: the dream only routes through the
+# `Memory_*` capability tools, which dispatch over HTTP to the local
+# ling-mem daemon. No shell out, no file I/O — so no filesystem
+# grants either.
 allowed-tools:
-  - Bash
   - Memory_query
   - Memory_write
-# No filesystem grants: the dream talks only to the local `ling-mem`
-# daemon on 127.0.0.1 (HTTP). The daemon — a separate process owned
-# by the user — is what actually writes to ~/.linggen/memory. The
-# agent never opens a file there, so no path grant is needed. Bash
-# is here for the one curl/jq call in Step 1; `Memory_*` route over
-# HTTP via the engine's capability dispatcher.
 permission:
   warning: >-
     Talks to the local ling-mem daemon on 127.0.0.1 only. Promotes
-    or deletes rows via /api/memory/* and reads /api/config. Touches
-    no files directly; the daemon process is what mutates
-    ~/.linggen/memory/.
+    or deletes rows via /api/memory/* . Touches no files directly;
+    the daemon process is what mutates ~/.linggen/memory/.
 ---
 
 # Memory dream — consolidation worker
@@ -46,25 +43,15 @@ semantic store and **deletes** the rest. Append-only writes to
 semantic. Never destructively edit an existing semantic row — that's
 user-initiated only. When in doubt about anything, **skip the row**.
 
-## Step 1 — Fetch the TTL
+## Step 1 — List the past-TTL worklist
 
 The TTL (how old an episodic row must be before we touch it) is owned
-by the `ling-mem` daemon, not the engine. Read it live:
-
-```bash
-ling_mem_url="http://127.0.0.1:9888"
-ttl_days=$(curl -fsS "${ling_mem_url}/api/config" 2>/dev/null \
-  | jq -r '.episodic_ttl_days // .data.episodic_ttl_days // 7')
-echo "TTL=${ttl_days}d"
-```
-
-If the curl fails (daemon down, bad shape), use `7` as the fallback —
-do not stop the run.
-
-## Step 2 — List the past-TTL worklist
+by the `ling-mem` daemon. The dream never names a number — it asks
+the daemon for "everything past the configured TTL" via `past_ttl:
+true`, and the daemon resolves the cutoff against its own config.
 
 ```
-Memory_query({verb: "list", episodic: true, older_than: "<TTL>d",
+Memory_query({verb: "list", episodic: true, past_ttl: true,
               limit: 200, format: "json"})
 ```
 
@@ -74,18 +61,18 @@ stop. No work to do.
 For each returned row you'll have: `id`, `content`, `type`, `from`,
 `contexts`, `created_at`, `updated_at`.
 
-## Step 3 — Per-row decision
+## Step 2 — Per-row decision
 
 For **each** worklist row, make exactly ONE terminal decision. Every
 row must leave episodic on this pass — there is no "leave it."
 
-### 3a. Search semantic for a match (every row, every time)
+### 2a. Search semantic for a match (every row, every time)
 
 ```
 Memory_query({verb: "search", query: "<row content gist>", limit: 8})
 ```
 
-### 3b. Decide one of four outcomes
+### 2b. Decide one of four outcomes
 
 | You see | Action |
 |:---|:---|
@@ -102,15 +89,15 @@ Memory_query({verb: "search", query: "<row content gist>", limit: 8})
   scattered utterances. Append the individual rows; live retrieval
   surfaces patterns.
 - **No merging.** Two distinct facts stay as two rows. Different
-  phrasings of the same fact → silent dedup per 3b row 1.
-- **No tool you don't have.** Your tool list is `Bash`, `Memory_query`,
-  `Memory_write`. Don't pretend AskUser exists; mission policy stripped
-  it on purpose.
+  phrasings of the same fact → silent dedup per 2b row 1.
+- **No tool you don't have.** Your tool list is `Memory_query` and
+  `Memory_write`. No Bash, no Read/Write, no AskUser — mission policy
+  stripped them on purpose.
 
-## Step 4 — Report
+## Step 3 — Report
 
 Emit exactly ONE final line, machine-parseable, ≤20 words. Count
-across all rows you processed in step 3:
+across all rows you processed in Step 2:
 
 ```
 CONSOLIDATED promoted=<n> deleted=<n>

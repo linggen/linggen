@@ -20,7 +20,11 @@ import {
   WidgetType,
 } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { RangeSetBuilder } from '@codemirror/state';
+import {
+  RangeSetBuilder,
+  StateField,
+  type EditorState,
+} from '@codemirror/state';
 
 // Lazy mermaid import to avoid blocking
 let mermaidInstance: typeof import('mermaid').default | null = null;
@@ -169,6 +173,91 @@ class BulletWidget extends WidgetType {
   }
 }
 
+/** Renders a GFM table as a real HTML <table>. The widget receives the raw
+ *  markdown lines (including the header row, delimiter row, and body rows);
+ *  it splits on `|`, handles alignment from the delimiter row, and emits
+ *  thead/tbody. The original markdown lines underneath are hidden via
+ *  `cm-table-hidden-line` so the rendered table appears in their place.
+ *  When the cursor enters any line of the table, the entire block falls
+ *  back to raw markdown \u2014 same UX as headers/code blocks. */
+class TableWidget extends WidgetType {
+  private raw: string;
+
+  constructor(raw: string) {
+    super();
+    this.raw = raw;
+  }
+
+  toDOM() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'cm-table-widget';
+    const table = document.createElement('table');
+    table.className = 'cm-rendered-table';
+
+    const lines = this.raw.split('\n').filter((l) => l.trim().length > 0);
+    if (lines.length < 2) {
+      wrapper.appendChild(table);
+      return wrapper;
+    }
+
+    const splitRow = (line: string): string[] => {
+      let s = line.trim();
+      if (s.startsWith('|')) s = s.slice(1);
+      if (s.endsWith('|')) s = s.slice(0, -1);
+      // Split on unescaped `|`.
+      return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+    };
+
+    const headerCells = splitRow(lines[0]);
+    const delimCells = splitRow(lines[1]);
+    const aligns: ('left' | 'center' | 'right' | null)[] = delimCells.map((c) => {
+      const left = c.startsWith(':');
+      const right = c.endsWith(':');
+      if (left && right) return 'center';
+      if (right) return 'right';
+      if (left) return 'left';
+      return null;
+    });
+
+    const thead = document.createElement('thead');
+    const headerTr = document.createElement('tr');
+    headerCells.forEach((cell, i) => {
+      const th = document.createElement('th');
+      th.textContent = cell;
+      const a = aligns[i];
+      if (a) th.style.textAlign = a;
+      headerTr.appendChild(th);
+    });
+    thead.appendChild(headerTr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (let r = 2; r < lines.length; r++) {
+      const cells = splitRow(lines[r]);
+      const tr = document.createElement('tr');
+      cells.forEach((cell, i) => {
+        const td = document.createElement('td');
+        td.textContent = cell;
+        const a = aligns[i];
+        if (a) td.style.textAlign = a;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+
+  eq(other: TableWidget) {
+    return this.raw === other.raw;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
 // === Decoration Classes ===
 
 const hiddenMarkDecoration = Decoration.mark({ class: 'cm-hidden-syntax' });
@@ -193,6 +282,21 @@ function getActiveLines(view: EditorView): Set<number> {
   return activeLines;
 }
 
+/** Byte offset of the END of the YAML frontmatter (the position right after
+ *  the closing `---`). Returns 0 when the document doesn't start with a
+ *  frontmatter delimiter. Lezer's markdown grammar parses the whole file as
+ *  markdown, so YAML comments inside the frontmatter would otherwise be
+ *  treated as H1 headings — every decoration rule must check this range and
+ *  bail out for nodes inside it. */
+function computeFrontmatterEnd(doc: import('@codemirror/state').Text): number {
+  if (doc.lines < 2) return 0;
+  if (doc.line(1).text.trim() !== '---') return 0;
+  for (let i = 2; i <= doc.lines; i++) {
+    if (doc.line(i).text.trim() === '---') return doc.line(i).to;
+  }
+  return 0;
+}
+
 // === The main ViewPlugin ===
 
 export const livePreviewPlugin = ViewPlugin.fromClass(
@@ -213,11 +317,36 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
       const activeLines = getActiveLines(view);
       const doc = view.state.doc;
 
+      // YAML frontmatter region — the Lezer markdown grammar doesn't know
+      // about frontmatter, so `# ...` comments inside the `---…---` block
+      // get parsed as H1 headings. Compute the byte range of the
+      // frontmatter once and skip every live-preview rule for nodes that
+      // start inside it.
+      const frontmatterEnd = computeFrontmatterEnd(doc);
+      const frontmatterEndLine = frontmatterEnd > 0
+        ? doc.lineAt(frontmatterEnd).number
+        : 0;
+
       const decorations: {
         from: number;
         to: number;
         decoration: Decoration;
       }[] = [];
+
+      // Tag every line inside the frontmatter so CSS can override the
+      // header styling that CodeMirror's markdown extension applies
+      // unconditionally (it adds `cm-header-line cm-header-1` to lines
+      // starting with `#`, which inside YAML is just a comment).
+      if (frontmatterEndLine > 0) {
+        for (let n = 1; n <= frontmatterEndLine; n++) {
+          const ln = doc.line(n);
+          decorations.push({
+            from: ln.from,
+            to: ln.from,
+            decoration: Decoration.line({ class: 'cm-frontmatter-line' }),
+          });
+        }
+      }
 
       // === Standard markdown live preview decorations ===
       for (const { from, to } of view.visibleRanges) {
@@ -225,6 +354,9 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
           from,
           to,
           enter: (node) => {
+            // Skip anything that lives inside the YAML frontmatter.
+            if (node.from < frontmatterEnd) return;
+
             const line = doc.lineAt(node.from);
             const isActiveLine = activeLines.has(line.number);
 
@@ -403,6 +535,68 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
                 }),
               });
             }
+
+            // Fenced code blocks ```lang\n...code...\n```
+            // Hide the opening fence line (```lang) and closing fence line
+            // (```) when no cursor sits in the block. Style the code body
+            // lines as a code-block. Mermaid blocks are handled separately
+            // below (they get a full Mermaid widget), so we skip them here.
+            if (nodeType === 'FencedCode') {
+              const blockStartLine = doc.lineAt(node.from).number;
+              const blockEndLine = doc.lineAt(node.to).number;
+              if (blockStartLine === blockEndLine) return; // malformed/empty
+
+              let blockHasActive = false;
+              for (let n = blockStartLine; n <= blockEndLine; n++) {
+                if (activeLines.has(n)) {
+                  blockHasActive = true;
+                  break;
+                }
+              }
+              if (blockHasActive) return;
+
+              // Detect mermaid (handled by the dedicated widget below).
+              const firstLineText = doc.line(blockStartLine).text.trim();
+              if (firstLineText.startsWith('```mermaid')) return;
+
+              // Hide the opening fence line entirely.
+              decorations.push({
+                from: doc.line(blockStartLine).from,
+                to: doc.line(blockStartLine).from,
+                decoration: Decoration.line({
+                  class: 'cm-codefence-hidden-line',
+                }),
+              });
+              // Hide the closing fence line (only if it's a separate line).
+              if (blockEndLine > blockStartLine) {
+                decorations.push({
+                  from: doc.line(blockEndLine).from,
+                  to: doc.line(blockEndLine).from,
+                  decoration: Decoration.line({
+                    class: 'cm-codefence-hidden-line',
+                  }),
+                });
+              }
+              // Style intermediate code body lines.
+              const bodyStart = blockStartLine + 1;
+              const bodyEnd = blockEndLine - 1;
+              for (let n = bodyStart; n <= bodyEnd; n++) {
+                const ln = doc.line(n);
+                let cls = 'cm-code-block-line';
+                if (n === bodyStart) cls += ' cm-code-block-line-first';
+                if (n === bodyEnd) cls += ' cm-code-block-line-last';
+                decorations.push({
+                  from: ln.from,
+                  to: ln.from,
+                  decoration: Decoration.line({ class: cls }),
+                });
+              }
+            }
+
+            // GFM tables — rendering a multi-line table widget requires a
+            // StateField (ViewPlugin replace decorations can't cross line
+            // breaks). Tables stay as raw markdown for now; readable as
+            // text. Revisit via StateField if we want true rendering.
           },
         });
       }
@@ -416,6 +610,10 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
         const blockCode = match[1];
         const blockStart = match.index;
         const blockEnd = match.index + match[0].length;
+
+        // Skip mermaid blocks parsed from inside the YAML frontmatter
+        // (very unlikely, but the regex doesn't know about frontmatter).
+        if (blockStart < frontmatterEnd) continue;
 
         if (mermaidEditBlocks.has(blockStart)) {
           let stillEditing = false;
@@ -473,6 +671,67 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
   }
 );
+
+// === Tables — StateField for block decorations ===
+//
+// CodeMirror's ViewPlugin layer only accepts inline decorations; block
+// widgets and decorations that replace line breaks must come from a
+// StateField. Tables are inherently multi-line, so the table renderer
+// lives here, separate from the rest of the live-preview decorations.
+//
+// One field, one job: walk the syntax tree, find `Table` nodes that are
+// outside the YAML frontmatter and outside the user's current selection,
+// and replace each one with a TableWidget rendered as a block.
+
+function buildTableDecorations(state: EditorState): DecorationSet {
+  const doc = state.doc;
+  const frontmatterEnd = computeFrontmatterEnd(doc);
+
+  // Collect selection lines so we can fall back to raw markdown when the
+  // user clicks into the table.
+  const activeLines = new Set<number>();
+  for (const range of state.selection.ranges) {
+    const a = doc.lineAt(range.from).number;
+    const b = doc.lineAt(range.to).number;
+    for (let n = a; n <= b; n++) activeLines.add(n);
+  }
+
+  const builder = new RangeSetBuilder<Decoration>();
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== 'Table') return;
+      if (node.from < frontmatterEnd) return;
+
+      const tStart = doc.lineAt(node.from).number;
+      const tEnd = doc.lineAt(node.to).number;
+      for (let n = tStart; n <= tEnd; n++) {
+        if (activeLines.has(n)) return;
+      }
+
+      const raw = doc.sliceString(node.from, node.to);
+      builder.add(
+        node.from,
+        node.to,
+        Decoration.replace({
+          widget: new TableWidget(raw),
+          block: true,
+        }),
+      );
+    },
+  });
+  return builder.finish();
+}
+
+export const livePreviewTableField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildTableDecorations(state);
+  },
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value;
+    return buildTableDecorations(tr.state);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 // === Theme for live preview elements ===
 
@@ -566,6 +825,88 @@ export const livePreviewTheme = EditorView.theme({
     opacity: '0',
     fontSize: '0',
     lineHeight: '0',
+  },
+  // YAML frontmatter lines — reset any styling the markdown extension or
+  // livePreviewTheme would otherwise apply (the H1 styling on lines that
+  // start with `#`, for example). Inside frontmatter, `#` is a YAML
+  // comment, not a header. Use !important to win against the existing
+  // header rules below without rearranging selector order.
+  '.cm-frontmatter-line': {
+    fontSize: '0.9em !important',
+    fontWeight: 'normal !important',
+    color: 'inherit !important',
+    fontFamily:
+      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    lineHeight: '1.4 !important',
+  },
+  '.cm-frontmatter-line *': {
+    fontSize: 'inherit !important',
+    fontWeight: 'normal !important',
+    color: 'inherit !important',
+    textDecoration: 'none !important',
+    backgroundColor: 'transparent !important',
+  },
+  '.cm-codefence-hidden-line': {
+    height: '0 !important',
+    padding: '0 !important',
+    margin: '0 !important',
+    overflow: 'hidden !important',
+    opacity: '0',
+    fontSize: '0',
+    lineHeight: '0',
+  },
+  '.cm-code-block-line': {
+    backgroundColor: 'rgba(148,163,184,0.10)',
+    paddingLeft: '12px !important',
+    paddingRight: '12px !important',
+    fontFamily:
+      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    fontSize: '0.9em',
+  },
+  '.cm-code-block-line-first': {
+    paddingTop: '8px !important',
+    borderTopLeftRadius: '6px',
+    borderTopRightRadius: '6px',
+  },
+  '.cm-code-block-line-last': {
+    paddingBottom: '8px !important',
+    borderBottomLeftRadius: '6px',
+    borderBottomRightRadius: '6px',
+  },
+
+  // Rendered GFM table
+  '.cm-table-hidden-line': {
+    height: '0 !important',
+    padding: '0 !important',
+    margin: '0 !important',
+    overflow: 'hidden !important',
+    opacity: '0',
+    fontSize: '0',
+    lineHeight: '0',
+  },
+  '.cm-table-widget': {
+    display: 'block',
+    margin: '8px 0',
+    overflowX: 'auto',
+  },
+  '.cm-rendered-table': {
+    borderCollapse: 'collapse',
+    width: '100%',
+    fontSize: '0.92em',
+    border: '1px solid rgba(148,163,184,0.3)',
+  },
+  '.cm-rendered-table th, .cm-rendered-table td': {
+    border: '1px solid rgba(148,163,184,0.25)',
+    padding: '6px 10px',
+    textAlign: 'left',
+    verticalAlign: 'top',
+  },
+  '.cm-rendered-table th': {
+    backgroundColor: 'rgba(148,163,184,0.12)',
+    fontWeight: '600',
+  },
+  '.cm-rendered-table tbody tr:nth-child(even) td': {
+    backgroundColor: 'rgba(148,163,184,0.05)',
   },
 });
 
