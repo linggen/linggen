@@ -554,7 +554,7 @@ pub fn tool_action_tier(tool: &str) -> PermissionMode {
 pub fn parse_skill_tier(tier: &str) -> Option<PermissionMode> {
     match tier {
         "read" => Some(PermissionMode::Read),
-        "edit" => Some(PermissionMode::Edit),
+        "edit" | "write" => Some(PermissionMode::Edit),
         "admin" => Some(PermissionMode::Admin),
         _ => None,
     }
