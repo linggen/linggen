@@ -182,17 +182,20 @@ fn mission_session_title(mission: &Mission) -> String {
     format!("{} session", label)
 }
 
-/// User-side "go" message for a mission run.
+/// User-side "go" messages for a mission run. The first item lands in the
+/// session immediately as the initial user turn; any remaining items are
+/// drained one-per-assistant-final-reply via `AgentEngine.kickoff_queue`
+/// so authors can stage multi-turn onboarding (e.g. greet, then start work)
+/// without batching everything into one model reply.
 ///
-/// The mission body is the full system prompt (injected via `ActiveMission`);
-/// the kickoff just gives the agent loop a user turn to react to. Kept short
-/// on purpose — output shape, tools, and step-by-step instructions all live
-/// in the body, so we don't repeat them here. Shared between the cron path
-/// (`dispatch_mission_prompt`) and the manual-trigger API
-/// (`api::missions::trigger_mission`).
-pub fn mission_kickoff_message(mission: &Mission) -> String {
+/// Missions without an explicit `kickoff:` list fall back to a single
+/// generic "run the X mission" line.
+pub fn mission_kickoff_messages(mission: &Mission) -> Vec<String> {
+    if !mission.kickoff.is_empty() {
+        return mission.kickoff.clone();
+    }
     let label = mission.name.as_deref().unwrap_or(&mission.id);
-    format!("Run the \"{}\" mission per your system prompt.", label)
+    vec![format!("Run the \"{}\" mission per your system prompt.", label)]
 }
 
 /// Create a new session for a mission run in the global session store.
@@ -350,160 +353,21 @@ async fn dispatch_mission_prompt(
 ) {
     use crate::server::AgentStatusKind;
 
+    // Refresh from disk so in-flight `mission.md` edits land on the next
+    // run without needing a daemon restart. Falls back to the cached
+    // copy if the file is gone or unparseable — better to run stale than
+    // to silently no-op a scheduled mission.
+    let refreshed = state.manager.missions.reload_one(&mission.id);
+    let mission = refreshed.as_ref().unwrap_or(mission);
     let agent_id = mission.agent_id.as_str();
 
-    // Mission-level run id. Used for the per-run output dir, the
-    // MISSION_RUN_ID env var, and the MissionRunEntry.run_id.
+    // Mission-level run id. Keys MissionRunEntry.run_id and the
+    // MissionTriggered event.
     let mission_run_id = format!(
         "mission-run-{}-{}",
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
-
-    // Create the per-run output directory. Entry script writes here; agent
-    // reads files from here. See doc/mission-spec.md → Entry script contract.
-    let output_dir = state
-        .manager
-        .missions
-        .mission_dir(&mission.id)
-        .join("runs")
-        .join(&mission_run_id);
-    if let Err(e) = std::fs::create_dir_all(&output_dir) {
-        warn!(
-            "Mission scheduler: failed to create output dir for '{}': {}",
-            mission.id, e
-        );
-        record_mission_run_full(
-            &state,
-            mission,
-            &mission_run_id,
-            None,
-            "failed",
-            false,
-            None,
-            Some(output_dir.to_string_lossy().into_owned()),
-        );
-        return;
-    }
-
-    // Entry script pre-stage. Runs before the agent (if any). Non-zero exit
-    // aborts the mission run before the agent is created.
-    let entry_exit_code = if let Some(ref entry) = mission.entry {
-        match run_entry_script(mission, entry, &output_dir, &mission_run_id, &state).await {
-            Ok(code) => Some(code),
-            Err(e) => {
-                warn!("Mission scheduler: entry script error for '{}': {}", mission.id, e);
-                record_mission_run_full(
-                    &state,
-                    mission,
-                    &mission_run_id,
-                    None,
-                    "failed",
-                    false,
-                    Some(-1),
-                    Some(output_dir.to_string_lossy().into_owned()),
-                );
-                return;
-            }
-        }
-    } else {
-        None
-    };
-
-    if matches!(entry_exit_code, Some(c) if c != 0) {
-        record_mission_run_full(
-            &state,
-            mission,
-            &mission_run_id,
-            None,
-            "failed",
-            false,
-            entry_exit_code,
-            Some(output_dir.to_string_lossy().into_owned()),
-        );
-        return;
-    }
-
-    // Worklist short-circuit. When the entry script prints
-    // `WORKLIST_SIZE=0`, there is genuinely no work to do — spawning
-    // the LLM at this point just risks the model misinterpreting the
-    // empty result as a failed query (observed with gpt-5.5: looped
-    // five times then emitted CONSOLIDATE_FAILED). Mirror what the
-    // mission body's "empty = success" branch would have done: write
-    // the success status into the session as the agent's reply, mark
-    // the run completed, and return.
-    if entry_exit_code.is_some() {
-        if let Some(status_line) = read_worklist_empty_marker(&output_dir).await {
-            // Reuse the pre-created session (the UI/trigger flow always
-            // pre-creates one with its kickoff message); only fall back
-            // to creating one if we're on a cron run that didn't.
-            // Without this we'd produce a phantom second session per
-            // UI-triggered empty-worklist run.
-            let sid = pre_session_id.clone().or_else(|| create_mission_session(mission));
-            if let Some(ref s) = sid {
-                // Kickoff message was already added by `trigger_mission`
-                // when the session was pre-created; only add it when we
-                // created the session here (cron / pre_session_id=None).
-                if pre_session_id.is_none() {
-                    let kickoff = mission_kickoff_message(mission);
-                    let _ = state.manager.global_sessions.add_chat_message(
-                        s,
-                        &crate::state_fs::sessions::ChatMsg {
-                            agent_id: agent_id.to_string(),
-                            from_id: "user".to_string(),
-                            to_id: agent_id.to_string(),
-                            content: kickoff,
-                            timestamp: crate::util::now_ts_secs(),
-                            is_observation: false,
-                        },
-                    );
-                }
-                let _ = state.manager.global_sessions.add_chat_message(
-                    s,
-                    &crate::state_fs::sessions::ChatMsg {
-                        agent_id: agent_id.to_string(),
-                        from_id: agent_id.to_string(),
-                        to_id: "user".to_string(),
-                        content: status_line.clone(),
-                        timestamp: crate::util::now_ts_secs(),
-                        is_observation: false,
-                    },
-                );
-            }
-            tracing::info!(
-                "Mission scheduler: '{}' entry reported empty worklist — skipping LLM, emitted '{}'",
-                mission.id,
-                status_line
-            );
-            record_mission_run_full(
-                &state,
-                mission,
-                &mission_run_id,
-                sid.as_deref(),
-                "completed",
-                false,
-                entry_exit_code,
-                Some(output_dir.to_string_lossy().into_owned()),
-            );
-            return;
-        }
-    }
-
-    // Script-only mission: entry ran successfully and there's no agent prompt.
-    // No session, no agent loop — just record completion.
-    if mission.prompt.trim().is_empty() {
-        record_mission_run_full(
-            &state,
-            mission,
-            &mission_run_id,
-            None,
-            "completed",
-            false,
-            entry_exit_code,
-            Some(output_dir.to_string_lossy().into_owned()),
-        );
-        return;
-    }
 
     // Use pre-created session or create a new one
     let has_pre_session = pre_session_id.is_some();
@@ -517,15 +381,13 @@ async fn dispatch_mission_prompt(
                 "Mission scheduler: failed to get mission agent: {}",
                 e
             );
-            record_mission_run_full(
+            record_mission_run(
                 &state,
                 mission,
                 &mission_run_id,
                 None,
                 "failed",
                 false,
-                entry_exit_code,
-                Some(output_dir.to_string_lossy().into_owned()),
             );
             return;
         }
@@ -575,12 +437,17 @@ async fn dispatch_mission_prompt(
     };
 
     // The mission body is injected into the system prompt via active_mission
-    // (below). The user turn is a short kickoff so the agent starts executing
-    // against the instructions it already has in context — see
-    // `mission_kickoff_message` for why this is short.
-    let message = mission_kickoff_message(mission);
+    // (below). The kickoff list seeds the user side of the conversation:
+    // item 0 becomes the first user turn that drives the agent loop; the
+    // remainder fire one-per-assistant-final-reply via the engine's
+    // kickoff_queue (see AgentEngine.try_drain_kickoff).
+    let kickoff_items = mission_kickoff_messages(mission);
+    let (first_message, queued) = kickoff_items
+        .split_first()
+        .map(|(first, rest)| (first.clone(), rest.to_vec()))
+        .expect("mission_kickoff_messages always returns at least one item");
 
-    // Persist the mission prompt as a "user" message so it appears in the session chat.
+    // Persist the first kickoff item as a user message in the session.
     // Skip if the trigger API already persisted it (pre-created session).
     if !has_pre_session {
         let global_store = crate::state_fs::SessionStore::with_sessions_dir(
@@ -593,7 +460,7 @@ async fn dispatch_mission_prompt(
                     agent_id: agent_id.to_string(),
                     from_id: "user".to_string(),
                     to_id: agent_id.to_string(),
-                    content: message.clone(),
+                    content: first_message.clone(),
                     timestamp: crate::util::now_ts_secs(),
                     is_observation: false,
                 },
@@ -620,7 +487,8 @@ async fn dispatch_mission_prompt(
         .await;
 
     engine.observations.clear();
-    engine.task = Some(message.clone());
+    engine.task = Some(first_message.clone());
+    engine.kickoff_queue = queued.into();
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
 
@@ -827,17 +695,13 @@ async fn dispatch_mission_prompt(
         .update_agent_activity(project_path, agent_id)
         .await;
 
-    // Record mission run. Uses the mission-level run id so MissionRunEntry
-    // stays aligned with the per-run output dir and env vars.
-    record_mission_run_full(
+    record_mission_run(
         &state,
         mission,
         &mission_run_id,
         session_id.as_deref(),
         status,
         false,
-        entry_exit_code,
-        Some(output_dir.to_string_lossy().into_owned()),
     );
 
     // Notify UI that the mission finished.
@@ -877,28 +741,12 @@ fn record_mission_run(
     status: &str,
     skipped: bool,
 ) {
-    record_mission_run_full(state, mission, run_id, session_id, status, skipped, None, None);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_mission_run_full(
-    state: &Arc<ServerState>,
-    mission: &Mission,
-    run_id: &str,
-    session_id: Option<&str>,
-    status: &str,
-    skipped: bool,
-    entry_exit_code: Option<i32>,
-    output_dir: Option<String>,
-) {
     let entry = MissionRunEntry {
         run_id: run_id.to_string(),
         session_id: session_id.map(|s| s.to_string()),
         triggered_at: crate::util::now_ts_secs(),
         status: status.to_string(),
         skipped,
-        entry_exit_code,
-        output_dir,
     };
     let _ = state
         .manager
@@ -906,249 +754,9 @@ fn record_mission_run_full(
         .append_mission_run(&mission.id, &entry);
 }
 
-/// Run the mission's entry script, pulling mission_dir and last_run_at from
-/// state. Thin wrapper around `execute_entry_script`.
-async fn run_entry_script(
-    mission: &Mission,
-    entry: &str,
-    output_dir: &std::path::Path,
-    mission_run_id: &str,
-    state: &Arc<ServerState>,
-) -> anyhow::Result<i32> {
-    let mission_dir = state.manager.missions.mission_dir(&mission.id);
-    let last_run_at = state
-        .manager
-        .missions
-        .last_successful_run_at(&mission.id)
-        .map(|t| t.to_string())
-        .unwrap_or_default();
-
-    let cwd_str = mission
-        .cwd
-        .clone()
-        .or_else(|| mission.project.clone())
-        .unwrap_or_else(|| mission_dir.to_string_lossy().into_owned());
-    let cwd_resolved = crate::util::resolve_path(std::path::Path::new(&cwd_str));
-    let cwd = if cwd_resolved.is_dir() {
-        cwd_resolved
-    } else {
-        mission_dir.clone()
-    };
-
-    execute_entry_script(
-        entry,
-        &mission.id,
-        &mission_dir,
-        &cwd,
-        output_dir,
-        mission_run_id,
-        &last_run_at,
-    )
-    .await
-}
-
-/// Pure entry-script runner. No shared state; takes explicit paths so it's
-/// unit-testable. Captures stdout/stderr to `output_dir/{stdout,stderr}.log`
-/// and returns the exit code. See doc/mission-spec.md → Entry script contract.
-async fn execute_entry_script(
-    entry: &str,
-    mission_id: &str,
-    mission_dir: &std::path::Path,
-    cwd: &std::path::Path,
-    output_dir: &std::path::Path,
-    mission_run_id: &str,
-    last_run_at: &str,
-) -> anyhow::Result<i32> {
-    use std::process::Stdio;
-
-    let mission_dir_abs = mission_dir
-        .canonicalize()
-        .unwrap_or_else(|_| mission_dir.to_path_buf());
-
-    // If `entry` resolves to a real file inside the mission dir, run it directly.
-    // Otherwise treat entry as an inline bash command.
-    let script_candidate = mission_dir.join(entry);
-    let invocation = if script_candidate.is_file() {
-        crate::extensions::script::Invocation::File(&script_candidate)
-    } else {
-        crate::extensions::script::Invocation::Inline(entry)
-    };
-
-    let env: [(&str, &std::ffi::OsStr); 6] = [
-        ("MISSION_ID", mission_id.as_ref()),
-        ("MISSION_DIR", mission_dir_abs.as_os_str()),
-        ("MISSION_CWD", cwd.as_os_str()),
-        ("MISSION_OUTPUT_DIR", output_dir.as_os_str()),
-        ("MISSION_LAST_RUN_AT", last_run_at.as_ref()),
-        ("MISSION_RUN_ID", mission_run_id.as_ref()),
-    ];
-
-    let mut cmd = crate::extensions::script::async_command(invocation, cwd, &env);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    info!(
-        "Mission scheduler: running entry for '{}' (output_dir={})",
-        mission_id,
-        output_dir.display()
-    );
-    let output = cmd.output().await?;
-
-    // One-shot writes (open + write-all + close). Previously this used
-    // tokio::fs::File + write_all without an explicit flush; tokio's File
-    // buffers and does not flush on drop, so a reader (or the next mission
-    // step) could observe an empty/partial log. tokio::fs::write closes the
-    // file before returning, eliminating the race.
-    tokio::fs::write(output_dir.join("stdout.log"), &output.stdout).await?;
-    tokio::fs::write(output_dir.join("stderr.log"), &output.stderr).await?;
-
-    let code = output.status.code().unwrap_or(-1);
-    if code != 0 {
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "Mission scheduler: entry script for '{}' exited {}: {}",
-            mission_id,
-            code,
-            stderr_str.trim()
-        );
-    }
-    Ok(code)
-}
-
-/// Parse the entry script's stdout for a `WORKLIST_SIZE=<n>` marker.
-/// When the marker is present and `<n>` parses to zero, return the
-/// status line the mission body would have emitted on the empty-list
-/// branch (`CONSOLIDATED promoted=0 deleted=0`). Otherwise — marker
-/// absent, malformed, or non-zero — return `None`, letting the LLM
-/// path proceed as usual.
-///
-/// Looks at `<output_dir>/stdout.log` which `execute_entry_script`
-/// writes after the entry process exits.
-async fn read_worklist_empty_marker(output_dir: &std::path::Path) -> Option<String> {
-    let stdout = tokio::fs::read_to_string(output_dir.join("stdout.log")).await.ok()?;
-    for line in stdout.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("WORKLIST_SIZE=") {
-            return match rest.parse::<u32>() {
-                Ok(0) => Some("CONSOLIDATED promoted=0 deleted=0".to_string()),
-                _ => None,
-            };
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TempMission {
-        mission_dir: std::path::PathBuf,
-        output_dir: std::path::PathBuf,
-        _tmp: tempfile::TempDir,
-    }
-
-    fn fresh_mission(id: &str) -> TempMission {
-        let tmp = tempfile::tempdir().unwrap();
-        let mission_dir = tmp.path().join(id);
-        let output_dir = mission_dir.join("runs").join("r1");
-        std::fs::create_dir_all(&output_dir).unwrap();
-        TempMission { mission_dir, output_dir, _tmp: tmp }
-    }
-
-    #[tokio::test]
-    async fn entry_inline_command_runs_and_captures_output() {
-        let m = fresh_mission("inline");
-        let code = execute_entry_script(
-            "echo hello from entry && echo err >&2",
-            "inline",
-            &m.mission_dir,
-            &m.mission_dir,
-            &m.output_dir,
-            "run-1",
-            "0",
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 0);
-
-        let stdout = std::fs::read_to_string(m.output_dir.join("stdout.log")).unwrap();
-        assert!(stdout.contains("hello from entry"));
-        let stderr = std::fs::read_to_string(m.output_dir.join("stderr.log")).unwrap();
-        assert!(stderr.contains("err"));
-    }
-
-    #[tokio::test]
-    async fn entry_nonzero_exit_is_returned() {
-        let m = fresh_mission("fail");
-        let code = execute_entry_script(
-            "exit 7",
-            "fail",
-            &m.mission_dir,
-            &m.mission_dir,
-            &m.output_dir,
-            "run-2",
-            "0",
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 7);
-    }
-
-    #[tokio::test]
-    async fn entry_env_vars_are_set() {
-        let m = fresh_mission("envcheck");
-        // Script writes MISSION_* env vars so we can assert they're set.
-        let cmd = r#"printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
-            "$MISSION_ID" "$MISSION_CWD" "$MISSION_OUTPUT_DIR" \
-            "$MISSION_RUN_ID" "$MISSION_LAST_RUN_AT" "$MISSION_DIR""#;
-        let code = execute_entry_script(
-            cmd,
-            "envcheck",
-            &m.mission_dir,
-            &m.mission_dir,
-            &m.output_dir,
-            "run-42",
-            "1700000000",
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 0);
-
-        let stdout = std::fs::read_to_string(m.output_dir.join("stdout.log")).unwrap();
-        let lines: Vec<&str> = stdout.lines().collect();
-        assert_eq!(lines[0], "envcheck");
-        // cwd/output_dir strings come back resolved; just check they're non-empty.
-        assert!(!lines[1].is_empty());
-        assert!(!lines[2].is_empty());
-        assert_eq!(lines[3], "run-42");
-        assert_eq!(lines[4], "1700000000");
-        assert!(!lines[5].is_empty());
-    }
-
-    #[tokio::test]
-    async fn entry_resolves_relative_script_file() {
-        let m = fresh_mission("scripted");
-        let scripts = m.mission_dir.join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        let script = scripts.join("hi.sh");
-        std::fs::write(&script, "#!/usr/bin/env bash\necho ran-$MISSION_RUN_ID\n").unwrap();
-
-        let code = execute_entry_script(
-            "scripts/hi.sh",
-            "scripted",
-            &m.mission_dir,
-            &m.mission_dir,
-            &m.output_dir,
-            "abc",
-            "0",
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 0);
-
-        let stdout = std::fs::read_to_string(m.output_dir.join("stdout.log")).unwrap();
-        assert!(stdout.contains("ran-abc"), "got: {}", stdout);
-    }
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

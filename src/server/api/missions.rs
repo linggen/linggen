@@ -64,12 +64,12 @@ pub(crate) struct CreateMissionRequest {
     permission_paths: Option<Vec<String>>,
     #[serde(default)]
     permission_warning: Option<String>,
-    /// Legacy mission mode: "agent" | "app" | "script".
-    /// Phase 1 compat: "app" rejected, "script" maps to entry-only.
+    /// Legacy mission mode: "agent" | "app".
+    /// Phase 1 compat: "app" rejected.
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
-    entry: Option<String>,
+    kickoff: Option<Vec<String>>,
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
 }
@@ -99,21 +99,12 @@ pub(crate) async fn create_mission(
     }
 
     let prompt = req.prompt.unwrap_or_default();
-    let entry = req.entry.clone();
-    let entry_is_empty = entry.as_deref().map(str::trim).unwrap_or("").is_empty();
     let prompt_is_empty = prompt.trim().is_empty();
 
-    if mode == "agent" && prompt_is_empty && entry_is_empty {
+    if mode == "agent" && prompt_is_empty {
         return (
             StatusCode::BAD_REQUEST,
-            "Mission requires a prompt body or an entry script".to_string(),
-        )
-            .into_response();
-    }
-    if mode == "script" && entry_is_empty {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Script-mode missions require an entry command".to_string(),
+            "Mission requires a prompt body".to_string(),
         )
             .into_response();
     }
@@ -136,7 +127,7 @@ pub(crate) async fn create_mission(
         enabled: Some(true),
         cwd: Some(req.cwd.clone()),
         model: Some(req.model),
-        entry: Some(entry),
+        kickoff: req.kickoff,
         allowed_tools: req.allowed_tools,
         permission: Some(permission),
         project: Some(req.cwd),
@@ -208,7 +199,7 @@ pub(crate) struct UpdateMissionRequest {
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
-    entry: Option<Option<String>>,
+    kickoff: Option<Vec<String>>,
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
 }
@@ -268,7 +259,7 @@ pub(crate) async fn update_mission(
         enabled: req.enabled,
         cwd: cwd_pair.clone(),
         model: req.model,
-        entry: req.entry,
+        kickoff: req.kickoff,
         allowed_tools: req.allowed_tools,
         permission: permission_update,
         project: cwd_pair,
@@ -377,10 +368,16 @@ pub(crate) async fn trigger_mission(
     Path(id): Path<String>,
     Json(req): Json<TriggerMissionRequest>,
 ) -> impl IntoResponse {
-    let mission = match state.manager.missions.get_mission(&id) {
-        Ok(Some(m)) => m,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Mission not found".to_string()).into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    // Refresh from disk so a manual trigger picks up in-flight edits to
+    // mission.md (kickoff, body, allowed-tools, etc.) without a daemon
+    // restart. Falls back to the cached copy if the file is gone.
+    let mission = match state.manager.missions.reload_one(&id) {
+        Some(m) => m,
+        None => match state.manager.missions.get_mission(&id) {
+            Ok(Some(m)) => m,
+            Ok(None) => return (StatusCode::NOT_FOUND, "Mission not found".to_string()).into_response(),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
     };
 
     // Determine project root: from request, mission cwd (or legacy project), or env cwd.
@@ -404,24 +401,27 @@ pub(crate) async fn trigger_mission(
     // the sidebar at click time, not at completion time.
     let session_id = crate::extensions::missions::scheduler::create_mission_session(&mission);
 
-    // Persist a short kickoff user message so the UI has something to show
-    // when it loads the session. The mission body lives in the system prompt
-    // (via active_mission, set by the scheduler) — duplicating it here would
-    // mean the agent sees the instructions twice and the transcript is
-    // cluttered with thousands of characters of redundant context.
+    // Persist the first kickoff message as a user turn so the UI has something
+    // to show when it loads the session. The mission body lives in the system
+    // prompt (via active_mission, set by the scheduler) — duplicating it here
+    // would mean the agent sees the instructions twice and the transcript is
+    // cluttered. The remaining kickoff items are seeded into the engine's
+    // kickoff_queue by the scheduler and drain one-per-assistant-final-reply.
     if let Some(ref sid) = session_id {
-        let message = crate::extensions::missions::scheduler::mission_kickoff_message(&mission);
-        let _ = state.manager.global_sessions.add_chat_message(
-            sid,
-            &crate::state_fs::sessions::ChatMsg {
-                agent_id: mission.agent_id.clone(),
-                from_id: "user".to_string(),
-                to_id: mission.agent_id.clone(),
-                content: message,
-                timestamp: crate::util::now_ts_secs(),
-                is_observation: false,
-            },
-        );
+        let kickoff = crate::extensions::missions::scheduler::mission_kickoff_messages(&mission);
+        if let Some(first) = kickoff.first() {
+            let _ = state.manager.global_sessions.add_chat_message(
+                sid,
+                &crate::state_fs::sessions::ChatMsg {
+                    agent_id: mission.agent_id.clone(),
+                    from_id: "user".to_string(),
+                    to_id: mission.agent_id.clone(),
+                    content: first.clone(),
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: false,
+                },
+            );
+        }
     }
 
     // Now emit MissionTriggered with the real session id, and a
@@ -534,32 +534,3 @@ pub(crate) async fn list_mission_runs(
     }
 }
 
-/// GET /api/missions/:id/runs/:run_id/output — return captured stdout/stderr
-/// from the entry-script pre-stage. Missing logs return empty strings.
-///
-/// Rejects run_id values containing `/` or `..` so malformed URLs can't
-/// traverse out of the runs/ directory.
-pub(crate) async fn get_mission_run_output(
-    State(state): State<Arc<ServerState>>,
-    Path((id, run_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    if run_id.is_empty() || run_id.contains('/') || run_id.contains("..") {
-        return (StatusCode::BAD_REQUEST, "Invalid run_id".to_string()).into_response();
-    }
-    let dir = state
-        .manager
-        .missions
-        .mission_dir(&id)
-        .join("runs")
-        .join(&run_id);
-    let stdout = std::fs::read_to_string(dir.join("stdout.log")).unwrap_or_default();
-    let stderr = std::fs::read_to_string(dir.join("stderr.log")).unwrap_or_default();
-    Json(serde_json::json!({
-        "run_id": run_id,
-        "mission_id": id,
-        "output_dir": dir.to_string_lossy(),
-        "stdout": stdout,
-        "stderr": stderr,
-    }))
-    .into_response()
-}

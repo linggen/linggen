@@ -739,7 +739,7 @@ impl AgentEngine {
                             .get_manager()
                             .map(|m| m.skills.clone());
                         if let Some(skills) = lookup {
-                            if let Some(skill) = skills.get_skill(&name).await {
+                            if let Some(skill) = skills.reload_one(&name).await {
                                 let _ = self
                                     .activate_skill(
                                         skill,

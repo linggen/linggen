@@ -45,8 +45,13 @@ pub struct Mission {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry: Option<String>,
+
+    /// User-turn messages persisted into the session before the agent
+    /// runs. Item 0 fires immediately; items 1.. drain one-per-assistant-
+    /// final-reply via the engine's `kickoff_queue`. Empty list falls
+    /// back to a generic "Run the X mission" kickoff.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kickoff: Vec<String>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
@@ -83,10 +88,4 @@ pub struct MissionRunEntry {
     pub triggered_at: u64,
     pub status: String,
     pub skipped: bool,
-    /// Set when an entry script ran; None for agent-only missions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry_exit_code: Option<i32>,
-    /// Per-run scratch dir (where entry output and agent temp files live).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_dir: Option<String>,
 }

@@ -103,12 +103,17 @@ pub(crate) async fn get_system_prompt_api(
     // shows a "cold engine" view missing SKILL.md / mission body.
     if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
         if let Some(ref skill_name) = meta.skill {
-            if let Some(skill) = state.manager.skills.get_skill(skill_name).await {
+            if let Some(skill) = state.manager.skills.reload_one(skill_name).await {
                 engine.activate_skill(skill, ActivationMode::Export).await;
             }
         }
         if let Some(ref mission_id) = meta.mission_id {
-            if let Ok(Some(mission)) = state.manager.missions.get_mission(mission_id) {
+            let mission = state
+                .manager
+                .missions
+                .reload_one(mission_id)
+                .or_else(|| state.manager.missions.get_mission(mission_id).ok().flatten());
+            if let Some(mission) = mission {
                 // Mirror what mission_scheduler does at dispatch time:
                 // - inject the mission body via active_mission
                 // - apply allowed-tools so the `tools` array and

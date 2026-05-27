@@ -4,7 +4,7 @@
 //! - **New format** — frontmatter mirrors SKILL.md (`description`,
 //!   `allowed-tools`, `permission`) plus mission-specific
 //!   scheduling fields (`schedule`, `enabled`, `catchup_hours`,
-//!   `cwd`, `agent`, `entry`).
+//!   `cwd`, `agent`, `kickoff`).
 //! - **Legacy format** — pre-redesign shape with `mode:` and
 //!   `permission_tier:`. Detected by sentinel fields, mapped on
 //!   read, migrated on next write. `mode: app` is rejected (no
@@ -44,8 +44,8 @@ struct MissionFrontmatter {
     model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agent: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    kickoff: Vec<String>,
 
     #[serde(
         rename = "allowed-tools",
@@ -76,8 +76,6 @@ struct LegacyFrontmatter {
     enabled: bool,
     #[serde(default)]
     mode: Option<String>,
-    #[serde(default)]
-    entry: Option<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -127,7 +125,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         catchup_hours: fm.catchup_hours,
         cwd: fm.cwd,
         model: fm.model,
-        entry: fm.entry,
+        kickoff: fm.kickoff,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
         prompt: body,
@@ -147,7 +145,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         catchup_hours: None,
         cwd: None,
         model: None,
-        entry: None,
+        kickoff: Vec::new(),
         allowed_tools: Vec::new(),
         permission: None,
         prompt,
@@ -190,7 +188,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         catchup_hours: None,
         cwd: fm.project.clone(),
         model: fm.model,
-        entry: fm.entry,
+        kickoff: Vec::new(),
         allowed_tools: Vec::new(),
         permission,
         prompt,
@@ -219,7 +217,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         cwd: mission.cwd.clone(),
         model: mission.model.clone(),
         agent: agent_fm,
-        entry: mission.entry.clone(),
+        kickoff: mission.kickoff.clone(),
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),
         project: mission.project.clone(),

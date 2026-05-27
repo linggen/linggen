@@ -56,6 +56,36 @@ impl MissionLoader {
         *self.cache.lock().unwrap() = missions;
     }
 
+    /// Re-parse one mission's `mission.md` from disk and update the cache
+    /// entry for it. Returns the fresh `Mission`, or `None` when the file
+    /// is gone / corrupt / unreadable. Called at the top of each scheduler
+    /// dispatch so an in-flight edit takes effect on the next run without
+    /// requiring a daemon restart.
+    pub fn reload_one(&self, id: &str) -> Option<Mission> {
+        let mission_file = self.mission_path(id);
+        if !mission_file.exists() {
+            // Drop a stale cache entry if the dir was deleted out from under us.
+            let mut cache = self.cache.lock().unwrap();
+            cache.retain(|m| m.id != id);
+            return None;
+        }
+        let content = fs::read_to_string(&mission_file).ok()?;
+        let parsed = match parse_mission_md(id, &content) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("reload_one: parse failed for '{}': {}", id, e);
+                return None;
+            }
+        };
+        let mut cache = self.cache.lock().unwrap();
+        if let Some(slot) = cache.iter_mut().find(|m| m.id == id) {
+            *slot = parsed.clone();
+        } else {
+            cache.push(parsed.clone());
+        }
+        Some(parsed)
+    }
+
     fn ensure_dir(&self) -> Result<()> {
         fs::create_dir_all(&self.dir)?;
         Ok(())
@@ -83,9 +113,8 @@ impl MissionLoader {
         validate_cron(schedule)?;
 
         let prompt = draft.prompt.clone().unwrap_or_default();
-        let entry = draft.entry.clone().flatten();
-        if prompt.trim().is_empty() && entry.as_deref().map(str::trim).unwrap_or("").is_empty() {
-            bail!("Mission requires a prompt body or an entry script");
+        if prompt.trim().is_empty() {
+            bail!("Mission requires a prompt body");
         }
 
         self.ensure_dir()?;
@@ -119,7 +148,7 @@ impl MissionLoader {
             catchup_hours: draft.catchup_hours.clone().flatten(),
             cwd: draft.cwd.clone().flatten(),
             model: draft.model.clone().flatten(),
-            entry,
+            kickoff: draft.kickoff.clone().unwrap_or_default(),
             allowed_tools: draft.allowed_tools.clone().unwrap_or_default(),
             permission: draft.permission.clone().flatten(),
             prompt,
@@ -179,8 +208,8 @@ impl MissionLoader {
         if let Some(a) = draft.agent {
             mission.agent_id = a;
         }
-        if let Some(e) = draft.entry {
-            mission.entry = e;
+        if let Some(k) = draft.kickoff {
+            mission.kickoff = k;
         }
         if let Some(t) = draft.allowed_tools {
             mission.allowed_tools = t;
@@ -571,8 +600,6 @@ mod tests {
             triggered_at: 1000,
             status: "completed".into(),
             skipped: false,
-            entry_exit_code: None,
-            output_dir: None,
         };
         let entry2 = MissionRunEntry {
             run_id: "run-2".into(),
@@ -580,8 +607,6 @@ mod tests {
             triggered_at: 2000,
             status: "skipped".into(),
             skipped: true,
-            entry_exit_code: None,
-            output_dir: None,
         };
         store.append_mission_run(&m.id, &entry1).unwrap();
         store.append_mission_run(&m.id, &entry2).unwrap();
@@ -644,7 +669,10 @@ mod tests {
 
     #[test]
     fn test_legacy_script_mode_drops_body() {
-        // Legacy script mode: entry was the command, body was unused.
+        // Legacy script mode used to set entry + drop body. The entry
+        // field is now removed entirely; legacy files load but the
+        // entry command is no longer honored, and the body still drops
+        // to match the prior "script mode = no agent" intent.
         let content = "---\n\
             schedule: 0 9 * * *\n\
             enabled: true\n\
@@ -654,8 +682,8 @@ mod tests {
             \n\
             Some ignored body.\n";
         let m = parse_mission_md("s", content).unwrap();
-        assert_eq!(m.entry.as_deref(), Some("echo hi"));
-        assert_eq!(m.prompt, ""); // body dropped for script mode
+        assert_eq!(m.prompt, "");
+        assert!(m.kickoff.is_empty());
     }
 
     #[test]
@@ -710,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_requires_prompt_or_entry() {
+    fn test_create_requires_prompt() {
         let (store, _dir) = temp_store();
         let err = store.create_mission(MissionDraft {
             name: Some("empty".into()),
@@ -718,15 +746,6 @@ mod tests {
             ..Default::default()
         });
         assert!(err.is_err());
-
-        // Entry-only mission OK.
-        let ok = store.create_mission(MissionDraft {
-            name: Some("script-only".into()),
-            schedule: Some("0 * * * *".into()),
-            entry: Some(Some("scripts/run.sh".into())),
-            ..Default::default()
-        });
-        assert!(ok.is_ok());
     }
 
     #[test]
@@ -757,8 +776,6 @@ mod tests {
             triggered_at: 1000,
             status: "completed".into(),
             skipped: false,
-            entry_exit_code: None,
-            output_dir: None,
         };
         store.append_mission_run(&m.id, &entry).unwrap();
         assert!(root.join("test-dir").join("runs.jsonl").exists());

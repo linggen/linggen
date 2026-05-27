@@ -139,7 +139,7 @@ async fn resolve_slash_skill(
     let Some(manager) = engine.tools.get_manager() else {
         return SlashResolution::NoMatch;
     };
-    let Some(skill) = manager.skills.get_skill(cmd).await else {
+    let Some(skill) = manager.skills.reload_one(cmd).await else {
         return SlashResolution::NoMatch;
     };
 
@@ -278,7 +278,7 @@ pub(super) async fn run_trigger_dispatch(
 
     let mut skill_default_task: Option<String> = None;
     if let Some(manager) = engine.tools.get_manager() {
-        if let Some(skill) = manager.skills.get_skill(skill_name).await {
+        if let Some(skill) = manager.skills.reload_one(skill_name).await {
             if !skill.user_invocable {
                 let err_msg = format!(
                     "Skill '{}' is not user-invocable and cannot be activated via trigger.",

@@ -504,7 +504,7 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
         tracing::info!("Session-bound skill '{}' blocked by policy", skill_name);
         return;
     }
-    let Some(skill) = ctx.manager.skills.get_skill(&skill_name).await else {
+    let Some(skill) = ctx.manager.skills.reload_one(&skill_name).await else {
         return;
     };
     tracing::info!("Session-bound skill activated: {}", skill.name);

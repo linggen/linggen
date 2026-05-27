@@ -72,6 +72,51 @@ impl AgentEngine {
             .collect()
     }
 
+    /// Drain one pending kickoff turn, if any, persisting it as a user
+    /// message and pushing it into the running loop state. Called at
+    /// each "final assistant reply" return site so multi-item missions
+    /// continue past the first response instead of exiting the loop.
+    /// Returns `true` when an item was drained — caller should `continue`
+    /// the agent loop instead of returning.
+    async fn try_drain_kickoff(
+        &mut self,
+        state: &mut LoopState,
+        session_id: Option<&str>,
+    ) -> bool {
+        let Some(next) = self.kickoff_queue.pop_front() else {
+            return false;
+        };
+        if let Some(manager) = self.tools.get_manager() {
+            let agent_id = self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            manager
+                .add_chat_message(
+                    &self.cfg.ws_root,
+                    session_id.unwrap_or("default"),
+                    &crate::state_fs::sessions::ChatMsg {
+                        agent_id: agent_id.clone(),
+                        from_id: "user".to_string(),
+                        to_id: agent_id,
+                        content: next.clone(),
+                        timestamp: crate::util::now_ts_secs(),
+                        is_observation: false,
+                    },
+                )
+                .await;
+            manager
+                .send_event(
+                    crate::engine::agent::AgentEvent::StateUpdated,
+                    self.session_id.clone(),
+                )
+                .await;
+        }
+        state.messages.push(ChatMessage::new("user", next.clone()));
+        self.chat_history.push(ChatMessage::new("user", next));
+        true
+    }
+
     /// Pre-loop setup: load session permissions, emit "working" status,
     /// sync world state, validate the task, push the start-of-loop
     /// context record, prime context-window/token estimates, and
@@ -491,6 +536,9 @@ impl AgentEngine {
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw);
+                    if self.try_drain_kickoff(&mut state, session_id).await {
+                        continue;
+                    }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
                 }
@@ -565,6 +613,9 @@ impl AgentEngine {
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw);
+                    if self.try_drain_kickoff(&mut state, session_id).await {
+                        continue;
+                    }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
                 }
@@ -646,6 +697,9 @@ impl AgentEngine {
                         let _ = self
                             .persist_assistant_message(&raw, session_id)
                             .await;
+                        if self.try_drain_kickoff(&mut state, session_id).await {
+                            continue;
+                        }
                         return Ok(AgentOutcome::None);
                     }
                     // Either malformed JSON or short/incomplete plain text — nudge.
@@ -662,6 +716,9 @@ impl AgentEngine {
                         let _ = self
                             .persist_assistant_message(&message, session_id)
                             .await;
+                        if self.try_drain_kickoff(&mut state, session_id).await {
+                            continue;
+                        }
                         self.active_skill = None;
                         return Ok(AgentOutcome::None);
                     }

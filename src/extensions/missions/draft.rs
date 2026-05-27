@@ -17,7 +17,7 @@ pub struct MissionDraft {
     pub cwd: Option<Option<String>>,
     pub model: Option<Option<String>>,
     pub agent: Option<String>,
-    pub entry: Option<Option<String>>,
+    pub kickoff: Option<Vec<String>>,
     pub allowed_tools: Option<Vec<String>>,
     pub permission: Option<Option<MissionPermission>>,
     pub prompt: Option<String>,

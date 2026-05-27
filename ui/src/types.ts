@@ -347,8 +347,10 @@ export interface CronMission {
   cwd?: string | null;
   /** Model override. */
   model?: string | null;
-  /** Optional pre-agent script (path relative to mission dir, or inline bash). */
-  entry?: string | null;
+  /** Ordered user-turn messages seeded into the session at run start.
+   *  Item 0 fires immediately; later items drain one-per-assistant-final-reply
+   *  via the engine's kickoff queue. Empty → generic fallback line. */
+  kickoff?: string[];
 
   /** Explicit tool allowlist. Empty → unrestricted. */
   allowed_tools?: string[];
@@ -367,18 +369,6 @@ export interface MissionRunEntry {
   triggered_at: number;
   status: string;
   skipped: boolean;
-  /** Set when an entry script ran. */
-  entry_exit_code?: number | null;
-  /** Per-run output directory path. */
-  output_dir?: string | null;
-}
-
-export interface MissionRunOutput {
-  run_id: string;
-  mission_id: string;
-  output_dir: string;
-  stdout: string;
-  stderr: string;
 }
 
 export const MISSION_POLICIES = ['strict', 'trusted', 'sandbox', 'interactive'] as const;

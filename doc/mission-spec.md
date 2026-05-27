@@ -38,8 +38,6 @@ Missions live under `~/.linggen/missions/` and mirror the skill directory shape:
 ```
 ~/.linggen/missions/dream/
 ├── mission.md         # frontmatter + agent prompt (body)
-├── scripts/           # optional — entry scripts, helpers
-│   └── collect.sh
 ├── assets/            # optional — static files
 └── runs.jsonl         # run history
 ```
@@ -60,9 +58,15 @@ schedule: "0 3 * * *"
 catchup_hours: 24                  # optional — fire from the post-turn seam if last run is older than this
 enabled: true
 agent: ling-mem                    # optional — engine agent to run this mission (default: ling)
-cwd: ~/.linggen                    # working directory for entry + agent
+cwd: ~/.linggen                    # working directory for the agent
 model: <optional override>
-entry: scripts/collect.sh          # optional pre-agent script (relative to mission dir)
+
+# Kickoff: one or more user-turn messages persisted into the session
+# at the start of the run. Item 0 fires immediately; item 1+ drain
+# one-per-assistant-final-reply via the engine's kickoff_queue.
+kickoff:
+  - "Briefly greet and say what you're about to do."
+  - "Now do the actual work, per your system prompt."
 
 # Tools (SKILL.md shape)
 allowed-tools:
@@ -95,9 +99,9 @@ permission:
 | `catchup_hours` | no | If set, the post-turn seam fires the mission when its last non-skipped run is older than this many hours. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
-| `cwd` | yes | Working directory for entry script + agent |
+| `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
-| `entry` | no | Pre-agent script — path relative to mission dir, or inline `bash -c "..."` |
+| `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
 | `allowed-tools` | yes | Explicit tool list. Authors omit `AskUser` / `EnterPlanMode` for unattended missions where there's no one to respond. The `Skill` tool is never available to missions — missions do not delegate to skills |
 | `permission.paths` | no | Per-path grants, each with its own `mode`. Same shape as `SkillPermission` — see `permission-spec.md`. Omitting `permission` or leaving `paths` empty means the mission has no filesystem grants and will fail the first write/edit it attempts |
 | `permission.warning` | no | Displayed in the UI before enabling |
@@ -122,51 +126,24 @@ The body should look like a SKILL.md body in structure — step-by-step instruct
  busy-skip check (previous run still running?) ─── yes ──► record skipped
    │ no
    ▼
- run entry script (if present)
+ create session + persist kickoff[0] as user turn
    │
-   ├─ exit != 0 ──► mission failed; agent not invoked
-   │ exit == 0
    ▼
- body present? ─── no ──► record completed (script-only mission)
-   │ yes
-   ▼
- create session + run agent loop with body as prompt
+ run agent loop with body as system prompt; on each assistant
+ final-response, drain next kickoff item from queue as the next
+ user turn (until queue empty), then end
    │
    ▼
  finalize: record run + emit events + write runs.jsonl
 ```
 
-### Entry script contract
+### Kickoff queue
 
-When `entry:` is set, the scheduler runs it **before** invoking the agent. This replaces the old `script` mode and lets missions pre-compute expensive work (collecting session files, extracting raw material) cheaply — without burning LLM tokens.
+`kickoff:` is a list of user-turn messages that seed the session before any agent reply. Item 0 is persisted as the first chat message and becomes the agent's initial task. Items 1+ go into the engine's `kickoff_queue`; the agent loop drains one each time it emits a final assistant reply (a turn with no further tool calls). This staged delivery lets a mission produce a greeting *as its own* assistant message before the work-step kickoff arrives, instead of folding everything into one batched reply.
 
-Environment passed to entry:
+If `kickoff:` is omitted or empty, the scheduler falls back to a single generic line (`Run the "<name>" mission per your system prompt.`).
 
-| Var | Meaning |
-|:----|:--------|
-| `MISSION_ID` | Mission directory name |
-| `MISSION_DIR` | Absolute path to the mission directory |
-| `MISSION_CWD` | Resolved working directory (from `cwd:`) |
-| `MISSION_OUTPUT_DIR` | Per-run scratch dir — scheduler creates it, entry writes to it, agent reads from it |
-| `MISSION_LAST_RUN_AT` | Unix timestamp of the last successful run (or empty on first run) |
-| `MISSION_RUN_ID` | Unique id for this run |
-
-The script runs under the mission's permission bubble (same `allowed-tools`/`permission` constraints do **not** apply to entry — entry is shell, not an agent). Guardrails on entry are the mission author's responsibility.
-
-Entry output conventions:
-- **Structured data** → write to files under `$MISSION_OUTPUT_DIR/`. Agent `Read`s them in the body.
-- **Stdout** → captured to `$MISSION_OUTPUT_DIR/stdout.log` as a fallback.
-- **Stderr** → captured to `$MISSION_OUTPUT_DIR/stderr.log` for debugging.
-
-If entry exits non-zero, the mission is marked failed and the agent loop is skipped. The captured logs are surfaced in the run record for diagnosis.
-
-### Agent-only and script-only missions
-
-- **Agent only** (no `entry:`) — classic prompt-driven mission. Same as today's agent mode.
-- **Script only** (no body, `entry:` set) — pure background script. No LLM loop, no session, no cost. Replaces today's `mode: script`.
-- **Hybrid** (entry + body) — entry pre-processes; agent consumes. Default for data-processing missions like `dream`.
-
-The old `mode: app` (open a URL in browser on a schedule) is removed entirely. That use case is better served by a separate reminder feature, not missions.
+There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a built-in capability tool like `Memory_query`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at the dispatch boundary in `engine/capabilities.rs` — see the ling-mem `past_ttl=true` strip rule.
 
 ## Cron syntax
 
@@ -218,14 +195,12 @@ The `dream` mission lists `Bash`, `Memory_query`, `Memory_write` — all built-i
 
 ## Session per run
 
-Every agent-mode run creates a new session. The session is the run log.
+Every run creates a new session. The session is the run log.
 
 - **Session title**: `"Mission: <name> — <timestamp>"`.
 - **All tool calls, messages, observations** recorded same as a user chat.
 - **Viewable in UI**: runs appear in the session list (read-only).
 - **Run entry links to session**: `MissionRunEntry.session_id` lets the UI navigate from run history to the full transcript.
-
-Script-only missions (no body) do not create sessions. Their run record carries entry logs only.
 
 ## Scheduler behavior
 
@@ -234,9 +209,8 @@ Background task evaluates all enabled missions against their cron schedules ever
 1. **Tick** — wake, list enabled missions.
 2. **Match** — for each, check if its cron expression matches the current minute window.
 3. **Busy-skip** — if the previous run is still executing, record `skipped` and move on.
-4. **Entry** — run the entry script if declared. Non-zero exit → fail fast, skip agent.
-5. **Agent** — create session, construct prompt from body, run the agent loop.
-6. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
+4. **Agent** — create session, persist `kickoff[0]` as the first user turn, seed `kickoff[1..]` into the engine queue, run the agent loop with the body as system prompt.
+5. **Record** — write `runs.jsonl` entry; emit events; finalize run record.
 
 ### Deduplication
 
@@ -252,7 +226,7 @@ The built-in `dream` consolidation mission uses `catchup_hours: 24`: missed 3am 
 
 Each trigger creates:
 
-- A **session** (agent-mode runs only) containing the full conversation.
+- A **session** containing the full conversation.
 - An `AgentRunRecord` in `runs/` (standard format).
 - A `mission_run` entry in `missions/<name>/runs.jsonl` linking run → mission → session.
 
@@ -262,15 +236,13 @@ Each trigger creates:
   "session_id": "sess-1700000000-def",
   "triggered_at": 1700000000,
   "status": "completed",
-  "skipped": false,
-  "entry_exit_code": 0,
-  "output_dir": "/Users/u/.linggen/missions/dream/runs/mission-run-1700000000-a1b2c3d4"
+  "skipped": false
 }
 ```
 
-The mission-level `run_id` (format `mission-run-<ts>-<uuid8>`) keys the output dir, the `MISSION_RUN_ID` env var, and the `runs.jsonl` entry. It's distinct from the agent's internal `AgentRunRecord.run_id`, which stays an engine-internal concern.
+The mission-level `run_id` (format `mission-run-<ts>-<uuid8>`) keys the `runs.jsonl` entry. It's distinct from the agent's internal `AgentRunRecord.run_id`, which stays an engine-internal concern.
 
-Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them. Script-only runs omit `session_id` and include `entry_exit_code`.
+Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `session_id`; they still get a real `run_id` so downstream tooling can reference them.
 
 ## Safety
 
@@ -283,7 +255,6 @@ Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `sess
 | Path-mode grants | Required | Filesystem access is limited to the `{path, mode}` entries in `permission.paths`. No implicit grant on `cwd` |
 | Interactive tools | Author opt-in | `AskUser` / `EnterPlanMode` only available when listed in `allowed-tools`. Scheduled cron missions should omit them; manually-triggered missions may include them when a user is reachable |
 | Hardcoded deny floor | Enforced | Engine-baked deny patterns block dangerous commands in every mode |
-| Entry script failure | Skips agent | Prevents garbage-in agent work |
 
 ## Lifecycle
 
@@ -323,7 +294,6 @@ Missions render no UI of their own; the run shows up in the mission's run histor
 | Enable / disable | Toggle `enabled` flag |
 | List runs | Run history for a mission (paginated) |
 | Get run session | Read-only session view for a specific run |
-| Get run output | Captured entry-script `stdout` / `stderr` for a specific run |
 | Trigger mission | Fire now, ignoring schedule |
 
 ## Subsystem structure
@@ -350,7 +320,7 @@ Both subsystems are first-class — engine boot treats them symmetrically.
 | `engine/mission/registry.rs` | `MissionRegistry` trait (spec lookup contract) |
 | `engine/mission/runs.rs` | `MissionRunStore` trait (run-history persistence contract) |
 | `extensions/missions/mod.rs` | `MissionLoader` — disk CRUD, frontmatter parse/serialize, run history; impls both engine traits |
-| `extensions/missions/scheduler.rs` | Cron evaluation, tick loop, entry execution, session creation, agent dispatch |
+| `extensions/missions/scheduler.rs` | Cron evaluation, tick loop, session creation, kickoff seeding, agent dispatch |
 | `server/api/missions.rs` | HTTP endpoints for management and manual trigger |
 | `engine/permission/` | Path-mode enforcement; `manifest.rs` owns the YAML grant grammar shared with skills |
 | `extensions/skills/` | Capability registration — mission resolves tools through the same registry |
@@ -368,8 +338,9 @@ Mission permission no longer has a single top-level `mode` — every path declar
 | `permission_tier: full` | per-entry `mode: admin` |
 | Implicit cwd grant (was applied at `permission.mode`) | list cwd explicitly in `permission.paths` if you need it |
 | `mode: agent` | *(removed — default)* |
-| `mode: script` | remove `mode`, move command to `entry:`, clear body |
+| `mode: script` | **dropped** — every mission now needs a body; convert the script's work into an agent-driven `Bash`/capability-tool call, or remove the mission |
 | `mode: app` | **dropped — no migration path**; authors convert to an external reminder |
+| `entry:` (top-level) | **dropped** — author the work as agent steps in the body; if you need to seed input, put it in `kickoff:` |
 | top-level `prompt` | markdown body below frontmatter |
 | `agent_id` | *(removed — mission body IS the agent's system prompt; no `agents/<name>.md` is loaded for missions)* |
 

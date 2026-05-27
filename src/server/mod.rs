@@ -47,7 +47,7 @@ use api::marketplace::{
     marketplace_install, marketplace_move_to_global, marketplace_uninstall,
 };
 use api::missions::{
-    create_mission, delete_mission, get_mission_file, get_mission_run_output,
+    create_mission, delete_mission, get_mission_file,
     get_mission_session_state, list_mission_runs, list_missions, trigger_mission,
     update_mission, upsert_mission_file,
 };
@@ -961,7 +961,6 @@ async fn prepare_server(
         .route("/api/missions/sessions/state", get(get_mission_session_state))
         .route("/api/missions/{id}", put(update_mission).delete(delete_mission))
         .route("/api/missions/{id}/runs", get(list_mission_runs))
-        .route("/api/missions/{id}/runs/{run_id}/output", get(get_mission_run_output))
         .route("/api/missions/{id}/trigger", post(trigger_mission))
         .route("/api/mission-file", get(get_mission_file).post(upsert_mission_file))
         // Chat & plan (also accessible via named WebRTC RPC)

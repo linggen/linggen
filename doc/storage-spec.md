@@ -168,10 +168,10 @@ Mission sessions are stored in `~/.linggen/sessions/` alongside all other sessio
 ### Mission run history (`runs.jsonl`)
 
 ```json
-{ "run_id": "mission-run-1700000000-a1b2c3d4", "session_id": "sess-1700000000-abc12345", "triggered_at": 1700000000, "status": "completed", "skipped": false, "entry_exit_code": 0, "output_dir": "/Users/u/.linggen/missions/ci-watcher/runs/mission-run-1700000000-a1b2c3d4" }
+{ "run_id": "mission-run-1700000000-a1b2c3d4", "session_id": "sess-1700000000-abc12345", "triggered_at": 1700000000, "status": "completed", "skipped": false }
 ```
 
-Append-only. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true` and no `session_id`. Each agent-mode run also writes `stdout.log` / `stderr.log` under `output_dir/` when an entry script ran.
+Append-only. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true` and no `session_id`.
 
 ### Plan messages (in `messages.jsonl`)
 

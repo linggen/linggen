@@ -469,6 +469,41 @@ impl SkillLoader {
         skills.get(name).cloned()
     }
 
+    /// Re-read this skill's `SKILL.md` from disk and update the cache entry.
+    /// Returns the fresh `Skill`, or `None` when the name is unknown or the
+    /// on-disk file is gone / unparseable. Called at each activation site so
+    /// edits to an installed SKILL.md take effect on the next launch without
+    /// requiring a daemon restart. New-directory discovery still goes through
+    /// `load_all` (manual reload button / CLI / marketplace install).
+    pub async fn reload_one(&self, name: &str) -> Option<Skill> {
+        let (skill_dir, source) = {
+            let skills = self.skills.lock().await;
+            let cached = skills.get(name)?;
+            (cached.skill_dir.clone()?, cached.source.clone())
+        };
+        let parsed = match load_skill_from_path(&skill_dir, source) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                tracing::warn!(
+                    "reload_one: skill '{}' has no SKILL.md at {} — dropping from cache",
+                    name,
+                    skill_dir.display()
+                );
+                self.skills.lock().await.remove(name);
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!("reload_one: parse failed for '{}': {}", name, e);
+                return None;
+            }
+        };
+        self.skills
+            .lock()
+            .await
+            .insert(parsed.name.clone(), parsed.clone());
+        Some(parsed)
+    }
+
     pub async fn list_skills(&self) -> Vec<Skill> {
         let skills = self.skills.lock().await;
         skills.values().cloned().collect()

@@ -10,7 +10,7 @@ use crate::engine::skill::registry::SkillRegistry;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -280,6 +280,11 @@ pub struct AgentEngine {
     pub plan: Option<Plan>,
     /// Base64-encoded images to attach to the next user message.
     pub pending_images: Vec<String>,
+    /// Mission kickoff items still waiting to fire as user turns. Drained
+    /// one-per-assistant-final-reply by the agent loop. Empty for normal
+    /// sessions; populated by the mission scheduler with `Mission.kickoff[1..]`
+    /// after item 0 has been used as the initial task.
+    pub kickoff_queue: VecDeque<String>,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
@@ -464,6 +469,7 @@ impl AgentEngine {
             plan_mode: false,
             plan: None,
             pending_images: Vec::new(),
+            kickoff_queue: VecDeque::new(),
             session_permissions: permission::SessionPermissions::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
