@@ -145,10 +145,31 @@ pub(crate) async fn get_system_prompt_api(
     // Tool schemas are delivered to the model via the native function-calling
     // `tools` API parameter — not embedded in the system prompt text. Expose
     // them alongside so the debug export shows the full model-facing surface.
-    let tools = engine.tools.oai_tool_definitions(allowed_tools.as_ref());
+    //
+    // Provider-aware: route through the same `wire_tool_def` each provider
+    // uses on the live request path. Single source of truth — the export
+    // shape matches the wire shape exactly. Falls back to the canonical
+    // OpenAI-nested form if the model_id isn't registered (rare).
+    let canonical_tools = engine.tools.oai_tool_definitions(allowed_tools.as_ref());
+    let provider = engine
+        .model_manager
+        .provider_kind(&engine.model_id)
+        .unwrap_or("ollama");
+    let tools: Vec<serde_json::Value> = canonical_tools
+        .iter()
+        .filter_map(|t| match provider {
+            "chatgpt" | "openai" | "gemini" | "deepseek" => {
+                crate::provider::openai::wire_tool_def(t)
+            }
+            "anthropic" => crate::provider::anthropic::wire_tool_def(t),
+            _ => crate::provider::ollama::wire_tool_def(t),
+        })
+        .collect();
     Json(serde_json::json!({
         "system_prompt": system_prompt,
         "tools": tools,
+        "provider": provider,
+        "model_id": engine.model_id,
     }))
     .into_response()
 }

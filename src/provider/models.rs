@@ -795,6 +795,15 @@ impl ModelManager {
         self.models.contains_key(model_id)
     }
 
+    /// Return the provider name (`"chatgpt"`, `"openai"`, `"anthropic"`,
+    /// `"ollama"`, `"gemini"`, `"deepseek"`, etc.) for a model id. Used by
+    /// debug/export surfaces to render tool-defs in the wire shape that
+    /// model's provider actually receives — so what you copy from the
+    /// system-prompt panel matches what gets sent on the wire.
+    pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
+        self.models.get(model_id).map(|m| m.config.provider.as_str())
+    }
+
     /// Return the first OllamaClient found among configured models.
     pub fn first_ollama_client(&self) -> Option<&OllamaClient> {
         for instance in self.models.values() {

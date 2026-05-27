@@ -53,6 +53,27 @@ enum AuthMode {
     Unset,
 }
 
+/// Convert a canonical tool def (`{type:"function", function:{name, description, parameters}}`)
+/// into Anthropic's shape: `{ name, description, input_schema }`. The
+/// parameter JSON Schema is passed through as-is — Claude reads JSON
+/// Schema natively and respects optional-field semantics (no need for
+/// the OpenAI-style strict-mode rewrite).
+///
+/// Single source of truth for the Anthropic wire shape; called from
+/// both the live request path and the system-prompt export so users
+/// inspecting the export see exactly what Claude receives.
+pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value> {
+    let func = canonical.get("function")?;
+    Some(serde_json::json!({
+        "name": func.get("name")?.clone(),
+        "description": func.get("description").cloned().unwrap_or(serde_json::Value::Null),
+        "input_schema": func
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+    }))
+}
+
 #[derive(Clone)]
 pub struct AnthropicClient {
     http: Client,
@@ -140,20 +161,9 @@ impl AnthropicClient {
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
-        // OpenAI-shaped tools → Anthropic's `{ name, description, input_schema }`.
         let anthro_tools: Vec<serde_json::Value> = tools
             .iter()
-            .filter_map(|t| {
-                let func = t.get("function")?;
-                Some(serde_json::json!({
-                    "name": func.get("name")?.clone(),
-                    "description": func.get("description").cloned().unwrap_or(serde_json::Value::Null),
-                    "input_schema": func
-                        .get("parameters")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
-                }))
-            })
+            .filter_map(wire_tool_def)
             .collect();
         self.stream_messages(model, messages, anthro_tools).await
     }

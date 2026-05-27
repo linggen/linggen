@@ -74,22 +74,6 @@ impl AgentEngine {
     pub(crate) fn system_prompt(&self) -> String {
         use crate::prompts::keys;
 
-        // Mission short-circuit: when the scheduler dispatched a mission,
-        // its body IS the system prompt. No agent persona / identity / spec
-        // body / skill metadata is prepended — mission authors write the
-        // full runbook in `mission.md`. See `doc/mission-spec.md` →
-        // "Body IS the system prompt". Tools come from the mission's
-        // `allowed-tools`; permission from `permission`; everything else
-        // the LLM needs to know is in the mission body.
-        if let Some(mission) = &self.active_mission {
-            let resolved = if let Some(ref dir) = mission.mission_dir {
-                mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
-            } else {
-                mission.body.clone()
-            };
-            return resolved;
-        }
-
         // Personality is injected first — it's the agent's voice regardless of context.
         let personality = self
             .spec
@@ -107,8 +91,9 @@ impl AgentEngine {
 
         // Hoist the first paragraph of the spec body (typically "You are X — <short
         // self-description>") into the ## Identity block. Keeps the agent's name
-        // alive in app-skill / consumer sessions where the rest of the body is stripped,
-        // and labels personality traits with a section header for scan/debug clarity.
+        // alive in app-skill / consumer / mission sessions where the rest of the
+        // body is stripped, and labels personality traits with a section header
+        // for scan/debug clarity.
         let spec_body_full = self.spec_system_prompt.as_deref().map(str::trim).unwrap_or("");
         let (identity_preface, body_rest) = {
             let (head, tail) = spec_body_full.split_once("\n\n").unwrap_or((spec_body_full, ""));
@@ -119,6 +104,33 @@ impl AgentEngine {
                 (head_trim, tail.trim_start())
             }
         };
+
+        let identity_block = match (identity_preface.is_empty(), personality.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => format!("## Identity\n\n{}", identity_preface),
+            (true, false) => format!("## Identity\n\n{}", personality.trim()),
+            (false, false) => format!("## Identity\n\n{}\n\n{}", identity_preface, personality.trim()),
+        };
+
+        // Mission frame: same persona/identity treatment as skills, but the
+        // mission body replaces the agent's spec body entirely (the spec's
+        // workflow / planning / delegation guidance doesn't apply to a
+        // headless cron). Agent's `## Identity` block (name + personality)
+        // still leads — mission authors get a warm voice for free without
+        // duplicating "You are Ling" prose into every mission.md.
+        if let Some(mission) = &self.active_mission {
+            let resolved = if let Some(ref dir) = mission.mission_dir {
+                mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
+            } else {
+                mission.body.clone()
+            };
+            return match (identity_block.is_empty(), resolved.is_empty()) {
+                (true, true) => String::new(),
+                (false, true) => identity_block,
+                (true, false) => resolved,
+                (false, false) => format!("{}\n\n{}", identity_block, resolved),
+            };
+        }
 
         let body = if is_app_skill || self.prompt_profile.consumer_frame {
             // App skills: skill content becomes the primary prompt.
@@ -132,13 +144,6 @@ impl AgentEngine {
                 .render_or_fallback(keys::SYSTEM_FALLBACK_IDENTITY, &[])
         } else {
             body_rest.to_string()
-        };
-
-        let identity_block = match (identity_preface.is_empty(), personality.is_empty()) {
-            (true, true) => String::new(),
-            (false, true) => format!("## Identity\n\n{}", identity_preface),
-            (true, false) => format!("## Identity\n\n{}", personality.trim()),
-            (false, false) => format!("## Identity\n\n{}\n\n{}", identity_preface, personality.trim()),
         };
 
         let mut prompt = match (identity_block.is_empty(), body.is_empty()) {

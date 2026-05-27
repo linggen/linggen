@@ -8,6 +8,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
+/// Convert a canonical tool def into Ollama's wire shape. Ollama
+/// natively accepts the OpenAI-nested form (`{type:"function",
+/// function:{name, description, parameters}}`), so this is an
+/// identity pass-through. Exists for parity with the other providers'
+/// `wire_tool_def` so the system-prompt export can use a uniform
+/// per-provider dispatch.
+pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value> {
+    Some(canonical.clone())
+}
+
 /// Build a compact summary of message roles + lengths for error logs.
 fn summarize_messages(messages: &[ChatMessage]) -> String {
     messages

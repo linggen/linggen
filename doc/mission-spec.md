@@ -106,13 +106,24 @@ permission:
 | `permission.paths` | no | Per-path grants, each with its own `mode`. Same shape as `SkillPermission` — see `permission-spec.md`. Omitting `permission` or leaving `paths` empty means the mission has no filesystem grants and will fail the first write/edit it attempts |
 | `permission.warning` | no | Displayed in the UI before enabling |
 
-### Body IS the system prompt
+### Body + agent identity together form the system prompt
 
-A mission body is **the entire system prompt** for the run. The `agent:` referenced in frontmatter contributes the routing identity (events, session attribution) and the model/config default — but its persona block is **not** concatenated onto the body. The mission stands alone as a self-contained instruction document. Tools come from `allowed-tools`, permission from `permission`, and the prompt body tells the LLM exactly what to do.
+A mission body is the **runbook**: step-by-step instructions, explicit tool calls, output contract. It mirrors a SKILL.md body in shape.
 
-This keeps missions scrutable: readers find all behaviour in one place, instead of cross-referencing an `agents/<name>.md` persona to know what the mission will do.
+The agent referenced in frontmatter (`agent: ling`, default `ling`) contributes its `## Identity` block — the first paragraph of its spec body (typically `"You are X — <short self-description>"`) plus the YAML `personality` field. This block is prepended to the mission body, giving the run a consistent voice without forcing every mission author to duplicate "You are Ling" prose.
 
-The body should look like a SKILL.md body in structure — step-by-step instructions, explicit tool calls, output contract.
+The agent's **spec body** (workflow, delegation, planning, memory protocol, etc.) is NOT concatenated — that guidance is tuned for interactive coding sessions, not for headless cron. Missions get persona + body only.
+
+So the assembled system prompt for a mission is:
+
+```
+## Identity
+<agent.personality + agent spec's first-paragraph identity preface>
+
+<mission body — verbatim, with $MISSION_DIR substituted>
+```
+
+Tools come from `allowed-tools`, permission from `permission`. Everything else the LLM needs to know is in the mission body.
 
 ## Execution flow
 

@@ -43,21 +43,43 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'WebSearch': return args.query || raw;
       case 'Skill': return args.skill || raw;
       case 'Memory_query': {
-        // verb=search → show the query; verb=get → show the id;
-        // verb=list → show the filter or "list" itself.
-        const verb = args.verb || '';
-        if (verb === 'search' && args.query) return `"${args.query}"`;
-        if (verb === 'get' && args.id) return args.id;
-        if (verb === 'list') return args.type || args.tier || 'list';
-        return args.query || args.id || verb || raw;
+        // Render verb + the meaningful args together so the chip reflects
+        // the full call shape — not just one cherry-picked field. The
+        // dispatch boundary may strip hallucinated `type`/`from`/`outcome`
+        // before the daemon sees them (memory_tool.rs), but at the chip
+        // layer we show what the MODEL emitted; the strip output is in
+        // the engine log. Compact, space-joined, key=value pairs.
+        const verb = args.verb || 'list';
+        const parts: string[] = [verb];
+        if (typeof args.query === 'string' && args.query) parts.push(`"${args.query}"`);
+        if (typeof args.id === 'string' && args.id) parts.push(args.id);
+        if (typeof args.tier === 'string' && args.tier) parts.push(`tier=${args.tier}`);
+        if (typeof args.type === 'string' && args.type) parts.push(`type=${args.type}`);
+        if (args.past_ttl === true) parts.push('past_ttl');
+        if (Array.isArray(args.contexts) && args.contexts.length > 0) {
+          parts.push(`contexts=[${(args.contexts as string[]).join(',')}]`);
+        }
+        if (typeof args.from === 'string' && args.from) parts.push(`from=${args.from}`);
+        if (typeof args.outcome === 'string' && args.outcome) parts.push(`outcome=${args.outcome}`);
+        if (typeof args.limit === 'number' && args.limit) parts.push(`limit=${args.limit}`);
+        return parts.join(' ');
       }
       case 'Memory_write': {
-        // verb=add/update → show the content snippet; verb=delete → show the id.
-        const verb = args.verb || '';
-        if (verb === 'delete' && args.id) return `delete ${args.id}`;
-        if (args.content) return `"${args.content}"`;
-        if (args.id) return args.id;
-        return verb || raw;
+        // Same shape as Memory_query: verb + meaningful args. For add/update
+        // the content snippet is the headline; for delete it's the id.
+        const verb = args.verb || 'add';
+        const parts: string[] = [verb];
+        if (typeof args.id === 'string' && args.id) parts.push(args.id);
+        if (typeof args.content === 'string' && args.content) {
+          const snippet = args.content.length > 50 ? args.content.slice(0, 47) + '…' : args.content;
+          parts.push(`"${snippet}"`);
+        }
+        if (typeof args.tier === 'string' && args.tier) parts.push(`tier=${args.tier}`);
+        if (typeof args.type === 'string' && args.type) parts.push(`type=${args.type}`);
+        if (Array.isArray(args.replace_ids) && args.replace_ids.length > 0) {
+          parts.push(`replace_ids=${args.replace_ids.length}`);
+        }
+        return parts.join(' ');
       }
       default: {
         const first = Object.values(args).find(v => typeof v === 'string' && (v as string).length < 80) as string | undefined;

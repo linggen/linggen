@@ -4,6 +4,34 @@ use futures_util::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+/// Convert a canonical tool def (`{type:"function", function:{name, description, parameters}}`)
+/// into the shape the OpenAI Responses API wants:
+/// - flattened: top-level `name` / `description` / `parameters` / `strict`
+/// - parameters strictified: every property in `required[]`, optionals widened
+///   to nullable unions, `additionalProperties:false` at every nesting level
+/// - `strict: true` set on the tool wrapper
+///
+/// Single source of truth for the OpenAI wire shape. Called from the live
+/// request path in `chat_tool_stream` AND from `server/chat/admin.rs`'s
+/// system-prompt export — both surfaces emit identical JSON so users
+/// inspecting the export see exactly what the wire receives.
+pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value> {
+    let func = canonical.get("function")?;
+    let params = func
+        .get("parameters")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let strict_params =
+        crate::engine::tools::json_schema::strictify_for_openai(params);
+    Some(serde_json::json!({
+        "type": "function",
+        "name": func.get("name")?,
+        "description": func.get("description").unwrap_or(&serde_json::Value::Null),
+        "parameters": strict_params,
+        "strict": true,
+    }))
+}
+
 /// Fix malformed JSON from some providers (e.g. Gemini sends `"function":,` instead of `"function":null,`).
 fn sanitize_json(data: &str) -> std::borrow::Cow<'_, str> {
     // Match `":,` or `":}` patterns (value missing after colon)
@@ -458,16 +486,15 @@ impl OpenAiClient {
                     }
                 }
 
-                // Convert OpenAI-style tool defs to Responses API function tools
-                let resp_tools: Vec<serde_json::Value> = tools.iter().filter_map(|t| {
-                let func = t.get("function")?;
-                Some(serde_json::json!({
-                    "type": "function",
-                    "name": func.get("name")?,
-                    "description": func.get("description").unwrap_or(&serde_json::Value::Null),
-                    "parameters": func.get("parameters").unwrap_or(&serde_json::Value::Null),
-                }))
-            }).collect();
+                // Convert OpenAI-style tool defs to Responses API function tools.
+                // Single source of truth: `wire_tool_def` handles flattening +
+                // strict-mode rewrite; admin's system-prompt export calls the
+                // same helper so what the user sees in the export matches what
+                // the wire receives.
+                let resp_tools: Vec<serde_json::Value> = tools
+                    .iter()
+                    .filter_map(|t| wire_tool_def(t))
+                    .collect();
 
                 let mut req = serde_json::json!({
                     "model": model,

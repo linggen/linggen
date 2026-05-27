@@ -116,6 +116,100 @@ fn tool_def(name: &str, description: &str, parameters: Value) -> Value {
     })
 }
 
+/// Convert a tool's args_schema into OpenAI-strict-mode shape:
+/// - every property in `properties` is listed in `required[]`
+/// - properties that were not in the author's original `required` get
+///   their `type` widened to a nullable union (`["X", "null"]`), and any
+///   `enum` list gets `null` appended — so the model can opt out with
+///   `null` instead of being forced to invent an enum value
+/// - `additionalProperties: false`
+/// - recurses into nested object schemas and array `items` so the same
+///   rules apply at every level (OpenAI requires deep compliance)
+///
+/// Authors keep writing simple JSON Schema with a short `required[]` —
+/// this helper does the boilerplate conversion right before the wire
+/// hop. Non-OpenAI providers (Anthropic, Gemini, Ollama) don't go
+/// through this path; they read the original optional-style schema
+/// where their models behave correctly.
+pub fn strictify_for_openai(schema: Value) -> Value {
+    let Value::Object(mut obj) = schema else { return schema; };
+
+    // Recurse into nested object schemas + array item schemas before
+    // rewriting this level, so nested constraints land first.
+    if let Some(items) = obj.get_mut("items") {
+        let taken = std::mem::take(items);
+        *items = strictify_for_openai(taken);
+    }
+
+    let is_object = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|s| s == "object")
+        .unwrap_or_else(|| obj.contains_key("properties"));
+    if !is_object {
+        return Value::Object(obj);
+    }
+
+    // Snapshot author's `required` set before we rewrite it.
+    let original_required: HashSet<String> = obj
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Recurse into each property's schema, then make optional ones nullable.
+    let mut all_names: Vec<String> = Vec::new();
+    if let Some(Value::Object(props)) = obj.get_mut("properties") {
+        all_names = props.keys().cloned().collect();
+        for name in &all_names {
+            let Some(prop) = props.get_mut(name) else { continue; };
+            let taken = std::mem::take(prop);
+            let mut rewritten = strictify_for_openai(taken);
+
+            if !original_required.contains(name) {
+                // Widen `type` to include "null".
+                if let Some(prop_obj) = rewritten.as_object_mut() {
+                    match prop_obj.get_mut("type") {
+                        Some(Value::String(s)) => {
+                            let kept = s.clone();
+                            prop_obj.insert(
+                                "type".to_string(),
+                                json!([kept, "null"]),
+                            );
+                        }
+                        Some(Value::Array(arr)) => {
+                            if !arr.iter().any(|v| v.as_str() == Some("null")) {
+                                arr.push(json!("null"));
+                            }
+                        }
+                        _ => {}
+                    }
+                    if let Some(Value::Array(enum_arr)) = prop_obj.get_mut("enum") {
+                        if !enum_arr.iter().any(|v| v.is_null()) {
+                            enum_arr.push(Value::Null);
+                        }
+                    }
+                }
+            }
+            *prop = rewritten;
+        }
+    }
+
+    // Every property is now required.
+    obj.insert(
+        "required".to_string(),
+        Value::Array(all_names.into_iter().map(Value::String).collect()),
+    );
+
+    obj.insert("additionalProperties".to_string(), Value::Bool(false));
+
+    Value::Object(obj)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +224,87 @@ mod tests {
             assert!(def["function"]["description"].is_string());
             assert!(def["function"]["parameters"].is_object());
         }
+    }
+
+    #[test]
+    fn strictify_adds_null_to_optional_type() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "max_bytes": {"type": "integer"}
+            },
+            "required": ["path"]
+        });
+        let out = strictify_for_openai(input);
+        assert_eq!(out["properties"]["path"]["type"], json!("string"));
+        assert_eq!(out["properties"]["max_bytes"]["type"], json!(["integer", "null"]));
+        assert_eq!(out["required"], json!(["path", "max_bytes"]));
+        assert_eq!(out["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn strictify_adds_null_to_optional_enum() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "verb": {"type": "string", "enum": ["list", "search", "get"]},
+                "type": {"type": "string", "enum": ["fact", "preference"]}
+            },
+            "required": ["verb"]
+        });
+        let out = strictify_for_openai(input);
+        assert_eq!(out["properties"]["verb"]["enum"], json!(["list", "search", "get"]));
+        assert_eq!(out["properties"]["verb"]["type"], json!("string"));
+        assert_eq!(out["properties"]["type"]["type"], json!(["string", "null"]));
+        assert_eq!(out["properties"]["type"]["enum"], json!(["fact", "preference", null]));
+    }
+
+    #[test]
+    fn strictify_recurses_into_array_items() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"}
+                        },
+                        "required": ["id"]
+                    }
+                }
+            },
+            "required": []
+        });
+        let out = strictify_for_openai(input);
+        let item_schema = &out["properties"]["items"]["items"];
+        assert_eq!(item_schema["required"], json!(["id", "title"]));
+        assert_eq!(item_schema["properties"]["title"]["type"], json!(["string", "null"]));
+        assert_eq!(item_schema["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn strictify_preserves_already_nullable_type() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "opt": {"type": ["string", "null"]}
+            },
+            "required": []
+        });
+        let out = strictify_for_openai(input);
+        assert_eq!(out["properties"]["opt"]["type"], json!(["string", "null"]));
+    }
+
+    #[test]
+    fn strictify_handles_empty_object() {
+        let input = json!({"type": "object"});
+        let out = strictify_for_openai(input);
+        assert_eq!(out["required"], json!([]));
+        assert_eq!(out["additionalProperties"], json!(false));
     }
 
     #[test]
