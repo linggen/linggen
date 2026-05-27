@@ -20,8 +20,15 @@ cwd: ~/.linggen
 # (the actual work). The engine drains item 1 from kickoff_queue on
 # the assistant's final-response transition — no scheduler polling.
 kickoff:
-  - You are ling, the memory consolidator, running unattended. Greet briefly in one short line and say you're about to check the episodic worklist.
-  - Now call Memory_query with `{ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 200 }` and process the result per your system prompt. If the list is empty, emit `CONSOLIDATED promoted=0 deleted=0` and stop.
+  - >-
+    You are ling, the memory consolidator, running unattended.
+    Greet briefly in one short line and say you're about to check
+    the episodic worklist.
+  - >-
+    Now call Memory_query with the exact args
+    `{"verb":"list","tier":"episodic","past_ttl":true,"limit":200}`
+    and process the result per your system prompt. If the list is
+    empty, emit `CONSOLIDATED promoted=0 deleted=0` and stop.
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not
 # in the tool list — uncertainty must resolve to "skip the row" per

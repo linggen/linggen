@@ -738,6 +738,26 @@ mod tests {
     }
 
     #[test]
+    fn test_builtin_dream_mission_parses() {
+        // Guard against YAML regressions in the bundled dream mission.
+        // If this fails the daemon will silently skip dream at startup —
+        // exactly the symptom we hit when kickoff strings with embedded
+        // JSON were left as plain scalars.
+        let dream_md = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/missions/dream/mission.md"),
+        )
+        .expect("missions/dream/mission.md should exist");
+        let mission = parse_mission_md("dream", &dream_md)
+            .expect("dream mission.md must parse — daemon scan_disk skips invalid files silently");
+        assert!(
+            !mission.kickoff.is_empty(),
+            "dream mission must have a kickoff list (got empty)"
+        );
+        assert!(mission.enabled, "dream must be enabled by default");
+        assert!(!mission.prompt.is_empty(), "dream must have a body");
+    }
+
+    #[test]
     fn test_create_requires_prompt() {
         let (store, _dir) = temp_store();
         let err = store.create_mission(MissionDraft {
