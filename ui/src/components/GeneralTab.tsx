@@ -111,25 +111,6 @@ export const GeneralTab: React.FC<{
             <p className="text-[11px] text-slate-400 mt-0.5">Auto-compact fires when context usage crosses this fraction of the model window. Blank = engine default (95%). Per-session overrides (e.g. Pulse at 50%) still take precedence. Applies to new sessions.</p>
           </div>
           <div>
-            <label className={labelCls}>Memory Encode Every N Turns</label>
-            <input
-              className={inputCls}
-              type="number"
-              min={1}
-              max={100}
-              step={1}
-              value={config.agent.consolidate_every_n_turns ?? 10}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (Number.isFinite(n) && n >= 1) {
-                  onChange({ ...config, agent: { ...config.agent, consolidate_every_n_turns: n } });
-                }
-              }}
-              placeholder="10 (default)"
-            />
-            <p className="text-[11px] text-slate-400 mt-0.5">How often the per-session memory encoder fires (in user turns). Lower = more frequent encoding, more LLM cost. Default 10. Sessions shorter than N turns are never encoded.</p>
-          </div>
-          <div>
             <label className={labelCls}>Memory Inject Score</label>
             <input
               className={inputCls}

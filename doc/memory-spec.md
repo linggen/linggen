@@ -19,6 +19,18 @@ people and projects in their life. Memory must help every kind of user
 > Decay and §3 rule 5 are resolved. Open items remain in "Open / next".
 > No back-compatibility with the prior append-mostly single-store design.
 
+> **2026-05-28 update:** the every-N-turns memory encoder subagent has
+> been **retired**. The main `ling` agent now writes durable rows
+> inline, driven by the system prompt's memory protocol + per-turn
+> auto-recall hint — aligning Linggen with how Claude Code, Codex, and
+> OpenClaw operate via the `shared-memory` plugin/skill. The
+> user-triggered `dream` mission still owns bulk reprocessing
+> (extract candidates from the scan window + promote/evict episodic).
+> Sections below that describe the encoder subagent's mechanics
+> (every-N firing, AskUser bridge, `SubagentPane` routing) reflect the
+> old architecture and are scheduled for rewrite — read them as
+> historical context, not current behavior.
+
 ## 1. What is memory
 
 Memory is the **user's biography across sessions**, not the agent's

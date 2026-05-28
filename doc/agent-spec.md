@@ -51,13 +51,12 @@ When a skill sets `allowed-tools: []`, tool-related prompt sections (schemas, us
 | Agent | Role | Key tools |
 |:------|:-----|:----------|
 | `ling` | The universal user-facing agent — adapts to any context via skills | `["*"]` |
-| `ling-mem` | Built-in **system** subagent — memory consolidation. Not user-invoked. | `["Bash"]` (drives the `ling-mem` CLI) |
 
-`ling-mem` is engine-scheduled, not delegated by `ling`: fired every N
-turns (per-session counter), runs **async** (never blocks the user's
-turn), and performs encode → consolidate → evict against the memory
-stores. See [`memory-spec.md`](memory-spec.md) §2. Third-party hosts use
-the `ling-mem` skill + hooks instead of this subagent.
+Memory consolidation is **not** done by a separate subagent anymore. `ling`
+itself writes durable rows inline (driven by the system prompt's memory
+protocol + the per-turn auto-recall hint), matching how Claude Code and
+Codex operate. The user-triggered `dream` mission still handles bulk
+reprocessing — see [`memory-spec.md`](memory-spec.md) §2.
 
 Ling is the universal agent. Specialized behavior comes from skills:
 - **Game-table skill** — bound to game sessions, zero tools, pure conversation

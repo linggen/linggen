@@ -4,7 +4,7 @@
 
 use crate::engine::agent::AgentManager;
 use crate::server::rtc;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -52,13 +52,6 @@ pub struct ServerState {
     /// the first one's callback server (or vice versa), producing a
     /// "State mismatch" error. Logout also aborts.
     pub codex_login_task: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    /// Session ids with a memory-consolidation tick in flight. The
-    /// every-N-turns trigger skips a session already present here so a slow
-    /// tick is never overlapped by the next qualifying turn (mirrors the
-    /// mission scheduler's per-mission `running` guard). In-memory only —
-    /// a daemon restart clears it, which is correct: no tick survives a
-    /// restart, so none can still be "running".
-    pub consolidation_active: Arc<Mutex<HashSet<String>>>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveStatusRecord {

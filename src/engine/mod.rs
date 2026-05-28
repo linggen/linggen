@@ -1,7 +1,6 @@
 pub mod actions;
 pub mod agent;
 mod context;
-pub mod memory;
 pub mod mission;
 pub mod permission;
 mod plan;

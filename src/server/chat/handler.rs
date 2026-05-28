@@ -433,10 +433,9 @@ async fn promote_mission_session_to_user(
 /// **before** spawning the engine task (so other clients see it
 /// immediately via the event broadcast), so the same message shows up in
 /// `get_chat_history` here. `push_user_turn_with_recall` will then push
-/// it into `chat_history` again — leaving a duplicate that silently
-/// inflates the user-turn counter (the consolidation encoder fired one
-/// turn early under N=3 because of this). Trim the trailing entry when
-/// it's the current message so the post-push state is exactly one copy.
+/// it into `chat_history` again — leaving a duplicate. Trim the trailing
+/// entry when it's the current message so the post-push state is exactly
+/// one copy.
 async fn restore_chat_history_if_empty(
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
@@ -678,8 +677,7 @@ pub(crate) async fn chat_handler(
         // protocol injected into their system prompt. The owner-vs-consumer
         // policy is too coarse to express this — every owner-machine session
         // gets `include_memory=true` by default — so we narrow it here once
-        // the live creator is known. Matches the encoder gate in
-        // `consolidation::maybe_fire_consolidation`.
+        // the live creator is known.
         if session_creator != "user" {
             engine.prompt_profile.include_memory = false;
             engine.cached_system_prompt = None;
@@ -729,11 +727,6 @@ pub(crate) async fn chat_handler(
             parent_run_id: None,
         });
 
-        // Post-turn: if this owner session just hit a consolidation
-        // interval, fire the memory ENCODE tick off the turn (non-blocking
-        // — reads what it needs from `engine` here, then spawns). No-op
-        // for consumer/mission/sub-N sessions.
-        super::consolidation::maybe_fire_consolidation(&ctx, &engine);
         // Owner turns also catch up any mission whose `catchup_hours` is set
         // and whose last run is older than that threshold (e.g. the `dream`
         // consolidate+evict mission, when its daily cron was missed because

@@ -122,13 +122,9 @@ pub struct EngineConfig {
     /// Every N user messages, inject a hidden memory self-review nudge into
     /// the turn's message list. `0` disables. Default 6.
     pub memory_nudge_interval: usize,
-    /// Fire the every-N-turns memory consolidation subagent once per N
-    /// completed turns (per-session, derived from chat history — no
-    /// persisted counter). Default 10. See `memory-spec.md` §2.
-    pub consolidate_every_n_turns: usize,
-    /// Episodic-memory retention in days; the consolidate pass terminally
-    /// decides rows older than this, the evict backstop sweeps the rest.
-    /// Default 7. See `memory-spec.md` §2.
+    /// Episodic-memory retention in days; the user-triggered `dream` mission
+    /// terminally decides rows older than this, the evict backstop sweeps the
+    /// rest. Default 7. See `memory-spec.md` §2.
     pub episodic_ttl_days: u64,
     /// Global default auto-compaction trigger as a fraction of context_window_tokens.
     /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
@@ -167,7 +163,6 @@ impl EngineConfig {
             consumer_allowed_tools: None,
             consumer_allowed_skills: None,
             memory_nudge_interval: config.agent.memory_nudge_interval,
-            consolidate_every_n_turns: config.agent.consolidate_every_n_turns,
             episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,

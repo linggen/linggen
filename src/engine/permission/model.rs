@@ -625,8 +625,7 @@ pub fn check_permission(
     // workspace — they hit the user's own daemon-backed memory store, not
     // any path in `session_cwd`. Path-gating them produces a bogus
     // "Switch this folder to chat" ExceedsCeiling prompt when path_modes
-    // is empty (e.g. encoder subagent, which inherits `Vec::new()` from
-    // `consolidation.rs::run_ling_mem_subagent`). Allow unconditionally.
+    // is empty. Allow unconditionally.
     if action_tier == PermissionMode::Chat {
         return PermissionCheckResult::Allowed;
     }

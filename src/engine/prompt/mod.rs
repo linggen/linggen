@@ -12,7 +12,6 @@
 pub mod core_block;
 pub mod profile;
 
-use super::memory;
 use super::types::*;
 use crate::engine::tools;
 use crate::message::ChatMessage;

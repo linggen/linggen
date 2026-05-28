@@ -99,8 +99,8 @@ pub fn install_default_agents() -> Result<()> {
 /// (`.builtin-missions-installed`) records that seeding has happened, so
 /// upgrades never clobber a user's schedule/enabled edits and — crucially
 /// — never resurrect a mission the user deliberately deleted (deleting
-/// `dream` is a supported choice that disables auto-consolidation, not a
-/// bug). Idempotent and safe to call on every daemon start.
+/// `dream` is a supported choice, not a bug). Idempotent and safe to call
+/// on every daemon start.
 pub fn install_default_missions() -> Result<()> {
     let missions_dir = crate::paths::global_missions_dir();
     let sentinel = missions_dir.join(".builtin-missions-installed");
