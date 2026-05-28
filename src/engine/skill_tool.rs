@@ -9,6 +9,23 @@ use tracing::info;
 
 use super::tools::ToolResult;
 
+/// Recursively detects no-op payloads. Returns true for `null`, empty
+/// strings, empty objects/arrays, and — crucially — arrays whose entries
+/// are all effectively empty (e.g. `[{}]`) and objects whose fields are
+/// all effectively empty (e.g. `{"top_bar": null, "body": null}`).
+///
+/// Catches the gpt-5.5 pattern of satisfying "non-empty array" by
+/// passing `[{}]` while emitting no real content.
+fn is_effectively_empty(val: &Value) -> bool {
+    match val {
+        Value::Null => true,
+        Value::String(s) => s.is_empty(),
+        Value::Array(a) => a.iter().all(is_effectively_empty),
+        Value::Object(m) => m.values().all(is_effectively_empty),
+        _ => false, // numbers, bools — concrete content
+    }
+}
+
 fn default_param_type() -> String {
     "string".to_string()
 }
@@ -120,17 +137,13 @@ impl SkillToolDef {
                 // silently emitting an empty update.
                 if param.param_type == "object" || param.param_type == "array" {
                     if let Some(val) = obj.and_then(|o| o.get(name)) {
-                        let is_empty = match val {
-                            Value::Object(m) => m.is_empty(),
-                            Value::Array(a) => a.is_empty(),
-                            _ => false,
-                        };
-                        if is_empty {
+                        if is_effectively_empty(val) {
                             anyhow::bail!(
-                                "{} call has empty '{}' ({}). {}. Retry with the full payload.",
+                                "{} call has empty '{}' (e.g. {} or {}). {}. Retry with the full payload.",
                                 self.name,
                                 name,
                                 if param.param_type == "object" { "{}" } else { "[]" },
+                                if param.param_type == "object" { "all-null fields" } else { "[{}]" },
                                 param.description.trim_end_matches('.'),
                             );
                         }
@@ -149,13 +162,7 @@ impl SkillToolDef {
             // optional-only data tools like PageUpdate.
             let any_non_empty = self.args.keys().any(|name| {
                 obj.and_then(|o| o.get(name))
-                    .map(|v| match v {
-                        Value::Null => false,
-                        Value::Object(m) => !m.is_empty(),
-                        Value::Array(a) => !a.is_empty(),
-                        Value::String(s) => !s.is_empty(),
-                        _ => true,
-                    })
+                    .map(|v| !is_effectively_empty(v))
                     .unwrap_or(false)
             });
             if !any_non_empty {
@@ -326,6 +333,29 @@ mod tests {
     #[test]
     fn shell_escape_with_single_quote() {
         assert_eq!(shell_escape_arg("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn effectively_empty_catches_gpt55_patterns() {
+        use serde_json::json;
+        // Trivially empty
+        assert!(is_effectively_empty(&json!(null)));
+        assert!(is_effectively_empty(&json!("")));
+        assert!(is_effectively_empty(&json!({})));
+        assert!(is_effectively_empty(&json!([])));
+        // gpt-5.5 over-fill patterns
+        assert!(is_effectively_empty(&json!([{}])));
+        assert!(is_effectively_empty(&json!([{}, {}])));
+        assert!(is_effectively_empty(&json!({"top_bar": null, "body": null})));
+        assert!(is_effectively_empty(&json!({"a": {"b": null}})));
+        assert!(is_effectively_empty(&json!([{"a": null}, {}])));
+        // Concrete content — not empty
+        assert!(!is_effectively_empty(&json!("hello")));
+        assert!(!is_effectively_empty(&json!(42)));
+        assert!(!is_effectively_empty(&json!(true)));
+        assert!(!is_effectively_empty(&json!({"key": "val"})));
+        assert!(!is_effectively_empty(&json!([{"match": "x"}])));
+        assert!(!is_effectively_empty(&json!([{}, {"real": 1}])));
     }
 
     #[test]
