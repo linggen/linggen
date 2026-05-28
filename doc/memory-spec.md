@@ -19,17 +19,10 @@ people and projects in their life. Memory must help every kind of user
 > Decay and §3 rule 5 are resolved. Open items remain in "Open / next".
 > No back-compatibility with the prior append-mostly single-store design.
 
-> **2026-05-28 update:** the every-N-turns memory encoder subagent has
-> been **retired**. The main `ling` agent now writes durable rows
-> inline, driven by the system prompt's memory protocol + per-turn
-> auto-recall hint — aligning Linggen with how Claude Code, Codex, and
-> OpenClaw operate via the `shared-memory` plugin/skill. The
-> user-triggered `dream` mission still owns bulk reprocessing
-> (extract candidates from the scan window + promote/evict episodic).
-> Sections below that describe the encoder subagent's mechanics
-> (every-N firing, AskUser bridge, `SubagentPane` routing) reflect the
-> old architecture and are scheduled for rewrite — read them as
-> historical context, not current behavior.
+> **2026-05-28:** the every-N-turns memory encoder subagent was retired.
+> Capture is now inline on the live agent's turn — same protocol across
+> Linggen, Claude Code, Codex, and OpenClaw. The `dream` mission still
+> owns bulk consolidation. §2 below reflects the new architecture.
 
 ## 1. What is memory
 
@@ -92,31 +85,37 @@ core`); no markdown inject path.
 
 ### Engines (the hippocampus)
 
-Two triggers, split by the Complementary Learning Systems model — fast
-encoding while awake, slow consolidation + forgetting "asleep":
+Two paths, split by the Complementary Learning Systems model — fast
+encoding during the turn, slow consolidation + forgetting "asleep":
 
-**Encode — per-session, every N turns** (N default ~10, Settings).
-Per-session counter: resets each session; no startup trigger; sessions
-shorter than N turns are not encoded (a deliberate simplicity tradeoff).
-An async `ling-mem` subagent reads the recent in-session exchange (the
-transcript the engine already holds — memory is **never** captured by
-scanning session/transcript files on disk), applies §4's *exclusion*
-filters (drop file-derivable, secrets, pure activity) **plus a
-write-time usefulness bar** (write only what a future task benefits
-from; drop garbage), and **reads existing memory before each write**
-(`Memory_query`): skip a duplicate (exact or reworded); on a
-contradiction it calls `AskUser` — the widget surfaces in the
-encoder's own `SubagentPane` tab (routed by `agent_id`), and on
-answer the encoder writes the resolved row. On the 5-min `AskUser`
-timeout it falls back to "append new row with `reconcile:pending`,
-leave the old one" so the conflict can still be resolved at a later
-recall. See the Reconcile block for the full per-depth contract.
-The encoder is the *first* gate — episodic is recall-visible immediately
-(recall spans both tables). It does **only** encode. ≈ waking encoding.
+**Capture — inline, on every turn.** The live agent currently talking to
+the user (`ling` in Linggen; the host-resident agent in Claude Code,
+Codex, OpenClaw) writes durable rows in the same turn the signal arrives.
+It is driven by:
 
-Cross-tool memory comes from the **shared store + per-host in-host
-encode** (Linggen's engine here; the cross-agent skill inside other
-hosts), never from one tool scraping another's logs.
+- the system prompt's memory protocol — the substantive doctrine of
+  *what to save and when*, shipped as the MCP server's `initialize.instructions`
+  (third-party hosts) or inlined by `engine/prompt` (Linggen);
+- the per-turn auto-recall hint — relevant prior rows surface at turn
+  start so the live agent can chip them in its reply *and* reconcile
+  duplicates/conflicts on the side (see Reconcile).
+
+Each `Memory_write` reads existing memory first (`Memory_query`): skip a
+duplicate (exact or reworded); on a contradiction call the host's
+ask-user primitive (Linggen `AskUser`, Claude Code `AskUserQuestion`,
+plain chat on Codex/OpenClaw) and write the resolved row on answer. Same
+contract across every host — the *kind* of fact at stake (preferences,
+identity, declarative statements) is the same kind the live agent
+already produces, so a second model running the same prompt out-of-band
+adds latency without lifting capture quality. ≈ waking encoding.
+
+This was previously an every-N-turns `ling-mem` subagent on Linggen
+(retired 2026-05-28). Cross-host parity, no AskUser bridge layer, no
+per-session counter, no SubagentPane routing.
+
+Cross-tool memory comes from the **shared store** — one `~/.linggen`
+backed by the daemon, every host writes through `Memory_*` — never from
+one tool scraping another's logs.
 
 **Consolidate + evict — global, the built-in `dream` mission.** A
 normal, **visible** built-in mission (`~/.linggen/missions/dream/`,
@@ -157,21 +156,16 @@ no-op runs stay quiet.
   (embed, dedup, decay). **No LLM in the binary** — it is the
   portable, deterministic data layer, the single shared source every
   caller goes through.
-- **Judgment** ("what's worth keeping", "is this a contradiction") needs
-  an LLM. "No LLM in the binary" scopes to the `ling-mem` *binary* only
-  — the **Linggen engine has the LLM**, and every judgment site (encode,
-  recall, the dream mission) runs in the engine. Scheduled per host:
-  - **Linggen** — built-in: the engine runs the per-session encoder
-    subagent and the built-in `dream` consolidate+evict mission (daily
-    cron + turn-seam catch-up). Reliable; per-run stoppable; deletable
-    as a supported opt-out (degrades curation, never loses data).
-  - **Third-party (Claude Code, ClawHub/OpenClaw)** — the `ling-mem`
-    skill + lifecycle hooks substitute for the engine scheduler
-    (turn-counter on a Stop hook, etc.).
-- Once Linggen ships built-in, the skill is **third-party-only**.
+- **Judgment** ("is this worth saving", "is this a contradiction") needs
+  an LLM. Capture judgment lives in whichever agent is currently talking
+  to the user — `ling` on Linggen, the host-resident agent on
+  Claude Code / Codex / OpenClaw. The `dream` mission owns the offline
+  consolidation pass; on Linggen it runs in the engine's mission
+  scheduler, on third-party hosts via the `shared-memory` skill's
+  `dream` slash-command. Both call the same `Memory_*` surface.
 - The store lives under `~/.linggen`, owned by the binary, **not** in
-  the skill bundle: deleting the skill degrades capture, never loses
-  data.
+  the skill bundle: deleting the skill / plugin degrades capture, never
+  loses data.
 
 ### Recall
 
@@ -185,38 +179,38 @@ surfaces both for the user/LLM to reconcile, never silently hidden.
 Bulk forget stays user-initiated (dashboard / `ling-mem forget` CLI),
 never a model tool.
 
-### Write routing — by salience (step-3b)
+### Write routing — by salience
 
 Two write speeds, split by salience — mirrors the brain (explicit,
-flagged input gets a fast strong trace; incidental experience goes
-through slow hippocampal consolidation). Capture is **not**
-episodic-only:
+flagged input gets a fast strong trace; incidental experience
+accumulates and is later consolidated). Both happen inline on the
+same turn — the difference is the target table, not who writes:
 
 - **Explicit / declarative** — the user says "remember…", states an
   identity fact, gives a standing instruction, or uses commitment
   language ("always", "never", "from now on"). The live agent commits
-  it **this turn** via `Memory_write` → semantic. Immediate, not queued
-  behind the episodic→consolidate path. Salience → semantic *now*.
-- **Incidental / observed** — what the user/agent did, a decision that
-  emerged, ambient context. Goes to **episodic** via the every-N-turns
-  encoder; the consolidator promotes past-TTL.
+  it **this turn** via `Memory_write` → semantic (`tier=core` for
+  stable universals; `tier=semantic` otherwise). Immediate.
+- **Incidental / observed** — a decision that emerged, ambient context
+  the agent judged worth preserving across sessions. The live agent
+  writes it to **episodic** in the same turn. The `dream` mission
+  later promotes-or-evicts past-TTL.
 - **Core** is *not* a counter or a fast lane: salience gets a row to
   semantic; only a **stable universal** (name, role, enduring rule)
-  becomes `tier=core`, user-confirmed or high-confidence identity-class.
-  A volatile fact ("age 18") goes semantic but is a poor core
-  candidate. The *kind* of fact decides core, never how many times it
-  was said.
+  becomes `tier=core`. A volatile fact ("age 18") goes semantic but is
+  a poor core candidate. The *kind* of fact decides core, never how
+  many times it was said.
 
-Redundancy across the two paths is safe and self-healing: cross-table
-recall dedup keeps the semantic copy; the consolidator later deletes
-the episodic twin.
+Redundancy across paths is safe and self-healing: cross-table recall
+dedup keeps the semantic copy; the `dream` mission later deletes the
+episodic twin.
 
 **Repetition.** An *explicit* restatement reinforces via the live path
 above. An *implicit* pattern (the user keeps doing A but never states a
-rule) does **not** authorize the offline consolidator to synthesize
+rule) does **not** authorize the `dream` mission to synthesize
 "user always A" — that generalization needs the user present (§3;
-surfaced at recall, step 4). The consolidator may promote the
-individual durable rows; it never mints a new general rule alone.
+surfaced at recall, step 4). Dream may promote the individual durable
+rows; it never mints a new general rule alone.
 
 ### Reconcile
 
@@ -238,45 +232,30 @@ against existing memory:
 - **Contradiction** (same subject, *incompatible* value) → resolve
   **only with the user present and only when material** to the current
   interaction: surface the conflicting rows **with their dates** and ask
-  the user to choose/correct; on answer, write the resolved value as a
-  **new timestamped row** (the stale one stays — recall reconciles by
-  recency; the user may explicitly delete it). Never silently overwrite.
-  When **not material**, or in a context that **cannot ask**: append
-  the new row, leave the old one, defer the ask. There is no structural
-  "replaces" link — reconciliation is append + read-time + explicit
-  user delete (see §3, §4; a link is Future, not built). Cosine
-  **cannot** separate a contradiction from a restatement — both score
-  high — so this classification needs the LLM, never the binary's dedup.
+  the user to choose/correct via the host's ask-user primitive (Linggen
+  `AskUser`, Claude Code `AskUserQuestion`, plain chat on Codex/OpenClaw).
+  On answer, write the resolved row and delete the losers — ordered
+  `memory_add` then `memory_delete` so a concurrent recall sees the old
+  rows or both, never an empty hole on the subject. When **not material**,
+  or in a context that **cannot ask**: append the new row, leave the old
+  one, defer the ask. Cosine **cannot** separate a contradiction from a
+  restatement — both score high — so this classification needs the LLM,
+  never the binary's dedup.
 - **New** → write.
 
-**Who can actually ask — and where the widget surfaces.** Both the
-depth-0 live agent and depth-1 subagents may call `AskUser`; the prior
-depth>0 block in `tools/mod.rs` was lifted once subagents got their
-own UI surface (`SubagentPane`). What still decides each path is the
-session's chat surface the widget routes to, not whether the call is
-allowed:
+**Same protocol across every host.** Two write surfaces remain:
 
-- **Live `Memory_write`** (the conversational agent, depth-0) — reads
-  first; near-dup → skip; contradiction → `AskUser` in the **main
-  chat**; on answer, append the resolved row.
-- **N-turn encoder** (a sub-agent) — reads first (`Memory_query`);
-  skips an exact/reworded duplicate; on a contradiction it **calls
-  `AskUser`** showing both rows with their dates plus a free-text
-  "other" option. The widget surfaces in the encoder's own
-  `SubagentPane` tab (routed by `agent_id`), so the user can answer
-  at their own pace without interrupting the main chat. On answer
-  the encoder writes the resolved row and may delete the loser
-  (explicit user resolution is the one delete the encoder is allowed
-  to make). On **timeout** (5 min, enforced by the AskUser tool)
-  the encoder falls back: write the new row with
-  `--context reconcile:pending`, leave the old one, let a later
-  recall surface both.
-- **`dream` mission** (no user at all) — reads the store, mechanical +
-  high-confidence only; defers contradictions entirely.
+- **Live `Memory_write`** (the live agent, on every turn) — reads first;
+  near-dup → skip; contradiction → ask the user via the host's primitive;
+  on answer, write the resolved row then delete the losers.
+- **`dream` mission** (no user present) — reads the store, mechanical +
+  high-confidence promote/evict only; defers contradictions entirely (no
+  rows are silently rewritten without the user).
 
-So "every write reads first" still holds on all three; the *ask* now
-runs at whichever depth saw the conflict, with each agent's widget
-landing in its own chat surface.
+The encoder subagent and its dedicated `SubagentPane` widget routing are
+**gone** — the live agent's ask-user widget lands wherever it is
+already talking (Linggen's main chat, CC's UI, Codex's terminal). Same
+contract on all four hosts.
 
 **Floors.** Synthesis *for the answer* is encouraged (merge rows into a
 dated narrative in the reply); synthesis *into a stored row* is
@@ -287,9 +266,9 @@ nuance or contradiction.
 
 ### Extraction contract
 
-The encoder and the consolidator share one contract: the durability
-rules in §4, plus Reconcile above. Same rules, runtimes differ only by
-user-presence.
+The live agent (capture) and the `dream` mission (consolidation) share
+one contract: the durability rules in §4, plus Reconcile above. Same
+rules, runtimes differ only by user-presence.
 
 ## 3. Design rules
 
@@ -540,15 +519,18 @@ Ordered. Each is a design decision not yet locked.
 
 1. **Decay model** — *resolved* (§2): clock = `updated_at` (touch
    resets it); wall-clock `EPISODIC_TTL` (7d default,
-   Settings-configurable); consolidate-before-evict. Encode trigger is
-   per-session/every-N-turns (no startup, sub-N skipped); consolidate +
-   evict run on the `dream` mission (daily cron + turn-seam catch-up).
+   Settings-configurable); consolidate-before-evict. Capture is inline
+   on every live turn (no encoder subagent, no every-N counter — retired
+   2026-05-28); consolidate + evict run on the `dream` mission (daily
+   cron + turn-seam catch-up).
 2. **Consolidator contract** — *resolved* (§2): consolidate processes
    past-TTL rows only; each is terminally promoted (→ semantic, a plain
    append, never destructive) or deleted; re-entrancy needs
-   no watermark — a handled row leaves episodic. Split (2026-05-19) onto
-   the built-in **`dream` mission** (global, visible, cron + turn-seam
-   catch-up); the per-session subagent is now **encode-only**.
+   no watermark — a handled row leaves episodic. Lives entirely on the
+   built-in **`dream` mission** (global, visible, daily cron + turn-seam
+   catch-up). Split off the per-session subagent on 2026-05-19; the
+   subagent itself was retired 2026-05-28 (capture is now inline on the
+   live agent's turn).
 3. **Dedup threshold** — *resolved*: `DEDUP_SIMILARITY_THRESHOLD = 0.75`,
    retuned 2026-05-15 against the real Qwen3-Embedding-0.6B distribution
    (restatements 0.78–0.97, distinct pairs ≤0.65; 0.75 sits in the gap,
@@ -563,13 +545,15 @@ Ordered. Each is a design decision not yet locked.
    scorecard is a new eval measuring extraction precision, dedup
    correctness, supersession accuracy, and decay calibration — unbuilt
    by anyone; this is the opening. Build it next.
-5. **Encoder ↔ consolidator boundary** — *resolved* (§2): the encoder
-   applies §4's hard exclusions **+ a write-time usefulness bar**
-   (episodic is recall-visible immediately); the consolidator remains
+5. **Capture ↔ consolidation boundary** — *resolved* (§2): the live
+   agent applies §4's hard exclusions **+ a write-time usefulness bar**
+   (episodic is recall-visible immediately); the `dream` mission remains
    the terminal promote/delete gate for past-TTL rows. Revised
    2026-05-19 from "liberal capture" once recall began spanning episodic
    — server-side dedup (`insert_with_dedup`) collapses byte-identical
    restatements (exact-content only; reworded/contradiction is the LLM's).
+   Updated 2026-05-28: capture moved off a per-session subagent onto the
+   live agent's inline turn writes.
 6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
    (any reactivation), gated action; exact-dup→mechanical collapse
    (cosine is never a sameness gate — it can't tell a restatement from a
