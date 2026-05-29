@@ -450,6 +450,19 @@ mod tests {
         // Real paths still come through; bare-slash junk is dropped.
         let mixed = extract_command_paths("cat ~/.linggen/x.json / // ///");
         assert_eq!(mixed, vec!["~/.linggen/x.json".to_string()]);
+
+        // Path-like words INSIDE a quoted string arg (a search query) are
+        // NOT path args — the quoted span stays one word.
+        let q = extract_command_paths(
+            "ling-mem search \"binary path /usr/local/bin ~/.local/bin state ~/.linggen\" --limit 8",
+        );
+        assert!(q.is_empty(), "quoted search query must not yield path args; got {q:?}");
+
+        // But a genuinely quoted path ARG still counts.
+        assert_eq!(
+            extract_command_paths("cat \"/etc/hosts\""),
+            vec!["/etc/hosts".to_string()],
+        );
     }
 
     #[test]

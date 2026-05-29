@@ -74,9 +74,14 @@ impl AgentEngine {
         // effects, no save, no prompt. Used by the Copy-System-Prompt button.
         // Tools NOT registered on export — the export path is a read-only
         // prompt snapshot and the throwaway engine's tool registry is
-        // discarded.
+        // discarded. We still apply the tool scope so the exported prompt
+        // shows the SAME restricted tool surface the live session uses
+        // (skill `allowed-tools` ∩ engine tools, plus the skill's own
+        // tools) — otherwise the snapshot misleadingly lists all of ling's
+        // tools.
         if matches!(mode, ActivationMode::Export) {
             apply_skill_app_scope(self, &skill);
+            apply_skill_tool_scope(self, &skill);
             self.active_skill = Some(skill);
             return ActivationOutcome::Activated { grants_changed: false };
         }

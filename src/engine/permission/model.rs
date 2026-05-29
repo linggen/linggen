@@ -746,19 +746,69 @@ pub fn check_permission(
 /// spaces, embedded `--flag=/path` forms, or command substitution. Catches the
 /// common `cmd /path` and `cmd ~/path` forms.
 pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
-    cmd.split_whitespace()
-        .filter(|t| t.starts_with('/') || t.starts_with("~/") || *t == "~")
-        // Strip trailing punctuation introduced by compound shell syntax
-        // (`cmd1; cmd2`, `cmd1 && cmd2`, redirects).
+    shell_words(cmd)
+        .into_iter()
+        // A fully-quoted word is a single string argument — unwrap it so a
+        // quoted path ARG (`cat "/etc/x"`) still counts, while a quoted
+        // string that merely CONTAINS path-like words (a `ling-mem search
+        // "... /usr/local/bin ..."` query, a jq program) stays one word
+        // and is not mistaken for a path the command touches.
+        .map(|w| {
+            let t = w.trim();
+            let quoted = t.len() >= 2
+                && ((t.starts_with('"') && t.ends_with('"'))
+                    || (t.starts_with('\'') && t.ends_with('\'')));
+            if quoted { t[1..t.len() - 1].to_string() } else { t.to_string() }
+        })
+        .filter(|t| t.starts_with('/') || t.starts_with("~/") || t == "~")
+        // Strip trailing punctuation from compound shell syntax.
         .map(|t| t.trim_end_matches(';').trim_end_matches('&').trim_end_matches('|').to_string())
         .filter(|t| !t.is_empty())
-        // Reject all-slash tokens that aren't real paths — most commonly
-        // jq's `//` alternative operator (`'.a // .b // 7'`), but also a
-        // bare `/` or `///`. Without this they get treated as a path the
-        // command touches, demanding admin on `//` — an unsatisfiable
-        // grant that re-prompts forever.
+        // Reject all-slash tokens (`/`, `//`, `///`) — e.g. an unquoted jq
+        // `//` operator — which would otherwise demand admin on `//`.
         .filter(|t| !t.trim_matches('/').is_empty())
         .collect()
+}
+
+/// Split a command line into shell-ish words, keeping single/double quoted
+/// spans together as one word (the quotes are retained). Not a full shell
+/// parser — just enough to tell a path ARG from a path that merely appears
+/// inside a quoted string argument (search query, jq program), which must
+/// NOT be gated as a path the command touches.
+fn shell_words(cmd: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut has = false;
+    for c in cmd.chars() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                cur.push(c);
+                has = true;
+            }
+            None if c.is_whitespace() => {
+                if has {
+                    words.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            None => {
+                cur.push(c);
+                has = true;
+            }
+        }
+    }
+    if has {
+        words.push(cur);
+    }
+    words
 }
 
 fn expand_path_arg(p: &str) -> PathBuf {
