@@ -211,9 +211,21 @@ fn apply_skill_app_scope(engine: &mut AgentEngine, skill: &Skill) {
 /// ling's full set). Only for session-entering activations (SessionBound /
 /// SlashCommand / Trigger) — NOT the transient `ToolInvocation` borrow,
 /// where ling keeps its own tools, nor `Export` (read-only snapshot).
+///
+/// `allowed-tools` gates only the shared ENGINE tools. A skill's OWN
+/// provided tools — its `tools:` capabilities plus the auto-injected
+/// `PageUpdate` for app-skills — are intrinsic to the skill and are always
+/// available, so they're unioned into the scope. (Without this an app
+/// skill that declares `allowed-tools` could never render its dashboard.)
 fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
-    engine.cfg.skill_allowed_tools =
+    let mut scope =
         crate::extensions::scope::compute_tool_scope(skill.allowed_tools.as_deref().unwrap_or(&[]));
+    if let Some(set) = scope.as_mut() {
+        for td in &skill.tool_defs {
+            set.insert(td.name.clone());
+        }
+    }
+    engine.cfg.skill_allowed_tools = scope;
 }
 
 /// Stamp a skill's declared `permission.paths` grants into the engine's
