@@ -5,8 +5,7 @@
 //! consolidates the four different "should I prompt? should I apply
 //! grants?" rules into one place ([`ActivationMode`]).
 
-use crate::engine::permission::{effective_mode_for_path, PermissionAction};
-use crate::engine::tools::{AskUserOption, AskUserQuestion};
+use crate::engine::permission::effective_mode_for_path;
 use crate::engine::AgentEngine;
 use crate::engine::skill::Skill;
 use std::collections::HashSet;
@@ -94,39 +93,15 @@ impl AgentEngine {
             return ActivationOutcome::Activated { grants_changed: false };
         }
 
-        // SlashCommand on an interactive session: prompt the user before
-        // committing. Cancel returns without touching engine state.
-        if matches!(mode, ActivationMode::SlashCommand)
-            && self.session_permissions.interactive
-            && skill.permission.is_some()
-        {
-            match prompt_for_grants(self, &skill).await {
-                PromptOutcome::Approve => {
-                    let grants_changed = write_skill_grants(self, &skill);
-                    register_skill_tools(self, &skill);
-                    apply_skill_app_scope(self, &skill);
-                    apply_skill_tool_scope(self, &skill);
-                    seed_session_cwd_from_skill(self, &skill);
-                    self.active_skill = Some(skill);
-                    return ActivationOutcome::Activated { grants_changed };
-                }
-                PromptOutcome::RunInCurrentMode => {
-                    register_skill_tools(self, &skill);
-                    apply_skill_app_scope(self, &skill);
-                    apply_skill_tool_scope(self, &skill);
-                    seed_session_cwd_from_skill(self, &skill);
-                    self.active_skill = Some(skill);
-                    return ActivationOutcome::Activated { grants_changed: false };
-                }
-                PromptOutcome::Cancel => {
-                    return ActivationOutcome::Cancelled;
-                }
-            }
-        }
-
-        // Implicit-approval modes (SessionBound, Trigger, and SlashCommand
-        // on non-interactive sessions): apply grants silently when
-        // interactive, then commit.
+        // All remaining real activations (SessionBound, Trigger, and
+        // SlashCommand) apply the skill's DECLARED permission.paths grants
+        // silently — the SKILL.md declaration is the approval, so there is
+        // no activation-time prompt. Anything the skill tries to touch at
+        // runtime BEYOND its declared grants still hits the per-operation
+        // ceiling check in `permission::check_permission`, which prompts
+        // ("Switch this folder to … / Allow once / Deny"). Declared = no
+        // ask; undeclared = ask. Grants are only written for interactive
+        // sessions (headless missions don't persist grants).
         let grants_changed = if self.session_permissions.interactive {
             write_skill_grants(self, &skill)
         } else {
@@ -276,51 +251,3 @@ fn write_skill_grants(engine: &mut AgentEngine, skill: &Skill) -> bool {
     changed
 }
 
-enum PromptOutcome {
-    /// User picked "Approve" — write the declared grants.
-    Approve,
-    /// User picked "Run in current mode" — proceed without writing grants.
-    RunInCurrentMode,
-    /// User picked "Cancel" or the prompt timed out.
-    Cancel,
-}
-
-async fn prompt_for_grants(engine: &mut AgentEngine, skill: &Skill) -> PromptOutcome {
-    let Some(perm) = skill.permission.as_ref() else {
-        return PromptOutcome::RunInCurrentMode;
-    };
-    let paths_str = perm.display_paths();
-    let mut question_text = format!("Skill \"{}\" requests grants on: {}", skill.name, paths_str);
-    if let Some(ref warning) = perm.warning {
-        question_text.push_str(&format!("\n⚠️ {}", warning));
-    }
-
-    let question = AskUserQuestion {
-        question: question_text,
-        header: "Permission".to_string(),
-        options: vec![
-            AskUserOption {
-                label: "Approve".to_string(),
-                description: Some(format!("Grant: {}", paths_str)),
-                preview: None,
-            },
-            AskUserOption {
-                label: "Run in current mode".to_string(),
-                description: Some("Skill runs with existing permissions (may fail)".to_string()),
-                preview: None,
-            },
-            AskUserOption {
-                label: "Cancel".to_string(),
-                description: Some("Don't run this skill".to_string()),
-                preview: None,
-            },
-        ],
-        multi_select: false,
-    };
-
-    match engine.ask_permission_raw(&skill.name, question).await {
-        Some(PermissionAction::AllowOnce) => PromptOutcome::Approve,
-        Some(PermissionAction::AllowSession) => PromptOutcome::RunInCurrentMode,
-        _ => PromptOutcome::Cancel,
-    }
-}

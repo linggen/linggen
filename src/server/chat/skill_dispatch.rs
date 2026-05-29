@@ -60,22 +60,11 @@ pub(super) async fn run_skill_dispatch(
     wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
 
     if let Some(skill) = resolved_skill {
-        // A slash command targeting the session's OWN bound skill (the app
-        // the user explicitly opened) is implicit consent — activate it
-        // silently via SessionBound so its declared grants apply without a
-        // permission prompt. Commands targeting a DIFFERENT skill still
-        // prompt (SlashCommand).
-        let bound_skill = ctx
-            .session_id
-            .as_deref()
-            .and_then(|sid| ctx.manager.global_sessions.get_session_meta(sid).ok().flatten())
-            .and_then(|m| m.skill);
-        let mode = if bound_skill.as_deref() == Some(skill.name.as_str()) {
-            ActivationMode::SessionBound
-        } else {
-            ActivationMode::SlashCommand
-        };
-        match engine.activate_skill(skill, mode).await {
+        // Declared permission.paths apply silently on activation (the
+        // SKILL.md declaration is the approval); undeclared runtime access
+        // still prompts via the per-operation ceiling check. So no grant
+        // prompt fires here regardless of mode.
+        match engine.activate_skill(skill, ActivationMode::SlashCommand).await {
             ActivationOutcome::Activated { grants_changed: true } => {
                 let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
             }
