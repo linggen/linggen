@@ -117,6 +117,12 @@ pub struct EngineConfig {
     /// When set, restricts available tools for proxy room consumers.
     /// Owner configures which tools consumers can use via room_config.toml.
     pub consumer_allowed_tools: Option<std::collections::HashSet<String>>,
+    /// When set, restricts available tools to the active skill's declared
+    /// `allowed-tools`. ling supplies the personality/soul; the active
+    /// skill supplies the tool surface. None = the skill declared no list
+    /// (inherit ling's full set). Applied on session-entering skill
+    /// activation; see `skill_activation::apply_skill_tool_scope`.
+    pub skill_allowed_tools: Option<std::collections::HashSet<String>>,
     /// When set, restricts available skills for proxy room consumers.
     pub consumer_allowed_skills: Option<std::collections::HashSet<String>>,
     /// Every N user messages, inject a hidden memory self-review nudge into
@@ -161,6 +167,7 @@ impl EngineConfig {
             bash_allow_prefixes: None,
             mission_allowed_tools: None,
             consumer_allowed_tools: None,
+            skill_allowed_tools: None,
             consumer_allowed_skills: None,
             memory_nudge_interval: config.agent.memory_nudge_interval,
             episodic_ttl_days: config.agent.episodic_ttl_days,
@@ -170,15 +177,23 @@ impl EngineConfig {
         }
     }
 
-    /// Compute the cascading intersection of mission + consumer tool restrictions.
-    /// Returns None if no restrictions apply (all tools allowed from config perspective).
+    /// Compute the cascading intersection of mission + consumer + skill
+    /// tool restrictions. Each present set narrows the allowed tools;
+    /// absent sets impose no constraint. Returns None when none apply.
     pub fn effective_tool_restrictions(&self) -> Option<std::collections::HashSet<String>> {
-        match (&self.mission_allowed_tools, &self.consumer_allowed_tools) {
-            (None, None) => None,
-            (Some(m), None) => Some(m.clone()),
-            (None, Some(c)) => Some(c.clone()),
-            (Some(m), Some(c)) => Some(m.intersection(c).cloned().collect()),
+        let sets = [
+            self.mission_allowed_tools.as_ref(),
+            self.consumer_allowed_tools.as_ref(),
+            self.skill_allowed_tools.as_ref(),
+        ];
+        let mut acc: Option<std::collections::HashSet<String>> = None;
+        for set in sets.into_iter().flatten() {
+            acc = Some(match acc {
+                None => set.clone(),
+                Some(prev) => prev.intersection(set).cloned().collect(),
+            });
         }
+        acc
     }
 
     /// Check if a specific tool is allowed by config-level restrictions.
@@ -608,5 +623,46 @@ impl AgentEngine {
         self.parent_agent_id
             .clone()
             .unwrap_or_else(|| "user".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn cfg() -> EngineConfig {
+        EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            PathBuf::from("/tmp"),
+            InterfaceMode::Web,
+        )
+    }
+    fn set(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_skill_tool_scope_restricts_and_intersects() {
+        // No restrictions → all tools allowed.
+        let c = cfg();
+        assert!(c.effective_tool_restrictions().is_none());
+        assert!(c.is_tool_allowed("Bash"));
+
+        // Skill-only scope narrows to the skill's declared tools.
+        let mut c = cfg();
+        c.skill_allowed_tools = Some(set(&["Read", "Bash", "AskUser", "Memory_write"]));
+        assert!(c.is_tool_allowed("Bash"));
+        assert!(c.is_tool_allowed("AskUser"));
+        assert!(!c.is_tool_allowed("WebFetch"));
+
+        // Skill ∩ mission → only tools in BOTH survive.
+        let mut c = cfg();
+        c.skill_allowed_tools = Some(set(&["Read", "Bash", "Edit"]));
+        c.mission_allowed_tools = Some(set(&["Read", "Bash"]));
+        let eff = c.effective_tool_restrictions().unwrap();
+        assert_eq!(eff, set(&["Read", "Bash"]));
+        assert!(!c.is_tool_allowed("Edit"));
     }
 }

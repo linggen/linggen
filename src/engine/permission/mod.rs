@@ -29,7 +29,8 @@ pub use store::SessionPermissions;
 #[cfg(test)]
 mod tests {
     use super::model::{
-        classify_bash_command, is_hardcoded_deny, tool_action_tier, BashClass,
+        classify_bash_command, extract_command_paths, is_hardcoded_deny, tool_action_tier,
+        BashClass,
     };
     use super::prompt::parse_exceeds_ceiling_answer;
     use super::*;
@@ -431,6 +432,50 @@ mod tests {
             assert!(matches!(result, PermissionCheckResult::Allowed),
                 "bash on a granted path should be allowed even if cwd is lower-tier. got {result:?}");
         }
+    }
+
+    #[test]
+    fn test_extract_command_paths_ignores_jq_alternative_operator() {
+        // jq's `//` alternative operator must NOT be read as a filesystem
+        // path — otherwise the dream's TTL command demands admin on `//`.
+        let cmd = "ling-mem list --episodic --older-than \"7d\" --format json \
+                   | jq -r '.data.episodic_ttl_days // env.X // 7'";
+        let paths = extract_command_paths(cmd);
+        assert!(paths.is_empty(), "jq // should not be extracted; got {paths:?}");
+
+        // Real paths still come through; bare-slash junk is dropped.
+        let mixed = extract_command_paths("cat ~/.linggen/x.json / // ///");
+        assert_eq!(mixed, vec!["~/.linggen/x.json".to_string()]);
+    }
+
+    #[test]
+    fn test_dream_commands_allowed_with_linggen_admin_grant() {
+        // End-to-end repro of the click-a-day → dream flow. The skill
+        // grants admin on ~/.linggen (SKILL.md permission.paths) and runs
+        // from cwd ~/.linggen. Both the scan.sh exec and the Phase 3 TTL
+        // command (which contains jq's `//` operator) must run WITHOUT a
+        // permission prompt.
+        let Some(home) = dirs::home_dir() else { return };
+        let cwd = home.join(".linggen");
+        let mut sp = SessionPermissions::default();
+        sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Admin);
+
+        let scan = "bash ~/.linggen/skills/shared-memory/scripts/scan.sh 2026-05-29";
+        assert!(
+            matches!(check_permission("Bash", Some(scan), None, &cwd, &sp, None),
+                     PermissionCheckResult::Allowed),
+            "scan.sh under admin ~/.linggen should be allowed",
+        );
+
+        let ttl = "set -e; TTL_DAYS=$(curl -s http://127.0.0.1:9888/api/config 2>/dev/null \
+                   | jq -r '.data.episodic_ttl_days // env.LING_MEM_EPISODIC_TTL_DAYS // 7'); \
+                   ling-mem list --episodic --older-than \"${TTL_DAYS}d\" --format json \
+                   | jq -c 'del(.vector)'";
+        assert!(
+            matches!(check_permission("Bash", Some(ttl), None, &cwd, &sp, None),
+                     PermissionCheckResult::Allowed),
+            "Phase 3 TTL command (with jq //) should be allowed, not re-prompt for admin on //",
+        );
     }
 
     #[test]

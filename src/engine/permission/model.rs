@@ -713,6 +713,12 @@ pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
         // (`cmd1; cmd2`, `cmd1 && cmd2`, redirects).
         .map(|t| t.trim_end_matches(';').trim_end_matches('&').trim_end_matches('|').to_string())
         .filter(|t| !t.is_empty())
+        // Reject all-slash tokens that aren't real paths — most commonly
+        // jq's `//` alternative operator (`'.a // .b // 7'`), but also a
+        // bare `/` or `///`. Without this they get treated as a path the
+        // command touches, demanding admin on `//` — an unsatisfiable
+        // grant that re-prompts forever.
+        .filter(|t| !t.trim_matches('/').is_empty())
         .collect()
 }
 

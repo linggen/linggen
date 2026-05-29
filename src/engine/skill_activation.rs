@@ -105,6 +105,7 @@ impl AgentEngine {
                     let grants_changed = write_skill_grants(self, &skill);
                     register_skill_tools(self, &skill);
                     apply_skill_app_scope(self, &skill);
+                    apply_skill_tool_scope(self, &skill);
                     seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
                     return ActivationOutcome::Activated { grants_changed };
@@ -112,6 +113,7 @@ impl AgentEngine {
                 PromptOutcome::RunInCurrentMode => {
                     register_skill_tools(self, &skill);
                     apply_skill_app_scope(self, &skill);
+                    apply_skill_tool_scope(self, &skill);
                     seed_session_cwd_from_skill(self, &skill);
                     self.active_skill = Some(skill);
                     return ActivationOutcome::Activated { grants_changed: false };
@@ -132,6 +134,7 @@ impl AgentEngine {
         };
         register_skill_tools(self, &skill);
         apply_skill_app_scope(self, &skill);
+        apply_skill_tool_scope(self, &skill);
         seed_session_cwd_from_skill(self, &skill);
         self.active_skill = Some(skill);
         ActivationOutcome::Activated { grants_changed }
@@ -225,6 +228,17 @@ fn apply_skill_app_scope(engine: &mut AgentEngine, skill: &Skill) {
     let mut scoped: HashSet<String> = allow.iter().cloned().collect();
     scoped.insert(skill.name.clone());
     engine.cfg.consumer_allowed_skills = Some(scoped);
+}
+
+/// Restrict the session's tool surface to the skill's declared
+/// `allowed-tools`. ling supplies the personality/soul; the active skill
+/// supplies the tools. An empty/absent list means no restriction (inherit
+/// ling's full set). Only for session-entering activations (SessionBound /
+/// SlashCommand / Trigger) — NOT the transient `ToolInvocation` borrow,
+/// where ling keeps its own tools, nor `Export` (read-only snapshot).
+fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
+    engine.cfg.skill_allowed_tools =
+        crate::extensions::scope::compute_tool_scope(skill.allowed_tools.as_deref().unwrap_or(&[]));
 }
 
 /// Stamp a skill's declared `permission.paths` grants into the engine's
