@@ -373,26 +373,30 @@ mod tests {
         // call prompts to upgrade /B.
         if let Some(home) = dirs::home_dir() {
             let cwd = home.join("a");
+            let other = home.join("b/foo");
+            let other_str = other.to_string_lossy().to_string();
             let mut sp = SessionPermissions::default();
             sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Read);
 
+            // Use a non-temp path: temp dirs are always-allowed scratch, so
+            // they wouldn't exercise the arg-path gate this test covers.
             let result = check_permission(
-                "Bash", Some("ls /tmp/foo"), None,
+                "Bash", Some(&format!("ls {other_str}")), None,
                 &cwd, &sp, None,
             );
             assert!(
                 matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
-                "ls /tmp/foo from cwd {} should prompt — /tmp/foo not covered. got {result:?}",
+                "ls {other_str} from cwd {} should prompt — arg path not covered. got {result:?}",
                 cwd.display(),
             );
 
-            sp.set_path_mode("/tmp", PermissionMode::Read);
+            sp.set_path_mode(&home.join("b").to_string_lossy(), PermissionMode::Read);
             let result = check_permission(
-                "Bash", Some("ls /tmp/foo"), None,
+                "Bash", Some(&format!("ls {other_str}")), None,
                 &cwd, &sp, None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed),
-                "ls /tmp/foo with read on /tmp should be allowed. got {result:?}");
+                "ls {other_str} with read on ~/b should be allowed. got {result:?}");
         }
     }
 
@@ -476,6 +480,37 @@ mod tests {
                      PermissionCheckResult::Allowed),
             "Phase 3 TTL command (with jq //) should be allowed, not re-prompt for admin on //",
         );
+    }
+
+    #[test]
+    fn test_temp_dir_is_always_allowed_scratch() {
+        let cwd = dirs::home_dir().unwrap_or_default().join(".linggen");
+        let sp = SessionPermissions::default(); // no grants at all
+
+        // A Bash write to /tmp (admin-class — unknown programs) is allowed
+        // with NO grant: temp is always-available scratch.
+        let cmd = "tail -n +2 ~/.linggen/memory/.scan-output.jsonl | jq -r '.x' \
+                   > /tmp/dream_users.txt && wc -l /tmp/dream_users.txt";
+        // (~/.linggen still needs its own grant; grant it so only /tmp is at issue.)
+        let mut sp2 = SessionPermissions::default();
+        sp2.set_path_mode(&dirs::home_dir().unwrap().join(".linggen").to_string_lossy(), PermissionMode::Admin);
+        assert!(
+            matches!(check_permission("Bash", Some(cmd), None, &cwd, &sp2, None),
+                     PermissionCheckResult::Allowed),
+            "admin-class bash writing to /tmp should be allowed as scratch",
+        );
+
+        // A Write tool straight to a /tmp file is allowed with no grant.
+        assert!(matches!(
+            check_permission("Write", None, Some("/tmp/scratch.json"), &cwd, &sp, None),
+            PermissionCheckResult::Allowed
+        ));
+
+        // Deny floor still wins even when the target is in temp.
+        assert!(matches!(
+            check_permission("Bash", Some("sudo rm -rf /tmp/x"), None, &cwd, &sp, None),
+            PermissionCheckResult::Blocked(_)
+        ));
     }
 
     #[test]

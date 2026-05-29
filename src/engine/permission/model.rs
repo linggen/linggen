@@ -525,6 +525,36 @@ pub fn effective_mode_for_path(path_modes: &[PathMode], target: &Path) -> Option
     best.map(|(pm, _)| pm.mode)
 }
 
+/// Canonical OS temp roots — scratch space always usable by any skill or
+/// agent without a permission prompt. Covers `/tmp` and `/private/tmp`
+/// (the same dir on macOS) plus `$TMPDIR` (`std::env::temp_dir()`, e.g.
+/// `/var/folders/.../T` on macOS). Computed once. The hardcoded deny floor
+/// (sudo, rm -rf /, mkfs, …) still applies to any command touching temp.
+fn temp_roots() -> &'static [String] {
+    static ROOTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        let mut v: Vec<String> = ["/tmp", "/private/tmp"]
+            .iter()
+            .map(|p| normalize_path(p))
+            .collect();
+        v.push(normalize_path(&std::env::temp_dir().to_string_lossy()));
+        v.retain(|s| !s.is_empty());
+        v.sort();
+        v.dedup();
+        v
+    })
+}
+
+/// True when `target` resolves inside an OS temp root. Such paths are
+/// exempt from permission gating — treated as always-granted scratch.
+pub(super) fn is_under_temp(target: &Path) -> bool {
+    let t = normalize_path(&target.to_string_lossy());
+    temp_roots().iter().any(|root| {
+        t.starts_with(root.as_str())
+            && (t.len() == root.len() || t.as_bytes().get(root.len()) == Some(&b'/'))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tool tier mapping
 // ---------------------------------------------------------------------------
@@ -642,6 +672,10 @@ pub fn check_permission(
             if !path_args.is_empty() {
                 for path_arg in &path_args {
                     let arg_path = expand_path_arg(path_arg);
+                    // OS temp dir is always-available scratch — don't gate it.
+                    if is_under_temp(&arg_path) {
+                        continue;
+                    }
                     let mode = effective_mode_for_path(&session_perms.path_modes, &arg_path);
                     if mode.map_or(true, |m| action_tier > m) {
                         let grant_path = grant_path_for_prompt(tool, &arg_path, session_cwd);
@@ -676,6 +710,11 @@ pub fn check_permission(
             }
         })
         .unwrap_or_else(|| session_cwd.to_path_buf());
+
+    // 3b. OS temp dir is always-available scratch (deny floor still applies).
+    if is_under_temp(&target_path) {
+        return PermissionCheckResult::Allowed;
+    }
 
     // 4. Most-specific grant covering the target.
     if let Some(mode) = effective_mode_for_path(&session_perms.path_modes, &target_path) {
