@@ -302,6 +302,9 @@ impl AgentEngine {
             self.spec.as_ref().map(|s| s.name.clone()),
         );
         if self.prompt_profile.include_memory {
+            // Head differs by whether the store has `tier=core` rows; the
+            // shared tail (save triggers, retrieval-visibility, usage rules)
+            // is one fragment so the two heads can't drift apart.
             match core_block::load_core() {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
                     keys::CORE_MEMORY_BLOCK,
@@ -312,6 +315,10 @@ impl AgentEngine {
                     &[],
                 )),
             }
+            stable.push_str(&self.prompt_store.render_or_fallback(
+                keys::CORE_MEMORY_SHARED,
+                &[],
+            ));
             // Canonical memory protocol — single source of truth for the
             // read-before-write rule, AskUser shape, tier selection, and
             // tier discipline on resolution. Injected once per session

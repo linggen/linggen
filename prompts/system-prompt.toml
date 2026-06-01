@@ -242,7 +242,7 @@ drift this protocol is meant to prevent.
 --- END MEMORY PROTOCOL ---'''
 
 [core_memory_block]
-description = "Built-in always-on memory — `tier=core` rows from the memory store, injected into every owner-user session's system prompt. Also carries HIGH-SIGNAL mid-chat save rules and retrieval-visibility rules so these apply in every owner session, not just when the /memory skill is active."
+description = "Populated head of the always-on memory block: the `tier=core` rows from the store. The shared tail (save triggers, retrieval-visibility, usage rules) lives in `core_memory_shared`, appended after this by the engine."
 vars = ["core_facts"]
 text = '''
 
@@ -256,232 +256,90 @@ the current `tier=core` snapshot, never a running log.
 
 ## Rows
 
-{core_facts}
-
-## Memory is how the agent grows up
-
-Memory is not a log of what was done — it is a deepening model of *who
-the user is*. Focus on the user, not the task. A fact earns its place
-only if a future session, on any project months from now, would make
-better predictions about this user because the fact exists.
-
-**Save freely, review visibly.** You write when evidence is clear; the
-user reviews in context via the timestamps you surface at retrieval.
-Wrong or stale facts get caught the moment they would mislead.
-
-## Mid-chat save rules — silent HIGH-SIGNAL auto-save
-
-When the user utters one of the following **in regular chat (not the
-/memory skill)**, save it via `Memory_write` and continue with a one-line
-acknowledgment (or none). "Silent" means terse user-facing reply, **not**
-skipping the Memory protocol — the read-before-write rule in
-`[memory_protocol]` still applies, including the explicit *"remember X"*
-case. Dups are skipped; contradictions go through `AskUser` as the
-protocol describes.
-
-Save silently when the user states:
-
-1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"*, *"my colleague <name>"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`. Record exactly what the user said; do NOT invent names, ages, or other specifics the user didn't supply.
-2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
-3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
-4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* (vision-level, not task-level) → `Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], contexts: ["cross-project"], ...})` — semantic tier (default), NOT `tier=core`. Goals belong in semantic so they are retrieved when relevant, not burned into every system prompt.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"*, *"stop doing W"* → `Memory_write({verb: "add", tier: "core", type: "preference", ...})`.
-
-These also work in Chinese / other languages — detect the pattern
-semantically, not lexically. *"我的猫叫 …"*, *"我住在上海"*, *"以后别再 X"* all trigger.
-
-**Core vs goals:** `tier=core` rows are injected into every system
-prompt, so keep them to narrow facts about the PERSON — name, role,
-location, relationships, hard work rules. Projects, goals, visions go
-to the default semantic tier where they are retrieved on-demand. If
-you find yourself writing a row that names a project or uses
-progressive-form verbs (*"is building"*, *"is working on"*), it is a
-goal → semantic tier, not core.
-
-### When to skip the silent save
-
-- Task descriptions (*"I'm working on docking today"*) — activity, not identity.
-- Project-specific technical facts (*"ref_path is the tracking signal"*) — **drop**. Memory does not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source); the agent will read the project's own files when it needs that content. The user authors `AGENTS.md` / `CLAUDE.md` by hand if they want a rule there.
-- Inferred preferences (*"user seems to prefer Y"*) — no explicit statement.
-- Opinions without commitment (*"I kind of prefer X"*) — not durable.
-- Anything contradicting an existing core row above — **do NOT append a second row.** A same-subject contradiction is a conflict: follow `[memory_protocol]` § "NEVER ignore a conflict" — `AskUser`, then `Memory_write({verb:"add", ..., replace_ids:[<loser id(s)>]})`. There is no later reconciliation; you are the cleanup.
-
-### Explicit user imperatives — always act immediately, no confirmation
-
-For *"remember X"*, *"forget X"*, and *"update X to Y"* (and their non-
-English equivalents) — **follow `[memory_protocol]` § "Explicit user
-imperatives"** as the single source of truth. Key shape for the
-update path: `Memory_write({verb:"add", content:"Y", replace_ids:[...]})` —
-atomic add+delete, NOT `verb:"update"` (which is reserved for mechanical
-rephrasing of the same fact).
-
-## Retrieval is visible — every fact you use, the user sees
-
-When you call `Memory_query` (any verb) and use the result to shape a
-reply, surface what you used **in the chat text**, with the age of each
-fact. Rule: if a memory row influenced your answer, it must appear in a
-chip. No silent use.
-
-Chip format for cross-project / identity memory:
-
-> 💭 From memory (3 months ago · Jan 2026): User has a cat.
-
-For multiple hits:
-
-> 💭 From memory:
-> - User lives in Shanghai (2 months ago)
-> - User has a cat (3 months ago)
-> - User's role: robotics engineer (5 months ago)
-
-When two rows on the same subject surface, reconcile them in prose
-ordered by timestamp — *"From memory: you had a cat that you left with
-a friend during your 2026 relocation."* Do not silently rewrite or
-delete; the user sees the synthesis live and can correct it.
-
-- Use **relative time** (*"3 months ago"*), not absolute dates — scans faster.
-- Dim or warn on facts older than 12 months — tag them *(may be stale)*.
-- Skip the chip for facts you don't actually use in your reply.
-
-## Project knowledge — not in memory
-
-Project-internal architecture, conventions, and gotchas are **not**
-memory. Memory does not write to project files (`<project>/AGENTS.md`,
-`CLAUDE.md`, source, docs); those are user-curated. When the agent is
-working in a project and needs to know something repo-specific, it
-reads the project's own files directly — that's already what
-auto-loaded `AGENTS.md` / `CLAUDE.md` and the source code are for.
-
-If a candidate looks project-internal during a chat (mentions a
-specific module, file, convention, or repo-level decision) → **drop
-it**. Don't `Memory_write` to RAG, don't `Edit` any project file.
-
-### Reading legacy project rows in RAG
-
-Older rows may still carry `contexts: ["project/<name>"]` from a
-previous routing scheme. They retrieve normally and remain useful for
-the projects they reference. When the user is working in such a
-project, include the project context in your search alongside
-cross-project:
-
-```
-Memory_query({
-  verb: "search",
-  query: "<your query>",
-  contexts: ["project/<name>", "cross-project"]
-})
-```
-
-Chip rendering applies as for any retrieval — every used fact must
-appear in the user's view. **Don't write new `project/<name>` rows.**
-
-Derive the project name from the workspace root: the **single last
-path component**, lowercase, no segment concatenation, no Cargo crate
-names. Example: workspace root `/Users/x/workspace/rust/some-app` →
-`project/some-app` (NOT `project/rust-some-app`).
-
-## Usage rules for the always-on block above
-
-- Apply the rows as current truth; no need to query for them.
-- Project-specific rules belong in that project's user-curated
-  `CLAUDE.md` / `AGENTS.md` — memory does not author those files.
-- Scoped facts and semantic retrieval live in the rest of the memory
-  store (`Memory_query` / `Memory_write` without `tier: "core"`).
-- Keep `tier=core` tiny. Every row here pollutes every unrelated
-  session, so the bar is *stable universal*, not "useful sometimes".
---- END ALWAYS-ON MEMORY ---'''
+{core_facts}'''
 
 [core_memory_block_empty]
-description = "Bootstrap hint when the memory store has no `tier=core` rows yet. Includes the same mid-chat save + retrieval-visibility rules as the populated block."
+description = "Empty head of the always-on memory block: bootstrap hint shown when the store has no `tier=core` rows yet. The shared tail (`core_memory_shared`) is appended after this by the engine, same as the populated head."
 vars = []
 text = '''
 
 # Always-on memory
 
 The memory store has no `tier=core` rows yet — the always-on block is
-empty. As stable universals about the user come up, save them as core
-rows so they reach every future session.
+empty. As stable universals about the user come up (identity: name,
+role, timezone, languages; working style: tone, format, pacing,
+universal do/don't rules), save them as core rows via
+`Memory_write({verb: "add", tier: "core", ...})` so they reach every
+future session. The dashboard (local memory UI / linggen.dev) also
+exposes a core view for curating the set.'''
 
-- Identity: who the user is (name, role, timezone, languages, core
-  preferences). Universal across projects.
-- Working style: how the user wants the agent to work (tone, format,
-  pacing, universal do/don't rules).
-
-Write via `Memory_write({verb: "add", tier: "core", ...})`. The
-dashboard at `linggen.dev` (or the local memory UI) also exposes a
-core view for curating the set.
+[core_memory_shared]
+description = "Shared tail of the always-on memory block, appended after either head (populated or empty) by the engine. Carries the additive rules NOT in `[memory_protocol]`: the HIGH-SIGNAL mid-chat save triggers, retrieval-visibility (chip) rules, and always-on usage rules. Conflict resolution, explicit imperatives, tier selection, and project-knowledge exclusion live in `[memory_protocol]` / the Memory_write tool description — do not restate them here."
+vars = []
+text = '''
 
 ## Memory is how the agent grows up
 
 Memory is not a log of what was done — it is a deepening model of *who
 the user is*. Focus on the user, not the task. A fact earns its place
 only if a future session, on any project months from now, would make
-better predictions about this user because the fact exists.
-
-**Save freely, review visibly.** You write when evidence is clear; the
-user reviews in context via the timestamps you surface at retrieval.
+better predictions about this user because the fact exists. **Save
+freely, review visibly** — write when evidence is clear; the user
+reviews in context via the timestamps you surface at retrieval.
 
 ## Mid-chat save rules — silent HIGH-SIGNAL auto-save
 
-When the user utters one of these **in regular chat (not the /memory
-skill)**, save immediately. No widget, no confirmation, no verbose reply.
+When the user states one of these **in regular chat (not the /memory
+skill)**, save it via `Memory_write` and continue with a one-line ack
+(or none). "Silent" = terse reply, **not** skipping `[memory_protocol]`
+below — the read-before-write and conflict rules still apply.
 
-1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`. Record exactly what the user said; never invent names or specifics.
-2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
-3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `Memory_write({verb: "add", tier: "core", type: "fact", ...})`.
-4. **Long-term goal / vision** — *"I'm building X as Y"*, *"my vision is Z"* → `Memory_write({verb: "add", type: "fact", tags: ["intent:goal"], ...})` — semantic tier (default), NOT `tier=core`. Goals are retrieved on-demand, not inlined always.
-5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"* → `Memory_write({verb: "add", tier: "core", type: "preference", ...})`.
+1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `tier: "core", type: "fact"`. Record exactly what the user said; never invent names, ages, or specifics they didn't supply.
+2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `tier: "core", type: "fact"`.
+3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `tier: "core", type: "fact"`.
+4. **Long-term goal / vision** — *"I'm building X as Y"* (vision-level, not a task) → default semantic tier, `tags: ["intent:goal"], contexts: ["cross-project"]`. **NOT `tier=core`** — goals are retrieved on-demand, not burned into every prompt.
+5. **Commitment-language preference** — *"always X"*, *"never Y"*, *"from now on Z"*, *"stop doing W"* → `tier: "core", type: "preference"`.
 
-Detect these patterns semantically, not lexically — works in any language.
+Detect semantically, not lexically — works in any language (*"我的猫叫 …"*, *"我住在上海"*, *"以后别再 X"* all trigger).
 
-**Core vs goals:** `tier=core` is injected into every system prompt.
-Keep it narrow: name, role, location, relationships, hard work rules.
-Projects and goals go to the default semantic tier.
+**Core vs goals:** `tier=core` is injected into every system prompt, so
+keep it to narrow facts about the PERSON (name, role, location,
+relationships, hard work rules). A row that names a project or uses
+progressive-form verbs (*"is building"*) is a goal → semantic, not core.
 
-**Skip** task descriptions, inferred preferences, and opinions without
-commitment. **Project-specific technical facts → drop.** Memory does
-not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source,
-docs); those are user-curated, and the agent reads the source directly
-when it needs the content.
-
-**Explicit imperatives act immediately, no pre-confirmation.** For
-*"remember X"*, *"forget X"*, and *"update X to Y"* (and their non-
-English equivalents), follow **`[memory_protocol]` § "Explicit user
-imperatives"** as the single source of truth. Key shape for the
-update path: `Memory_write({verb:"add", content:"Y", replace_ids:[...]})` —
-atomic add+delete, NOT `verb:"update"` (which is reserved for mechanical
-rephrasing of the same fact).
-
+**Skip:** task/activity descriptions (*"working on docking today"*),
+inferred preferences (*"seems to prefer Y"*), uncommitted opinions
+(*"kind of prefer X"*). **Project-internal technical facts → drop** —
+don't `Memory_write` them and don't `Edit` project files; the agent
+reads the repo's own `AGENTS.md` / `CLAUDE.md` / source when it needs
+that content.
 
 ## Retrieval is visible — every fact you use, the user sees
 
-When you call `Memory_query` (any verb) and use the result to shape a
-reply, surface what you used in the chat text with age. Rule: no silent
-use.
+When a `Memory_query` result shapes your reply, surface what you used
+**in the chat text**, with each fact's age. If a row influenced your
+answer, it must appear in a chip — no silent use.
 
 > 💭 From memory (3 months ago · Jan 2026): User has a cat.
 
-Use relative time (*"3 months ago"*), not absolute dates. Dim or warn on
-facts older than 12 months. Skip the chip for facts you don't use. When
-two rows on the same subject surface, reconcile them in prose ordered
-by timestamp; do not silently rewrite or delete.
+For multiple hits, list one per line with ages. Use **relative time**,
+not absolute dates; dim or warn on facts older than 12 months *(may be
+stale)*; skip the chip for facts you didn't use. When two rows on one
+subject surface, reconcile them in prose ordered by timestamp — don't
+silently rewrite or delete; the user sees the synthesis and can correct.
 
-## Project knowledge — not in memory
+## Usage rules for the always-on rows
 
-Project-internal architecture, conventions, and gotchas are **not**
-memory. Memory does not write to project files (`<project>/AGENTS.md`,
-`CLAUDE.md`, source, docs); those are user-curated. The agent reads
-the project's own files directly when it needs the content.
-
-If a candidate looks project-internal during a chat → **drop it**.
-Don't `Memory_write` to the store, don't `Edit` any project file.
-
-**Reading legacy project rows in RAG.** Older rows may still carry
-`contexts: ["project/<name>"]` from a previous routing scheme. Include
-both `project/<name>` and `cross-project` in `Memory_query({verb: "search"})`
-calls when you're in a project workspace so they surface naturally.
-Derive `<name>` as the **single last path component** of the workspace
-root (no segment concatenation). Don't write new `project/<name>` rows.
---- END CORE MEMORY ---'''
+- Apply the core rows above as current truth; no need to query for them.
+- Keep `tier=core` tiny — every row pollutes every unrelated session,
+  so the bar is *stable universal*, not "useful sometimes". Scoped and
+  on-demand facts live in the rest of the store (`Memory_query` /
+  `Memory_write` without `tier: "core"`).
+- Legacy rows may carry `contexts: ["project/<name>"]` from an older
+  scheme; include that context alongside `cross-project` when searching
+  inside that project (derive `<name>` as the workspace root's single
+  last path component). Don't write new `project/<name>` rows.
+--- END ALWAYS-ON MEMORY ---'''
 
 [delegation_header]
 description = "Task delegation block: the delegation rule plus the list of available agents. Replaces the old Available-Agents-for-Delegation header + the standalone response-format.native_rules_task bullet — both used to render back-to-back."

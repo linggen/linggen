@@ -30,6 +30,7 @@ pub mod keys {
     pub const SYSTEM_DELEGATION_ENTRY: &str = "system-prompt.delegation_entry";
     pub const CORE_MEMORY_BLOCK: &str = "system-prompt.core_memory_block";
     pub const CORE_MEMORY_BLOCK_EMPTY: &str = "system-prompt.core_memory_block_empty";
+    pub const CORE_MEMORY_SHARED: &str = "system-prompt.core_memory_shared";
     pub const MEMORY_PROTOCOL: &str = "system-prompt.memory_protocol";
     pub const SYSTEM_CONSUMER_FRAME: &str = "system-prompt.consumer_frame";
 
@@ -328,6 +329,7 @@ mod tests {
             keys::SYSTEM_DELEGATION_ENTRY,
             keys::CORE_MEMORY_BLOCK,
             keys::CORE_MEMORY_BLOCK_EMPTY,
+            keys::CORE_MEMORY_SHARED,
             keys::NUDGE_INVALID_JSON,
             keys::NUDGE_REPETITION,
             keys::NUDGE_REDUNDANT_TOOL,
