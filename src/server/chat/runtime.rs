@@ -40,10 +40,24 @@ pub(super) async fn run_loop_with_tracking(
                     crate::engine::agent::AgentRunStatus::Failed
                 };
                 let _ = manager.finish_agent_run(&run_id, status, Some(msg.clone())).await;
-                // AUTH_REQUIRED errors include the engine's "open Settings" hint
-                // so the UI can show the inline Settings → Models pointer.
-                let display = if msg.starts_with("AUTH_REQUIRED:") {
-                    msg.trim_start_matches("AUTH_REQUIRED:").trim().to_string()
+                // AUTH_REQUIRED errors render as a structured block in chat so
+                // the UI can show an inline "Sign in with ChatGPT" button —
+                // no need to navigate to Settings → Models to re-authenticate.
+                let display = if let Some(rest) = msg.strip_prefix("AUTH_REQUIRED:") {
+                    let text = rest.trim();
+                    let provider = if text.contains("ChatGPT") {
+                        "chatgpt"
+                    } else if text.contains("Claude") {
+                        "claude"
+                    } else {
+                        ""
+                    };
+                    serde_json::json!({
+                        "type": "auth_required",
+                        "provider": provider,
+                        "message": text,
+                    })
+                    .to_string()
                 } else {
                     format!("Error: {}", msg)
                 };

@@ -5,9 +5,31 @@ import { MarkdownContent } from './MarkdownContent';
 import { SubagentTreeView } from './SubagentTreeView';
 import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
+import { AuthRequiredBlock } from './AuthRequiredBlock';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
 import { stripEmbeddedStructuredJson, isPlanMessage } from '../../lib/messageUtils';
+
+/** If the message body is an `auth_required` block (emitted when a turn fails
+ *  on an expired OAuth session), render the inline sign-in CTA. Returns null
+ *  otherwise. */
+function renderAuthRequired(text?: string): React.ReactNode | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.includes('"auth_required"')) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed.type === 'auth_required' && typeof parsed.message === 'string') {
+      return (
+        <AuthRequiredBlock
+          provider={typeof parsed.provider === 'string' ? parsed.provider : ''}
+          message={parsed.message}
+        />
+      );
+    }
+  } catch { /* not the auth block */ }
+  return null;
+}
 
 /** Top-level agent message renderer — unified widget-list model.
  *
@@ -62,6 +84,11 @@ export const AgentMessage: React.FC<{
   const fallbackText = !hasToolBlocks
     ? (isPlanMessage(msg) ? (msg.text || '').trim() : visibleMessageText(msg))
     : '';
+
+  // An expired-OAuth turn surfaces an inline sign-in CTA, regardless of any
+  // partial output the failed turn produced before the 401.
+  const authBlock = renderAuthRequired(msg.text);
+  if (authBlock) return <>{authBlock}</>;
 
   // Error messages get a prominent banner style.
   if (msg.isError) {

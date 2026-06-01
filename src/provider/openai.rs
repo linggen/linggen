@@ -21,6 +21,41 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
         .get("parameters")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+
+    // Per OpenAI's function-calling guide
+    // (https://developers.openai.com/api/docs/guides/function-calling):
+    // `strict: true` REQUIRES every property to be listed in `required[]`
+    // with `additionalProperties: false`; optional params are expressed as
+    // nullable types (`["string", "null"]`) but must STILL appear in
+    // `required[]`. Crucially, the guide states that advanced JSON-schema
+    // constraints — `anyOf`, `minProperties`, "at least one of" — are NOT
+    // supported under strict. To opt out, "explicitly set `strict: false`".
+    //
+    // That makes strict faithful only when the tool actually has required
+    // fields. A tool whose params are ALL optional encodes exactly the
+    // unsupported "at least one of these" constraint (e.g. PageUpdate —
+    // provide one of body/top_bar/footer/body_patch). Strict can't express
+    // it: it makes every field required-nullable, so the model satisfies the
+    // schema by null-filling all of them (or sending `[{}]`), which then
+    // fails the runtime "at least one non-empty" check — and the
+    // always-present fields nudge spurious empty calls. Send such tools
+    // non-strict with their original schema so the model can omit the
+    // sections it isn't touching.
+    let has_required = params
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    if !has_required {
+        return Some(serde_json::json!({
+            "type": "function",
+            "name": func.get("name")?,
+            "description": func.get("description").unwrap_or(&serde_json::Value::Null),
+            "parameters": params,
+            "strict": false,
+        }));
+    }
+
     let strict_params =
         crate::engine::tools::json_schema::strictify_for_openai(params);
     Some(serde_json::json!({
@@ -112,6 +147,56 @@ impl OpenAiClient {
             }
         }
         rb
+    }
+
+    /// Send a request, applying auth fresh each attempt. In ChatGPT OAuth
+    /// mode a 401 means the access token expired — refresh it once using the
+    /// stored refresh token and retry transparently. Only when the refresh
+    /// itself fails (refresh token revoked/expired) does the 401 propagate,
+    /// where the caller turns it into an `AUTH_REQUIRED:` sign-in CTA.
+    async fn send_with_oauth_retry(
+        &self,
+        rb: reqwest::RequestBuilder,
+    ) -> anyhow::Result<reqwest::Response> {
+        let first = self
+            .apply_auth(rb.try_clone().ok_or_else(|| {
+                anyhow::anyhow!("request body not cloneable for auth retry")
+            })?);
+        let resp = first.send().await?;
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED || !self.codex_auth_live {
+            return Ok(resp);
+        }
+        if !self.try_refresh_codex_tokens().await {
+            return Ok(resp);
+        }
+        // apply_auth re-reads codex_auth.json, so the retry uses the fresh token.
+        Ok(self.apply_auth(rb).send().await?)
+    }
+
+    /// Attempt a one-shot refresh of the on-disk ChatGPT OAuth tokens.
+    /// Returns true if a new token was fetched and saved.
+    async fn try_refresh_codex_tokens(&self) -> bool {
+        use crate::provider::codex_auth;
+        let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+        if tokens.refresh_token.is_none() {
+            return false;
+        }
+        match codex_auth::refresh_tokens(&self.http, &tokens).await {
+            Ok(new) => match new.save(&codex_auth::codex_auth_file()) {
+                Ok(()) => {
+                    tracing::info!("Refreshed expired ChatGPT OAuth token after 401.");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to save refreshed ChatGPT tokens: {}", e);
+                    false
+                }
+            },
+            Err(e) => {
+                tracing::warn!("ChatGPT token refresh after 401 failed: {}", e);
+                false
+            }
+        }
     }
 
     /// Whether this client uses the ChatGPT Responses API (OAuth mode).
@@ -244,7 +329,7 @@ impl OpenAiClient {
                 req["instructions"] = serde_json::Value::String(instructions);
             }
             tracing::debug!("Responses API request to {}", url);
-            self.apply_auth(self.http.post(url).json(&req))
+            self.http.post(url).json(&req)
         } else {
             // Standard Chat Completions format
             let url = format!("{}/chat/completions", self.base_url);
@@ -271,9 +356,9 @@ impl OpenAiClient {
             }
             // Apply reasoning effort per provider
             Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
-            self.apply_auth(self.http.post(url).json(&req))
+            self.http.post(url).json(&req)
         };
-        let resp = rb.send().await?;
+        let resp = self.send_with_oauth_retry(rb).await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -282,6 +367,11 @@ impl OpenAiClient {
             } else {
                 text
             };
+            if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
+                anyhow::bail!(
+                    "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
+                );
+            }
             anyhow::bail!("openai error ({}): {}", status, truncated);
         }
 
@@ -507,7 +597,7 @@ impl OpenAiClient {
                     req["instructions"] = serde_json::Value::String(instructions);
                 }
                 tracing::debug!("Responses API tool request to {}", url);
-                self.apply_auth(self.http.post(url).json(&req))
+                self.http.post(url).json(&req)
             } else {
                 // Standard Chat Completions format
                 let url = format!("{}/chat/completions", self.base_url);
@@ -535,10 +625,10 @@ impl OpenAiClient {
                 }
                 // Apply reasoning effort per provider
                 Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
-                self.apply_auth(self.http.post(url).json(&req))
+                self.http.post(url).json(&req)
             };
 
-        let resp = rb.send().await?;
+        let resp = self.send_with_oauth_retry(rb).await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -547,6 +637,11 @@ impl OpenAiClient {
             } else {
                 text
             };
+            if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
+                anyhow::bail!(
+                    "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
+                );
+            }
             anyhow::bail!("openai error ({}): {}", status, truncated);
         }
 
@@ -1061,4 +1156,64 @@ struct OaiStreamToolCallFunction {
     name: Option<String>,
     #[serde(default)]
     arguments: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn wire_tool_def_strict_when_has_required() {
+        let canonical = json!({
+            "function": {
+                "name": "Read",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "max_bytes": {"type": "integer"}
+                    },
+                    "required": ["path"]
+                }
+            }
+        });
+        let wire = wire_tool_def(&canonical).unwrap();
+        assert_eq!(wire["strict"], json!(true));
+        // strictify forces every property into required.
+        let required = wire["parameters"]["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "path"));
+        assert!(required.iter().any(|v| v == "max_bytes"));
+    }
+
+    #[test]
+    fn wire_tool_def_non_strict_when_all_optional() {
+        // PageUpdate-shaped: all params optional, "at least one of" semantics
+        // that strict mode cannot express. Must go out non-strict so the
+        // model can omit the sections it isn't changing.
+        let canonical = json!({
+            "function": {
+                "name": "PageUpdate",
+                "description": "Refresh the dashboard",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "body": {"type": "object"},
+                        "top_bar": {"type": "object"},
+                        "footer": {"type": "object"},
+                        "body_patch": {"type": "array", "items": {"type": "object"}}
+                    },
+                    "required": []
+                }
+            }
+        });
+        let wire = wire_tool_def(&canonical).unwrap();
+        assert_eq!(wire["strict"], json!(false));
+        // Original schema is passed through untouched — required stays empty,
+        // optionals are NOT widened to nullable, no additionalProperties:false.
+        assert_eq!(wire["parameters"]["required"], json!([]));
+        assert!(wire["parameters"].get("additionalProperties").is_none());
+        assert_eq!(wire["parameters"]["properties"]["body"]["type"], json!("object"));
+    }
 }
