@@ -103,24 +103,21 @@ export const SessionList: React.FC<{
 }> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
   const storeSessions = useSessionStore((s) => s.allSessions);
   const allSessions = filterSessions ?? storeSessions;
-  // Server-authoritative "is a run in flight" per session. Indexed
-  // once per render: O(runs) instead of a scan per row. Subagent runs
-  // (parent_run_id set) intentionally don't light up the row spinner
-  // — that's the SubagentPane's signal, not the session list's.
-  const agentRunsRaw = useServerStore((s) => s.agentRuns);
-  const agentStatusText = useServerStore((s) => s.agentStatusText);
+  // Which sessions have an agent in flight. Sourced from agentStatus, which
+  // is fed by page_state.busy_sessions — the server scopes that by
+  // permission (owner sees every session, a consumer only their own, an
+  // embed iframe only its pinned session) plus live activity for the active
+  // session. Using it (instead of the session-scoped agent_runs) is what
+  // lets the standalone session-sidebar iframe show spinners at all, since
+  // a single transport only ever receives one session's agent_runs.
+  const agentStatus = useServerStore((s) => s.agentStatus);
   const runningSessionIds = useMemo(() => {
     const out = new Set<string>();
-    for (const r of agentRunsRaw) {
-      if (r.status !== 'running' || r.parent_run_id) continue;
-      // Defensive: if the per-session status text says "Idle", the
-      // session is genuinely done. Trust handleTurnComplete over a
-      // stale `running` row from a page_state poll.
-      if (agentStatusText[r.session_id] === 'Idle') continue;
-      out.add(r.session_id);
+    for (const [sid, status] of Object.entries(agentStatus)) {
+      if (status && status !== 'idle') out.add(sid);
     }
     return out;
-  }, [agentRunsRaw, agentStatusText]);
+  }, [agentStatus]);
   const openMissionEditor = useOpenMissionEditor();
   // When filters are hidden the consumer is pre-filtering via filterSessions,
   // so default to 'all' to avoid the 'user'-only default clipping the list.
