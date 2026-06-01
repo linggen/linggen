@@ -304,7 +304,7 @@ goal → semantic tier, not core.
 - Project-specific technical facts (*"ref_path is the tracking signal"*) — **drop**. Memory does not write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source); the agent will read the project's own files when it needs that content. The user authors `AGENTS.md` / `CLAUDE.md` by hand if they want a rule there.
 - Inferred preferences (*"user seems to prefer Y"*) — no explicit statement.
 - Opinions without commitment (*"I kind of prefer X"*) — not durable.
-- Anything contradicting an existing core row above — append a new row stating what the user just said; reconciliation surfaces both at recall.
+- Anything contradicting an existing core row above — **do NOT append a second row.** A same-subject contradiction is a conflict: follow `[memory_protocol]` § "NEVER ignore a conflict" — `AskUser`, then `Memory_write({verb:"add", ..., replace_ids:[<loser id(s)>]})`. There is no later reconciliation; you are the cleanup.
 
 ### Explicit user imperatives — always act immediately, no confirmation
 
