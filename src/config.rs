@@ -106,13 +106,13 @@ pub struct AgentConfig {
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u64,
 
-    /// Per-row cosine similarity floor for per-turn auto-recall. Rows
-    /// scoring below this are filtered out by ling-mem before the result
-    /// crosses the wire — they're never injected into the model context
-    /// and never shown in the widget. When no rows pass, the recall is a
-    /// silent no-op. Range 0.0–1.0. Default 0.6.
-    #[serde(default = "default_memory_inject_min_score")]
-    pub memory_inject_min_score: f32,
+    /// Per-row cosine floor for per-turn auto-recall, as an OVERRIDE of the
+    /// ling-mem daemon's store-wide `recall_min_score`. `None` (default) =
+    /// defer to the daemon, so every host shares one recall selectivity (the
+    /// engine omits `min_score` and the daemon applies its configured floor).
+    /// `Some(s)` = this Linggen instance overrides. Range 0.0–1.0.
+    #[serde(default)]
+    pub memory_inject_min_score: Option<f32>,
 
     /// Base URL of the local `ling-mem` HTTP daemon. The engine's built-in
     /// `Memory_query` / `Memory_write` tools dispatch here, and the `dream`
@@ -130,10 +130,6 @@ fn default_memory_nudge_interval() -> usize {
 
 fn default_episodic_ttl_days() -> u64 {
     7
-}
-
-fn default_memory_inject_min_score() -> f32 {
-    0.6
 }
 
 fn default_ling_mem_url() -> String {
@@ -352,11 +348,12 @@ impl Config {
                 "Agent episodic_ttl_days must be greater than 0"
             );
         }
-        let s = self.agent.memory_inject_min_score;
-        if !(0.0..=1.0).contains(&s) || s.is_nan() {
-            anyhow::bail!(
-                "Agent memory_inject_min_score must be between 0.0 and 1.0 (got {s})"
-            );
+        if let Some(s) = self.agent.memory_inject_min_score {
+            if !(0.0..=1.0).contains(&s) || s.is_nan() {
+                anyhow::bail!(
+                    "Agent memory_inject_min_score must be between 0.0 and 1.0 (got {s})"
+                );
+            }
         }
         let url = self.agent.ling_mem_url.trim();
         if url.is_empty() {
@@ -408,7 +405,7 @@ impl Default for Config {
                 memory_nudge_interval: default_memory_nudge_interval(),
                 compact_threshold: None,
                 episodic_ttl_days: default_episodic_ttl_days(),
-                memory_inject_min_score: default_memory_inject_min_score(),
+                memory_inject_min_score: None,
                 ling_mem_url: default_ling_mem_url(),
             },
             logging: LoggingConfig {

@@ -138,9 +138,9 @@ pub struct EngineConfig {
     pub compact_threshold_default: Option<f32>,
     /// Per-row cosine similarity floor for per-turn auto-recall. Rows
     /// below this score are dropped by ling-mem before reaching the
-    /// engine; nothing weaker is injected or shown. See
-    /// `config::AgentConfig`. Default 0.6.
-    pub memory_inject_min_score: f32,
+    /// engine; nothing weaker is injected or shown. `None` = defer to the
+    /// daemon's store-wide `recall_min_score`. See `config::AgentConfig`.
+    pub memory_inject_min_score: Option<f32>,
     /// Base URL of the local `ling-mem` HTTP daemon. The engine's
     /// built-in `Memory_*` dispatcher and the dream mission's TTL
     /// fetch use this. See `config::AgentConfig::ling_mem_url`.

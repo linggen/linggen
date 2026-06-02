@@ -189,7 +189,7 @@ async fn auto_recall_memory(
     state: &Arc<ServerState>,
     prompt: &str,
     session_id: Option<&str>,
-    min_score: f32,
+    min_score: Option<f32>,
     ling_mem_url: &str,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
@@ -214,18 +214,20 @@ async fn auto_recall_memory(
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
         .and_then(|m| m.project_name);
 
-    // `min_score` is the per-row cosine floor — comes from
-    // `AgentConfig.memory_inject_min_score` (Settings → General → Memory
-    // Inject Score, default 0.5). Hand it straight to ling-mem so weak
-    // rows never make it back across the wire. There is no separate
-    // aggregate gate: if ling-mem returns any rows, every one passes
-    // the user's floor.
-    let args = serde_json::json!({
+    // `min_score` is the per-row cosine floor (Settings → General → Memory
+    // Inject Score). `None` means defer to the daemon's store-wide
+    // `recall_min_score` — we omit the field and ling-mem applies its own
+    // floor, so all hosts share one selectivity. `Some(s)` overrides. Either
+    // way the daemon drops weak rows before they cross the wire; there's no
+    // separate aggregate gate.
+    let mut args = serde_json::json!({
         "verb": "search",
         "query": trimmed,
         "limit": FETCH_LIMIT,
-        "min_score": min_score,
     });
+    if let Some(s) = min_score {
+        args["min_score"] = serde_json::json!(s);
+    }
 
     let dispatch = crate::engine::tools::memory_tool::call_memory_http(
         ling_mem_url,
