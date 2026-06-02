@@ -45,7 +45,7 @@ const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 /// Bump to `^1` (or `1.x`) once the binary cuts 1.0 — `install-bin.sh`'s `~`
 /// form needs `X.Y`, so a major-range uses `^`/`1.x`, not `~1`. Override with
 /// `$LING_MEM_VERSION`.
-const LING_MEM_PIN: &str = "~0.8";
+const LING_MEM_PIN: &str = "~1";
 
 /// Canonical binary-only installer (SHA-256 verified inside). Fetched over
 /// HTTPS and run via `bash -s` when the binary is absent.
