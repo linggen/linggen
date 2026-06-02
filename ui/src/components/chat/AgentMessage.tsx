@@ -10,24 +10,40 @@ import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessageP
 import { visibleMessageText } from './MessageHelpers';
 import { stripEmbeddedStructuredJson, isPlanMessage } from '../../lib/messageUtils';
 
-/** If the message body is an `auth_required` block (emitted when a turn fails
- *  on an expired OAuth session), render the inline sign-in CTA. Returns null
- *  otherwise. */
+/** Render the inline sign-in CTA when a turn fails on an expired OAuth session.
+ *  Accepts both shapes: the legacy structured `{type:"auth_required",…}` JSON
+ *  and — the path actually used — a plain `AUTH_REQUIRED: <msg>` error string
+ *  (optionally `Error:`-prefixed, since failed turns surface as `Error: …`).
+ *  Returns null when the text isn't an auth-required failure. */
 function renderAuthRequired(text?: string): React.ReactNode | null {
   if (!text) return null;
   const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.includes('"auth_required"')) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed.type === 'auth_required' && typeof parsed.message === 'string') {
-      return (
-        <AuthRequiredBlock
-          provider={typeof parsed.provider === 'string' ? parsed.provider : ''}
-          message={parsed.message}
-        />
-      );
-    }
-  } catch { /* not the auth block */ }
+
+  // Legacy structured-JSON shape.
+  if (trimmed.startsWith('{') && trimmed.includes('"auth_required"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.type === 'auth_required' && typeof parsed.message === 'string') {
+        return (
+          <AuthRequiredBlock
+            provider={typeof parsed.provider === 'string' ? parsed.provider : ''}
+            message={parsed.message}
+          />
+        );
+      }
+    } catch { /* not the auth block */ }
+  }
+
+  // Plain-text shape: "AUTH_REQUIRED: …", with an optional leading "Error: ".
+  const body = trimmed.replace(/^Error:\s*/i, '');
+  if (body.startsWith('AUTH_REQUIRED:')) {
+    const message = body.slice('AUTH_REQUIRED:'.length).trim();
+    const provider = message.includes('ChatGPT') ? 'chatgpt'
+      : message.includes('Claude') ? 'claude'
+      : '';
+    return <AuthRequiredBlock provider={provider} message={message} />;
+  }
+
   return null;
 }
 

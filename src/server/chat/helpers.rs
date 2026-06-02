@@ -15,29 +15,15 @@ use tokio::sync::broadcast;
 
 /// Format a failed turn's error for the chat surface.
 ///
-/// `AUTH_REQUIRED:`-prefixed errors become a structured `auth_required` block
-/// so the UI can render an inline "Sign in with ChatGPT" CTA instead of a dead
-/// red banner; everything else becomes a plain `Error: …` message. Shared by
-/// every interactive turn path (main loop, runtime wrapper, plan execution) so
-/// the sign-in button shows no matter which one surfaces the failure.
+/// Always an `Error: …` string so the UI's `isError` path (which keys on the
+/// `Error:` prefix) renders it reliably — that delivery path is proven, whereas
+/// a structured-JSON message gets mangled by the chat ingest (strip/dedup/
+/// block-parsing) and silently vanishes. `AUTH_REQUIRED:` errors keep their
+/// marker in the text so the UI upgrades the banner into an inline "Sign in
+/// with ChatGPT" CTA. Shared by every interactive turn path (main loop,
+/// runtime wrapper, plan execution).
 pub(crate) fn format_turn_error(msg: &str) -> String {
-    let Some(rest) = msg.strip_prefix("AUTH_REQUIRED:") else {
-        return format!("Error: {}", msg);
-    };
-    let text = rest.trim();
-    let provider = if text.contains("ChatGPT") {
-        "chatgpt"
-    } else if text.contains("Claude") {
-        "claude"
-    } else {
-        ""
-    };
-    serde_json::json!({
-        "type": "auth_required",
-        "provider": provider,
-        "message": text,
-    })
-    .to_string()
+    format!("Error: {}", msg)
 }
 
 // ---------------------------------------------------------------------------
