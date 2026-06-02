@@ -42,10 +42,12 @@ const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Binary version the engine bootstraps when `ling-mem` is missing. A semver
 /// range floor — `install-bin.sh` resolves it to the highest matching release.
-/// Bump to `^1` (or `1.x`) once the binary cuts 1.0 — `install-bin.sh`'s `~`
-/// form needs `X.Y`, so a major-range uses `^`/`1.x`, not `~1`. Override with
+/// Major-version range now that ling-mem has cut 1.0 — resolves to the highest
+/// 1.x release, so minors/patches flow without a re-pin (store schema-version
+/// guard keeps it data-safe). NOTE the form: `install-bin.sh`'s `~` needs
+/// `X.Y`, so a major range is `^1` (or `1.x`), never `~1`. Override with
 /// `$LING_MEM_VERSION`.
-const LING_MEM_PIN: &str = "~1";
+const LING_MEM_PIN: &str = "^1";
 
 /// Canonical binary-only installer (SHA-256 verified inside). Fetched over
 /// HTTPS and run via `bash -s` when the binary is absent.
