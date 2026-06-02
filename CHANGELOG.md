@@ -1,38 +1,79 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - 2026-06-02
 
-Memory system — recall redesign (Complementary Learning Systems model).
+First stable release. The public contracts — the skill / agent / mission
+spec formats, the `~/.linggen` storage layout, `linggen.toml`, and the
+install path — are now semver-stable: backward-compatible changes ship as
+minors, breaking changes as a major.
 
-### Changed
+### Memory — inline capture (Complementary Learning Systems)
 
-- **Capture is split by "wake/sleep".** A per-session, every-N-turns
-  subagent does **encode only** (recent exchange → episodic). A new
-  built-in, visible **`dream` mission** owns **consolidate + evict**
-  globally on a daily cron **plus a turn-seam catch-up** (covers a
-  machine that was off overnight). The dream mission is per-run
-  stoppable and deletable as a supported opt-out (degrades automatic
-  curation, never loses data); each run leaves an audit record.
-- **Write-time quality bar** — the encoder writes only what a future
-  task benefits from (episodic is recall-visible immediately), instead
-  of liberal capture.
-- **Write routing by salience** — explicit "remember…"/standing
-  instructions go to the durable store immediately via `Memory_write`;
-  incidental signal goes through episodic→consolidate.
-- **Reconcile contract** — memory is reconciled against existing memory
-  on any reactivation (write, recall, dream). Near-duplicates are
-  deduped mechanically; a genuine contradiction is resolved **with the
-  user** (asked, with dates) by appending the corrected row, never
-  silently overwritten or merged into storage; the no-user dream run
-  defers contradictions to a later recall. The store stays CRUD-only —
-  reconciliation is append + read-time + explicit user delete (no
-  structural "replaces" link). Live-agent guidance ships in the memory
-  nudge; the full contract is in `doc/memory-spec.md` §2.
+- **Inline, per-turn capture.** The live `ling` agent writes memory as it
+  goes — `core` / `semantic` / `episodic` via the built-in `Memory_*`
+  tools, routed by salience and confidence. This **retires the previous
+  every-N-turns encoder subagent**; capture is no longer a separate
+  wake/sleep pass.
+- **`dream` mission as audit + consolidator.** A built-in mission (runs
+  as `ling` on a daily cron plus a turn-seam catch-up) re-reads recent
+  sessions to catch anything the live agent missed, then consolidates
+  past-TTL `episodic` rows (promote → `semantic`/`core`, or evict).
+  Per-run stoppable/deletable; each run leaves an audit record.
+- **Read-before-write reconcile contract.** Every write is checked
+  against existing memory: near-duplicates deduped mechanically, genuine
+  contradictions resolved **with the user** (dated, appended — never
+  silently overwritten). Store stays CRUD-only. Full contract in
+  `doc/memory-spec.md` §2.
+- `Memory_query` / `Memory_write` are first-class **built-in tools**
+  (Chat-tier, ungated) — the capability layer is gone.
+- **Per-turn auto-recall** with score-gated injection
+  (`agent.memory_inject_min_score`, default 0.6) and visible
+  "From memory: …" citations.
+- The `ling-mem` binary is **semver-range-pinned** (`~0.8`) and
+  **auto-installed / auto-started** when missing; the store's
+  schema-version guard (`linggen-memory/doc/schema-versioning.md`) makes
+  in-place subversion upgrades data-safe.
 
-### Added
+### Engine architecture
 
-- `agent.dream_catchup_hours` (default 24) — catch-up threshold for the
-  built-in `dream` consolidation mission.
+- **engine / extensions split** — skill, agent, and mission share one
+  record + registry shape in `engine/`; disk loaders live in
+  `extensions/`.
+- **Tool trait + builtin registry** — all tools are async and
+  schema-driven; removed the capability layer and the dual sync/async
+  bridges. Large `mod.rs` files thinned; module boundaries reorganized.
+
+### Permissions
+
+- `path_modes`-based model; reads are gated like writes; a hardcoded
+  curated deny floor backstops catastrophic commands.
+- A skill's own provided tools bypass `allowed-tools` gating; declared
+  grants apply **silently** (no activation prompt); the OS temp dir is
+  always-allowed scratch; quote-aware path extraction.
+
+### Chat & providers
+
+- **ChatGPT OAuth** — silent refresh on 401, and an inline **"Sign in
+  with ChatGPT"** CTA when the session truly expires, on every turn path.
+- Fail-fast on missing/expired OAuth with a clear status.
+
+### Compaction
+
+- CC-aligned **two-tier** compaction with per-session config; `/compact`
+  fixed on tool-heavy sessions.
+
+### Missions
+
+- `dream` is a real built-in mission; raw-markdown mission editor with
+  frontmatter-safe live preview; per-mission `catchup_hours`.
+
+### Other
+
+- Telemetry module — install + command events only, daily-deduped
+  client-side; never sends prompts, responses, file contents, or paths.
+- Sessions: auto-rename placeholder titles from the first user message;
+  spinner driven by `busy_sessions` / agent runs.
+- Dependency bumps (str0m 0.16→0.19, grep 0.3→0.4, cron 0.15→0.16).
 
 ## v0.10.0 (2026-04-29)
 

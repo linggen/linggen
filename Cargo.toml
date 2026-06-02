@@ -1,6 +1,6 @@
 [package]
 name = "linggen"
-version = "0.10.1"
+version = "1.0.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Linggen — the root system for AI agents. A local-first runtime for AI apps."
