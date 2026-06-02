@@ -71,15 +71,25 @@ description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
 [memory_protocol]
-description = "Canonical memory protocol — single source of truth. Injected into every session where include_memory=true (main user chat + the N-turn encoder subagent). Skill/mission sessions skip this. Holds the read-before-write rule, the AskUser shape for contradictions, the tier-selection rule, and the tier-discipline-on-resolution rule. All other memory prompt surfaces (agents/ling.md, agents/ling-mem.md, Memory_write tool description, encoder task template) defer to this block — do not duplicate the protocol there."
+description = "Canonical memory protocol — single source of truth. Injected into every session where include_memory=true (main user chat). Skill/mission sessions skip this. Holds the per-turn episodic capture rule, the read-before-write rule for curated core/semantic writes, the AskUser shape for contradictions, the tier-selection rule, and the tier-discipline-on-resolution rule. The every-N-turns encoder subagent is retired — the main agent now captures episodic per turn. All other memory prompt surfaces (agents/ling.md, agents/ling-mem.md, Memory_write tool description) defer to this block — do not duplicate the protocol there."
 vars = []
 text = '''
 
-# Memory protocol — read before you write, every row
+# Memory protocol — capture to episodic each turn; curate core/semantic carefully
 
-Every `Memory_write({verb: "add"})` MUST be preceded by a `Memory_query`
-on the candidate's subject in the same turn. No exceptions — explicit
-*"remember X"* commands included.
+**Per-turn capture (episodic).** Each turn, append genuinely-noteworthy
+signal you're not yet sure is durable to `tier: "episodic"` — fast,
+append-only, **no query-first, no AskUser**. This is your steady-state
+capture lane now that the every-N-turns encoder subagent is retired; the
+dream consolidator dedupes, promotes worthy rows to semantic/core, and
+evicts the rest past-TTL. Don't overthink it — if it might matter later,
+stage it.
+
+**Curated writes (core / semantic) — read before you write, every row.**
+Every `Memory_write({verb: "add", tier: "core" | "semantic"})` MUST be
+preceded by a `Memory_query` on the candidate's subject in the same turn.
+No exceptions — explicit *"remember X"* commands included. (Episodic
+captures are exempt — they're staging, not curated rows.)
 
 ## NEVER ignore a conflict — the load-bearing floor
 
@@ -211,11 +221,12 @@ Pick the tier from the row's own durability, not from who is writing:
   Long-term goals, decisions whose reasoning is the value, commitment-
   language preferences, reusable tech gotchas. Retrieved on demand.
   **High confidence required.** If unsure, drop to episodic.
-- `tier: "episodic"` — **staging for genuinely uncertain durability.**
-  The dream consolidator (cron mission) evicts past-TTL rows that
-  weren't worth keeping. Use only when you can't confidently route to
-  core or semantic. **Not a default destination** — every encoded row
-  should aim for the tier it actually deserves.
+- `tier: "episodic"` — **per-turn working capture (the default lane).**
+  Append anything genuinely noteworthy you're not yet sure is durable —
+  fast, append-only, **no query-first**. The dream consolidator (cron
+  mission) dedupes, promotes worthy rows to semantic/core, and evicts
+  the rest past-TTL. This is where most per-turn capture lands; reserve
+  core/semantic for what you can already route with high confidence.
 
 ## Tier discipline on contradiction resolution
 
