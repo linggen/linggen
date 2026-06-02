@@ -98,7 +98,7 @@ async fn check_ling_mem() {
             let ver = ling_mem_version(path).unwrap_or_else(|| "unknown".to_string());
             ok("Binary    ", &format!("{} (v{})", path.display(), ver));
         }
-        None => fail("Binary    ", "ling-mem not on PATH (install via linggen.dev/install-shared-memory.sh)"),
+        None => fail("Binary    ", "ling-mem not on PATH (auto-installs on first memory op; or see linggen.dev/memory)"),
     }
 
     // Daemon on :9888 (default). Check the standard port; users running

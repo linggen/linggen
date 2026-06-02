@@ -14,9 +14,13 @@
 //!   the daemon's serde parse doesn't reject `until: ""`.
 //! - `tier: "episodic"` is translated to `episodic: true` on the wire.
 //! - `host` defaults to `"linggen"` on `Memory_write` calls.
-//! - On `ConnectionRefused` or timeout, autostart `ling-mem start` and
-//!   retry once. The daemon is idempotent — re-running `start` while up
-//!   exits 0.
+//! - On `ConnectionRefused` or timeout, ensure the binary is present
+//!   (auto-install the pinned `ling-mem` if missing — a fresh Linggen
+//!   marketplace install ships skill files but no binary), then autostart
+//!   `ling-mem start` and retry once. The daemon is idempotent — re-running
+//!   `start` while up exits 0. The engine owns this dependency: callers (the
+//!   23:00 dream, auto-recall) reach memory over HTTP, never via the CLI, so
+//!   nothing else would install/start the daemon for them.
 //!
 //! Schemas mirror what `engine::capabilities::CAPABILITIES` used to expose.
 
@@ -36,7 +40,15 @@ const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// that's about to succeed.
 const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 
-const AUTOSTART_CMD: &[&str] = &["ling-mem", "start"];
+/// Binary version the engine bootstraps when `ling-mem` is missing. A semver
+/// range floor — `install-bin.sh` resolves it to the highest matching release.
+/// Bump to `~1` once the binary cuts 1.0. Override with `$LING_MEM_VERSION`.
+const LING_MEM_PIN: &str = "~0.7";
+
+/// Canonical binary-only installer (SHA-256 verified inside). Fetched over
+/// HTTPS and run via `bash -s` when the binary is absent.
+const INSTALL_BIN_URL: &str =
+    "https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh";
 
 pub struct MemoryQueryTool;
 
@@ -346,15 +358,101 @@ fn parse_envelope(envelope: Value) -> Result<Value> {
     }
 }
 
-/// Spawn `ling-mem start` and wait. The subprocess is idempotent —
-/// running it when the daemon is already up exits 0.
+/// Resolve the `ling-mem` binary: `$PATH` first, then the two dirs the
+/// installers use (`~/.local/bin`, `/usr/local/bin`). `None` if not installed.
+fn resolve_ling_mem() -> Option<std::path::PathBuf> {
+    if let Ok(out) = std::process::Command::new("which").arg("ling-mem").output() {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(std::path::PathBuf::from(s));
+            }
+        }
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(std::path::PathBuf::from(home).join(".local/bin/ling-mem"));
+    }
+    candidates.push(std::path::PathBuf::from("/usr/local/bin/ling-mem"));
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Fetch the canonical binary-only installer and run it (`bash -s`), pinned to
+/// [`LING_MEM_PIN`]. The engine owns the dependency — a fresh marketplace
+/// install ships skill files but no binary, and nothing else would install it
+/// for the HTTP memory path.
+async fn install_ling_mem() -> Result<()> {
+    let pin = std::env::var("LING_MEM_VERSION").unwrap_or_else(|_| LING_MEM_PIN.to_string());
+    tracing::info!("ling-mem binary not found — installing {pin} via install-bin.sh");
+
+    let script = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow!(e))?
+        .get(INSTALL_BIN_URL)
+        .send()
+        .await
+        .context("fetching install-bin.sh")?
+        .error_for_status()
+        .context("install-bin.sh fetch returned non-success")?
+        .text()
+        .await
+        .context("reading install-bin.sh body")?;
+
+    let mut child = tokio::process::Command::new("bash")
+        .arg("-s")
+        .arg("--")
+        .arg("--version")
+        .arg(&pin)
+        .arg("--quiet")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("spawning bash to run install-bin.sh")?;
+
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("could not open stdin to install-bin.sh"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .await
+            .context("piping install-bin.sh to bash")?;
+    } // drop stdin → EOF so bash runs
+
+    let out = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
+        .await
+        .map_err(|_| anyhow!("install-bin.sh did not complete within 120s"))?
+        .context("waiting for install-bin.sh")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(anyhow!("install-bin.sh failed: {}", err.trim()));
+    }
+    Ok(())
+}
+
+/// Ensure the binary exists (installing it if missing) and run `<bin> start`.
+/// Idempotent — `start` while the daemon is already up exits 0.
 async fn autostart() -> Result<()> {
-    let binary = std::path::PathBuf::from(AUTOSTART_CMD[0]);
-    let args: Vec<&str> = AUTOSTART_CMD[1..].to_vec();
+    let bin = match resolve_ling_mem() {
+        Some(p) => p,
+        None => {
+            install_ling_mem()
+                .await
+                .context("ling-mem binary missing and auto-install failed")?;
+            resolve_ling_mem()
+                .ok_or_else(|| anyhow!("ling-mem still not found after auto-install"))?
+        }
+    };
+
     let output = tokio::time::timeout(
         AUTOSTART_TIMEOUT,
-        tokio::process::Command::new(&binary)
-            .args(&args)
+        tokio::process::Command::new(&bin)
+            .arg("start")
             .env("LINGGEN_DATA_DIR", crate::paths::linggen_home())
             .kill_on_drop(true)
             .output(),
@@ -362,21 +460,19 @@ async fn autostart() -> Result<()> {
     .await
     .map_err(|_| {
         anyhow!(
-            "`{} {}` did not complete within {}s",
-            binary.display(),
-            args.join(" "),
+            "`{} start` did not complete within {}s",
+            bin.display(),
             AUTOSTART_TIMEOUT.as_secs()
         )
     })?
-    .with_context(|| format!("spawning `{} {}`", binary.display(), args.join(" ")))?;
+    .with_context(|| format!("spawning `{} start`", bin.display()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let trimmed = stderr.trim();
         return Err(anyhow!(
-            "`{} {}` exited with status {}{}",
-            binary.display(),
-            args.join(" "),
+            "`{} start` exited with status {}{}",
+            bin.display(),
             output.status,
             if trimmed.is_empty() {
                 String::new()
