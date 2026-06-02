@@ -41,6 +41,13 @@ if [ "$BUILT_VER" != "$VERSION_NUM" ]; then
   echo "❌ Error: Built version ($BUILT_VER) does not match target version ($VERSION_NUM)" >&2
   exit 1
 fi
+# Ad-hoc codesign — macOS Sequoia 26.x sends SIGKILL ("Code Signature
+# Invalid") to adhoc-from-cargo Rust binaries launched from a tarball.
+# Sign explicitly so end-users on Sequoia can run `ling`.
+echo "🔏 Codesigning (ad-hoc)..."
+codesign --force --sign - target/release/ling
+codesign --verify --verbose target/release/ling 2>&1 | sed 's/^/   /' || true
+
 tar -C target/release -czf "$DIST_DIR/ling-${SLUG}.tar.gz" ling
 echo "✅ ling built: dist/ling-${SLUG}.tar.gz"
 
