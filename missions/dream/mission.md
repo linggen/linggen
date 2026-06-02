@@ -87,15 +87,22 @@ Don't add prose. Don't summarize mid-run. Just the status lines.
   promotion target. Holds durable signal: cross-project preferences,
   decisions with reasoning, re-hit gotchas, biographical facts that
   don't quite rise to core.
-- **`episodic`** — the raw staging pool. The encoder subagent writes
-  here every few turns, broadly but not indiscriminately. Each row
-  has a TTL; once it passes TTL it shows up in your worklist for
-  consolidation. **Episodic should never accumulate** — every past-
-  TTL row leaves on this pass.
+- **`episodic`** — the raw staging pool. The **main agent captures here
+  every turn** — fast, broad, low-bar, and **not deduped** (no
+  search-first at capture). So expect this pool to be **high-volume and
+  full of near-duplicates**: the same fact restated across many turns,
+  partial captures, and noise. The retired N-turn encoder subagent used
+  to pre-filter this; now that filtering is **your** job. Each row has a
+  TTL; once past TTL it enters your worklist. **Episodic never
+  accumulates** — every past-TTL row leaves on this pass.
 
-Your job tonight: walk the past-TTL episodic worklist, and for each
-row decide whether it earns a place in `semantic` (or, rarely, `core`)
-or whether it can be deleted.
+Your job tonight: walk the past-TTL episodic worklist. **Most rows will
+be evicted** — per-turn capture is intentionally low-bar, so the default
+outcome is delete, and only genuinely durable signal earns a place in
+`semantic` (or, rarely, `core`). **Cluster aggressively first:** group
+near-duplicate rows on the same subject, promote the single best-phrased
+representative once, and delete the rest — don't evaluate restatements
+one-by-one as if they were independent candidates.
 
 ## Step 1 — Read the worklist
 
@@ -137,6 +144,13 @@ Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "
   surfaces patterns.
 - **No merging.** Two distinct facts stay as two rows. Different
   phrasings of the same fact → dedup per 2b row 1.
+- **Cluster intra-pass duplicates.** Per-turn capture restates the same
+  thing across many turns, so the worklist itself is full of near-dups
+  of *each other* (not just of semantic). Before promoting, group
+  worklist rows by subject; promote the single best-phrased
+  representative **once**, and `delete` the other rows in that cluster.
+  Never promote two restatements of one fact as two semantic rows — that
+  just moves the duplication into semantic.
 - **No `replace_ids`.** That primitive is reserved for live AskUser-
   resolved conflicts; dream never resolves contradictions.
 - **No tool you don't have.** Your tool list is `Memory_query` and
