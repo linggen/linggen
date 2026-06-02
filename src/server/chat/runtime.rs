@@ -43,24 +43,7 @@ pub(super) async fn run_loop_with_tracking(
                 // AUTH_REQUIRED errors render as a structured block in chat so
                 // the UI can show an inline "Sign in with ChatGPT" button —
                 // no need to navigate to Settings → Models to re-authenticate.
-                let display = if let Some(rest) = msg.strip_prefix("AUTH_REQUIRED:") {
-                    let text = rest.trim();
-                    let provider = if text.contains("ChatGPT") {
-                        "chatgpt"
-                    } else if text.contains("Claude") {
-                        "claude"
-                    } else {
-                        ""
-                    };
-                    serde_json::json!({
-                        "type": "auth_required",
-                        "provider": provider,
-                        "message": text,
-                    })
-                    .to_string()
-                } else {
-                    format!("Error: {}", msg)
-                };
+                let display = crate::server::chat::helpers::format_turn_error(&msg);
                 let _ = events_tx.send(ServerEvent::Message {
                     from: agent_id.to_string(),
                     to: "user".to_string(),

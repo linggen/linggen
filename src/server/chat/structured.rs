@@ -124,7 +124,7 @@ pub(super) async fn run_structured_loop(
         // AgentEvent::Message which the bridge converts to ServerEvent::Message.
         // Emitting one here would duplicate the assistant response for WebRTC consumers.
     } else if let Err(err) = outcome {
-        let error_msg = format!("Error: {}", err);
+        let error_msg = super::helpers::format_turn_error(&err.to_string());
         persist_and_emit_message(
             &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
             &ctx.agent_id, "user", &error_msg, ctx.session_id.as_deref(), false,

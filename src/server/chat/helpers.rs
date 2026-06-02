@@ -10,6 +10,37 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 // ---------------------------------------------------------------------------
+// Turn-error formatting
+// ---------------------------------------------------------------------------
+
+/// Format a failed turn's error for the chat surface.
+///
+/// `AUTH_REQUIRED:`-prefixed errors become a structured `auth_required` block
+/// so the UI can render an inline "Sign in with ChatGPT" CTA instead of a dead
+/// red banner; everything else becomes a plain `Error: …` message. Shared by
+/// every interactive turn path (main loop, runtime wrapper, plan execution) so
+/// the sign-in button shows no matter which one surfaces the failure.
+pub(crate) fn format_turn_error(msg: &str) -> String {
+    let Some(rest) = msg.strip_prefix("AUTH_REQUIRED:") else {
+        return format!("Error: {}", msg);
+    };
+    let text = rest.trim();
+    let provider = if text.contains("ChatGPT") {
+        "chatgpt"
+    } else if text.contains("Claude") {
+        "claude"
+    } else {
+        ""
+    };
+    serde_json::json!({
+        "type": "auth_required",
+        "provider": provider,
+        "message": text,
+    })
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Message persistence
 // ---------------------------------------------------------------------------
 
