@@ -43,7 +43,7 @@ const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 /// Binary version the engine bootstraps when `ling-mem` is missing. A semver
 /// range floor — `install-bin.sh` resolves it to the highest matching release.
 /// Bump to `~1` once the binary cuts 1.0. Override with `$LING_MEM_VERSION`.
-const LING_MEM_PIN: &str = "~0.7";
+const LING_MEM_PIN: &str = "~0.8";
 
 /// Canonical binary-only installer (SHA-256 verified inside). Fetched over
 /// HTTPS and run via `bash -s` when the binary is absent.
