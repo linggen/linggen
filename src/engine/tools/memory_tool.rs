@@ -358,23 +358,50 @@ fn parse_envelope(envelope: Value) -> Result<Value> {
     }
 }
 
-/// Resolve the `ling-mem` binary: `$PATH` first, then the two dirs the
-/// installers use (`~/.local/bin`, `/usr/local/bin`). `None` if not installed.
+/// Parse `<bin> --version` ("ling-mem X.Y.Z") into a comparable tuple.
+fn ling_mem_version(path: &std::path::Path) -> Option<(u32, u32, u32)> {
+    let out = std::process::Command::new(path).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v = stdout.split_whitespace().nth(1)?;
+    let mut it = v.trim().split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    let patch = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// Resolve the `ling-mem` binary to the **highest-version** copy among the
+/// `$PATH` hit and the two installer dirs (`~/.local/bin`, `/usr/local/bin`).
+/// Picking by version — not first-on-PATH — avoids starting a stale copy when
+/// a default PATH happens to shadow a newer one with an older `/usr/local/bin`
+/// (a real multi-host skew: different installers drop different versions).
+/// `None` if no usable binary is found.
 fn resolve_ling_mem() -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(out) = std::process::Command::new("which").arg("ling-mem").output() {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
-                return Some(std::path::PathBuf::from(s));
+                candidates.push(std::path::PathBuf::from(s));
             }
         }
     }
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         candidates.push(std::path::PathBuf::from(home).join(".local/bin/ling-mem"));
     }
     candidates.push(std::path::PathBuf::from("/usr/local/bin/ling-mem"));
-    candidates.into_iter().find(|p| p.is_file())
+
+    candidates.retain(|p| p.is_file());
+    candidates.sort();
+    candidates.dedup();
+    candidates
+        .into_iter()
+        .filter_map(|p| ling_mem_version(&p).map(|v| (v, p)))
+        .max_by_key(|(v, _)| *v)
+        .map(|(_, p)| p)
 }
 
 /// Fetch the canonical binary-only installer and run it (`bash -s`), pinned to
