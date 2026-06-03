@@ -403,8 +403,15 @@ impl AgentEngine {
             }
 
             // --- Empty response protection ---
-            // Some providers (e.g. Gemini) may return empty text with no tool calls.
-            // Bail out after consecutive empty responses to avoid infinite loops.
+            // Some providers may return empty text with no tool calls. Bail out
+            // after consecutive empties to avoid infinite loops.
+            //
+            // Reasoning models (gpt-5.x / o-series, esp. via the ChatGPT/Codex
+            // `responses` backend) intermittently emit a reasoning-only turn —
+            // no output_text and no function_call — which lands here as "empty".
+            // These are transient and usually recover on the next attempt, so we
+            // give reasoning models more retries before giving up than the 3 we
+            // use elsewhere; bailing at 3 was killing otherwise-recoverable runs.
             if raw.trim().is_empty() && native_tool_calls.is_empty() {
                 state.empty_response_streak += 1;
                 warn!(
@@ -413,7 +420,14 @@ impl AgentEngine {
                     self.model_id,
                     native_tools.is_some(),
                 );
-                if state.empty_response_streak >= 3 {
+                let m = self.model_id.to_lowercase();
+                let is_reasoning_model = m.contains("gpt-5")
+                    || m.contains("o1")
+                    || m.contains("o3")
+                    || m.contains("o4")
+                    || m.contains("deepseek-r");
+                let empty_bail_threshold = if is_reasoning_model { 6 } else { 3 };
+                if state.empty_response_streak >= empty_bail_threshold {
                     warn!("Bailing out after {} consecutive empty responses from {}", state.empty_response_streak, self.model_id);
 
                     // In plan mode, auto-finalize with whatever research was gathered
