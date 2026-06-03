@@ -78,12 +78,16 @@ text = '''
 # Memory protocol — capture to episodic each turn; curate core/semantic carefully
 
 **Per-turn capture (episodic).** Each turn, append genuinely-noteworthy
-signal you're not yet sure is durable to `tier: "episodic"` — fast,
-append-only, **no query-first, no AskUser**. This is your steady-state
-capture lane now that the every-N-turns encoder subagent is retired; the
-dream consolidator dedupes, promotes worthy rows to semantic/core, and
-evicts the rest past-TTL. Don't overthink it — if it might matter later,
-stage it.
+signal to `tier: "episodic"` — fast, append-only, **no query-first, no
+AskUser**. **Project-scoped is fine here; episodic is staging, not
+user-biography.** Capture shipped milestones, decisions + the reasoning
+behind them, and non-obvious learnings from a run/experiment — even when
+they're about one project (e.g. *"Shipped Linggen 1.0"*; *"Sanji docking:
+dropped dock-wall cost, treat all cost-points uniformly"*; *"BlueBoat
+cruise tops out ~0.2 m/s"*). This is your steady-state lane now that the
+every-N-turns encoder subagent is retired; the dream consolidator dedupes,
+promotes worthy rows to semantic/core, and evicts the rest past-TTL. Don't
+overthink it — if a future session would be smarter for it, stage it.
 
 **Curated writes (core / semantic) — read before you write, every row.**
 Every `Memory_write({verb: "add", tier: "core" | "semantic"})` MUST be
@@ -222,11 +226,13 @@ Pick the tier from the row's own durability, not from who is writing:
   language preferences, reusable tech gotchas. Retrieved on demand.
   **High confidence required.** If unsure, drop to episodic.
 - `tier: "episodic"` — **per-turn working capture (the default lane).**
-  Append anything genuinely noteworthy you're not yet sure is durable —
-  fast, append-only, **no query-first**. The dream consolidator (cron
-  mission) dedupes, promotes worthy rows to semantic/core, and evicts
-  the rest past-TTL. This is where most per-turn capture lands; reserve
-  core/semantic for what you can already route with high confidence.
+  Append anything genuinely noteworthy — **including project-scoped
+  milestones, decisions + reasoning, and run learnings** (episodic is
+  staging, not user-biography). Fast, append-only, **no query-first**.
+  The dream consolidator (cron mission) dedupes, promotes worthy rows to
+  semantic/core, and evicts the rest past-TTL. This is where most
+  per-turn capture lands; reserve core/semantic for what you can already
+  route with high confidence.
 
 ## Tier discipline on contradiction resolution
 
@@ -318,12 +324,14 @@ keep it to narrow facts about the PERSON (name, role, location,
 relationships, hard work rules). A row that names a project or uses
 progressive-form verbs (*"is building"*) is a goal → semantic, not core.
 
-**Skip:** task/activity descriptions (*"working on docking today"*),
-inferred preferences (*"seems to prefer Y"*), uncommitted opinions
-(*"kind of prefer X"*). **Project-internal technical facts → drop** —
-don't `Memory_write` them and don't `Edit` project files; the agent
-reads the repo's own `AGENTS.md` / `CLAUDE.md` / source when it needs
-that content.
+**Keep out of core/semantic (episodic is fine):** task/activity
+descriptions (*"working on docking today"*), inferred preferences
+(*"seems to prefer Y"*), uncommitted opinions (*"kind of prefer X"*),
+project-internal technical facts. These stage in `tier: "episodic"`;
+the dream pass decides if any earn a curated row. **Never store at any
+tier:** secrets, and content verbatim re-derivable from a file the agent
+re-reads — capture the *decision/learning about* it, not the file body,
+and don't `Edit` project files to record it.
 
 ## Retrieval is visible — every fact you use, the user sees
 
