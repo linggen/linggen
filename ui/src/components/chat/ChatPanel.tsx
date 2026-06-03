@@ -18,6 +18,7 @@ import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from 
 import { getMessagePhase } from './MessagePhase';
 import { AgentMessage } from './AgentMessage';
 import { MemoryRecallMessage } from './MemoryRecallMessage';
+import { CompactionMessage } from './CompactionMessage';
 import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
@@ -144,6 +145,10 @@ const ChatMessageRow = React.memo<{
   // so the role is "agent" — branch on `from` instead.
   if (msg.from === 'memory') {
     return <MemoryRecallMessage text={msg.text} />;
+  }
+  // Auto-compaction notice, injected by handleContextUsage on `compressed`.
+  if (msg.from === 'compaction') {
+    return <CompactionMessage text={msg.text} />;
   }
   const phase = isUser ? undefined : getMessagePhase(msg);
   const messageClass = isUser
@@ -436,8 +441,8 @@ export const ChatPanel: React.FC<{
     return chatMessages.filter((msg) => {
       const from = normalizeAgentKey(msg.from || msg.role);
       const to = normalizeAgentKey(msg.to || '');
-      // Always show system messages (e.g. /status, /help output)
-      if (from === 'system') return true;
+      // Always show system + compaction notices (no per-agent `to` routing).
+      if (from === 'system' || from === 'compaction') return true;
       if (msg.role === 'user') {
         return !to || to === selected;
       }

@@ -85,6 +85,22 @@ function handleContextUsage(item: UiEvent): void {
       },
     }));
   }
+
+  // Surface auto-compaction in the chat. The engine sets `compressed` after a
+  // summary pass; without an on-screen line it's silent — and compaction can
+  // drop tool results (e.g. fetched threads) the agent still needs. Rendered
+  // as a divider via `from: 'compaction'` (see ChatPanel/CompactionMessage).
+  if ((item.data as { compressed?: boolean }).compressed && !parentId) {
+    const tk = Math.round(estTokens / 1000);
+    const limit = typeof item.data.token_limit === 'number' ? Number(item.data.token_limit) : 0;
+    const limitTxt = limit > 0 ? ` / ${Math.round(limit / 1000)}k` : '';
+    useChatStore.getState().addMessage({
+      role: 'agent',
+      from: 'compaction',
+      text: `Compacted context · ~${tk}k${limitTxt} tokens`,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
 
 function handlePlanUpdate(item: UiEvent): void {
