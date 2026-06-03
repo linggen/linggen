@@ -27,26 +27,25 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
     // `strict: true` REQUIRES every property to be listed in `required[]`
     // with `additionalProperties: false`; optional params are expressed as
     // nullable types (`["string", "null"]`) but must STILL appear in
-    // `required[]`. Crucially, the guide states that advanced JSON-schema
-    // constraints — `anyOf`, `minProperties`, "at least one of" — are NOT
-    // supported under strict. To opt out, "explicitly set `strict: false`".
+    // `required[]`. `oneOf`/`allOf` are rejected under strict and `anyOf`
+    // needs each branch strictified. To opt out, "explicitly set `strict:
+    // false`".
     //
-    // That makes strict faithful only when the tool actually has required
-    // fields. A tool whose params are ALL optional encodes exactly the
-    // unsupported "at least one of these" constraint (e.g. PageUpdate —
-    // provide one of body/top_bar/footer/body_patch). Strict can't express
-    // it: it makes every field required-nullable, so the model satisfies the
-    // schema by null-filling all of them (or sending `[{}]`), which then
-    // fails the runtime "at least one non-empty" check — and the
-    // always-present fields nudge spurious empty calls. Send such tools
-    // non-strict with their original schema so the model can omit the
-    // sections it isn't touching.
-    let has_required = params
-        .get("required")
-        .and_then(|v| v.as_array())
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
-    if !has_required {
+    // We only opt a tool into strict when `strictify_for_openai` would NOT
+    // have to change which fields are required — i.e. the schema is already
+    // fully-required at every level (and composite-free). The moment a tool
+    // has an optional field anywhere, strict's all-required rule distorts
+    // the contract: every optional becomes required-nullable, and reasoning
+    // models (gpt-5.x on the Responses API) react by null-filling every
+    // field or emitting empty/degenerate calls (e.g. `[{}]`) — which then
+    // fail the runtime "at least one non-empty" check and trip the
+    // consecutive-empty-response bail. So any tool with optional fields —
+    // PageUpdate, Read (file_path required, offset/limit optional), Grep,
+    // … — is sent `strict:false` with its ORIGINAL schema, letting the
+    // model omit the fields it isn't using. Strict stays on only for
+    // genuinely all-required tools, where it adds `additionalProperties:
+    // false` without touching `required`.
+    if !crate::engine::tools::json_schema::is_fully_required(&params) {
         return Some(serde_json::json!({
             "type": "function",
             "name": func.get("name")?,
@@ -593,6 +592,23 @@ impl OpenAiClient {
                     "stream": true,
                     "store": false,
                 });
+                // Reasoning models (gpt-5.x, o-series) on the Responses API take
+                // a `reasoning: { effort }` OBJECT — not the Chat Completions
+                // `reasoning_effort` scalar. The Responses branch never applied
+                // it, so the configured effort was silently dropped and the
+                // model always ran at default effort. `max_output_tokens` is
+                // deliberately left unset: OpenAI defaults it to the model
+                // maximum, so — unlike Gemini's small thinking budget (which we
+                // DO bump) — reasoning can't starve the visible output into an
+                // empty response.
+                if let Some(effort) = reasoning_effort {
+                    let e = effort.to_lowercase();
+                    if ["low", "medium", "high"].contains(&e.as_str())
+                        && Self::model_supports_reasoning(model, false)
+                    {
+                        req["reasoning"] = serde_json::json!({ "effort": e });
+                    }
+                }
                 if !instructions.is_empty() {
                     req["instructions"] = serde_json::Value::String(instructions);
                 }
@@ -1164,7 +1180,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn wire_tool_def_strict_when_has_required() {
+    fn wire_tool_def_non_strict_when_any_optional() {
+        // Read: `path` required, `max_bytes` optional. A mixed schema must NOT
+        // be strictified — strict's all-required rule would force max_bytes to
+        // required-nullable, which makes reasoning models null-fill / emit
+        // empty calls. Sent non-strict with the ORIGINAL schema instead.
         let canonical = json!({
             "function": {
                 "name": "Read",
@@ -1180,11 +1200,61 @@ mod tests {
             }
         });
         let wire = wire_tool_def(&canonical).unwrap();
+        assert_eq!(wire["strict"], json!(false));
+        // Original schema passed through untouched.
+        assert_eq!(wire["parameters"]["required"], json!(["path"]));
+        assert!(wire["parameters"].get("additionalProperties").is_none());
+    }
+
+    #[test]
+    fn wire_tool_def_strict_when_fully_required() {
+        // Every property required → strict is faithful (strictify only adds
+        // additionalProperties:false, never touches `required`).
+        let canonical = json!({
+            "function": {
+                "name": "Echo",
+                "description": "Echo text",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"}
+                    },
+                    "required": ["text"]
+                }
+            }
+        });
+        let wire = wire_tool_def(&canonical).unwrap();
         assert_eq!(wire["strict"], json!(true));
-        // strictify forces every property into required.
-        let required = wire["parameters"]["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v == "path"));
-        assert!(required.iter().any(|v| v == "max_bytes"));
+        assert_eq!(wire["parameters"]["required"], json!(["text"]));
+        assert_eq!(wire["parameters"]["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn wire_tool_def_non_strict_when_nested_optional() {
+        // Top-level all-required, but a nested object has an optional field →
+        // still non-strict, because strict would distort the nested contract.
+        let canonical = json!({
+            "function": {
+                "name": "Nested",
+                "description": "x",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cfg": {
+                            "type": "object",
+                            "properties": {
+                                "a": {"type": "string"},
+                                "b": {"type": "string"}
+                            },
+                            "required": ["a"]
+                        }
+                    },
+                    "required": ["cfg"]
+                }
+            }
+        });
+        let wire = wire_tool_def(&canonical).unwrap();
+        assert_eq!(wire["strict"], json!(false));
     }
 
     #[test]
