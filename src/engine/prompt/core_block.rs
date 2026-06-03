@@ -75,6 +75,13 @@ struct CoreRow {
 /// or compare against.
 pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — `Memory_write({verb:\"delete\", id:\"<id>\"})` for exact dups, AskUser + `Memory_write({verb:\"add\", content:\"<resolved>\", replace_ids:[\"<loser_id_1>\", ...], ...})` for conflicts (one atomic call, never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
 
+/// Per-turn capture nudge, injected model-only every owner turn (NOT
+/// rendered in the recall widget — it's an instruction to the agent, not a
+/// recalled memory). Word-for-word aligned with CC/Codex `recall.sh` so the
+/// per-turn reminder reads identically across every host. Definitions /
+/// routing live in `[memory_protocol]` (session start); this only nudges.
+pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental). Nothing worth keeping? Skip silently.";
+
 /// Query `tier=core` rows from `ling-mem` and render them as a bullet
 /// list. Returns `None` when there are no core rows (or the binary is
 /// unavailable / errors out — the caller emits the empty-block prompt

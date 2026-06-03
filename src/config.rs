@@ -90,10 +90,6 @@ pub struct AgentConfig {
     pub prompt_loop_breaker: Option<String>,
     #[serde(default = "default_max_delegation_depth")]
     pub max_delegation_depth: usize,
-    /// Every N user messages, inject a hidden memory self-review nudge into
-    /// the turn. `0` disables. Default 6. See `memory-spec.md`.
-    #[serde(default = "default_memory_nudge_interval")]
-    pub memory_nudge_interval: usize,
     /// Global auto-compaction trigger as a fraction of context_window_tokens.
     /// 0.10–0.99. None = use hardcoded engine default (0.95). Per-session
     /// override (set via POST /api/chat/compact_config) takes precedence.
@@ -124,9 +120,6 @@ pub struct AgentConfig {
     pub ling_mem_url: String,
 }
 
-fn default_memory_nudge_interval() -> usize {
-    6
-}
 
 fn default_episodic_ttl_days() -> u64 {
     7
@@ -402,7 +395,6 @@ impl Default for Config {
                 default_permission_mode: None,
                 prompt_loop_breaker: None,
                 max_delegation_depth: default_max_delegation_depth(),
-                memory_nudge_interval: default_memory_nudge_interval(),
                 compact_threshold: None,
                 episodic_ttl_days: default_episodic_ttl_days(),
                 memory_inject_min_score: None,

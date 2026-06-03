@@ -370,6 +370,20 @@ pub(super) async fn push_user_turn_with_recall(
         )
         .await;
     }
+
+    // Always-on per-turn capture nudge — model-only, fires every owner turn
+    // (including zero-recall turns, which often produce the new memory).
+    // Gated on the same include_memory check as recall so skill/mission
+    // sessions stay out. Not persisted to the recall widget: it's an
+    // instruction to the agent, not a recalled row. Mirrors CC/Codex
+    // recall.sh so the per-turn reminder is identical across hosts.
+    if engine.prompt_profile.include_memory {
+        engine.chat_history.push(crate::message::ChatMessage::new(
+            "system",
+            crate::engine::prompt::core_block::CAPTURE_REMINDER.to_string(),
+        ));
+    }
+
     engine
         .chat_history
         .push(crate::message::ChatMessage::new("user", ctx.clean_msg.clone()));

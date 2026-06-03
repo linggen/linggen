@@ -125,9 +125,6 @@ pub struct EngineConfig {
     pub skill_allowed_tools: Option<std::collections::HashSet<String>>,
     /// When set, restricts available skills for proxy room consumers.
     pub consumer_allowed_skills: Option<std::collections::HashSet<String>>,
-    /// Every N user messages, inject a hidden memory self-review nudge into
-    /// the turn's message list. `0` disables. Default 6.
-    pub memory_nudge_interval: usize,
     /// Episodic-memory retention in days; the user-triggered `dream` mission
     /// terminally decides rows older than this, the evict backstop sweeps the
     /// rest. Default 7. See `memory-spec.md` §2.
@@ -169,7 +166,6 @@ impl EngineConfig {
             consumer_allowed_tools: None,
             skill_allowed_tools: None,
             consumer_allowed_skills: None,
-            memory_nudge_interval: config.agent.memory_nudge_interval,
             episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
