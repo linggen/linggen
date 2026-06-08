@@ -58,6 +58,8 @@ export class RtcTransport implements Transport {
   private requestIdCounter = 0;
   // In-progress gzip chunked transfers (keyed by request_id)
   private gzipTransfers = new Map<string, { chunks: string[]; status: number; expectedChunks: number }>();
+  // In-flight reassembly for an unsolicited chunked push (e.g. large page_state).
+  private pushGzip: { chunks: string[]; expectedChunks: number } | null = null;
   // Sessions requested before connection was ready — replayed on connect
   private pendingSubscriptions = new Set<string>();
   // Abort controller for in-flight signaling (cancelled on cleanup/disconnect)
@@ -319,6 +321,34 @@ export class RtcTransport implements Transport {
           return;
         }
 
+        // Handle gzip chunked PUSH (unsolicited large messages like page_state).
+        // No request_id — reassemble, then dispatch as a normal event.
+        if (msg.push_gzip_start) {
+          this.pushGzip = { chunks: [], expectedChunks: msg.push_gzip_start.chunks || 0 };
+          return;
+        }
+        if (msg.push_gzip_chunk) {
+          if (this.pushGzip) this.pushGzip.chunks.push(msg.push_gzip_chunk);
+          return;
+        }
+        if (msg.push_gzip_end) {
+          const transfer = this.pushGzip;
+          this.pushGzip = null;
+          if (transfer) {
+            const binaryStr = transfer.chunks.map(c => atob(c)).join('');
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+            new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')))
+              .text()
+              .then(text => {
+                const pushed = JSON.parse(text);
+                if (pushed.kind) queueMicrotask(() => this.callbacks.onEvent(null, pushed as UiEvent));
+              })
+              .catch(err => console.error('Push decompress failed:', err));
+          }
+          return;
+        }
+
         // Handle RPC responses synchronously (callers are awaiting)
         if (msg.request_id && this.pendingRequests.has(msg.request_id)) {
           const pending = this.pendingRequests.get(msg.request_id)!;
@@ -468,6 +498,7 @@ export class RtcTransport implements Transport {
     }
     this.pendingRequests.clear();
     this.gzipTransfers.clear();
+    this.pushGzip = null;
 
     // Re-queue active sessions for replay after reconnect
     for (const [sid] of this.sessionChannels) {

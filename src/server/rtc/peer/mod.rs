@@ -28,7 +28,7 @@ mod session;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
 use inference::process_inference_request;
-use response::{enqueue_response, MAX_DC_WRITE_QUEUE};
+use response::{enqueue_push, enqueue_response, MAX_DC_WRITE_QUEUE};
 use session::handle_session_message;
 
 /// Create a new WebRTC peer connection from a WHIP SDP offer.
@@ -651,10 +651,9 @@ async fn run_peer(
                 match rid {
                     Some(rid) => enqueue_response(&mut pending_dc_writes, cid, &rid, result),
                     None => {
-                        // Unsolicited push (e.g. page_state) — write directly
-                        if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                            pending_dc_writes.push_back((cid, result.to_string()));
-                        }
+                        // Unsolicited push (e.g. page_state) — chunk if large so
+                        // an oversized frame can't reset the data channel.
+                        enqueue_push(&mut pending_dc_writes, cid, result);
                     }
                 }
             }
