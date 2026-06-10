@@ -439,6 +439,55 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_command_paths_catches_upward_relative() {
+        // Relative args that climb out of cwd via `..` are extracted so they
+        // get gated against their resolved target — this closes the
+        // `cat ../../.ssh/id_rsa` escape. Relative args without `..` stay
+        // inside cwd and are omitted (already covered by the cwd-tier check).
+        assert_eq!(
+            extract_command_paths("cat ../../.ssh/id_rsa"),
+            vec!["../../.ssh/id_rsa".to_string()],
+        );
+        assert_eq!(
+            extract_command_paths("cp a/../../b/x ./out"),
+            vec!["a/../../b/x".to_string()],
+        );
+        // No `..` component → not extracted.
+        assert!(extract_command_paths("cargo build --release").is_empty());
+        assert!(extract_command_paths("cat ./local.txt").is_empty());
+        // A git range (`main..feature`) is one component, not a `..` traversal.
+        assert!(extract_command_paths("git log main..feature").is_empty());
+    }
+
+    #[test]
+    fn test_check_permission_bash_relative_escape_gated() {
+        // End-to-end: a `..` arg that leaves the granted cwd must prompt, not
+        // pass at cwd's tier. Uses the real home dir as cwd so `..` resolves
+        // on disk (normalize_path collapses it against an existing directory).
+        if let Some(home) = dirs::home_dir() {
+            let mut sp = SessionPermissions::default();
+            sp.set_path_mode(&home.to_string_lossy(), PermissionMode::Read);
+
+            let escape = check_permission(
+                "Bash", Some("cat ../other-xyz/id_rsa"), None, &home, &sp, None,
+            );
+            assert!(
+                matches!(escape, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
+                "cat ../other-xyz/id_rsa must prompt — it climbs out of the granted cwd. got {escape:?}",
+            );
+
+            if let Some(parent) = home.parent() {
+                sp.set_path_mode(&parent.to_string_lossy(), PermissionMode::Read);
+                let granted = check_permission(
+                    "Bash", Some("cat ../other-xyz/id_rsa"), None, &home, &sp, None,
+                );
+                assert!(matches!(granted, PermissionCheckResult::Allowed),
+                    "with read on the parent, the escaped read should pass. got {granted:?}");
+            }
+        }
+    }
+
+    #[test]
     fn test_extract_command_paths_ignores_jq_alternative_operator() {
         // jq's `//` alternative operator must NOT be read as a filesystem
         // path — otherwise the dream's TTL command demands admin on `//`.

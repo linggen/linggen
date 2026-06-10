@@ -141,23 +141,23 @@ Markdown file with YAML frontmatter, shaped like `SKILL.md`. Stored at `~/.lingg
 name: ci-watcher
 description: Check CI/CD status every 30 minutes and report issues.
 schedule: '*/30 * * * *'
+catchup_hours: 24
 enabled: true
+agent: ling
 cwd: /path/to/project
-entry: scripts/poll.sh            # optional pre-agent script
-allow-skills: []
-requires: []
+kickoff:
+  - "Check CI/CD status and report any issues."
 allowed-tools: [Read, Bash, Task]
 permission:
-  mode: edit
-  paths: []
+  paths:
+    - { path: /path/to/project, mode: edit }
   warning: ""
-created_at: 1700000000
 ---
 
 Check CI/CD status and report issues.
 ```
 
-Core frontmatter fields: `name`, `description`, `schedule` (5-field cron), `enabled`, `cwd`, `entry` (optional script path or inline bash), `allow-skills`, `requires`, `allowed-tools`, `permission` (nested `mode` / `paths` / `warning`), `created_at`. Legacy `permission_tier`, mission `policy`, and top-level `mode: agent|script|app` are still read by the parser and rewritten to the new shape on next save; `mode: app` is unsupported.
+Core frontmatter fields: `name`, `description`, `schedule` (5-field cron), `catchup_hours` (optional), `enabled`, `agent` (optional), `cwd`, `model` (optional), `kickoff` (optional), `allowed-tools`, `permission` (per-path `paths`, each `{path, mode}`, plus `warning`). See [`mission-spec.md`](mission-spec.md) for the authoritative field reference. Legacy `permission_tier`, mission `policy`, single top-level `permission.mode`, and `mode: agent|script|app` are **no longer converted** — a file still using them loads with no permission grants and must be rewritten to the per-path shape.
 
 The markdown body is the mission prompt (step-by-step instructions for the agent). Multiple missions can be active simultaneously — each in its own directory.
 

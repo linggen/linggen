@@ -29,7 +29,7 @@ Two sibling subsystems in the linggen engine, discovered and loaded the same way
 
 **Mission = scheduled task.** Cron-triggered. Consumes tools and capabilities that skills register. Renders no UI of its own — the agent communicates through the session transcript (visible after the run via the mission's run history). Whether a mission can ask the user is up to its `allowed-tools`: a scheduled overnight mission like `dream` omits `AskUser` because there's nobody to answer; a manually-triggered or catch-up mission may list `AskUser` if its author wants it to.
 
-A mission looks like a `SKILL.md` with a `schedule:` field. It uses capability tools (like `Memory_*`) that installed skills have registered. It can also delegate to another skill via the `Skill` tool when needed, but that's the exception — typically missions just use tools directly.
+A mission looks like a `SKILL.md` with a `schedule:` field. It uses built-in engine tools plus capability tools (like `Memory_*`) that installed skills have registered, calling them directly. Missions do **not** delegate to skills — the `Skill` tool is never part of a mission's tool surface (see "Tools missions can use").
 
 ## File layout
 
@@ -187,7 +187,7 @@ See `permission-spec.md` for the full model.
 | **edit** (alias `write`) | Build / test / maintenance missions |
 | **admin** | Trusted automation (memory, backups, system tasks) |
 
-Grants compose via longest-path-match. When a mission invokes a skill via the `Skill` tool, the skill inherits the mission's grants and cannot widen them — narrower skill-declared grants overlay on the matching prefix.
+Grants compose via longest-path-match — the most-specific `{path, mode}` entry covering a target wins.
 
 ### Hardcoded deny floor
 

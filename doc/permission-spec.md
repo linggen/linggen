@@ -60,14 +60,15 @@ Compound commands: classified by the highest component. Unknown commands: admin-
 
 ### Bash path-arg gating
 
-Bash gates on **the paths the command actually touches**, not just the session cwd. Absolute (`/foo`) and tilde (`~/foo`) tokens in the command are extracted; each must be covered by a grant at the command's tier.
+Bash gates on **the paths the command actually touches**, not just the session cwd. Absolute (`/foo`), tilde (`~/foo`), and upward-relative (`../foo`) tokens in the command are extracted; each must be covered by a grant at the command's tier. Relative tokens are resolved against the session cwd before the grant lookup.
 
 - `ls` (no path args) → cwd's tier must cover read.
 - `ls /tmp/foo` → `/tmp` must have read; cwd's tier is irrelevant.
 - `cat /etc/hosts > /tmp/x` → both `/etc/hosts` (read) and `/tmp/x` (write) checked.
 - `bash ~/scripts/foo.sh` → admin tier required on `~/scripts/foo.sh` (or its parent grant).
+- `cat ../../.ssh/id_rsa` → resolved against cwd; the real target (`~/.ssh/id_rsa`) is gated, so a session granted only on cwd prompts.
 
-This prevents `read on /A, cwd /A` from leaking into `bash ls /B` — `/B` would prompt for upgrade. Best-effort extraction: doesn't parse `--flag=/path` forms or quoted paths with spaces. Compound commands (`a; b`, `a && b`) are split and each path checked.
+This prevents `read on /A, cwd /A` from leaking into `bash ls /B` — `/B` would prompt for upgrade. A relative token that stays inside cwd (no `..` component) is covered by the cwd-tier check and isn't separately extracted. Best-effort extraction: doesn't parse `--flag=/path` forms, quoted paths with spaces, shell-variable expansion (`$HOME`), or command substitution (`$(…)`) — these remain gated only at the cwd tier. Compound commands (`a; b`, `a && b`) are split and each path checked.
 
 ### Per-tool path-gate matrix
 

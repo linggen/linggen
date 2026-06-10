@@ -660,18 +660,20 @@ pub fn check_permission(
         return PermissionCheckResult::Allowed;
     }
 
-    // 2. Bash-specific path gating: if the command contains explicit absolute
-    // or tilde-prefixed path args, each must be covered at action_tier.
-    // Without this, `bash ls /B` from a session with read-on-/A would pass
-    // because step 3 only consulted cwd's tier — but the command's actual
-    // reach is /B, not /A. cwd is just where the shell starts; we gate on
-    // what the command actually touches.
+    // 2. Bash-specific path gating: if the command contains explicit absolute,
+    // tilde-prefixed, or upward-relative (`../…`) path args, each must be
+    // covered at action_tier. Without this, `bash ls /B` from a session with
+    // read-on-/A would pass because step 3 only consulted cwd's tier — but the
+    // command's actual reach is /B, not /A. cwd is just where the shell starts;
+    // we gate on what the command actually touches. Relative args are resolved
+    // against the session cwd, so `cat ../../.ssh/id_rsa` is gated against the
+    // file it really reaches, not cwd.
     if tool == "Bash" {
         if let Some(cmd) = bash_command {
             let path_args = extract_command_paths(cmd);
             if !path_args.is_empty() {
                 for path_arg in &path_args {
-                    let arg_path = expand_path_arg(path_arg);
+                    let arg_path = resolve_bash_arg(path_arg, session_cwd);
                     // OS temp dir is always-available scratch — don't gate it.
                     if is_under_temp(&arg_path) {
                         continue;
@@ -740,11 +742,15 @@ pub fn check_permission(
 // Helpers reused by check_permission and prompt construction
 // ---------------------------------------------------------------------------
 
-/// Extract absolute (`/foo/bar`) and tilde-prefixed (`~`, `~/foo`) tokens from
-/// a bash command. Used to gate Bash by the paths it actually touches, not
-/// just the session cwd's tier. Best-effort: doesn't handle quoted paths with
-/// spaces, embedded `--flag=/path` forms, or command substitution. Catches the
-/// common `cmd /path` and `cmd ~/path` forms.
+/// Extract absolute (`/foo/bar`), tilde-prefixed (`~`, `~/foo`), and
+/// upward-relative (`../foo`, `a/../../b`) tokens from a bash command. Used to
+/// gate Bash by the paths it actually touches, not just the session cwd's tier.
+/// Relative tokens that climb out of cwd via a `..` component are caught so a
+/// session granted only on cwd can't reach `cat ../../.ssh/id_rsa`; tokens that
+/// stay within cwd are omitted (already covered by the cwd-tier check).
+/// Best-effort: doesn't handle quoted paths with spaces, embedded
+/// `--flag=/path` forms, shell-variable expansion (`$HOME`), or command
+/// substitution (`$(…)`).
 pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
     shell_words(cmd)
         .into_iter()
@@ -760,7 +766,7 @@ pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
                     || (t.starts_with('\'') && t.ends_with('\'')));
             if quoted { t[1..t.len() - 1].to_string() } else { t.to_string() }
         })
-        .filter(|t| t.starts_with('/') || t.starts_with("~/") || t == "~")
+        .filter(|t| t.starts_with('/') || t.starts_with("~/") || t == "~" || is_upward_relative(t))
         // Strip trailing punctuation from compound shell syntax.
         .map(|t| t.trim_end_matches(';').trim_end_matches('&').trim_end_matches('|').to_string())
         .filter(|t| !t.is_empty())
@@ -821,6 +827,32 @@ fn expand_path_arg(p: &str) -> PathBuf {
     } else {
         PathBuf::from(p)
     }
+}
+
+/// Resolve a path token from a bash command to an absolute path for gating.
+/// Absolute (`/x`) and tilde (`~`, `~/x`) tokens expand as-is; a relative token
+/// is joined onto the session cwd so its real target — including any `..`
+/// traversal, which `normalize_path` then collapses — is what gets gated,
+/// rather than the process-global cwd that `canonicalize` would otherwise use.
+fn resolve_bash_arg(path_arg: &str, session_cwd: &Path) -> PathBuf {
+    if path_arg == "~" || path_arg.starts_with("~/") || path_arg.starts_with('/') {
+        expand_path_arg(path_arg)
+    } else {
+        session_cwd.join(path_arg)
+    }
+}
+
+/// True for a relative token that climbs out of cwd via a `..` path component
+/// (e.g. `../secret`, `a/../../b`). Such a token can reach outside the granted
+/// folder, so it must be gated against its resolved target. Relative tokens
+/// without `..` stay inside cwd and are already covered by the cwd-tier check,
+/// so they are not extracted — keeping subcommand words (`build`, `lint`) and
+/// git ranges (`main..feature`, a single component with no `..`) ungated.
+fn is_upward_relative(token: &str) -> bool {
+    if token.starts_with('/') || token.starts_with('~') {
+        return false;
+    }
+    token.split('/').any(|c| c == "..")
 }
 
 /// Compute the path to offer in the "Switch this folder to {mode}" option.
