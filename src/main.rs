@@ -1,3 +1,4 @@
+mod account;
 mod cli;
 mod config;
 mod credentials;
@@ -113,6 +114,21 @@ enum Command {
     Logout,
     /// Show remote access status
     Remote,
+    /// Manage the linggen.dev account (billing sign-in, subscriptions)
+    Account {
+        #[command(subcommand)]
+        action: AccountAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AccountAction {
+    /// Sign in to linggen.dev (browser flow; writes ~/.linggen/account.toml)
+    Login,
+    /// Sign out (remove account.toml)
+    Logout,
+    /// Show account + subscription/trial status
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -211,6 +227,13 @@ async fn main() -> Result<()> {
         }
         Some(Command::Remote) => {
             return cli::login::run_status().await;
+        }
+        Some(Command::Account { action }) => {
+            return match action {
+                AccountAction::Login => cli::account::run_login().await,
+                AccountAction::Logout => cli::account::run_logout().await,
+                AccountAction::Status => cli::account::run_status().await,
+            };
         }
         Some(Command::Auth { action }) => {
             match action {
@@ -439,7 +462,8 @@ async fn main() -> Result<()> {
         | Some(Command::Auth { .. })
         | Some(Command::Login)
         | Some(Command::Logout)
-        | Some(Command::Remote) => unreachable!(),
+        | Some(Command::Remote)
+        | Some(Command::Account { .. }) => unreachable!(),
     }
 
     Ok(())

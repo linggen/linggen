@@ -68,7 +68,8 @@ pub struct RemoteConfig {
 }
 
 /// Start a one-shot localhost HTTP server that receives the token via redirect.
-async fn receive_token_via_callback() -> Result<Option<String>> {
+/// Shared with `cli::account` — same browser handoff, different destination file.
+pub(crate) async fn receive_token_via_callback() -> Result<Option<String>> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let callback_url = format!("http://localhost:{port}/callback");

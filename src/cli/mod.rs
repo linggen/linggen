@@ -1,3 +1,4 @@
+pub mod account;
 pub mod daemon;
 pub mod init;
 pub mod login;

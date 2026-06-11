@@ -36,6 +36,10 @@ use api::agents::{
     reload_agents, run_agent, set_task,
     upsert_agent_file_api,
 };
+use api::account::{
+    get_account, get_account_callback, post_account_checkout, post_account_login,
+    post_account_logout,
+};
 use api::auth::{auth_callback, auth_login, auth_logout, get_user_me};
 use api::config::{
     codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
@@ -986,6 +990,11 @@ async fn prepare_server(
         .route("/api/auth/login", get(auth_login))
         .route("/api/auth/callback", get(auth_callback))
         .route("/api/auth/logout", post(auth_logout))
+        .route("/api/account", get(get_account))
+        .route("/api/account/login", post(post_account_login))
+        .route("/api/account/callback", get(get_account_callback))
+        .route("/api/account/logout", post(post_account_logout))
+        .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
         .route("/api/rooms/{*path}", axum::routing::any(proxy_rooms))

@@ -1,6 +1,7 @@
 //! HTTP handler modules. Each submodule owns a coherent slice of
 //! `/api/*` endpoints; `server::mod` wires them into the Axum router.
 
+pub(super) mod account;
 pub(super) mod agents;
 pub(super) mod auth;
 pub(super) mod config;

@@ -56,6 +56,9 @@ ling eval                         # Run eval tasks
 | `auth login` | Sign in with ChatGPT subscription | No |
 | `auth logout` | Clear ChatGPT OAuth tokens | No |
 | `auth status` | Show ChatGPT auth status | No |
+| `account login` | Billing sign-in to linggen.dev (`~/.linggen/account.toml`) | No |
+| `account logout` | Remove account.toml | No |
+| `account status` | Show subscription + trial status | No |
 | `skills` | Manage skills (add/remove/list/search) | No |
 
 "Needs full runtime" means the command initialises tracing, `AgentManager`, database, and skill loading. Lightweight commands only load `Config`.
@@ -226,6 +229,22 @@ ling skills search <QUERY>
 ```
 
 Searches the Linggen marketplace (and skills.sh fallback) and prints results.
+
+---
+
+## account
+
+```
+ling account login    # browser sign-in → ~/.linggen/account.toml (0600)
+ling account logout   # remove account.toml
+ling account status   # signed-in source, subscriptions, trial usage
+```
+
+Billing sign-in for the linggen.dev account — separate from `ling login`
+(remote access): no instance is registered. When `account.toml` is absent,
+an existing `remote.toml` token is used read-only (same account). The daemon
+exposes the same operations at `/api/account*` for app shells and the web UI;
+see `linggensite/doc/entitlement-spec.md`.
 
 ---
 
