@@ -441,8 +441,9 @@ export const ChatPanel: React.FC<{
     return chatMessages.filter((msg) => {
       const from = normalizeAgentKey(msg.from || msg.role);
       const to = normalizeAgentKey(msg.to || '');
-      // Always show system + compaction notices (no per-agent `to` routing).
-      if (from === 'system' || from === 'compaction') return true;
+      // Always show system + compaction notices and skill-page-injected
+      // assistant messages (add_message bridge) — none carry per-agent `to` routing.
+      if (from === 'system' || from === 'compaction' || from === 'assistant') return true;
       if (msg.role === 'user') {
         return !to || to === selected;
       }

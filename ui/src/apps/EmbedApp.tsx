@@ -147,6 +147,9 @@ export const EmbedApp: React.FC = () => {
     window.addEventListener('message', handleSkillCommand);
     window.addEventListener('message', handleMessage);
     document.addEventListener('keydown', handleCopy);
+    // Tell the parent skill page we can now receive posted messages — its
+    // chat-bridge queues sends until it sees life from this iframe.
+    try { window.parent.postMessage({ type: 'linggen-skill-event', event: 'ready', payload: {} }, '*'); } catch { /* not embedded */ }
     return () => {
       window.removeEventListener('message', handleSkillCommand);
       window.removeEventListener('message', handleMessage);
