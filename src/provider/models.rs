@@ -191,6 +191,14 @@ impl ModelManager {
                     );
                 }
             }
+            Some("linggen_account") => {
+                if crate::account::resolve_token().is_none() {
+                    anyhow::bail!(
+                        "AUTH_REQUIRED: Not signed in to linggen.dev for model '{}'. Run `ling account login` or sign in from the app.",
+                        cfg.id
+                    );
+                }
+            }
             Some("claude_oauth") => {
                 let tokens = crate::provider::claude_auth::load().map_err(|_| {
                     anyhow::anyhow!(
@@ -217,6 +225,8 @@ impl ModelManager {
     }
 
     pub fn new_with_credentials(configs: Vec<ModelConfig>, creds: &Credentials) -> Self {
+        let mut configs = configs;
+        inject_linggen_cloud(&mut configs);
         let mut models = HashMap::new();
 
         // Load ChatGPT OAuth tokens if any model uses chatgpt_oauth
@@ -245,7 +255,12 @@ impl ModelManager {
                 cfg.api_key = effective_key;
             }
 
+            let is_linggen_account = cfg.auth_mode.as_deref() == Some("linggen_account");
+
             let client = match cfg.provider.as_str() {
+                _ if is_linggen_account => ProviderClient::OpenAi(
+                    OpenAiClient::new_linggen_account(cfg.url.clone()),
+                ),
                 "ollama" => {
                     ProviderClient::Ollama(OllamaClient::new(cfg.url.clone(), cfg.api_key.clone()))
                 }
@@ -820,6 +835,31 @@ impl ModelManager {
 // ---------------------------------------------------------------------------
 
 /// Check if an error indicates a rate limit (HTTP 429).
+/// Built-in Linggen Cloud model — present in every install, routed through
+/// the linggen.dev/api/llm proxy with the account token resolved fresh per
+/// request (sign-in needs no restart). A user-defined model with the same id
+/// wins (BYOK-first), and injection never touches the default model choice.
+fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
+    const CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
+    if configs.iter().any(|c| c.id == CLOUD_MODEL_ID) {
+        return;
+    }
+    configs.push(ModelConfig {
+        id: CLOUD_MODEL_ID.to_string(),
+        provider: "openai".to_string(),
+        url: format!("{}/api/llm", crate::account::site_url()),
+        model: CLOUD_MODEL_ID.to_string(),
+        api_key: None,
+        keep_alive: None,
+        context_window: Some(1_000_000),
+        tags: vec![],
+        supports_tools: Some(true),
+        auth_mode: Some("linggen_account".to_string()),
+        reasoning_effort: None,
+        provided_by: Some("Linggen Cloud".to_string()),
+    });
+}
+
 pub fn is_rate_limit_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string();
     msg.contains("(429)") || msg.to_lowercase().contains("rate limit")

@@ -78,6 +78,12 @@ fn sanitize_json(data: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Pull the `error.message` out of an OpenAI-shaped error body, if present.
+fn extract_error_message(text: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    v.get("error")?.get("message")?.as_str().map(String::from)
+}
+
 #[derive(Clone)]
 pub struct OpenAiClient {
     http: Client,
@@ -87,6 +93,9 @@ pub struct OpenAiClient {
     chatgpt_account_id: Option<String>,
     /// When true, reload token from codex_auth.json on each request (auto-refresh).
     codex_auth_live: bool,
+    /// When true, resolve the linggen.dev account token on each request, so
+    /// signing in/out is picked up without a daemon restart.
+    linggen_account_live: bool,
 }
 
 impl OpenAiClient {
@@ -102,6 +111,7 @@ impl OpenAiClient {
             api_key,
             chatgpt_account_id: None,
             codex_auth_live: false,
+            linggen_account_live: false,
         }
     }
 
@@ -123,7 +133,16 @@ impl OpenAiClient {
             api_key: Some(access_token),
             chatgpt_account_id: account_id,
             codex_auth_live: true,
+            linggen_account_live: false,
         }
+    }
+
+    /// Create a client for the Linggen Cloud proxy (linggen.dev/api/llm).
+    /// The account token is resolved fresh on each request.
+    pub fn new_linggen_account(base_url: String) -> Self {
+        let mut client = Self::new(base_url, None);
+        client.linggen_account_live = true;
+        client
     }
 
     /// Apply auth headers to a request builder.
@@ -137,6 +156,10 @@ impl OpenAiClient {
             if let Some(ref account_id) = tokens.account_id {
                 rb = rb.header("ChatGPT-Account-Id", account_id);
             }
+        } else if self.linggen_account_live {
+            if let Some((token, _)) = crate::account::resolve_token() {
+                rb = rb.header("Authorization", format!("Bearer {}", token));
+            }
         } else {
             if let Some(key) = &self.api_key {
                 rb = rb.header("Authorization", format!("Bearer {}", key));
@@ -146,6 +169,33 @@ impl OpenAiClient {
             }
         }
         rb
+    }
+
+    /// Format a non-success provider response into a user-facing error.
+    /// Payment errors carry the proxy's message (subscribe / trial CTA)
+    /// verbatim; live-auth 401s become sign-in CTAs.
+    fn provider_error(&self, status: reqwest::StatusCode, text: String) -> anyhow::Error {
+        if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
+            return anyhow::anyhow!(
+                "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
+            );
+        }
+        if self.linggen_account_live && status == reqwest::StatusCode::UNAUTHORIZED {
+            return anyhow::anyhow!(
+                "AUTH_REQUIRED: linggen.dev sign-in missing or expired. Run `ling account login`."
+            );
+        }
+        if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            if let Some(msg) = extract_error_message(&text) {
+                return anyhow::anyhow!("{msg}");
+            }
+        }
+        let truncated = if text.len() > 500 {
+            format!("{}… ({} chars)", &text[..500], text.len())
+        } else {
+            text
+        };
+        anyhow::anyhow!("openai error ({}): {}", status, truncated)
     }
 
     /// Send a request, applying auth fresh each attempt. In ChatGPT OAuth
@@ -361,17 +411,7 @@ impl OpenAiClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            let truncated = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..500], text.len())
-            } else {
-                text
-            };
-            if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
-                anyhow::bail!(
-                    "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
-                );
-            }
-            anyhow::bail!("openai error ({}): {}", status, truncated);
+            return Err(self.provider_error(status, text));
         }
 
         // Stream SSE lines
@@ -648,17 +688,7 @@ impl OpenAiClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            let truncated = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..500], text.len())
-            } else {
-                text
-            };
-            if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
-                anyhow::bail!(
-                    "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
-                );
-            }
-            anyhow::bail!("openai error ({}): {}", status, truncated);
+            return Err(self.provider_error(status, text));
         }
 
         let byte_stream = resp
