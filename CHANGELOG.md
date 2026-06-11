@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.0] - 2026-06-11
+
+### Account & Linggen Cloud
+
+- **`ling account login`** + daemon `/api/account*` endpoints — browser
+  sign-in to the linggen.dev account, token stored in
+  `~/.linggen/account.toml` (0600, separate from remote access). Entitlement
+  and free-trial state are served with a short cache and offline grace;
+  subscription checkout is proxied for app shells.
+- **Built-in Linggen Cloud model.** `deepseek-v4-flash` ships in every
+  install, routed through linggen.dev with the account token resolved per
+  request — no API key. A user-defined model with the same id always wins.
+- Built-in models appear under Settings → Models → Built-in and can be set
+  as the default.
+- Payment-required responses surface the subscribe / trial message verbatim
+  instead of a raw provider error.
+
+### Fixes
+
+- OpenAI strict-mode tool schemas + Responses-API reasoning effort; more
+  empty-response retries for reasoning models.
+- WebRTC: large unsolicited pushes are chunked so `page_state` can't reset
+  the data channel.
+- Auto-compaction is surfaced in chat; permission gating for
+  upward-relative bash args; memory capture nudges and a lower episodic
+  gate; skill-page-injected assistant messages render in the embed.
+
 ## [1.0.0] - 2026-06-02
 
 First stable release. The public contracts — the skill / agent / mission
