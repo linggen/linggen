@@ -88,6 +88,19 @@ export const ModelsTab: React.FC<{
 
   const defaultModels = config.routing?.default_models ?? [];
 
+  // Runtime model list — includes built-ins the config file doesn't know
+  // about (e.g. the Linggen Cloud model the engine injects). Shown read-only
+  // below so they can be starred as default.
+  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null }[]>([]);
+  useEffect(() => {
+    fetch('/api/models')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((ms) => setRuntimeModels(Array.isArray(ms) ? ms : []))
+      .catch(() => {});
+  }, []);
+  const configModelIds = new Set((config.models ?? []).map((m: { id: string }) => m.id));
+  const builtinModels = runtimeModels.filter((m) => m.id && !configModelIds.has(m.id));
+
   const hasOllamaModels = config.models?.some((m: { provider: string }) => m.provider === 'ollama') ?? false;
 
   const fetchOllamaStatus = useCallback(async () => {
@@ -310,6 +323,44 @@ export const ModelsTab: React.FC<{
               </div>
             );
           })()}
+        </section>
+      )}
+
+      {/* Built-in models — injected by the engine, not part of the config
+          file. Read-only, but they can be starred as the default. */}
+      {builtinModels.length > 0 && (
+        <section className={sectionCls}>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
+            Built-in
+          </h2>
+          <div className="space-y-2">
+            {builtinModels.map((m) => {
+              const modelIsDefault = isDefault(m.id);
+              return (
+                <div
+                  key={m.id}
+                  className={`flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border ${modelIsDefault ? 'border-amber-300 dark:border-amber-700' : 'border-slate-100 dark:border-white/5'}`}
+                >
+                  <button
+                    onClick={() => toggleDefault(m.id)}
+                    className={`p-1 transition-colors ${modelIsDefault ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-amber-500'}`}
+                    title={modelIsDefault ? 'Remove from defaults' : 'Set as default'}
+                  >
+                    <Star size={14} fill={modelIsDefault ? 'currentColor' : 'none'} />
+                  </button>
+                  <span className="text-xs font-medium flex-1">
+                    {m.id}
+                    {m.provided_by && (
+                      <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                        {m.provided_by}
+                      </span>
+                    )}
+                  </span>
+                  <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 

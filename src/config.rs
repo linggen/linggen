@@ -358,7 +358,11 @@ impl Config {
             );
         }
         // Warn (log) if default_models references non-existent model IDs.
+        // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
+            if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {
+                continue;
+            }
             if !seen_ids.contains(&dm) {
                 tracing::warn!(
                     "routing.default_models references unknown model ID '{}'; it will be ignored",

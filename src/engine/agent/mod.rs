@@ -133,9 +133,11 @@ impl AgentManager {
             warn!("Agent frontmatter model '{}' not found in configured models; falling through", choice);
         }
 
-        // 3. First model in routing.default_models
+        // 3. First model in routing.default_models. Checked against the
+        // ModelManager (not just config.models) so built-in models like
+        // Linggen Cloud can be the default too.
         for dm in &config.routing.default_models {
-            if model_ids.contains(dm.as_str()) {
+            if model_ids.contains(dm.as_str()) || models.has_model(dm) {
                 return Ok(dm.clone());
             }
         }

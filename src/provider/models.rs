@@ -839,8 +839,10 @@ impl ModelManager {
 /// the linggen.dev/api/llm proxy with the account token resolved fresh per
 /// request (sign-in needs no restart). A user-defined model with the same id
 /// wins (BYOK-first), and injection never touches the default model choice.
+pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
+
 fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
-    const CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
+    const CLOUD_MODEL_ID: &str = LINGGEN_CLOUD_MODEL_ID;
     if configs.iter().any(|c| c.id == CLOUD_MODEL_ID) {
         return;
     }
