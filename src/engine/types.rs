@@ -138,6 +138,9 @@ pub struct EngineConfig {
     /// engine; nothing weaker is injected or shown. `None` = defer to the
     /// daemon's store-wide `recall_min_score`. See `config::AgentConfig`.
     pub memory_inject_min_score: Option<f32>,
+    /// Recalled rows injected per turn — the top-K cap applied after the
+    /// project-scope filter. See `config::AgentConfig::memory_recall_count`.
+    pub memory_recall_count: usize,
     /// Base URL of the local `ling-mem` HTTP daemon. The engine's
     /// built-in `Memory_*` dispatcher and the dream mission's TTL
     /// fetch use this. See `config::AgentConfig::ling_mem_url`.
@@ -169,6 +172,7 @@ impl EngineConfig {
             episodic_ttl_days: config.agent.episodic_ttl_days,
             compact_threshold_default: config.agent.compact_threshold,
             memory_inject_min_score: config.agent.memory_inject_min_score,
+            memory_recall_count: config.agent.memory_recall_count,
             ling_mem_url: config.agent.ling_mem_url.trim_end_matches('/').to_string(),
         }
     }

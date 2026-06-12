@@ -103,12 +103,16 @@ pub struct AgentConfig {
     pub episodic_ttl_days: u64,
 
     /// Per-row cosine floor for per-turn auto-recall, as an OVERRIDE of the
-    /// ling-mem daemon's store-wide `recall_min_score`. `None` (default) =
-    /// defer to the daemon, so every host shares one recall selectivity (the
-    /// engine omits `min_score` and the daemon applies its configured floor).
-    /// `Some(s)` = this Linggen instance overrides. Range 0.0–1.0.
-    #[serde(default)]
+    /// ling-mem daemon's store-wide `recall_min_score`. Default 0.7. `None`
+    /// (explicit, not the default) = defer to the daemon's configured floor
+    /// (the engine omits `min_score`). Range 0.0–1.0.
+    #[serde(default = "default_memory_inject_min_score")]
     pub memory_inject_min_score: Option<f32>,
+
+    /// How many recalled memories are injected per turn — the top-K cap
+    /// applied after the project-scope filter. Default 3.
+    #[serde(default = "default_memory_recall_count")]
+    pub memory_recall_count: usize,
 
     /// Base URL of the local `ling-mem` HTTP daemon. The engine's built-in
     /// `Memory_query` / `Memory_write` tools dispatch here, and the `dream`
@@ -123,6 +127,14 @@ pub struct AgentConfig {
 
 fn default_episodic_ttl_days() -> u64 {
     7
+}
+
+fn default_memory_inject_min_score() -> Option<f32> {
+    Some(0.7)
+}
+
+fn default_memory_recall_count() -> usize {
+    3
 }
 
 fn default_ling_mem_url() -> String {
@@ -348,6 +360,12 @@ impl Config {
                 );
             }
         }
+        if !(1..=20).contains(&self.agent.memory_recall_count) {
+            anyhow::bail!(
+                "Agent memory_recall_count must be between 1 and 20 (got {})",
+                self.agent.memory_recall_count
+            );
+        }
         let url = self.agent.ling_mem_url.trim();
         if url.is_empty() {
             anyhow::bail!("Agent ling_mem_url must not be empty");
@@ -401,7 +419,8 @@ impl Default for Config {
                 max_delegation_depth: default_max_delegation_depth(),
                 compact_threshold: None,
                 episodic_ttl_days: default_episodic_ttl_days(),
-                memory_inject_min_score: None,
+                memory_inject_min_score: default_memory_inject_min_score(),
+                memory_recall_count: default_memory_recall_count(),
                 ling_mem_url: default_ling_mem_url(),
             },
             logging: LoggingConfig {

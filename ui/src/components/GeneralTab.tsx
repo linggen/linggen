@@ -118,16 +118,35 @@ export const GeneralTab: React.FC<{
               min={0}
               max={1}
               step={0.05}
-              value={config.agent.memory_inject_min_score ?? 0.6}
+              value={config.agent.memory_inject_min_score ?? 0.7}
               onChange={(e) => {
                 const v = parseFloat(e.target.value);
                 if (Number.isFinite(v) && v >= 0 && v <= 1) {
                   onChange({ ...config, agent: { ...config.agent, memory_inject_min_score: v } });
                 }
               }}
-              placeholder="0.6 (default)"
+              placeholder="0.7 (default)"
             />
-            <p className="text-[11px] text-slate-400 mt-0.5">Per-row cosine score floor for per-turn auto-recall. Any row below this is dropped — never injected, never shown. Raise for stricter, fewer hits; lower to let weaker matches through. Range 0–1. Default 0.6.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Per-row cosine score floor for per-turn auto-recall. Any row below this is dropped — never injected, never shown. Raise for stricter, fewer hits; lower to let weaker matches through. Range 0–1. Default 0.7.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Recall Count</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              value={config.agent.memory_recall_count ?? 3}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (Number.isFinite(v) && v >= 1 && v <= 20) {
+                  onChange({ ...config, agent: { ...config.agent, memory_recall_count: v } });
+                }
+              }}
+              placeholder="3 (default)"
+            />
+            <p className="text-[11px] text-slate-400 mt-0.5">How many recalled memories are injected per turn — the top matches after project filtering. Range 1–20. Default 3.</p>
           </div>
           <div className="col-span-2">
             <label className={labelCls}>Ling-mem URL</label>

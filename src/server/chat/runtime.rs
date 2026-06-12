@@ -190,14 +190,14 @@ async fn auto_recall_memory(
     prompt: &str,
     session_id: Option<&str>,
     min_score: Option<f32>,
+    top_k: usize,
     ling_mem_url: &str,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
     // Fetch wide so the project-scope filter has headroom before the
-    // TOP_K cap kicks in.
+    // top-K cap (Settings → General → Recall Count) kicks in.
     const FETCH_LIMIT: usize = 30;
-    const TOP_K: usize = 10;
     const MIN_PROMPT_CHARS: usize = 8;
 
     let trimmed = prompt.trim();
@@ -255,7 +255,7 @@ async fn auto_recall_memory(
 
     let mut hits: Vec<RecallRow> = Vec::new();
     for row in rows {
-        if hits.len() >= TOP_K {
+        if hits.len() >= top_k {
             break;
         }
 
@@ -337,6 +337,7 @@ pub(super) async fn push_user_turn_with_recall(
             &ctx.clean_msg,
             ctx.session_id.as_deref(),
             engine.cfg.memory_inject_min_score,
+            engine.cfg.memory_recall_count,
             &engine.cfg.ling_mem_url,
         )
         .await
