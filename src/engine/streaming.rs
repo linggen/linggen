@@ -151,6 +151,16 @@ pub(crate) fn check_context_staleness(
 // ---------------------------------------------------------------------------
 
 impl AgentEngine {
+    /// App product for per-app usage attribution on the Linggen Cloud proxy
+    /// (X-Linggen-App): the session's bound skill, when it is a branded-app
+    /// product. Everything else meters the shared 'linggen' bucket.
+    pub(crate) fn app_product(&self) -> Option<&str> {
+        self.active_skill
+            .as_ref()
+            .map(|s| s.name.as_str())
+            .filter(|n| crate::provider::models::is_app_product(n))
+    }
+
     /// Stream model output with thinking-token forwarding.
     ///
     /// Uses `chat_text_stream` (no format constraint) instead of `chat_json`
@@ -165,7 +175,7 @@ impl AgentEngine {
         use crate::provider::models::StreamChunk;
         let mut stream = self
             .model_manager
-            .chat_text_stream(model_id, messages)
+            .chat_text_stream(model_id, messages, self.app_product())
             .await?;
         let mut accumulated = String::new();
         let mut thinking_ended = false;
@@ -242,7 +252,7 @@ impl AgentEngine {
 
         let mut stream = self
             .model_manager
-            .chat_tool_stream(model_id, messages, tools)
+            .chat_tool_stream(model_id, messages, tools, self.app_product())
             .await?;
 
         let mut accumulated_text = String::new();

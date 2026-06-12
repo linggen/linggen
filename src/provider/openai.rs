@@ -171,6 +171,16 @@ impl OpenAiClient {
         rb
     }
 
+    /// Tag the request with the app product for per-app usage attribution on
+    /// the Linggen Cloud proxy (it meters tokens per X-Linggen-App bucket).
+    /// No-op for every other provider.
+    fn with_app_header(&self, rb: reqwest::RequestBuilder, app: Option<&str>) -> reqwest::RequestBuilder {
+        match app {
+            Some(app) if self.linggen_account_live => rb.header("X-Linggen-App", app),
+            _ => rb,
+        }
+    }
+
     /// Format a non-success provider response into a user-facing error.
     /// Payment errors carry the proxy's message (subscribe / trial CTA)
     /// verbatim; live-auth 401s become sign-in CTAs.
@@ -340,6 +350,7 @@ impl OpenAiClient {
         model: &str,
         messages: &[crate::message::ChatMessage],
         reasoning_effort: Option<&str>,
+        app: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
         tracing::info!(
@@ -407,7 +418,7 @@ impl OpenAiClient {
             Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
             self.http.post(url).json(&req)
         };
-        let resp = self.send_with_oauth_retry(rb).await?;
+        let resp = self.send_with_oauth_retry(self.with_app_header(rb, app)).await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -545,6 +556,7 @@ impl OpenAiClient {
         messages: &[crate::message::ChatMessage],
         tools: Vec<serde_json::Value>,
         reasoning_effort: Option<&str>,
+        app: Option<&str>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
         tracing::info!(
@@ -684,7 +696,7 @@ impl OpenAiClient {
                 self.http.post(url).json(&req)
             };
 
-        let resp = self.send_with_oauth_retry(rb).await?;
+        let resp = self.send_with_oauth_retry(self.with_app_header(rb, app)).await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();

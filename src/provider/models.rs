@@ -321,6 +321,7 @@ impl ModelManager {
         &self,
         model_id: &str,
         messages: &[ChatMessage],
+        app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
@@ -330,6 +331,7 @@ impl ModelManager {
             model_id,
             messages,
             instance.config.keep_alive.clone(),
+            app,
         )
         .await
     }
@@ -339,6 +341,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         keep_alive: Option<String>,
+        app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
@@ -422,7 +425,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_text_stream(&instance.config.model, messages, instance.config.reasoning_effort.as_deref())
+                    .chat_text_stream(&instance.config.model, messages, instance.config.reasoning_effort.as_deref(), app)
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -474,6 +477,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
+        app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
@@ -539,7 +543,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_tool_stream(&instance.config.model, messages, tools, instance.config.reasoning_effort.as_deref())
+                    .chat_tool_stream(&instance.config.model, messages, tools, instance.config.reasoning_effort.as_deref(), app)
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -840,6 +844,15 @@ impl ModelManager {
 /// request (sign-in needs no restart). A user-defined model with the same id
 /// wins (BYOK-first), and injection never touches the default model choice.
 pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
+
+/// Branded-app product ids accepted by the Linggen Cloud proxy's
+/// X-Linggen-App header — mirrors KNOWN_APPS in linggensite's entitlement
+/// layer. The proxy rejects unknown ids, so only these skill names are sent
+/// as usage attribution; every other session bills the shared 'linggen'
+/// bucket.
+pub fn is_app_product(skill_name: &str) -> bool {
+    matches!(skill_name, "sys-doctor" | "cfo" | "pulse")
+}
 
 fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     const CLOUD_MODEL_ID: &str = LINGGEN_CLOUD_MODEL_ID;

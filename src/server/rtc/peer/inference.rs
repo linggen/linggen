@@ -167,14 +167,16 @@ pub(super) async fn process_inference_request(
 
             let models = state.manager.models.read().await;
 
+            // Room-shared inference has no app-bound session — bills the
+            // shared 'linggen' bucket.
             let stream_result = if let Some(tools) = tools {
                 if !tools.is_empty() {
-                    models.chat_tool_stream(model_id, &messages, tools).await
+                    models.chat_tool_stream(model_id, &messages, tools, None).await
                 } else {
-                    models.chat_text_stream(model_id, &messages).await
+                    models.chat_text_stream(model_id, &messages, None).await
                 }
             } else {
-                models.chat_text_stream(model_id, &messages).await
+                models.chat_text_stream(model_id, &messages, None).await
             };
 
             let mut stream = match stream_result {
