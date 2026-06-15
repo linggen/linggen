@@ -390,9 +390,23 @@ async fn resolve_effective_model(
     if is_consumer {
         // Consumer chose "Default" — pick a shared model, never the owner's.
         engine.model_id = consumer_default().unwrap_or_else(|| engine.default_model_id.clone());
-    } else {
-        engine.model_id = engine.default_model_id.clone();
+        return;
     }
+
+    // Owner, no explicit model. Prefer the bound skill's declared default
+    // (SKILL.md `model:`) so an app ships its own model without touching the
+    // engine-wide default; fall back to the global default otherwise. A
+    // per-skill user override is layered on top by passing it as the session's
+    // pinned model (req_model_id), which already wins above.
+    if let Some(skill_name) = session_meta.as_ref().and_then(|m| m.skill.clone()) {
+        if let Some(skill) = manager.skills.reload_one(&skill_name).await {
+            if let Some(model) = skill.model.filter(|m| engine.model_manager.has_model(m)) {
+                engine.model_id = model;
+                return;
+            }
+        }
+    }
+    engine.model_id = engine.default_model_id.clone();
 }
 
 /// Promote a session created by the mission scheduler to a user-owned
