@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1] - 2026-06-15
+
+### Added
+
+- Per-app usage attribution — outbound model calls carry an `X-Linggen-App`
+  header so the linggen.dev proxy meters tokens per (account, app), enabling
+  per-app trials and subscriptions for branded apps.
+- Settings: configurable memory recall count (default 3) and recall
+  similarity threshold (default 0.7).
+
 ## [1.1.0] - 2026-06-11
 
 ### Account & Linggen Cloud
