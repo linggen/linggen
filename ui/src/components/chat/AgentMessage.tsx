@@ -40,6 +40,7 @@ function renderAuthRequired(text?: string): React.ReactNode | null {
     const message = body.slice('AUTH_REQUIRED:'.length).trim();
     const provider = message.includes('ChatGPT') ? 'chatgpt'
       : message.includes('Claude') ? 'claude'
+      : message.includes('linggen.dev') ? 'linggen'
       : '';
     return <AuthRequiredBlock provider={provider} message={message} />;
   }
