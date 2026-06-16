@@ -1,12 +1,12 @@
 //! linggen.dev account layer — billing sign-in, entitlement, checkout.
 //!
-//! Deliberately separate from remote access (`cli/login.rs` + `remote.toml`):
-//! signing in for billing does not enroll the machine in the remote relay.
-//! The token lives in `~/.linggen/account.toml` (0600). When that file is
-//! absent, an existing `remote.toml` token is used read-only — it is the same
-//! linggen.dev account, so machines already linked for remote access get
-//! cloud models without a second sign-in. The fallback never writes remote
-//! state. See linggensite/doc/entitlement-spec.md.
+//! Billing identity is `~/.linggen/account.toml` (0600) and nothing else: a
+//! remote-access link (`cli/login.rs` + `remote.toml`) is transport enrollment,
+//! not a billing fallback. Because linking for remote access requires signing
+//! in first, that flow also writes `account.toml` (same token), so a
+//! remote-linked daemon is billing-signed-in too. Signing out deletes
+//! `account.toml` — cloud models + app gating switch off (BYOK keeps working)
+//! while the remote link stays intact. See linggensite/doc/entitlement-spec.md.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -76,24 +76,18 @@ pub fn delete_account() -> Result<bool> {
 #[serde(rename_all = "snake_case")]
 pub enum TokenSource {
     Account,
-    Remote,
 }
 
-/// Billing token resolution: `account.toml` first, then a read-only fallback
-/// to `remote.toml` (same account — see module docs).
+/// Billing token resolution: the local `account.toml` only. A remote-access
+/// link is never a billing fallback (see module docs).
 pub fn resolve_token() -> Option<(String, TokenSource)> {
-    if let Some(acc) = load_account() {
-        return Some((acc.api_token, TokenSource::Account));
-    }
-    crate::cli::login::load_remote_config().map(|c| (c.api_token, TokenSource::Remote))
+    let acc = load_account()?;
+    Some((acc.api_token, TokenSource::Account))
 }
 
-/// Display name for the resolved token, from whichever file provided it.
+/// Display name from the signed-in account.
 pub fn resolved_user_name() -> Option<String> {
-    if let Some(acc) = load_account() {
-        return acc.user_name;
-    }
-    crate::cli::login::load_remote_config().and_then(|c| c.user_name)
+    load_account().and_then(|a| a.user_name)
 }
 
 fn http() -> reqwest::Client {

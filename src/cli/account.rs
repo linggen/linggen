@@ -40,22 +40,18 @@ pub async fn run_logout() -> Result<()> {
         println!("  Not signed in.");
     }
     if crate::cli::login::load_remote_config().is_some() {
-        println!("  Note: the remote access link (remote.toml) is still active and");
-        println!("  its token still covers billing. `ling logout` removes it.");
+        println!("  Note: the remote access link (remote.toml) is still active");
+        println!("  (transport only — it no longer covers billing). `ling logout` unlinks it.");
     }
     Ok(())
 }
 
 pub async fn run_status() -> Result<()> {
-    let Some((token, source)) = account::resolve_token() else {
+    let Some((token, _source)) = account::resolve_token() else {
         println!("  Not signed in. Run `ling account login`.");
         return Ok(());
     };
-    let via = match source {
-        account::TokenSource::Account => "account.toml",
-        account::TokenSource::Remote => "remote.toml (remote access link)",
-    };
-    println!("  Signed in via {via}");
+    println!("  Signed in via account.toml");
     if let Some(name) = account::resolved_user_name() {
         println!("  User: {name}");
     }

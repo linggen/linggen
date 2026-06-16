@@ -137,12 +137,12 @@ fn fail_page(reason: &str) -> Html<String> {
     ))
 }
 
-/// POST /api/account/logout — remove account.toml. A remote.toml link (if
-/// any) is left untouched and still provides a billing token.
+/// POST /api/account/logout — remove account.toml (billing sign-out). Any
+/// remote.toml link is transport-only and left untouched; it no longer keeps
+/// the daemon signed in for billing.
 pub(crate) async fn post_account_logout() -> impl IntoResponse {
     let removed = account::delete_account().unwrap_or(false);
-    let remote_link_active = crate::cli::login::load_remote_config().is_some();
-    Json(serde_json::json!({ "ok": true, "removed": removed, "remote_link_active": remote_link_active }))
+    Json(serde_json::json!({ "ok": true, "removed": removed }))
 }
 
 #[derive(serde::Deserialize)]

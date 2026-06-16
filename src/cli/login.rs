@@ -244,6 +244,19 @@ pub async fn run() -> Result<()> {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     }
 
+    // Linking required a sign-in, so persist the billing identity too. This
+    // makes the remote daemon billing-signed-in without a second sign-in, while
+    // keeping the files separate: a later `ling account logout` removes only
+    // account.toml (cloud + app gating off) and leaves the remote link intact.
+    if let Err(e) = crate::account::save_account(&crate::account::AccountConfig {
+        api_token: config.api_token.clone(),
+        user_id: config.user_id.clone(),
+        user_name: config.user_name.clone(),
+        avatar_url: config.avatar_url.clone(),
+    }) {
+        eprintln!("  Warning: linked for remote access but could not save account.toml: {e}");
+    }
+
     println!("\n  ✅ Remote access configured!");
     println!("  Instance: {instance_name} ({instance_id})");
     println!("  Config saved to: {}", path.display());
