@@ -19,6 +19,12 @@ pub struct ServerState {
     /// Connected WebRTC peer count. Drives the idle-shutdown watcher when
     /// `idle_shutdown_secs` is set. Bumped in `rtc::peer::create_peer_inner`.
     pub active_peer_count: Arc<std::sync::atomic::AtomicUsize>,
+    /// Unix-seconds of the last sign of life — a connected peer OR a health
+    /// ping (bundled-app shells ping `/api/health` while their window is open).
+    /// The idle-shutdown watcher exits only after `idle_shutdown_secs` of no
+    /// peers AND no activity, so a daemon never quits while a window is open
+    /// even when the WebRTC peer has transiently dropped.
+    pub last_activity: Arc<AtomicU64>,
     pub events_tx: broadcast::Sender<ServerEvent>,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,

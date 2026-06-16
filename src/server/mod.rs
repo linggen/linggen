@@ -785,6 +785,7 @@ async fn prepare_server(
         dev_mode,
         port,
         active_peer_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        last_activity: Arc::new(AtomicU64::new(unix_secs_now())),
         events_tx,
         skills,
         prompt_store,
@@ -818,27 +819,28 @@ async fn prepare_server(
     // process after that many seconds with zero connected WebRTC peers.
     // Used by bundled apps so the daemon doesn't outlive its last client.
     if let Some(timeout) = idle_shutdown_secs.filter(|t| *t > 0) {
-        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::atomic::Ordering;
         let peers = state.active_peer_count.clone();
-        let idle_since = Arc::new(AtomicU64::new(0));
-        info!("idle-shutdown enabled: exit after {timeout}s with no peers");
+        let last_activity = state.last_activity.clone();
+        info!("idle-shutdown enabled: exit after {timeout}s with no peers and no activity");
         tokio::spawn(async move {
             let check_interval = std::time::Duration::from_secs(15);
             loop {
                 tokio::time::sleep(check_interval).await;
+                let now = unix_secs_now();
+                // A connected peer is itself a sign of life — keep the activity
+                // clock fresh so dropping a peer never trips an instant exit on
+                // a stale timestamp.
                 if peers.load(Ordering::Relaxed) > 0 {
-                    idle_since.store(0, Ordering::Relaxed);
+                    last_activity.store(now, Ordering::Relaxed);
                     continue;
                 }
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let prev = idle_since.load(Ordering::Relaxed);
-                if prev == 0 {
-                    idle_since.store(now, Ordering::Relaxed);
-                } else if now.saturating_sub(prev) >= timeout {
-                    info!("idle-shutdown: no peers for {timeout}s, exiting");
+                // No peers: exit only after `timeout` of no activity at all.
+                // Bundled-app shells ping /api/health while their window is open
+                // (see health_handler), so the daemon survives a window that is
+                // open but transiently disconnected.
+                if now.saturating_sub(last_activity.load(Ordering::Relaxed)) >= timeout {
+                    info!("idle-shutdown: no peers and no activity for {timeout}s, exiting");
                     std::process::exit(0);
                 }
             }
@@ -1292,7 +1294,22 @@ async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Resp
     }
 }
 
-async fn health_handler() -> impl IntoResponse {
+/// Seconds since the Unix epoch (0 on the impossible clock-before-epoch error).
+fn unix_secs_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+async fn health_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
+) -> impl IntoResponse {
+    // A health ping is a sign of life: bundled-app shells ping this every ~60s
+    // while their window is open, which keeps the idle-shutdown clock fresh.
+    state
+        .last_activity
+        .store(unix_secs_now(), std::sync::atomic::Ordering::Relaxed);
     axum::Json(json!({ "ok": true }))
 }
 
