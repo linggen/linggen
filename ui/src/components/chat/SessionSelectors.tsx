@@ -81,9 +81,14 @@ export const SessionModelSelector: React.FC = () => {
       title="Session model override"
     >
       <option value="">Default ({defaultLabel})</option>
-      {models.filter((m) => !defaultModels.includes(m.id)).map((m) => (
+      {/* List every model explicitly — including the global default. With the
+          per-skill `model:` tier, "Default" resolves to the skill's pinned
+          model for app sessions, so the global default must be selectable on
+          its own; otherwise a user whose skill model hit its limit can never
+          switch off it (the only escape is an explicit, non-"Default" pin). */}
+      {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}
+          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels.includes(m.id) ? ' — default' : ''}
         </option>
       ))}
     </select>

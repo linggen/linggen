@@ -393,19 +393,12 @@ async fn resolve_effective_model(
         return;
     }
 
-    // Owner, no explicit model. Prefer the bound skill's declared default
-    // (SKILL.md `model:`) so an app ships its own model without touching the
-    // engine-wide default; fall back to the global default otherwise. A
-    // per-skill user override is layered on top by passing it as the session's
-    // pinned model (req_model_id), which already wins above.
-    if let Some(skill_name) = session_meta.as_ref().and_then(|m| m.skill.clone()) {
-        if let Some(skill) = manager.skills.reload_one(&skill_name).await {
-            if let Some(model) = skill.model.filter(|m| engine.model_manager.has_model(m)) {
-                engine.model_id = model;
-                return;
-            }
-        }
-    }
+    // Owner with no explicit model → the engine-wide default. An app's default
+    // model (e.g. deepseek-v4-flash) is NOT applied here: branded apps pin it
+    // as req_model_id (their skill page sends ?model= only in app_mode, which
+    // wins above), while the SAME skill run in the core app uses the user's
+    // configured global default. The SKILL.md `model:` field is intentionally
+    // not consulted — that would force the app model on core sessions too.
     engine.model_id = engine.default_model_id.clone();
 }
 
