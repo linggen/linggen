@@ -15,6 +15,7 @@ import { ToastContainer } from '../components/ToastContainer';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
+import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
@@ -22,6 +23,7 @@ import { useRunInfo } from '../hooks/useRunInfo';
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
 const pinnedSkill = params.get('skill') || '';
+const pinnedModel = params.get('model') || '';
 const vscProject = params.get('project') || '';
 const hideToolbar = params.get('hide_toolbar') === '1';
 
@@ -55,6 +57,10 @@ export const EmbedApp: React.FC = () => {
         selectedProjectRoot: '',
         ...(pinnedSkill ? { isSkillSession: true, activeSkillName: pinnedSkill } : {}),
       });
+      // Honor the model the host skill pinned (?model=…). useChatActions reads
+      // uiStore.sessionModel at send time; without this the run silently falls
+      // back to the engine default and the selector shows "Default (…)".
+      if (pinnedModel) useUiStore.getState().setSessionModel(pinnedModel);
       const cs = useChatStore.getState();
       cs.setActiveSession(pinnedSession);
       cs.fetchSessionState();
