@@ -63,6 +63,13 @@ pub struct Skill {
     pub model: Option<String>,
     #[serde(default)]
     pub context: Option<String>,
+    /// Memory namespace for this skill. When set, the engine FORCES every
+    /// `Memory_query`/`Memory_write` from a session bound to this skill to be
+    /// scoped to this `contexts` tag — so a focused app (e.g. CFO ↔ "cfo")
+    /// only ever sees/writes its own memory, never the shared cross-app store.
+    /// Omitted → the skill's memory (if it has the tools) is unscoped.
+    #[serde(default)]
+    pub memory_context: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]

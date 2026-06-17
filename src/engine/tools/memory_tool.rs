@@ -164,11 +164,40 @@ impl Tool for MemoryWriteTool {
 async fn dispatch_memory(
     tools: &Tools,
     tool_name: &'static str,
-    args: Value,
+    mut args: Value,
 ) -> Result<ToolResult> {
     let manager = tools.get_manager().ok_or_else(|| {
         anyhow!("{tool_name} requires a running AgentManager context — tool context not set")
     })?;
+
+    // Per-skill memory isolation: when this session is bound to a skill that
+    // declares `memory_context`, FORCE that scope tag onto every read filter
+    // and write — so a focused app (e.g. CFO ↔ "cfo") only ever sees/writes
+    // its own namespace, never the shared cross-app store, regardless of what
+    // `contexts` the model passed. Skills without `memory_context` (e.g. Pulse)
+    // are unaffected and keep full-store access.
+    if let Some(sid) = tools.session_id.clone() {
+        if let Some(meta) = manager
+            .global_sessions
+            .get_session_meta(&sid)
+            .ok()
+            .flatten()
+        {
+            if let Some(skill_name) = meta.skill {
+                if let Some(skill) = manager.skills.reload_one(&skill_name).await {
+                    if let Some(ctx) = skill.memory_context.filter(|c| !c.trim().is_empty()) {
+                        if let Some(obj) = args.as_object_mut() {
+                            obj.insert(
+                                "contexts".to_string(),
+                                Value::Array(vec![Value::String(ctx)]),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let ling_mem_url = manager.get_config_snapshot().await.agent.ling_mem_url;
     let value = call_memory_http(&ling_mem_url, tool_name, args).await?;
     Ok(ToolResult::Success(value.to_string()))

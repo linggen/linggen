@@ -316,6 +316,8 @@ struct SkillFrontmatter {
     model: Option<String>,
     #[serde(default)]
     context: Option<String>,
+    #[serde(default, rename = "memory-context")]
+    memory_context: Option<String>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -582,6 +584,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         allow_skills: frontmatter.allow_skills,
         model: frontmatter.model,
         context: frontmatter.context,
+        memory_context: frontmatter.memory_context,
         agent: frontmatter.agent,
         trigger: frontmatter.trigger,
         app: frontmatter.app,
