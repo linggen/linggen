@@ -18,6 +18,14 @@ pub struct PromptProfile {
     pub include_delegation: bool,
     /// Consumer-specific frame: explains constraints to the model.
     pub consumer_frame: bool,
+    /// Scoped per-app memory: when set (from the bound skill's
+    /// `memory-context`), the turn auto-recalls ONLY this namespace —
+    /// independent of `include_memory` (which stays off for skill sessions, so
+    /// the core block / full biography is NOT injected). The two `recall_*`
+    /// fields tune that scoped recall; `None` → engine defaults.
+    pub memory_context: Option<String>,
+    pub memory_recall_min_score: Option<f32>,
+    pub memory_recall_count: Option<usize>,
 }
 
 impl PromptProfile {
@@ -30,6 +38,9 @@ impl PromptProfile {
             include_workspace_listing: true,
             include_delegation: true,
             consumer_frame: false,
+            memory_context: None,
+            memory_recall_min_score: None,
+            memory_recall_count: None,
         }
     }
 
@@ -42,6 +53,9 @@ impl PromptProfile {
             include_workspace_listing: false,
             include_delegation: false,
             consumer_frame: true,
+            memory_context: None,
+            memory_recall_min_score: None,
+            memory_recall_count: None,
         }
     }
 }

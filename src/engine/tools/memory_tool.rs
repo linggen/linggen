@@ -497,7 +497,7 @@ async fn install_ling_mem() -> Result<()> {
 
 /// Ensure the binary exists (installing it if missing) and run `<bin> start`.
 /// Idempotent — `start` while the daemon is already up exits 0.
-async fn autostart() -> Result<()> {
+pub(crate) async fn autostart() -> Result<()> {
     let bin = match resolve_ling_mem() {
         Some(p) => p,
         None => {

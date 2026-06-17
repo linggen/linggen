@@ -191,6 +191,7 @@ async fn auto_recall_memory(
     session_id: Option<&str>,
     min_score: Option<f32>,
     top_k: usize,
+    contexts: Option<Vec<String>>,
     ling_mem_url: &str,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
@@ -228,6 +229,11 @@ async fn auto_recall_memory(
     if let Some(s) = min_score {
         args["min_score"] = serde_json::json!(s);
     }
+    // Scoped per-app recall: restrict the search to this namespace on the
+    // daemon side, so a focused app (CFO ↔ "cfo") only ever pulls its own rows.
+    if let Some(ctx) = &contexts {
+        args["contexts"] = serde_json::json!(ctx);
+    }
 
     let dispatch = crate::engine::tools::memory_tool::call_memory_http(
         ling_mem_url,
@@ -259,25 +265,30 @@ async fn auto_recall_memory(
             break;
         }
 
-        // Drop rows scoped to a different project; rows with no project/*
-        // context (cross-project, no-context, domain-scoped) always pass.
-        let project_scoped: Vec<&str> = row
-            .get("contexts")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter(|s| s.starts_with("project/"))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let project_ok = project_scoped.is_empty()
-            || want_proj_ctx
-                .as_deref()
-                .map(|w| project_scoped.iter().any(|s| *s == w))
-                .unwrap_or(false);
-        if !project_ok {
-            continue;
+        // Project-scope filter applies only to the full (unscoped) recall.
+        // In scoped per-app mode the daemon already constrained to the app's
+        // `contexts`, so don't second-guess it with the project heuristic.
+        if contexts.is_none() {
+            // Drop rows scoped to a different project; rows with no project/*
+            // context (cross-project, no-context, domain-scoped) always pass.
+            let project_scoped: Vec<&str> = row
+                .get("contexts")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .filter(|s| s.starts_with("project/"))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let project_ok = project_scoped.is_empty()
+                || want_proj_ctx
+                    .as_deref()
+                    .map(|w| project_scoped.iter().any(|s| *s == w))
+                    .unwrap_or(false);
+            if !project_ok {
+                continue;
+            }
         }
 
         let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -332,12 +343,31 @@ pub(super) async fn push_user_turn_with_recall(
     // the "🧠 N memories recalled" widget appears in a skill session that
     // shouldn't touch memory at all.
     let recalled = if engine.prompt_profile.include_memory {
+        // Full recall — the user's biography, project-scoped (core/user sessions).
         auto_recall_memory(
             &ctx.state,
             &ctx.clean_msg,
             ctx.session_id.as_deref(),
             engine.cfg.memory_inject_min_score,
             engine.cfg.memory_recall_count,
+            None,
+            &engine.cfg.ling_mem_url,
+        )
+        .await
+    } else if let Some(ctx_tag) = engine.prompt_profile.memory_context.clone() {
+        // Scoped per-app recall — ONLY this app's namespace, at the app's own
+        // threshold/count. No core block, no capture nudge (include_memory is
+        // off) → lean, isolated, no cross-app pollution.
+        auto_recall_memory(
+            &ctx.state,
+            &ctx.clean_msg,
+            ctx.session_id.as_deref(),
+            engine
+                .prompt_profile
+                .memory_recall_min_score
+                .or(engine.cfg.memory_inject_min_score),
+            engine.prompt_profile.memory_recall_count.unwrap_or(3),
+            Some(vec![ctx_tag]),
             &engine.cfg.ling_mem_url,
         )
         .await

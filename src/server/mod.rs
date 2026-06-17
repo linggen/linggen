@@ -815,6 +815,31 @@ async fn prepare_server(
         });
     }
 
+    // Pre-warm ling-mem when any installed skill uses scoped memory
+    // (`memory-context`). Those apps auto-recall every turn, so get the
+    // possibly-first-time (~100 MB) install + daemon start off the hot path.
+    // No-op for daemons with no memory-using skill; on failure the per-call
+    // autostart still covers it.
+    {
+        let skills = state.skills.clone();
+        tokio::spawn(async move {
+            let uses_memory = skills.list_skills().await.iter().any(|s| {
+                s.memory_context
+                    .as_deref()
+                    .map(|c| !c.trim().is_empty())
+                    .unwrap_or(false)
+            });
+            if uses_memory {
+                match crate::engine::tools::memory_tool::autostart().await {
+                    Ok(()) => info!("ling-mem pre-warmed (a skill uses scoped memory)"),
+                    Err(e) => {
+                        info!("ling-mem pre-warm deferred to first use: {e}")
+                    }
+                }
+            }
+        });
+    }
+
     // Idle-shutdown watcher: when --idle-shutdown-secs is set, exit the
     // process after that many seconds with zero connected WebRTC peers.
     // Used by bundled apps so the daemon doesn't outlive its last client.

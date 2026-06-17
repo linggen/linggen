@@ -318,6 +318,10 @@ struct SkillFrontmatter {
     context: Option<String>,
     #[serde(default, rename = "memory-context")]
     memory_context: Option<String>,
+    #[serde(default, rename = "memory-recall-min-score")]
+    memory_recall_min_score: Option<f32>,
+    #[serde(default, rename = "memory-recall-count")]
+    memory_recall_count: Option<usize>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -585,6 +589,8 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         model: frontmatter.model,
         context: frontmatter.context,
         memory_context: frontmatter.memory_context,
+        memory_recall_min_score: frontmatter.memory_recall_min_score,
+        memory_recall_count: frontmatter.memory_recall_count,
         agent: frontmatter.agent,
         trigger: frontmatter.trigger,
         app: frontmatter.app,

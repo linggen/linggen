@@ -70,6 +70,14 @@ pub struct Skill {
     /// Omitted → the skill's memory (if it has the tools) is unscoped.
     #[serde(default)]
     pub memory_context: Option<String>,
+    /// When `memory_context` is set, the engine also auto-recalls that
+    /// namespace into each turn. These tune that scoped recall (per-app):
+    /// cosine floor and how many rows to inject. Omitted → engine defaults
+    /// (0.6 floor, 3 rows). Ignored when `memory_context` is absent.
+    #[serde(default)]
+    pub memory_recall_min_score: Option<f32>,
+    #[serde(default)]
+    pub memory_recall_count: Option<usize>,
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]

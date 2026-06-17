@@ -515,6 +515,21 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
     };
     tracing::info!("Session-bound skill activated: {}", skill.name);
 
+    // Scoped per-app memory: if the bound skill declares a `memory-context`,
+    // wire it (+ its recall thresholds) onto the prompt profile so this turn
+    // auto-recalls ONLY that namespace. Independent of `include_memory`
+    // (which stays off for skill sessions, so no core block / full biography).
+    if skill
+        .memory_context
+        .as_deref()
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false)
+    {
+        engine.prompt_profile.memory_context = skill.memory_context.clone();
+        engine.prompt_profile.memory_recall_min_score = skill.memory_recall_min_score;
+        engine.prompt_profile.memory_recall_count = skill.memory_recall_count;
+    }
+
     // Ensure session_dir is populated so skill-permission saves persist.
     // Otherwise run_agent_loop later loads permission.json from disk and
     // clobbers the in-memory grants we're about to apply.
