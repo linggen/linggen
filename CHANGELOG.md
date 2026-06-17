@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.2] - 2026-06-17
+
+### Added
+
+- Per-app scoped memory — a skill can declare `memory-context` (plus
+  `memory-recall-min-score` and `memory-recall-count`) in its frontmatter so
+  the agent reads and writes memory only within that namespace. Auto-recall and
+  the `Memory_*` tools are scoped to the skill's context, keeping a focused app
+  (e.g. CFO) from pulling in unrelated cross-app memories.
+- ling-mem is pre-warmed at startup when any installed skill uses scoped
+  memory, so the first recall has no cold-start delay.
+
 ## [1.1.1] - 2026-06-15
 
 ### Added
