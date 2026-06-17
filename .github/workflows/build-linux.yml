@@ -1,0 +1,88 @@
+name: build-linux
+
+# Cloud replacement for the DS242 native Linux build box.
+# Builds `ling` (with embedded UI) for linux x86_64 + aarch64 on GitHub-hosted
+# runners — native per-arch, no Docker/QEMU, modern Node. Mirrors the steps in
+# scripts/Dockerfile.linux. Produces flat tarballs `ling-linux-<arch>.tar.gz`
+# matching what install.sh / download-ling.sh expect.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "git ref to build (branch / tag / sha)"
+        required: true
+        default: "main"
+      version:
+        description: "version baked into the binary (LINGGEN_BUILD_VERSION)"
+        required: true
+        default: "0.0.0-dev"
+      release_tag:
+        description: "release tag to upload assets to (blank = artifacts only)"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config cmake libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # rust-embed bakes ui/dist/ into the binary, so the UI MUST build first.
+      - name: Build Web UI
+        working-directory: ui
+        run: |
+          npm install
+          npm run build
+          [ "$(ls -A dist)" ] || (echo "UI build produced no assets" && exit 1)
+
+      - name: Build ling
+        env:
+          LINGGEN_BUILD_VERSION: ${{ inputs.version }}
+        run: cargo build --release
+
+      - name: Package flat tarball
+        run: |
+          BIN=target/release/ling
+          SIZE=$(stat -c%s "$BIN")
+          [ "$SIZE" -ge 1000000 ] || (echo "ling binary too small: $SIZE bytes" && exit 1)
+          mkdir -p out/ling-flat
+          cp "$BIN" out/ling-flat/
+          (cd out/ling-flat && tar -czf "../ling-linux-${{ matrix.arch }}.tar.gz" ling)
+          ls -lh out/*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ling-linux-${{ matrix.arch }}
+          path: out/ling-linux-${{ matrix.arch }}.tar.gz
+
+      - name: Upload to release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.release_tag }}" \
+            "out/ling-linux-${{ matrix.arch }}.tar.gz" \
+            --clobber --repo "${{ github.repository }}"
