@@ -4,10 +4,15 @@
 //! the Yinyue agent to decide whether to tell the user. First slice: react only
 //! to a *non-Yinyue* mission finishing.
 //!
+//! The reaction is launched as a plain **agent run** (not a mission), so it (a)
+//! never persists a `missions/yinyue-react/` dir that would pollute the mission
+//! list, and (b) runs with Yinyue's full `yinyue.md` system prompt rather than a
+//! mission body that replaces it.
+//!
 //! Guards:
-//! 1. No self-loop — Yinyue's own reaction run emits its own `MissionCompleted`;
-//!    we skip mission ids that belong to her (the `yinyue` prefix), or her run
-//!    would re-trigger her forever.
+//! 1. No self-loop — an agent run does not emit `MissionCompleted`, so a reaction
+//!    can't re-trigger this loop. The `yinyue` mission-id check below is kept as
+//!    belt-and-suspenders for any future mission-shaped reaction.
 //! 2. Cost — match only the coarse event(s); the per-token firehose
 //!    (`Token` / `TextSegment` / `ContentBlock*`) falls through the `else` arm at
 //!    near-zero cost. The LLM is woken only on a narrow trigger.
@@ -17,13 +22,12 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::events::{NotificationPayload, ServerEvent};
 use super::state::ServerState;
-use crate::engine::mission::record::Mission;
 
 const YINYUE_AGENT: &str = "yinyue";
-/// Mission id for Yinyue's ad-hoc reaction runs. The loop ignores
-/// `MissionCompleted` events whose id starts with the agent name, so her own
-/// reactions never re-trigger her (guard 1).
-const REACT_MISSION_ID: &str = "yinyue-react";
+/// All of Yinyue's reactions share one ongoing session, so they serialize
+/// (one `agent.lock()` at a time) and read as a single continuing thread
+/// rather than littering the session list.
+const REACT_SESSION_ID: &str = "sess-yinyue";
 
 pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
     let mut rx = state.events_tx.subscribe();
@@ -52,7 +56,7 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         return; // firehose + all other events dropped here, near-free
     };
 
-    // Guard 1: never react to Yinyue's own reaction missions (self-loop).
+    // Guard: never react to a Yinyue-shaped mission (belt-and-suspenders).
     if mission_id.starts_with(YINYUE_AGENT) {
         return;
     }
@@ -64,52 +68,71 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
     });
 }
 
-/// Wake the Yinyue agent with the event as a user turn, reusing the mission
-/// dispatch path. She decides whether it's worth surfacing to the user.
+/// Wake the Yinyue agent with the event as her task, via a plain agent run
+/// (mirrors `api::agents::run_agent`, minus the mission machinery). She runs
+/// with her full system prompt and decides whether to surface anything.
 async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &str) {
-    let body = "You have been woken to react to something that just happened on the \
-        user's machine. Read the message below, decide whether it is worth telling them, \
-        and if so say it in one or two brief sentences, in your voice — what happened and \
-        anything notable you can find (you may Memory_query for context). If it is routine \
-        and not worth interrupting them, reply with exactly: SILENT. Be brief. Never nag."
-        .to_string();
-
-    let kickoff = vec![format!(
-        "The background job \"{mission_name}\" just finished (status: {status})."
-    )];
-
-    let mission = Mission {
-        id: REACT_MISSION_ID.to_string(),
-        name: Some("Yinyue".to_string()),
-        description: String::new(),
-        schedule: String::new(),
-        enabled: true,
-        catchup_hours: None,
-        cwd: None,
-        model: None,
-        kickoff,
-        allowed_tools: vec![
-            "Memory_query".to_string(),
-            "Memory_write".to_string(),
-            "Read".to_string(),
-            "Grep".to_string(),
-        ],
-        permission: None,
-        prompt: body,
-        agent_id: YINYUE_AGENT.to_string(),
-        project: None,
-        created_at: crate::util::now_ts_secs(),
-    };
+    let task = format!(
+        "You've been woken to react to a background event on the user's machine. \
+         The background job \"{mission_name}\" just finished (status: {status}). \
+         Decide whether it's worth telling the user; if so, say it in one or two brief \
+         sentences, in your voice — what happened and anything notable (you may Memory_query, \
+         Read, or Grep for context). If it's routine and not worth interrupting them, do \
+         nothing. Be brief. Never nag."
+    );
 
     let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
-    let project_path = root.to_string_lossy().to_string();
 
-    crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
-        state,
-        root,
-        &project_path,
-        &mission,
-        None,
-    )
-    .await;
+    let agent = match state
+        .manager
+        .get_or_create_session_agent(REACT_SESSION_ID, &root, YINYUE_AGENT)
+        .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("[yinyue-watch] could not create Yinyue agent: {e}");
+            return;
+        }
+    };
+
+    let run_id = state
+        .manager
+        .begin_agent_run(
+            &root,
+            Some(REACT_SESSION_ID),
+            YINYUE_AGENT,
+            None,
+            Some("yinyue-watch".to_string()),
+        )
+        .await
+        .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
+
+    let (run_status, err_msg) = {
+        let mut engine = agent.lock().await;
+        engine.set_parent_agent(None);
+        engine.set_task(task);
+        engine.set_run_id(Some(run_id.clone()));
+        let result = engine.run_agent_loop(Some(REACT_SESSION_ID)).await;
+        engine.set_run_id(None);
+        match result {
+            Ok(_) => (crate::engine::agent::AgentRunStatus::Completed, None),
+            Err(e) => {
+                let msg = e.to_string();
+                let status = if msg.to_lowercase().contains("cancel") {
+                    crate::engine::agent::AgentRunStatus::Cancelled
+                } else {
+                    crate::engine::agent::AgentRunStatus::Failed
+                };
+                (status, Some(msg))
+            }
+        }
+    };
+
+    if let Some(ref m) = err_msg {
+        tracing::warn!("[yinyue-watch] reaction run failed: {m}");
+    }
+    let _ = state
+        .manager
+        .finish_agent_run(&run_id, run_status, err_msg)
+        .await;
 }
