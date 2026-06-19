@@ -45,6 +45,45 @@ fn get_os_version() -> String {
         .clone()
 }
 
+/// Best-effort IANA timezone name (e.g. "America/Halifax") from the
+/// `/etc/localtime` symlink. Falls back to "unknown" where it can't be read.
+/// Stable for the process lifetime, so it's safe in the cached prompt prefix.
+fn local_timezone() -> String {
+    static TZ: OnceLock<String> = OnceLock::new();
+    TZ.get_or_init(|| {
+        if let Ok(target) = std::fs::read_link("/etc/localtime") {
+            let s = target.to_string_lossy();
+            if let Some(idx) = s.find("zoneinfo/") {
+                let tz = (&s[idx + "zoneinfo/".len()..]).trim_matches('/');
+                if !tz.is_empty() {
+                    return tz.to_string();
+                }
+            }
+        }
+        "unknown".into()
+    })
+    .clone()
+}
+
+/// Best-effort BCP-47-ish locale (e.g. "en-CA") from the environment.
+/// Stable for the process lifetime.
+fn locale_tag() -> String {
+    static LOCALE: OnceLock<String> = OnceLock::new();
+    LOCALE
+        .get_or_init(|| {
+            for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
+                if let Ok(val) = std::env::var(key) {
+                    let base = val.split('.').next().unwrap_or("").trim();
+                    if !base.is_empty() && base != "C" && base != "POSIX" {
+                        return base.replace('_', "-");
+                    }
+                }
+            }
+            "unknown".into()
+        })
+        .clone()
+}
+
 fn workspace_listing(ws_root: &std::path::Path) -> String {
     let entries = match std::fs::read_dir(ws_root) {
         Ok(e) => e,
@@ -224,11 +263,15 @@ impl AgentEngine {
         if self.prompt_profile.include_environment {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".into());
             let os_version = get_os_version();
+            let timezone = local_timezone();
+            let locale = locale_tag();
             stable.push_str(&self.prompt_store.render_or_fallback(
                 keys::SYSTEM_ENVIRONMENT_BLOCK,
                 &[
                     ("platform", std::env::consts::OS),
                     ("os_version", &os_version),
+                    ("timezone", &timezone),
+                    ("locale", &locale),
                     ("shell", &shell),
                     ("ws_root", &self.cfg.ws_root.display().to_string()),
                     ("interface_mode", &self.cfg.interface_mode.to_string()),

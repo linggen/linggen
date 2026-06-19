@@ -378,12 +378,14 @@ text = "\n- **{name}**: {description}"
 
 [environment_block]
 description = "Runtime environment context"
-vars = ["platform", "os_version", "shell", "ws_root", "interface_mode"]
+vars = ["platform", "os_version", "timezone", "locale", "shell", "ws_root", "interface_mode"]
 text = '''
 
 # Environment
 - Platform: {platform}
 - OS: {os_version}
+- Timezone: {timezone}
+- Locale: {locale}
 - Shell: {shell}
 - Workspace: {ws_root}
 - Interface: {interface_mode}
