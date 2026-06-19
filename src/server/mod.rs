@@ -3,6 +3,7 @@ mod chat;
 mod events;
 pub(crate) mod rtc;
 mod state;
+mod yinyue_watch;
 
 pub use events::{AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent};
 pub use state::ServerState;
@@ -1045,6 +1046,15 @@ async fn prepare_server(
     {
         let scheduler_state = state.clone();
         tokio::spawn(crate::extensions::missions::scheduler::mission_scheduler_loop(scheduler_state));
+    }
+
+    // Spawn Yinyue's event-reactive watch loop. Taps the same event bus and, on
+    // a coarse trigger (first slice: a non-Yinyue mission finishing), wakes the
+    // Yinyue agent to decide whether to tell the user. Guards against self-loops
+    // and ignores the per-token firehose. See server/yinyue_watch.rs.
+    {
+        let yinyue_state = state.clone();
+        tokio::spawn(yinyue_watch::yinyue_watch_loop(yinyue_state));
     }
 
     // Spawn the agent_run sweeper. Reaps `Running` rows older than the
