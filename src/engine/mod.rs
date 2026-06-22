@@ -284,8 +284,8 @@ impl AgentEngine {
 
         let use_native_tools = self.model_manager.supports_tools(&self.model_id);
         info!(
-            "[{}] Agent loop: model_id={}, native_tools={}",
-            log_run, self.model_id, use_native_tools
+            "[{}] Agent loop: model_id={}, native_tools={}, reasoning_effort={:?}",
+            log_run, self.model_id, use_native_tools, self.reasoning_effort
         );
         let (messages, allowed_tools, read_paths) =
             self.prepare_loop_messages(&task, use_native_tools);

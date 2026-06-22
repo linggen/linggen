@@ -321,6 +321,7 @@ impl ModelManager {
         &self,
         model_id: &str,
         messages: &[ChatMessage],
+        effort_override: Option<&str>,
         app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
@@ -331,6 +332,7 @@ impl ModelManager {
             model_id,
             messages,
             instance.config.keep_alive.clone(),
+            effort_override,
             app,
         )
         .await
@@ -341,6 +343,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         keep_alive: Option<String>,
+        effort_override: Option<&str>,
         app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
@@ -425,7 +428,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_text_stream(&instance.config.model, messages, instance.config.reasoning_effort.as_deref(), app)
+                    .chat_text_stream(&instance.config.model, messages, effort_override.or(instance.config.reasoning_effort.as_deref()), app)
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -477,6 +480,7 @@ impl ModelManager {
         model_id: &str,
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
+        effort_override: Option<&str>,
         app: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
@@ -543,7 +547,7 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_tool_stream(&instance.config.model, messages, tools, instance.config.reasoning_effort.as_deref(), app)
+                    .chat_tool_stream(&instance.config.model, messages, tools, effort_override.or(instance.config.reasoning_effort.as_deref()), app)
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);

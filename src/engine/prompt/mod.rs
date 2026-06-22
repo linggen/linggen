@@ -432,6 +432,14 @@ impl AgentEngine {
             });
         }
 
+        // A conversational companion (e.g. Yinyue) declares none of the "doing"
+        // tools — no files, code, shell, delegation, or planning. It gets a lean
+        // prompt and a bare task message (not the coding-framed response format
+        // and autonomous-loop bootstrap), so it talks like a person, not a dev agent.
+        let conversational = !["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task", "EnterPlanMode", "UpdatePlan"]
+            .iter()
+            .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
+
         // Dynamic content appended after cached stable prefix.
 
         // Check if tools are available — skip all tool-related prompt sections when empty.
@@ -449,7 +457,22 @@ impl AgentEngine {
                 let tool_allowed = |name: &str| -> bool {
                     allowed_tools.as_ref().map_or(true, |s| s.contains(name))
                 };
-                if let Some(base) = self.prompt_store.get(crate::prompts::RESPONSE_FORMAT_NATIVE) {
+                if conversational {
+                    if let Some(lean) = self
+                        .prompt_store
+                        .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_LEAN)
+                    {
+                        system.push_str("\n\n");
+                        system.push_str(lean);
+                        if tool_allowed("AskUser") {
+                            if let Some(b) = self.prompt_store.get(
+                                crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET,
+                            ) {
+                                system.push_str(b);
+                            }
+                        }
+                    }
+                } else if let Some(base) = self.prompt_store.get(crate::prompts::RESPONSE_FORMAT_NATIVE) {
                     system.push_str("\n\n");
                     system.push_str(base);
                     if tool_allowed("AskUser") {
@@ -564,7 +587,12 @@ impl AgentEngine {
 
         // Provide workspace info + task (last user message).
         // Owner gets full workspace listing; consumer gets task only.
-        let task_content = if self.prompt_profile.include_workspace_listing {
+        let task_content = if conversational {
+            // A companion's "task" is just what the person said — no autonomous-
+            // loop framing, no workspace listing, no "explore the codebase / emit
+            // a done action" coda (all of which make her sound like a coding agent).
+            task.to_string()
+        } else if self.prompt_profile.include_workspace_listing {
             let ws_listing = workspace_listing(&self.cfg.ws_root);
             self.prompt_store.render(
                 crate::prompts::TASK_BOOTSTRAP,

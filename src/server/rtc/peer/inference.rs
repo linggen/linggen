@@ -171,12 +171,12 @@ pub(super) async fn process_inference_request(
             // shared 'linggen' bucket.
             let stream_result = if let Some(tools) = tools {
                 if !tools.is_empty() {
-                    models.chat_tool_stream(model_id, &messages, tools, None).await
+                    models.chat_tool_stream(model_id, &messages, tools, None, None).await
                 } else {
-                    models.chat_text_stream(model_id, &messages, None).await
+                    models.chat_text_stream(model_id, &messages, None, None).await
                 }
             } else {
-                models.chat_text_stream(model_id, &messages, None).await
+                models.chat_text_stream(model_id, &messages, None, None).await
             };
 
             let mut stream = match stream_result {

@@ -21,6 +21,12 @@ pub struct AgentSpec {
     pub model: Option<String>,
     #[serde(default)]
     pub personality: Option<String>,
+    /// Per-agent reasoning-effort override ("low"|"medium"|"high"). Applied to
+    /// reasoning-capable models (gpt-5.x / o-series / deepseek-r) at call time,
+    /// overriding the model config's default — lets a conversational agent like
+    /// Yinyue run the flagship at low effort for snappier replies.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 /// A loaded agent: frontmatter (`spec`) + body (`system_prompt`) +

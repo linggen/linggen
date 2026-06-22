@@ -80,6 +80,7 @@ pub mod keys {
     pub const RESPONSE_FORMAT_NATIVE_PLAN_MODE: &str = "response-format.native_plan_mode";
     pub const RESPONSE_FORMAT_NATIVE_UPDATE_PLAN: &str = "response-format.native_update_plan";
     pub const RESPONSE_FORMAT_NATIVE_RULES_BASE: &str = "response-format.native_rules_base";
+    pub const RESPONSE_FORMAT_NATIVE_LEAN: &str = "response-format.native_lean";
     pub const PLAN_MODE: &str = "plan-mode.default";
     pub const PLAN_EXECUTE: &str = "plan-execute.default";
     pub const TASK_BOOTSTRAP: &str = "task-bootstrap.default";
@@ -369,6 +370,7 @@ mod tests {
             keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE,
             keys::RESPONSE_FORMAT_NATIVE_UPDATE_PLAN,
             keys::RESPONSE_FORMAT_NATIVE_RULES_BASE,
+            keys::RESPONSE_FORMAT_NATIVE_LEAN,
             keys::PLAN_MODE,
             keys::PLAN_EXECUTE,
             keys::TASK_BOOTSTRAP,

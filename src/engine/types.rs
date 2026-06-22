@@ -246,6 +246,9 @@ pub struct AgentEngine {
     /// Used to reset model_id at the start of each turn when no session
     /// override is active, so fallback state doesn't persist.
     pub default_model_id: String,
+    /// Per-agent reasoning-effort override from the agent spec ("low"|"medium"|
+    /// "high"). Overrides the model config's effort at call time when set.
+    pub reasoning_effort: Option<String>,
     pub tools: ToolRegistry,
     pub role: AgentRole,
     pub task: Option<String>,
@@ -455,6 +458,7 @@ impl AgentEngine {
             model_manager,
             default_model_id: model_id.clone(),
             model_id,
+            reasoning_effort: None,
             tools,
             role,
             task: None,
@@ -523,6 +527,7 @@ impl AgentEngine {
 
     pub fn set_spec(&mut self, agent_id: String, spec: AgentSpec, system_prompt: String) {
         self.agent_id = Some(agent_id);
+        self.reasoning_effort = spec.reasoning_effort.clone();
         self.spec = Some(spec);
         self.spec_system_prompt = Some(system_prompt);
     }

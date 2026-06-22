@@ -175,7 +175,7 @@ impl AgentEngine {
         use crate::provider::models::StreamChunk;
         let mut stream = self
             .model_manager
-            .chat_text_stream(model_id, messages, self.app_product())
+            .chat_text_stream(model_id, messages, self.reasoning_effort.as_deref(), self.app_product())
             .await?;
         let mut accumulated = String::new();
         let mut thinking_ended = false;
@@ -252,7 +252,7 @@ impl AgentEngine {
 
         let mut stream = self
             .model_manager
-            .chat_tool_stream(model_id, messages, tools, self.app_product())
+            .chat_tool_stream(model_id, messages, tools, self.reasoning_effort.as_deref(), self.app_product())
             .await?;
 
         let mut accumulated_text = String::new();

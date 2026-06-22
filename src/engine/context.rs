@@ -583,7 +583,7 @@ impl AgentEngine {
 
         match self
             .model_manager
-            .chat_text_stream(&self.model_id, &summarize_msgs, self.app_product())
+            .chat_text_stream(&self.model_id, &summarize_msgs, self.reasoning_effort.as_deref(), self.app_product())
             .await
         {
             Ok(mut stream) => {
