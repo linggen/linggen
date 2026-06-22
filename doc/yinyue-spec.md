@@ -219,6 +219,34 @@ Click summons/dismisses Yinyue; a menu offers settings and quit. The **jump out 
 the icon** spawn — her 3D body popping out of the tray and arcing onto the desktop —
 needs the singleton overlay (above) and rides that work.
 
+### Wiring the daemon tier (talk / mood)
+
+The local tier is shell-only. The daemon tier consumes the **same speech/expression
+event the other surfaces get** — `ServerEvent::YinyueSpeak { text, emotion }`: global
+(no session), explicitly fanned to pet / menubar / web overlay; the cue is small, the
+audio blob is pulled from `/api/tts`. The catch: that event rides the **WebRTC data
+channel to webview peers**, and the tray is **Rust, not a peer**. The bridge:
+
+1. The webview already voicing her (`pet-ui` / WebUI overlay) receives `YinyueSpeak`,
+   plays the `/api/tts` clip and lip-syncs the body — and **relays a compact cue to
+   the shell** over Tauri IPC: `yinyue:express { emotion, talking }` (`talking` true at
+   playback start, false at end).
+2. `menubar.rs` listens (`app.listen`) and drives the existing `set_expression` seam.
+   `Mood` grows `{ Talk, Joy, Worried, Alert }`; `talk` lip-flaps for the clip's
+   duration, then the mood decays back to `rest`.
+
+This adds **no transport** — the webview→shell hop is in-process IPC (both live in the
+shell process), and talk stays in sync with the body because the surface playing the
+audio drives the flap. With no window open there's no relay — but also no surface
+voicing her, so tray-talk is moot; for **mood with no window** (e.g. a background
+mission → joy) the shell can poll a small `/api/yinyue/state` instead.
+
+Frames: `talk` (3 mouth levels) and `joy` are already captured; add `worried`.
+
+Depends on the in-progress voice feature (`api/yinyue.rs`, `api/tts.rs`, the `pet-ui`
+voice path); the tray is then a small consumer add — one `listen` + a few `Mood`
+states + one frame.
+
 ## Event-reactive supervision
 
 Yinyue reacts to runtime events instead of polling. The watch loop
@@ -283,10 +311,13 @@ user's region and time without asking.
 - Designed (not built): singleton roaming pet — daemon-owned single instance,
   full-screen click-through overlay, walks the desktop and climbs Linggen's own app
   windows via cooperative window-rect reporting (no Accessibility API).
-- Designed (not built): menubar presence — animated 2D tray face (frames captured
-  from the VRM), faces switch by event (local: blink/smile/sleep; daemon: talk/mood),
-  summon/dismiss; the jump-out spawn rides the overlay. Frame-capture pipeline is
-  proven (headless three-vrm → outline/contrast post → PNG frames).
+- Shipped: menubar presence v1 (local) — animated 2D tray face (blink/smile/sleep,
+  click-to-summon), `menubar.rs` + the `set_expression` seam, live-verified
+  (`linggen-app` `cdb13c2`). Frame-capture pipeline proven (headless three-vrm →
+  outline/contrast post → PNG frames; placeholder model, gitignored).
+- Designed (not built): menubar daemon tier — `talk`/`mood` driven by the webview
+  relaying `YinyueSpeak` to the Rust tray over Tauri IPC (see "Wiring the daemon
+  tier"); the jump-out spawn rides the overlay.
 - Designed (not built): adaptive presentation — one renderer + one event spine,
   shown as a native window in the desktop app and an in-page overlay in the browser;
   app-vs-web behavior bounded by host (see "Adaptive presentation").
