@@ -23,7 +23,7 @@ This is the contract both sides build against. The daemon side lives in this rep
 
 The extension is a **global bridge**: a host shell plus per-site **modules**. The **X module ships first**; future skills add modules (e.g. LinkedIn) without a new Web Store listing. The extension declares host permissions only for enabled modules' domains — `x.com` only, for now.
 
-Reads are **on-demand**: nothing is harvested in the background. A skill asks → the daemon brokers the request to the extension → the extension reads → returns. When a request arrives and no relevant tab is open, the extension opens a hidden tab on demand, runs the read in full page context, and closes it (read locus "B" — gets `x-csrf-token` and the page's `x-client-transaction-id` signing for free).
+Reads are **on-demand**: nothing is harvested in the background. A skill asks → the daemon brokers the request to the extension → the extension reads → returns. When a request arrives, the extension opens a hidden `x.com` tab at the relevant URL, lets the **page** make and sign its own API call, intercepts the response (a `document_start` hook wrapping `fetch`/XHR), normalizes it, and closes the tab (read locus "B"). Because the page issues the request, all signing — `queryId`, `features`, `x-csrf-token`, `x-client-transaction-id` — is x.com's own, so the extension forges nothing and X rotating those can't break the bridge.
 
 ```
 skill script ──HTTP──> daemon ──WS req──> extension ──hidden x.com tab──> X internal API
