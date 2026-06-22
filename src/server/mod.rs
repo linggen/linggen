@@ -1,4 +1,5 @@
 mod api;
+mod bridge;
 mod chat;
 mod events;
 pub(crate) mod rtc;
@@ -128,6 +129,32 @@ fn default_status_text(status: AgentStatusKind) -> String {
 pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
     let ts_ms = crate::util::now_ts_ms();
     match event {
+        ServerEvent::PetSpeak { text, emotion } => Some(UiEvent {
+            id: format!("pet-speak-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "pet_speak".to_string(),
+            phase: None,
+            text: Some(text.clone()),
+            agent_id: Some("yinyue".to_string()),
+            session_id: None, // global → control channel of every surface
+            project_root: None,
+            data: Some(json!({ "text": text, "emotion": emotion })),
+        }),
+        ServerEvent::PetExpress { emotion, action } => Some(UiEvent {
+            id: format!("pet-express-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "pet_express".to_string(),
+            phase: None,
+            text: None,
+            agent_id: Some("yinyue".to_string()),
+            session_id: None, // global → every surface
+            project_root: None,
+            data: Some(json!({ "emotion": emotion, "action": action })),
+        }),
         ServerEvent::Message { from, to, content, session_id, run_id, parent_agent_id } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(UiEvent {
@@ -803,6 +830,8 @@ async fn prepare_server(
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
+        tts: api::tts::default_provider(),
+        bridge: Arc::new(bridge::BridgeHub::new()),
     });
 
     // Flush token usage to disk every 30 seconds.
@@ -839,6 +868,15 @@ async fn prepare_server(
                 }
             }
         });
+    }
+
+    // Pre-warm the voice model (Yinyue's TTS) off the hot path, so her first
+    // utterance is as fast as the rest. Non-blocking: boot continues; the model
+    // becomes resident a few seconds later. No-op for the stateless `say`
+    // provider; loads Kokoro onto the GPU for the Kokoro provider.
+    {
+        let tts = state.tts.clone();
+        tokio::spawn(async move { tts.prewarm().await });
     }
 
     // Idle-shutdown watcher: when --idle-shutdown-secs is set, exit the
@@ -1011,6 +1049,12 @@ async fn prepare_server(
         .route("/api/file", get(read_file_api))
         .route("/api/workspace/state", get(get_workspace_state))
         .route("/api/bash", post(run_bash_api))
+        .route("/api/tts", post(api::tts::tts_handler))
+        .route("/api/yinyue/say", post(api::yinyue::say_handler))
+        .route("/api/bridge/socket", get(bridge::socket_handler))
+        .route("/api/bridge/call", post(bridge::call_handler))
+        .route("/api/bridge/status", get(bridge::status_handler))
+        .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))

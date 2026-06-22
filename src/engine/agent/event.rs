@@ -13,6 +13,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
+    /// The pet expresses on its avatar body — a sustained mood and/or a
+    /// one-shot gesture. Emitted by the `Express` tool; carries no agent text.
+    /// Generic across pets/mascots (Yinyue today, others later).
+    PetExpress {
+        emotion: Option<String>,
+        action: Option<String>,
+    },
     TaskUpdate {
         agent_id: String,
         task: String,

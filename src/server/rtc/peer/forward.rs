@@ -70,8 +70,12 @@ pub(super) fn forward_event_to_channels(
     if !filter.is_admin {
         match ui_msg.session_id.as_deref() {
             Some("global") | None => {
-                // Room chat must reach all peers regardless of permission level.
-                if ui_msg.kind != "room_chat" {
+                // Room chat and Yinyue's voice/expression must reach all peers
+                // regardless of permission level — user-level global signals.
+                if ui_msg.kind != "room_chat"
+                    && ui_msg.kind != "pet_speak"
+                    && ui_msg.kind != "pet_express"
+                {
                     tracing::debug!(
                         "[fwd] DROP(user-filter global) user={} view={} sid={} kind={}",
                         dbg_user,

@@ -34,6 +34,11 @@ export const EVENT_KINDS = [
   'app_launched',
   'working_folder',
 
+  // Pet — pushed "speak" cue (global); the surface plays the voice.
+  'pet_speak',
+  // Pet expression — emotion / one-shot gesture for the avatar (global).
+  'pet_express',
+
   // Control-channel pushes (not strictly UiEvent, but routed through the same
   // dispatcher because they carry a `kind` discriminator).
   'page_state',

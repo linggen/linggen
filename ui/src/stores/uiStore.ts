@@ -29,6 +29,22 @@ export interface AppPanelState {
   height?: number;
 }
 
+/** Yinyue's current spoken line — shown as a transient in-character bubble,
+ *  driven by the `yinyue_speak` event (paired with her voice). */
+export interface YinyueSpeech {
+  id: string;
+  text: string;
+  emotion: string;
+}
+
+/** A pet expression directive (emotion and/or one-shot gesture), driven by
+ *  the `pet_express` event. Generic across pets/mascots. */
+export interface PetExpress {
+  id: string;
+  emotion?: string;
+  action?: string;
+}
+
 interface UiState {
   // Page navigation
   currentPage: Page;
@@ -62,6 +78,15 @@ interface UiState {
   toasts: Toast[];
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
+
+  // Yinyue speech bubble (driven by the `yinyue_speak` event)
+  yinyueSpeech: YinyueSpeech | null;
+  showYinyueSpeech: (text: string, emotion: string) => void;
+  clearYinyueSpeech: () => void;
+
+  // Pet expression (driven by the `pet_express` event)
+  petExpress: PetExpress | null;
+  pushPetExpress: (emotion?: string, action?: string) => void;
 
   // Actions
   setCurrentPage: (page: Page) => void;
@@ -114,6 +139,24 @@ export const useUiStore = create<UiState>((set) => ({
     }
   },
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  yinyueSpeech: null,
+  showYinyueSpeech: (text, emotion) => {
+    const id = `ys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    set({ yinyueSpeech: { id, text, emotion } });
+    // Linger roughly as long as the spoken line; clear only if not superseded.
+    const ms = Math.min(12000, Math.max(3500, 2500 + text.length * 55));
+    setTimeout(() => {
+      set((s) => (s.yinyueSpeech?.id === id ? { yinyueSpeech: null } : {}));
+    }, ms);
+  },
+  clearYinyueSpeech: () => set({ yinyueSpeech: null }),
+
+  petExpress: null,
+  pushPetExpress: (emotion, action) => {
+    const id = `px-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    set({ petExpress: { id, emotion, action } });
+  },
 
   setCurrentPage: (page) => set({ currentPage: page }),
   setSidebarTab: (tab) => set({ sidebarTab: tab }),

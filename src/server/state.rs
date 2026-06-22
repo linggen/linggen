@@ -3,6 +3,7 @@
 //! per-status tracking used to dedupe agent-status updates.
 
 use crate::engine::agent::AgentManager;
+use crate::server::bridge::BridgeHub;
 use crate::server::rtc;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,6 +59,12 @@ pub struct ServerState {
     /// the first one's callback server (or vice versa), producing a
     /// "State mismatch" error. Logout also aborts.
     pub codex_login_task: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Voice backend for `/api/tts` (Yinyue's speech). Held here so a
+    /// model-backed provider (Kokoro) loads once rather than per request.
+    pub tts: Arc<dyn crate::server::api::tts::TtsProvider>,
+    /// Browser bridge hub — the connected `linggen-browser` extension (if any)
+    /// plus in-flight request correlation. See `server/bridge.rs`.
+    pub bridge: Arc<BridgeHub>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveStatusRecord {

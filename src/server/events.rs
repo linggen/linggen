@@ -64,6 +64,25 @@ pub enum NotificationPayload {
 #[serde(tag = "type")]
 pub enum ServerEvent {
     StateUpdated,
+    /// The pet has something to say — a pushed "speak" cue for every surface
+    /// (pet / menubar / web overlay). Carries the line and an optional emotion;
+    /// the surface fetches the audio from `/api/tts` and renders the bubble +
+    /// expression. Global (no session) so it reaches all of the user's surfaces.
+    /// Generic across pets/mascots (Yinyue today, others later).
+    PetSpeak {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        emotion: Option<String>,
+    },
+    /// The pet expresses on its avatar — a sustained mood and/or a one-shot
+    /// gesture (no speech). Emitted by the `Express` tool. Global, like Speak.
+    /// Generic across pets/mascots (Yinyue today, others later).
+    PetExpress {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        emotion: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+    },
     Message {
         from: String,
         to: String,
@@ -315,6 +334,9 @@ impl ServerEvent {
             }),
             AgentEvent::PlanUpdate { agent_id, plan } => {
                 Some(Self::PlanUpdate { agent_id, plan, session_id })
+            }
+            AgentEvent::PetExpress { emotion, action } => {
+                Some(Self::PetExpress { emotion, action })
             }
             AgentEvent::TextSegment { agent_id, text, parent_id } => {
                 Some(Self::TextSegment { agent_id, text, parent_id, session_id })

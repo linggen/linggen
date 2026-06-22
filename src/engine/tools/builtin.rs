@@ -76,6 +76,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(RunAppTool),
             Arc::new(WebSearchTool),
             Arc::new(WebFetchTool),
+            Arc::new(ExpressTool),
             Arc::new(AskUserTool),
             // Memory_query / Memory_write — engine-built-in (HTTP to
             // `ling-mem`). Previously routed through the now-defunct
@@ -634,6 +635,73 @@ impl Tool for WebFetchTool {
             content_type: result.content_type,
             truncated: result.truncated,
         })
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ExpressArgs {
+    #[serde(default)]
+    emotion: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
+}
+
+/// The mascot's body control — she shows a mood and/or a gesture on her avatar.
+/// Fire-and-forget: emits a `PetExpress` event to every surface and returns
+/// immediately. Carries no speech (her spoken line is just her reply text).
+pub struct ExpressTool;
+#[async_trait]
+impl Tool for ExpressTool {
+    fn name(&self) -> &'static str { "Express" }
+    fn aliases(&self) -> &'static [&'static str] { &["express"] }
+    fn description(&self) -> &'static str {
+        "Show feeling on your avatar body: a sustained mood and/or a one-shot \
+         gesture (no speech). Use sparingly and naturally — never narrate it."
+    }
+    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "emotion": {
+                    "type": "string",
+                    "enum": ["neutral", "happy", "sad", "angry", "relaxed"],
+                    "description": "Sustained mood to hold until you change it."
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["nod", "shake", "wave", "bow", "dance", "cheer"],
+                    "description": "A one-shot gesture to perform once."
+                }
+            }
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Express",
+            "args": {"emotion": "string?", "action": "string?"},
+            "returns": "ok",
+            "notes": "Show feeling on your avatar. emotion (sustained): neutral|happy|sad|angry|relaxed. action (one-shot): nod|shake|wave|bow|dance|cheer. At least one. Use sparingly; never narrate it."
+        })
+    }
+    async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        let args: ExpressArgs = serde_json::from_value(call.args)
+            .map_err(|e| anyhow::anyhow!("invalid args for Express: {}", e))?;
+        if args.emotion.is_none() && args.action.is_none() {
+            anyhow::bail!("Express needs at least one of: emotion, action");
+        }
+        if let Some(manager) = tools.get_manager() {
+            manager
+                .send_event(
+                    crate::engine::agent::AgentEvent::PetExpress {
+                        emotion: args.emotion,
+                        action: args.action,
+                    },
+                    tools.session_id.clone(),
+                )
+                .await;
+        }
+        Ok(ToolResult::Success("ok".to_string()))
     }
 }
 

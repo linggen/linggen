@@ -10,6 +10,8 @@ import { ChatWidget } from '../components/chat';
 import { HeaderBar } from '../components/HeaderBar';
 import { AgentSpecEditorModal } from '../components/AgentSpecEditorModal';
 import { ToastContainer } from '../components/ToastContainer';
+import { YinyueBubble } from '../components/YinyueBubble';
+import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
@@ -260,6 +262,7 @@ export const MainApp: React.FC = () => {
   return (
     <>
       <ToastContainer />
+      <YinyueBubble />
       <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
@@ -313,8 +316,15 @@ export const MainApp: React.FC = () => {
 
           {/* Right sidebar (desktop only) */}
           {!isMobile && (
-            <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] p-3 gap-3 overflow-y-auto">
-              <InfoPanel {...infoPanelProps} />
+            <aside className="hidden lg:flex w-72 border-l border-slate-200 dark:border-white/5 flex-col bg-slate-100/40 dark:bg-[#0a0a0a] overflow-hidden">
+              {/* Models + skills scroll above; Yinyue is docked below. */}
+              <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
+                <InfoPanel {...infoPanelProps} />
+              </div>
+              {/* Yinyue's dock — reserved space, click her to talk. */}
+              <div className="h-72 shrink-0 border-t border-slate-200 dark:border-white/5">
+                <YinyueAvatar />
+              </div>
             </aside>
           )}
 
