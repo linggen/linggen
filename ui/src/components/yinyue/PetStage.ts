@@ -93,7 +93,10 @@ export class PetStage {
   private thinkWeight = 0; // eased 0..1 so the procedural pondering pose blends in/out
   // Optional Mixamo "Thinking" clip (real hand-on-chin); falls back to the
   // procedural head-cock if absent. undefined = not yet loaded, null = none.
-  private thinkingClipUrl = '/anim/thinking.fbx';
+  // Trimmed to the raise→hold window (hand reaches the chin ~t1.0 and holds to
+  // ~t2.75; it lowers after t3.0). Ending at 2.5 + clampWhenFinished keeps the
+  // hand at the chin for the whole wait instead of dropping it.
+  private thinkingClipUrl = '/anim/thinking.fbx#0,2.5';
   private thinkingClip: THREE.AnimationClip | null | undefined = undefined;
   private thinkingAction: THREE.AnimationAction | null = null;
   // Resting idle clip — auto-plays as the base whenever nothing else is active.
