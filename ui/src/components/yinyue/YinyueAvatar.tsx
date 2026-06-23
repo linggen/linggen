@@ -34,6 +34,7 @@ export const YinyueAvatar: React.FC = () => {
   const thinkTimer = useRef<number>(0);
   const express = useUiStore((s) => s.petExpress);
   const thinking = useUiStore((s) => s.petThinking);
+  const speaking = useUiStore((s) => s.petSpeaking);
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -112,6 +113,11 @@ export const YinyueAvatar: React.FC = () => {
   useEffect(() => {
     stageRef.current?.setThinking(thinking);
   }, [thinking]);
+
+  // Her voice is playing → run the talking body loop.
+  useEffect(() => {
+    stageRef.current?.setSpeaking(speaking);
+  }, [speaking]);
 
   async function send() {
     const text = draft.trim();

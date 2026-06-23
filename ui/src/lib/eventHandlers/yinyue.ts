@@ -118,6 +118,7 @@ async function play(text: string, emotion: string): Promise<void> {
   const onAudioStart = () => {
     synthInFlight = false;
     useUiStore.getState().setPetThinking(false);
+    useUiStore.getState().setPetSpeaking(true); // talking body loop while the voice plays
     useUiStore.getState().showYinyueSpeech(text, emotion);
     flushExpress();
   };
@@ -144,13 +145,21 @@ async function play(text: string, emotion: string): Promise<void> {
     playback = { envelope: computeRmsEnvelope(decoded), startTime: ctx.currentTime };
     current = src;
     src.onended = () => {
-      if (current === src) { current = null; playback = null; }
+      if (current === src) {
+        current = null;
+        playback = null;
+        useUiStore.getState().setPetSpeaking(false); // voice done → drop the talking loop
+      }
     };
     onAudioStart(); // bubble + gesture land exactly as the voice begins
     src.start();
   } catch (err) {
-    // TTS failed — still show the text, leave thinking, and fire the gesture.
+    // TTS failed — show text, leave thinking, fire the gesture; no audio so no talking loop.
     console.error('[yinyue] speak failed', err);
-    onAudioStart();
+    synthInFlight = false;
+    useUiStore.getState().setPetThinking(false);
+    useUiStore.getState().setPetSpeaking(false);
+    useUiStore.getState().showYinyueSpeech(text, emotion);
+    flushExpress();
   }
 }

@@ -92,6 +92,10 @@ interface UiState {
   petThinking: boolean;
   setPetThinking: (v: boolean) => void;
 
+  // Pet speaking — true while her voice is playing; drives the talking body loop.
+  petSpeaking: boolean;
+  setPetSpeaking: (v: boolean) => void;
+
   // Actions
   setCurrentPage: (page: Page) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -164,6 +168,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   petThinking: false,
   setPetThinking: (v) => set({ petThinking: v }),
+
+  petSpeaking: false,
+  setPetSpeaking: (v) => set({ petSpeaking: v }),
 
   setCurrentPage: (page) => set({ currentPage: page }),
   setSidebarTab: (tab) => set({ sidebarTab: tab }),

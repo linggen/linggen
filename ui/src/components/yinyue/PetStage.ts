@@ -105,6 +105,11 @@ export class PetStage {
   private idleAction: THREE.AnimationAction | null = null;
   private idleStarting = false;
   private idleRestUntil = 0; // clock time before which idle rests (just blink/breathe)
+  // Talking body loop — plays while her voice is playing (gesture overrides it).
+  private speaking = false;
+  private talkingClipUrl: string | null = '/anim/talking.fbx';
+  private talkingClip: THREE.AnimationClip | null | undefined = undefined;
+  private talkingAction: THREE.AnimationAction | null = null;
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -192,6 +197,25 @@ export class PetStage {
     else this.stopThinkingClip();
   }
 
+  /** Toggle the talking body loop (driven on while her voice plays). The base
+   *  layer (ensureBase) swaps idle↔talking; here we just interrupt the *other*
+   *  base clip so the switch is prompt. A gesture/thinking still overrides. */
+  setSpeaking(v: boolean) {
+    if (v === this.speaking) return;
+    this.speaking = v;
+    if (v) {
+      if (this.currentAction && this.currentAction === this.idleAction) {
+        this.idleAction.stop();
+        this.currentAction = null;
+        this.resetPosePending = true;
+      }
+    } else if (this.currentAction && this.currentAction === this.talkingAction) {
+      this.talkingAction!.stop();
+      this.currentAction = null;
+      this.resetPosePending = true;
+    }
+  }
+
   private async startThinkingClip() {
     if (!this.mixer || !this.vrm) return;
     if (this.thinkingClip === undefined) {
@@ -225,28 +249,48 @@ export class PetStage {
     this.thinkingAction = null;
   }
 
-  /** Keep a looping idle clip playing as the resting base whenever nothing else
-   *  (a gesture or thinking) owns the body. Falls back to the procedural idle
-   *  when no clip is set or it fails to load. */
-  private async ensureIdle() {
+  /** The looping BASE layer whenever no gesture/thinking owns the body: the
+   *  talking clip while her voice plays, otherwise the idle clip on a play-once
+   *  + rest cadence. Procedural idle is the fallback if a clip is missing. */
+  private async ensureBase() {
     if (!this.mixer || !this.vrm || this.idleStarting) return;
-    if (this.currentAction || this.thinking || !this.idleClipUrl) return; // something else owns it
+    if (this.currentAction || this.thinking) return; // a gesture or thinking owns the body
+
+    // Speaking → loop the talking body clip for the whole utterance.
+    if (this.speaking && this.talkingClipUrl) {
+      if (this.talkingClip === undefined) {
+        this.idleStarting = true;
+        this.talkingClip = await this.loadClip(this.talkingClipUrl).catch(() => null);
+        this.idleStarting = false;
+      }
+      if (this.currentAction || this.thinking || !this.speaking || !this.talkingClip || !this.mixer) return;
+      const a = this.mixer.clipAction(this.talkingClip);
+      a.reset();
+      a.loop = THREE.LoopRepeat;
+      a.play();
+      this.talkingAction = a;
+      this.currentAction = a;
+      this.resetPosePending = false;
+      return;
+    }
+
+    // Otherwise → idle clip, played once then resting (breathe + blink) between.
+    if (!this.idleClipUrl) return;
     if (this.idleClip === undefined) {
       this.idleStarting = true;
       this.idleClip = await this.loadClip(this.idleClipUrl).catch(() => null);
       this.idleStarting = false;
     }
-    if (this.clock.elapsedTime < this.idleRestUntil) return; // resting between plays (breathe + blink)
-    if (this.currentAction || this.thinking || !this.idleClip || !this.mixer) return;
+    if (this.clock.elapsedTime < this.idleRestUntil) return; // resting between plays
+    if (this.currentAction || this.thinking || this.speaking || !this.idleClip || !this.mixer) return;
     const a = this.mixer.clipAction(this.idleClip);
     a.reset();
-    a.loop = THREE.LoopOnce; // play once, then rest — not a tight back-to-back loop
+    a.loop = THREE.LoopOnce;
     a.clampWhenFinished = false;
     a.play();
     this.idleAction = a;
     this.currentAction = a;
     this.resetPosePending = false;
-    // Rest a few seconds (gentle procedural breathe + a couple of blinks) before replaying.
     this.idleRestUntil = this.clock.elapsedTime + this.idleClip.duration + 5 + Math.random() * 5;
   }
 
@@ -535,8 +579,8 @@ export class PetStage {
     );
 
     if (this.vrm) {
-      // Resting idle: start the looping idle clip when nothing else is playing.
-      void this.ensureIdle();
+      // Base layer: talking clip while speaking, else idle when nothing else plays.
+      void this.ensureBase();
       // A clip, while playing, drives the body. Advance it first so the face
       // layer (blink / lip-sync / emotion) can ride on top before vrm.update.
       const clipActive = this.currentAction !== null;
