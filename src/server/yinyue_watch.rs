@@ -38,6 +38,10 @@ const ROLL_TOKEN_FRACTION: f32 = 0.7;
 /// session would otherwise drag a whole day of turns into every quick reply; the
 /// rest lives on disk + in recalled memory. Small = snappy.
 const YINYUE_MAX_LIVE_MSGS: usize = 10;
+/// The metered Linggen Cloud model — Yinyue's default brain for signed-in
+/// (paid/free) users when `pet.model` is "auto". BYOK users keep the engine
+/// default unless they pick a model in settings.
+const CLOUD_DEFAULT_MODEL: &str = "deepseek-v4-flash";
 
 pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
     let mut rx = state.events_tx.subscribe();
@@ -241,6 +245,17 @@ pub(crate) async fn run_yinyue_turn(state: &Arc<ServerState>, task: String) -> O
         engine.cfg.memory_recall_count = pet.recall_count.max(1);
         engine.cfg.memory_inject_min_score = Some(pet.recall_min_score);
 
+        // Pick her brain per the Pet model setting (tier-aware default: the
+        // metered Linggen Cloud model for signed-in users, the engine default
+        // for BYOK). An unavailable id falls back to whatever she's already on.
+        if let Some(m) = resolve_pet_model(&pet.model) {
+            if engine.model_manager.has_model(&m) {
+                engine.model_id = m;
+            } else {
+                tracing::warn!("[yinyue] model '{m}' unavailable; using {}", engine.model_id);
+            }
+        }
+
         // First turn of a freshly rolled session: bridge the day/size roll with
         // a one-line "Previously" note so a thread mid-flight doesn't snap.
         // Deeper continuity rides shared memory (auto-recall + core), injected
@@ -278,6 +293,22 @@ pub(crate) async fn run_yinyue_turn(state: &Arc<ServerState>, task: String) -> O
         .await;
 
     spoken.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
+/// "auto" uses the metered Linggen Cloud model for signed-in (paid/free) users
+/// and leaves the engine default for BYOK users (who pick their own). Returns
+/// `None` to mean "keep the engine's current model".
+fn resolve_pet_model(setting: &str) -> Option<String> {
+    let s = setting.trim();
+    if !s.is_empty() && !s.eq_ignore_ascii_case("auto") {
+        return Some(s.to_string());
+    }
+    if crate::account::resolve_token().is_some() {
+        Some(CLOUD_DEFAULT_MODEL.to_string())
+    } else {
+        None
+    }
 }
 
 /// Pick Yinyue's current rolling session id: one per calendar day, rolling to an

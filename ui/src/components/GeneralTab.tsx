@@ -22,6 +22,14 @@ export const GeneralTab: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.agent.compact_threshold]);
 
+  // Pet model picker: a few recommended fast models + whatever the user has
+  // configured, deduped. "auto" is added directly in the <select>.
+  const petModelOptions = React.useMemo(() => {
+    const curated = ['deepseek-v4-flash', 'gpt-5.4-nano', 'gpt-5.4-mini', 'gemini-2.5-flash'];
+    const configured = (config.models ?? []).map((m) => m.id);
+    return Array.from(new Set([...curated, ...configured]));
+  }, [config.models]);
+
   return (
     <div className="space-y-6">
       {/* Agent Settings */}
@@ -187,6 +195,20 @@ export const GeneralTab: React.FC<{
               <option value="yinyue">Yinyue</option>
             </select>
             <p className="text-[11px] text-slate-400 mt-0.5">Which companion to show. More avatars later.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Model</label>
+            <select
+              className={inputCls}
+              value={config.pet?.model ?? 'auto'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, model: e.target.value } })}
+            >
+              <option value="auto">Auto (cloud default / your model)</option>
+              {petModelOptions.map((id) => (
+                <option key={id} value={id}>{id}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast one (e.g. gpt-5.4-nano) for snappier replies. Applied per turn.</p>
           </div>
           <div>
             <label className={labelCls}>Voice Engine</label>

@@ -14,7 +14,7 @@
  * Audio is independent of the model, so the voice still works if it fails.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { PetStage, type EmotionName, type ActionName } from './PetStage';
+import { PetStage, type EmotionName, type ActionName, type SeqStep } from './PetStage';
 import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
 import { _originalFetch } from '../../lib/fetchProxy';
@@ -31,7 +31,9 @@ const asAction = (a?: string): ActionName | null =>
 export const YinyueAvatar: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<PetStage | null>(null);
+  const thinkTimer = useRef<number>(0);
   const express = useUiStore((s) => s.petExpress);
+  const thinking = useUiStore((s) => s.petThinking);
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -56,58 +58,81 @@ export const YinyueAvatar: React.FC = () => {
     };
   }, []);
 
-  // Express tool → set emotion (sustained), then dispatch the intent by its
-  // render kind (procedural gesture / .vrma clip / show-hide), per the manifest.
+  // Express tool → set emotion (sustained) once, then play the action(s) as a
+  // (possibly single-step) sequence dispatched by render kind. `action` may be a
+  // comma-joined chain (e.g. "wave,tilt_head,shrug") from Express's `sequence`.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !express) return;
     const { emotion, action } = express;
     void loadIntents().then((intents) => {
       if (stageRef.current !== stage) return; // remounted while loading
-      const intent = action ? intents.get(action) : undefined;
-      // Explicit emotion wins; otherwise the intent's default mood.
-      const e = asEmotion(emotion) ?? asEmotion(intent?.emotion ?? undefined);
+      const names = (action ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      // Emotion (sustained): explicit wins, else the first intent's default mood.
+      const first = names.length ? intents.get(names[0]) : undefined;
+      const e = asEmotion(emotion) ?? asEmotion(first?.emotion ?? undefined);
       if (e) stage.setEmotion(e);
-      if (!intent) {
-        // No manifest entry: treat a bare action as a raw procedural gesture
-        // (backward-compatible with the original six gesture names).
-        const a = asAction(action);
-        if (a) stage.playAction(a);
-        return;
-      }
-      switch (intent.render) {
-        case 'proc': {
-          const a = asAction(intent.proc);
-          if (a) stage.playAction(a);
-          break;
+      if (!names.length) return;
+
+      const steps: SeqStep[] = [];
+      for (const name of names) {
+        const intent = intents.get(name);
+        if (!intent) {
+          // Back-compat: a bare action name → raw procedural gesture.
+          const a = asAction(name);
+          if (a) steps.push({ render: 'proc', proc: a });
+          continue;
         }
-        case 'visibility':
-          stage.setVisible(intent.visible !== false);
-          break;
-        case 'clip': {
-          const url = pickClip(intent);
-          if (url) void stage.playClip(url, { loop: intent.type === 'loop' });
-          else console.info(`[pet] '${intent.name}' has no clip yet — emotion only`);
-          break;
+        switch (intent.render) {
+          case 'proc': {
+            const a = asAction(intent.proc);
+            if (a) steps.push({ render: 'proc', proc: a });
+            break;
+          }
+          case 'visibility':
+            steps.push({ render: 'visibility', visible: intent.visible !== false });
+            break;
+          case 'clip': {
+            const url = pickClip(intent);
+            if (url) steps.push({ render: 'clip', clipUrl: url, loop: intent.type === 'loop' });
+            else console.info(`[pet] '${intent.name}' has no clip yet — emotion only`);
+            break;
+          }
         }
       }
+      if (steps.length) void stage.playSequence(steps);
     });
   }, [express?.id]);
+
+  // A reply is in flight → hold the pondering pose until she responds.
+  useEffect(() => {
+    stageRef.current?.setThinking(thinking);
+  }, [thinking]);
 
   async function send() {
     const text = draft.trim();
     setDraft('');
     setComposing(false);
     if (!text) return;
+    const { setPetThinking } = useUiStore.getState();
+    setPetThinking(true); // ponder until her reply arrives over the event spine
+    window.clearTimeout(thinkTimer.current);
+    thinkTimer.current = window.setTimeout(() => setPetThinking(false), 30000); // safety net
     try {
       await _originalFetch('/api/yinyue/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-      // Her reply arrives over the event spine → she speaks + the bubble shows.
+      // Her reply arrives over the event spine → handlePetSpeak clears thinking.
     } catch (e) {
       console.error('[yinyue] chat failed', e);
+      setPetThinking(false);
+      window.clearTimeout(thinkTimer.current);
     }
   }
 

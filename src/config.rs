@@ -52,6 +52,11 @@ pub struct PetConfig {
     /// Per-row cosine score floor for her auto-recall.
     #[serde(default = "default_pet_recall_min_score")]
     pub recall_min_score: f32,
+    /// LLM model for the companion. "auto" = the metered Linggen Cloud model for
+    /// signed-in (paid/free) users, or the engine default for BYOK users; or a
+    /// specific model id to pin. Applied per turn.
+    #[serde(default = "default_pet_model")]
+    pub model: String,
 }
 
 impl Default for PetConfig {
@@ -63,6 +68,7 @@ impl Default for PetConfig {
             show_text: true,
             recall_count: default_pet_recall_count(),
             recall_min_score: default_pet_recall_min_score(),
+            model: default_pet_model(),
         }
     }
 }
@@ -71,6 +77,9 @@ fn default_pet() -> String {
     "yinyue".to_string()
 }
 fn default_voice_engine() -> String {
+    "auto".to_string()
+}
+fn default_pet_model() -> String {
     "auto".to_string()
 }
 fn default_pet_recall_count() -> usize {

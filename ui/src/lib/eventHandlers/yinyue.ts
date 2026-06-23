@@ -52,6 +52,7 @@ export function handlePetExpress(item: UiEvent): void {
   const emotion = item.data?.emotion as string | undefined;
   const action = item.data?.action as string | undefined;
   if (!emotion && !action) return;
+  useUiStore.getState().setPetThinking(false); // her response has begun
   console.info(`[pet] express emotion=${emotion ?? '-'} action=${action ?? '-'}`);
   useUiStore.getState().pushPetExpress(emotion, action);
 }
@@ -59,6 +60,7 @@ export function handlePetExpress(item: UiEvent): void {
 export function handlePetSpeak(item: UiEvent): void {
   const text = ((item.data?.text as string | undefined) ?? item.text ?? '').trim();
   if (!text) return;
+  useUiStore.getState().setPetThinking(false); // her reply has arrived
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
   useUiStore.getState().showYinyueSpeech(text, emotion); // visual bubble + avatar emotion

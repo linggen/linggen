@@ -644,7 +644,14 @@ struct ExpressArgs {
     emotion: Option<String>,
     #[serde(default)]
     action: Option<String>,
+    /// An ordered list of gestures to play back-to-back as one routine.
+    /// Takes precedence over `action` when present.
+    #[serde(default)]
+    sequence: Option<Vec<String>>,
 }
+
+/// Cap on how many gestures one Express call may chain.
+const MAX_SEQUENCE: usize = 8;
 
 /// One entry of the pet animation manifest. Only the fields the engine needs
 /// to build the `Express` tool schema are deserialized; the renderer-side
@@ -703,10 +710,17 @@ impl Tool for ExpressTool {
                 },
                 "action": {
                     "type": "string",
-                    "enum": names,
+                    "enum": names.clone(),
                     "description": format!(
                         "A gesture, pose, or movement. Choose by what fits the moment:\n{menu}"
                     )
+                },
+                "sequence": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": names },
+                    "description": "Several gestures to play back-to-back as one little routine, \
+                        in order (e.g. [\"wave\", \"tilt_head\", \"shrug\"]). Use instead of `action` \
+                        when one beat isn't enough. Max 8."
                 }
             }
         })
@@ -719,31 +733,44 @@ impl Tool for ExpressTool {
             .join("|");
         json!({
             "name": "Express",
-            "args": {"emotion": "string?", "action": "string?"},
+            "args": {"emotion": "string?", "action": "string?", "sequence": "string[]?"},
             "returns": "ok",
             "notes": format!(
                 "Show feeling on your avatar. emotion (sustained): neutral|happy|sad|angry|relaxed. \
-                 action: {names}. At least one. Use sparingly; never narrate it."
+                 action: {names}. sequence: an ordered list of those to chain (max 8). \
+                 At least one of emotion/action/sequence. Use sparingly; never narrate it."
             )
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: ExpressArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for Express: {}", e))?;
-        if args.emotion.is_none() && args.action.is_none() {
-            anyhow::bail!("Express needs at least one of: emotion, action");
+
+        // `sequence` (an ordered routine) takes precedence over a single `action`.
+        let intents: Vec<String> = match args.sequence {
+            Some(seq) if !seq.is_empty() => seq,
+            _ => args.action.into_iter().collect(),
+        };
+        if args.emotion.is_none() && intents.is_empty() {
+            anyhow::bail!("Express needs at least one of: emotion, action, sequence");
         }
-        if let Some(action) = &args.action {
-            if !PET_INTENTS.iter().any(|i| &i.name == action) {
-                anyhow::bail!("Express: unknown action '{action}' (not in the avatar vocabulary)");
+        if intents.len() > MAX_SEQUENCE {
+            anyhow::bail!("Express sequence too long (max {MAX_SEQUENCE})");
+        }
+        for name in &intents {
+            if !PET_INTENTS.iter().any(|i| &i.name == name) {
+                anyhow::bail!("Express: unknown action '{name}' (not in the avatar vocabulary)");
             }
         }
+        // Transport the ordered intents as one comma-joined string so the
+        // existing PetExpress event + spine stay unchanged; the UI splits + queues.
+        let action = (!intents.is_empty()).then(|| intents.join(","));
         if let Some(manager) = tools.get_manager() {
             manager
                 .send_event(
                     crate::engine::agent::AgentEvent::PetExpress {
                         emotion: args.emotion,
-                        action: args.action,
+                        action,
                     },
                     tools.session_id.clone(),
                 )
@@ -833,5 +860,11 @@ mod express_tests {
         ] {
             assert!(names.contains(&expected), "missing intent '{expected}'");
         }
+
+        // `sequence` chains the same vocabulary.
+        let seq = schema["properties"]["sequence"]["items"]["enum"]
+            .as_array()
+            .expect("sequence items enum array");
+        assert_eq!(seq.len(), actions.len(), "sequence vocab must match action vocab");
     }
 }

@@ -88,6 +88,10 @@ interface UiState {
   petExpress: PetExpress | null;
   pushPetExpress: (emotion?: string, action?: string) => void;
 
+  // Pet thinking — true while a reply is in flight; drives the pondering pose.
+  petThinking: boolean;
+  setPetThinking: (v: boolean) => void;
+
   // Actions
   setCurrentPage: (page: Page) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -157,6 +161,9 @@ export const useUiStore = create<UiState>((set) => ({
     const id = `px-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     set({ petExpress: { id, emotion, action } });
   },
+
+  petThinking: false,
+  setPetThinking: (v) => set({ petThinking: v }),
 
   setCurrentPage: (page) => set({ currentPage: page }),
   setSidebarTab: (tab) => set({ sidebarTab: tab }),

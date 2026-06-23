@@ -23,6 +23,16 @@ import {
 export type EmotionName = 'neutral' | 'happy' | 'angry' | 'sad' | 'relaxed';
 export type ActionName = 'nod' | 'shake' | 'wave' | 'bow' | 'dance' | 'cheer';
 
+/** One resolved step of a sequence — the renderer-facing shape (no manifest
+ *  knowledge; YinyueAvatar resolves intent names to these). */
+export interface SeqStep {
+  render: 'proc' | 'clip' | 'visibility';
+  proc?: ActionName;
+  clipUrl?: string;
+  loop?: boolean;
+  visible?: boolean;
+}
+
 const EMOTIONS: Exclude<EmotionName, 'neutral'>[] = ['happy', 'angry', 'sad', 'relaxed'];
 
 // One-shot gesture durations (seconds).
@@ -71,6 +81,9 @@ export class PetStage {
   private visible = true; // sustained show/hide target (appear / disappear)
   private visibility = 1; // animated 0..1, damps toward visible ? 1 : 0
   private visApplied = 1; // last opacity/scale written (skip churn once settled)
+  private seqToken = 0; // bumped per playSequence; a newer call supersedes an older
+  private resetPosePending = false; // a clip ended → reset bones it touched that we don't manage
+  private thinking = false; // a reply is in flight → hold a pondering pose
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -115,9 +128,13 @@ export class PetStage {
     this.vrm = vrm;
 
     this.mixer = new THREE.AnimationMixer(vrm.scene);
-    this.mixer.addEventListener('finished', () => {
-      // A one-shot clip ended → hand the body back to the procedural layer.
+    this.mixer.addEventListener('finished', (e) => {
+      // A one-shot clip ended → stop it (so the mixer stops holding its final
+      // frame) and hand the body back to the procedural layer, flagging a reset
+      // for the bones the clip moved that we don't manage (hands, legs, hips).
+      (e as unknown as { action?: THREE.AnimationAction }).action?.stop();
       this.currentAction = null;
+      this.resetPosePending = true;
     });
   }
 
@@ -136,6 +153,11 @@ export class PetStage {
   /** Show or hide the whole avatar (appear / disappear) — eased via damping. */
   setVisible(v: boolean) {
     this.visible = v;
+  }
+
+  /** Toggle the pondering pose — driven on while a reply is in flight. */
+  setThinking(v: boolean) {
+    this.thinking = v;
   }
 
   /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */
@@ -160,10 +182,10 @@ export class PetStage {
    *  Loops hold (idle / walk); one-shots clamp then hand the body back to the
    *  procedural layer. While a clip plays it owns the managed bones — the face
    *  (emotion, blink, lip-sync) keeps riding on top. */
-  async playClip(url: string, opts: { loop?: boolean } = {}): Promise<void> {
+  async playClip(url: string, opts: { loop?: boolean } = {}): Promise<number> {
     if (!this.mixer) {
       console.warn('[pet] playClip before the model is ready — ignored');
-      return;
+      return 0;
     }
     let clip: THREE.AnimationClip | null = null;
     try {
@@ -171,7 +193,7 @@ export class PetStage {
     } catch (e) {
       console.warn(`[pet] clip load failed: ${url}`, e);
     }
-    if (!clip || !this.mixer) return;
+    if (!clip || !this.mixer) return 0;
 
     const next = this.mixer.clipAction(clip);
     next.reset();
@@ -182,6 +204,52 @@ export class PetStage {
       next.crossFadeFrom(this.currentAction, 0.3, false);
     }
     this.currentAction = next;
+    return clip.duration; // seconds
+  }
+
+  /** Stop any playing clip and hand the body back to the procedural layer. */
+  private stopClip() {
+    if (this.currentAction) {
+      this.mixer?.stopAllAction();
+      this.currentAction = null;
+      this.resetPosePending = true;
+    }
+  }
+
+  /** Play resolved steps in order, each dwelling for its natural duration.
+   *  A newer call supersedes a running one (token check after every await). */
+  async playSequence(steps: SeqStep[]): Promise<void> {
+    const token = ++this.seqToken;
+    for (const step of steps) {
+      if (token !== this.seqToken) return; // superseded by a newer Express
+      const dwellMs = await this.playStep(step);
+      if (token !== this.seqToken) return;
+      if (steps.length > 1) {
+        await new Promise((r) => setTimeout(r, dwellMs + 120)); // brief beat between
+      }
+    }
+  }
+
+  /** Dispatch one step by render kind; returns how long to dwell before the next. */
+  private async playStep(step: SeqStep): Promise<number> {
+    switch (step.render) {
+      case 'proc':
+        if (!step.proc) return 0;
+        this.stopClip();
+        this.playAction(step.proc);
+        return ACTION_DUR[step.proc] * 1000;
+      case 'visibility':
+        this.stopClip();
+        this.setVisible(step.visible ?? true);
+        return 600;
+      case 'clip': {
+        if (!step.clipUrl) return 0;
+        const dur = await this.playClip(step.clipUrl, { loop: step.loop });
+        return step.loop ? 2000 : Math.max(300, dur * 1000);
+      }
+      default:
+        return 0;
+    }
   }
 
   setCursor(x: number, y: number) {
@@ -239,6 +307,20 @@ export class PetStage {
     // Breathing.
     add('upperChest', breath * 0.05);
     add('spine', breath * 0.02);
+
+    // Ambient idle — a slow weight shift + sway so she stays gently alive
+    // when standing, never a frozen statue (layered under breath + any gesture).
+    add('spine', 0, Math.sin(t * 0.45) * 0.03, Math.sin(t * 0.3) * 0.02);
+    add('upperChest', 0, 0, Math.sin(t * 0.45 + 0.6) * 0.02);
+    add('head', Math.sin(t * 0.6) * 0.015, Math.sin(t * 0.33) * 0.04);
+    add('neck', 0, Math.sin(t * 0.33) * 0.02);
+
+    // Thinking — a contemplative tilt + dip while a reply is in flight.
+    if (this.thinking) {
+      add('head', 0.06, 0.05 + Math.sin(t * 0.8) * 0.04);
+      add('neck', 0.03, 0.03);
+      add('spine', 0, Math.sin(t * 0.5) * 0.02);
+    }
 
     // Gaze head-follow (eyes via lookAt).
     add('head', -this.cursor.y * 0.12, this.cursor.x * 0.22);
@@ -345,13 +427,31 @@ export class PetStage {
       const clipActive = this.currentAction !== null;
       if (this.mixer) this.mixer.update(dt);
 
-      this.lookTarget.position.set(
-        this.cursor.x * 0.6,
-        this.gazeY + this.cursor.y * 0.4,
-        this.camera.position.z,
-      );
+      // Gaze: pondering up-and-away while thinking; otherwise follow the cursor
+      // with a slow autonomous drift so her eyes wander — never a fixed stare.
+      if (this.thinking) {
+        this.lookTarget.position.set(
+          0.35,
+          this.gazeY + 0.4 + Math.sin(t * 0.7) * 0.05,
+          this.camera.position.z,
+        );
+      } else {
+        const driftX = Math.sin(t * 0.23) * 0.22 + Math.sin(t * 0.071) * 0.12;
+        const driftY = Math.sin(t * 0.17) * 0.12;
+        this.lookTarget.position.set(
+          (this.cursor.x + driftX) * 0.6,
+          this.gazeY + (this.cursor.y + driftY) * 0.4,
+          this.camera.position.z,
+        );
+      }
 
       if (!clipActive) {
+        // A clip just ended → clear its residue on bones we don't manage
+        // (hands/legs/hips) before the procedural layer takes back over.
+        if (this.resetPosePending) {
+          this.vrm.humanoid?.resetNormalizedPose();
+          this.resetPosePending = false;
+        }
         // Procedural body: idle posture + one-shot gesture overlay.
         if (this.action) {
           this.action.t += dt;
