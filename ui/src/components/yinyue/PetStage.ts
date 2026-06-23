@@ -101,6 +101,7 @@ export class PetStage {
   private idleClip: THREE.AnimationClip | null | undefined = undefined;
   private idleAction: THREE.AnimationAction | null = null;
   private idleStarting = false;
+  private idleRestUntil = 0; // clock time before which idle rests (just blink/breathe)
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -146,10 +147,13 @@ export class PetStage {
 
     this.mixer = new THREE.AnimationMixer(vrm.scene);
     this.mixer.addEventListener('finished', (e) => {
+      const action = (e as unknown as { action?: THREE.AnimationAction }).action;
+      // Thinking clamps + holds its final pose (hand at chin) — leave it running.
+      if (action && action === this.thinkingAction) return;
       // A one-shot clip ended → stop it (so the mixer stops holding its final
       // frame) and hand the body back to the procedural layer, flagging a reset
       // for the bones the clip moved that we don't manage (hands, legs, hips).
-      (e as unknown as { action?: THREE.AnimationAction }).action?.stop();
+      action?.stop();
       this.currentAction = null;
       this.resetPosePending = true;
     });
@@ -198,7 +202,8 @@ export class PetStage {
     if (!this.thinking || !this.thinkingClip || !this.mixer) return;
     const action = this.mixer.clipAction(this.thinkingClip);
     action.reset();
-    action.loop = THREE.LoopRepeat;
+    action.loop = THREE.LoopOnce;
+    action.clampWhenFinished = true; // raise the hand to the chin and HOLD it while thinking
     action.play();
     if (this.currentAction && this.currentAction !== action) {
       action.crossFadeFrom(this.currentAction, 0.3, false);
@@ -228,14 +233,18 @@ export class PetStage {
       this.idleClip = await this.loadClip(this.idleClipUrl).catch(() => null);
       this.idleStarting = false;
     }
+    if (this.clock.elapsedTime < this.idleRestUntil) return; // resting between plays (breathe + blink)
     if (this.currentAction || this.thinking || !this.idleClip || !this.mixer) return;
     const a = this.mixer.clipAction(this.idleClip);
     a.reset();
-    a.loop = THREE.LoopRepeat;
+    a.loop = THREE.LoopOnce; // play once, then rest — not a tight back-to-back loop
+    a.clampWhenFinished = false;
     a.play();
     this.idleAction = a;
     this.currentAction = a;
-    this.resetPosePending = false; // the idle clip is the new base
+    this.resetPosePending = false;
+    // Rest a few seconds (gentle procedural breathe + a couple of blinks) before replaying.
+    this.idleRestUntil = this.clock.elapsedTime + this.idleClip.duration + 5 + Math.random() * 5;
   }
 
   /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */

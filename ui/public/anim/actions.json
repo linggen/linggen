@@ -22,7 +22,7 @@
     { "name": "peace_sign",  "category": "social", "use_when": "a playful, cute, lighthearted moment",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_03.vrma"] },
     { "name": "pose",        "category": "social", "use_when": "striking a pose, presenting, or a photo moment",                  "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_06.vrma", "/anim/VRMA_01.vrma"] },
 
-    { "name": "clap",        "category": "joy",    "use_when": "praise — they succeeded, 'well done'",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/clap.fbx#0,4"] },
+    { "name": "clap",        "category": "joy",    "use_when": "praise — they succeeded, 'well done'",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/clap.fbx#1,3.2"] },
     { "name": "cheer",       "category": "joy",    "use_when": "a big win or great news; excitement",                            "type": "once", "render": "proc", "proc": "cheer", "emotion": "happy" },
     { "name": "jump_joy",    "category": "joy",    "use_when": "delight or a pleasant surprise",                                 "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/excited.fbx"] },
     { "name": "bounce",      "category": "joy",    "use_when": "light, happy energy",                                            "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },

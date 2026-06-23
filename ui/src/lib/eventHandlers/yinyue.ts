@@ -47,30 +47,81 @@ export function getMouthOpening(): number {
   return Math.max(0, Math.min(0.06 + amp * 3.2, 1));
 }
 
-/** Pet expression cue — emotion and/or a one-shot gesture for the avatar. */
+// A gesture held until the voice for the same turn begins, so the action lands
+// together with the bubble + voice (synthesis lags the events by a few seconds).
+// While it's held she stays in idle / thinking. A silent gesture (no speech)
+// fires on its own after a short fallback wait.
+let pendingExpress: { emotion?: string; action?: string } | null = null;
+let pendingTimer: number | undefined;
+let synthInFlight = false;
+
+function flushExpress(): void {
+  if (pendingTimer !== undefined) {
+    clearTimeout(pendingTimer);
+    pendingTimer = undefined;
+  }
+  if (!pendingExpress) return;
+  const { emotion, action } = pendingExpress;
+  pendingExpress = null;
+  useUiStore.getState().pushPetExpress(emotion, action);
+}
+
+/** Pet expression cue — emotion and/or a one-shot gesture for the avatar. Held
+ *  until her voice begins so it lands with the bubble + voice; if no speech
+ *  follows shortly it fires on its own (a silent gesture). */
 export function handlePetExpress(item: UiEvent): void {
   const emotion = item.data?.emotion as string | undefined;
   const action = item.data?.action as string | undefined;
   if (!emotion && !action) return;
-  useUiStore.getState().setPetThinking(false); // her response has begun
   console.info(`[pet] express emotion=${emotion ?? '-'} action=${action ?? '-'}`);
-  useUiStore.getState().pushPetExpress(emotion, action);
+
+  // Already speaking → the gesture rides the current speech immediately.
+  if (current) {
+    useUiStore.getState().pushPetExpress(emotion, action);
+    return;
+  }
+  // Otherwise hold it (she stays in idle/thinking) until the voice starts.
+  pendingExpress = { emotion, action };
+  if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+  pendingTimer = undefined;
+  // No speech is being synthesized → treat as a silent gesture; fire it soon.
+  // (If speech starts first, play() cancels this and waits for the voice onset.)
+  if (!synthInFlight) {
+    pendingTimer = window.setTimeout(() => {
+      useUiStore.getState().setPetThinking(false);
+      flushExpress();
+    }, 500);
+  }
 }
 
 export function handlePetSpeak(item: UiEvent): void {
   const text = ((item.data?.text as string | undefined) ?? item.text ?? '').trim();
   if (!text) return;
-  useUiStore.getState().setPetThinking(false); // her reply has arrived
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
-  // The bubble is shown *inside* play(), the moment the audio is ready — so her
-  // text and her voice land together. Synthesis lags the (now-fast) text by a
-  // few seconds, and showing the bubble first reads as out-of-sync.
+  // Keep her in thinking until the voice actually starts (synth lags a few
+  // seconds); the bubble, voice, and any held gesture all land together then.
   void play(text, emotion);
 }
 
 async function play(text: string, emotion: string): Promise<void> {
-  const showBubble = () => useUiStore.getState().showYinyueSpeech(text, emotion);
+  // Speech is coming → hold any pending gesture for the voice onset (not the
+  // short silent-gesture fallback), and keep her in thinking until then.
+  synthInFlight = true;
+  if (pendingTimer !== undefined) {
+    clearTimeout(pendingTimer);
+    pendingTimer = undefined;
+  }
+
+  // The moment her audio is ready: leave thinking, show the bubble, and fire any
+  // held gesture — so action + bubble + voice all land together.
+  const onAudioStart = () => {
+    synthInFlight = false;
+    useUiStore.getState().setPetThinking(false);
+    useUiStore.getState().showYinyueSpeech(text, emotion);
+    flushExpress();
+  };
+
   try {
     // Direct HTTP (not the proxied window.fetch, which mangles binary over WebRTC).
     const resp = await _originalFetch('/api/tts', {
@@ -95,11 +146,11 @@ async function play(text: string, emotion: string): Promise<void> {
     src.onended = () => {
       if (current === src) { current = null; playback = null; }
     };
-    showBubble(); // text appears exactly as the voice begins
+    onAudioStart(); // bubble + gesture land exactly as the voice begins
     src.start();
   } catch (err) {
-    // TTS failed — show the text anyway so she's never silent on screen.
+    // TTS failed — still show the text, leave thinking, and fire the gesture.
     console.error('[yinyue] speak failed', err);
-    showBubble();
+    onAudioStart();
   }
 }
