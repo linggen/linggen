@@ -61,7 +61,7 @@ gethostname = "1.1.0"
 open = "5.3.3"
 urlencoding = "2.1.3"
 flate2 = "1.1.9"
-any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "qwen3-tts", "download", "metal", "accelerate"] }
+any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
 
 # Optimize dependencies even in dev builds. The engine crate itself stays at
 # opt-level 0 (fast incremental compiles), but numerical deps like candle

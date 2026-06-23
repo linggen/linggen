@@ -22,13 +22,13 @@ export const GeneralTab: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.agent.compact_threshold]);
 
-  // Pet model picker: a few recommended fast models + whatever the user has
-  // configured, deduped. "auto" is added directly in the <select>.
-  const petModelOptions = React.useMemo(() => {
-    const curated = ['deepseek-v4-flash', 'gpt-5.4-nano', 'gpt-5.4-mini', 'gemini-2.5-flash'];
-    const configured = (config.models ?? []).map((m) => m.id);
-    return Array.from(new Set([...curated, ...configured]));
-  }, [config.models]);
+  // Pet model picker: only the user's actually-configured models, so we never
+  // offer an id that isn't wired up (an unconfigured pick fails to resolve).
+  // "auto" is added directly in the <select>.
+  const petModelOptions = React.useMemo(
+    () => (config.models ?? []).map((m) => m.id),
+    [config.models],
+  );
 
   return (
     <div className="space-y-6">
@@ -208,20 +208,7 @@ export const GeneralTab: React.FC<{
                 <option key={id} value={id}>{id}</option>
               ))}
             </select>
-            <p className="text-[11px] text-slate-400 mt-0.5">Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast one (e.g. gpt-5.4-nano) for snappier replies. Applied per turn.</p>
-          </div>
-          <div>
-            <label className={labelCls}>Voice Engine</label>
-            <select
-              className={inputCls}
-              value={config.pet?.voice_engine ?? 'auto'}
-              onChange={(e) => onChange({ ...config, pet: { ...config.pet, voice_engine: e.target.value } })}
-            >
-              <option value="auto">Auto (by RAM)</option>
-              <option value="qwen">Qwen3 — designed voice (~4 GB RAM)</option>
-              <option value="kokoro">Kokoro — light preset (~300 MB)</option>
-            </select>
-            <p className="text-[11px] text-slate-400 mt-0.5">Auto picks Qwen3 (her designed voice) on machines &gt;16 GB RAM, else Kokoro. Qwen3 downloads ~2 GB on her first speak. Applied on restart.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast configured model for snappier replies. Applied per turn.</p>
           </div>
           <div>
             <label className={labelCls}>Speech Text</label>

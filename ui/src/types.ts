@@ -193,7 +193,7 @@ export interface AppConfig {
   logging: { level?: string | null; directory?: string | null; retention_days?: number | null };
   agents: { id: string; spec_path: string; model?: string | null }[];
   routing?: { default_models?: string[]; default_policy?: string | null; auto_fallback?: boolean };
-  pet?: { enabled?: boolean; pet?: string; voice_engine?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string };
+  pet?: { enabled?: boolean; pet?: string; show_text?: boolean; recall_count?: number; recall_min_score?: number; model?: string };
 }
 
 export type ModelHealthStatus = 'healthy' | 'quota_exhausted' | 'down' | 'unknown';

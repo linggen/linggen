@@ -87,11 +87,11 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         // A run errored — Yinyue surfaces it in her own voice. A DETERMINISTIC
         // line over the speak spine, never an LLM wake: the failure may be the
         // model backend itself, so waking her agent to announce it could fail too
-        // (and loop). Guarded against her own failures + rate-limited.
+        // (and loop). This INCLUDES her own turns failing (e.g. her model 400s) —
+        // the announce is a fixed TTS line, not a new run, so it can't loop, and a
+        // silent failure is exactly what leaves the user wondering what's wrong.
+        // Rate-limited so an error storm doesn't make her chant.
         NotificationPayload::RunFailed { agent_id, .. } => {
-            if agent_id == YINYUE_AGENT {
-                return; // no self-loop — her own hiccup mustn't beget another
-            }
             if !error_announce_allowed() {
                 return; // an error storm shouldn't make her repeat herself
             }

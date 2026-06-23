@@ -37,12 +37,6 @@ pub struct PetConfig {
     /// Which pet/avatar to show. One id per shipped model; "yinyue" today.
     #[serde(default = "default_pet")]
     pub pet: String,
-    /// Voice engine: "auto" (pick by machine RAM — Qwen3 on >16 GB, else
-    /// Kokoro), "qwen" (Qwen3-TTS VoiceDesign — her designed voice, ~4 GB RAM,
-    /// ~2 GB download), or "kokoro" (light preset voice, ~300 MB). Applied at
-    /// daemon start.
-    #[serde(default = "default_voice_engine")]
-    pub voice_engine: String,
     /// Show the speech-bubble text alongside her spoken audio.
     #[serde(default = "default_true")]
     pub show_text: bool,
@@ -64,7 +58,6 @@ impl Default for PetConfig {
         Self {
             enabled: true,
             pet: default_pet(),
-            voice_engine: default_voice_engine(),
             show_text: true,
             recall_count: default_pet_recall_count(),
             recall_min_score: default_pet_recall_min_score(),
@@ -75,9 +68,6 @@ impl Default for PetConfig {
 
 fn default_pet() -> String {
     "yinyue".to_string()
-}
-fn default_voice_engine() -> String {
-    "auto".to_string()
 }
 fn default_pet_model() -> String {
     "auto".to_string()

@@ -830,7 +830,7 @@ async fn prepare_server(
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
-        tts: api::tts::make_tts_provider(&pet_cfg.voice_engine),
+        tts: api::tts::default_provider(),
         bridge: Arc::new(bridge::BridgeHub::new()),
     });
 
