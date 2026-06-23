@@ -5,3 +5,4 @@ yinyue.vrm
 # VRoid VRMA motion pack (© pixiv Inc. VRoid Project — license forbids redistributing
 # the raw motion files; dev-local only, resolve ship-time asset delivery + credit separately)
 *.vrma
+*.fbx

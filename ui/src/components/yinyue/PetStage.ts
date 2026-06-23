@@ -19,6 +19,7 @@ import {
   createVRMAnimationClip,
   type VRMAnimation,
 } from '@pixiv/three-vrm-animation';
+import { loadMixamoAnimation, trimClip } from './petMixamo';
 
 export type EmotionName = 'neutral' | 'happy' | 'angry' | 'sad' | 'relaxed';
 export type ActionName = 'nod' | 'shake' | 'wave' | 'bow' | 'dance' | 'cheer';
@@ -89,7 +90,17 @@ export class PetStage {
   private seqToken = 0; // bumped per playSequence; a newer call supersedes an older
   private resetPosePending = false; // a clip ended → reset bones it touched that we don't manage
   private thinking = false; // a reply is in flight → hold a pondering pose
-  private thinkWeight = 0; // eased 0..1 so the pondering pose blends in/out
+  private thinkWeight = 0; // eased 0..1 so the procedural pondering pose blends in/out
+  // Optional Mixamo "Thinking" clip (real hand-on-chin); falls back to the
+  // procedural head-cock if absent. undefined = not yet loaded, null = none.
+  private thinkingClipUrl = '/anim/thinking.fbx';
+  private thinkingClip: THREE.AnimationClip | null | undefined = undefined;
+  private thinkingAction: THREE.AnimationAction | null = null;
+  // Resting idle clip — auto-plays as the base whenever nothing else is active.
+  private idleClipUrl: string | null = '/anim/idle.fbx';
+  private idleClip: THREE.AnimationClip | null | undefined = undefined;
+  private idleAction: THREE.AnimationAction | null = null;
+  private idleStarting = false;
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -164,9 +175,67 @@ export class PetStage {
     this.visible = v;
   }
 
-  /** Toggle the pondering pose — driven on while a reply is in flight. */
+  /** Toggle the pondering state while a reply is in flight. Plays the Mixamo
+   *  "Thinking" clip (real hand-on-chin) if available, else the procedural
+   *  head-cock pose carries it. */
   setThinking(v: boolean) {
+    if (v === this.thinking) return;
     this.thinking = v;
+    if (v) void this.startThinkingClip();
+    else this.stopThinkingClip();
+  }
+
+  private async startThinkingClip() {
+    if (!this.mixer || !this.vrm) return;
+    if (this.thinkingClip === undefined) {
+      // Lazy-load + retarget the FBX once; null if missing/unparseable.
+      this.thinkingClip = await loadMixamoAnimation(this.thinkingClipUrl, this.vrm).catch((e) => {
+        console.warn('[pet] thinking clip load failed — using procedural pose', e);
+        return null;
+      });
+    }
+    // Thinking may have ended while loading, or there's no clip → procedural carries it.
+    if (!this.thinking || !this.thinkingClip || !this.mixer) return;
+    const action = this.mixer.clipAction(this.thinkingClip);
+    action.reset();
+    action.loop = THREE.LoopRepeat;
+    action.play();
+    if (this.currentAction && this.currentAction !== action) {
+      action.crossFadeFrom(this.currentAction, 0.3, false);
+    }
+    this.currentAction = action;
+    this.thinkingAction = action;
+  }
+
+  private stopThinkingClip() {
+    if (!this.thinkingAction) return;
+    this.thinkingAction.stop();
+    if (this.currentAction === this.thinkingAction) {
+      this.currentAction = null;
+      this.resetPosePending = true; // hand the body back (idle clip / procedural)
+    }
+    this.thinkingAction = null;
+  }
+
+  /** Keep a looping idle clip playing as the resting base whenever nothing else
+   *  (a gesture or thinking) owns the body. Falls back to the procedural idle
+   *  when no clip is set or it fails to load. */
+  private async ensureIdle() {
+    if (!this.mixer || !this.vrm || this.idleStarting) return;
+    if (this.currentAction || this.thinking || !this.idleClipUrl) return; // something else owns it
+    if (this.idleClip === undefined) {
+      this.idleStarting = true;
+      this.idleClip = await this.loadClip(this.idleClipUrl).catch(() => null);
+      this.idleStarting = false;
+    }
+    if (this.currentAction || this.thinking || !this.idleClip || !this.mixer) return;
+    const a = this.mixer.clipAction(this.idleClip);
+    a.reset();
+    a.loop = THREE.LoopRepeat;
+    a.play();
+    this.idleAction = a;
+    this.currentAction = a;
+    this.resetPosePending = false; // the idle clip is the new base
   }
 
   /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */
@@ -174,16 +243,29 @@ export class PetStage {
     const cached = this.clipCache.get(url);
     if (cached) return cached;
     if (!this.vrm) return null;
-    const loader = new GLTFLoader();
-    loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
-    const gltf = await loader.loadAsync(url);
-    const anims = gltf.userData.vrmAnimations as VRMAnimation[] | undefined;
-    if (!anims || anims.length === 0) {
-      console.warn(`[pet] ${url} contains no VRM animation`);
-      return null;
+    // Optional `#start,end` (seconds) trim window appended to the URL.
+    const [src, frag] = url.split('#');
+    let clip: THREE.AnimationClip | null = null;
+    if (src.endsWith('.fbx')) {
+      // Mixamo FBX → retargeted to this VRM rig at runtime (no Blender).
+      clip = await loadMixamoAnimation(src, this.vrm);
+    } else {
+      // VRMA — native VRM humanoid animation.
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+      const gltf = await loader.loadAsync(src);
+      const anims = gltf.userData.vrmAnimations as VRMAnimation[] | undefined;
+      if (!anims || anims.length === 0) {
+        console.warn(`[pet] ${src} contains no VRM animation`);
+        return null;
+      }
+      clip = createVRMAnimationClip(anims[0], this.vrm);
     }
-    const clip = createVRMAnimationClip(anims[0], this.vrm);
-    this.clipCache.set(url, clip);
+    if (clip && frag) clip = trimClip(clip, frag);
+    if (clip) {
+      console.info(`[pet] clip ${url} dur=${clip.duration.toFixed(2)}s`); // helps tune trim windows
+      this.clipCache.set(url, clip);
+    }
     return clip;
   }
 
@@ -329,13 +411,12 @@ export class PetStage {
     // toward the chin (best-effort, no hand bones). All eased by thinkWeight.
     const tw = this.thinkWeight;
     if (tw > 0.01) {
-      const hmm = Math.sin(t * 2.0);
-      add('head', (0.14 + hmm * 0.05) * tw, 0.1 * tw);
-      add('neck', 0.06 * tw, 0.05 * tw);
-      add('spine', 0, Math.sin(t * 0.5) * 0.03 * tw, 0.04 * tw);
-      // Right hand up toward the chin.
-      add('rightUpperArm', -0.6 * tw, 0.1 * tw, 1.15 * tw);
-      add('rightLowerArm', 0, 0, 1.4 * tw);
+      const hmm = Math.sin(t * 1.6);
+      // A cocked head (sideways tilt) with a slow mulling bob — reads as
+      // pondering WITHOUT craning her backward: tiny dip, no back-lean, gaze
+      // kept roughly level (see the gaze block). z = roll (the head-tilt).
+      add('head', 0.04 * tw, 0.05 * tw, (0.16 + hmm * 0.05) * tw);
+      add('neck', 0.02 * tw, 0.03 * tw, 0.05 * tw);
     }
 
     // Gaze head-follow (eyes via lookAt).
@@ -442,6 +523,8 @@ export class PetStage {
     );
 
     if (this.vrm) {
+      // Resting idle: start the looping idle clip when nothing else is playing.
+      void this.ensureIdle();
       // A clip, while playing, drives the body. Advance it first so the face
       // layer (blink / lip-sync / emotion) can ride on top before vrm.update.
       const clipActive = this.currentAction !== null;
@@ -456,8 +539,8 @@ export class PetStage {
       let gy = this.gazeY + (this.cursor.y + driftY) * 0.4;
       if (this.thinkWeight > 0.01) {
         const w = this.thinkWeight;
-        const tx = 0.4 + Math.sin(t * 0.5) * 0.3;
-        const ty = this.gazeY + 0.45 + Math.sin(t * 0.8) * 0.08;
+        const tx = 0.28 + Math.sin(t * 0.5) * 0.18; // glance aside, gently wandering
+        const ty = this.gazeY + 0.05 + Math.sin(t * 0.8) * 0.04; // roughly level — not craned up
         gx = gx * (1 - w) + tx * w;
         gy = gy * (1 - w) + ty * w;
       }
