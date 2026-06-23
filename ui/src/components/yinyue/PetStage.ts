@@ -40,6 +40,10 @@ const ACTION_DUR: Record<ActionName, number> = {
   nod: 0.9, shake: 0.9, wave: 1.6, bow: 1.8, dance: 3.0, cheer: 1.6,
 };
 
+// A set mood is a transient reaction — it fades back to neutral after this long,
+// so her eyes (which the happy/sad blendshapes narrow) return to open + blinking.
+const MOOD_DECAY_S = 6;
+
 const MANAGED: VRMHumanBoneName[] = [
   'spine', 'chest', 'upperChest', 'neck', 'head',
   'leftUpperArm', 'rightUpperArm', 'leftLowerArm', 'rightLowerArm',
@@ -72,6 +76,7 @@ export class PetStage {
   // Drivers
   private emotion: EmotionName = 'neutral';
   private emotionWeight = 0;
+  private emotionSetAt = 0; // clock time the current mood was set (for decay)
   private blinkValue = 0;
   private blinkTimer = 2;
   private blinkProgress = -1;
@@ -84,6 +89,7 @@ export class PetStage {
   private seqToken = 0; // bumped per playSequence; a newer call supersedes an older
   private resetPosePending = false; // a clip ended → reset bones it touched that we don't manage
   private thinking = false; // a reply is in flight → hold a pondering pose
+  private thinkWeight = 0; // eased 0..1 so the pondering pose blends in/out
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -140,7 +146,10 @@ export class PetStage {
 
   // --- Director API ---
 
-  setEmotion(name: EmotionName) { this.emotion = name; }
+  setEmotion(name: EmotionName) {
+    this.emotion = name;
+    this.emotionSetAt = this.clock.elapsedTime;
+  }
 
   /** Set the mouth opening (0..1) — driven each frame from the audio envelope. */
   setMouthTarget(v: number) { this.mouthTarget = clamp(v, 0, 1); }
@@ -315,11 +324,18 @@ export class PetStage {
     add('head', Math.sin(t * 0.6) * 0.015, Math.sin(t * 0.33) * 0.04);
     add('neck', 0, Math.sin(t * 0.33) * 0.02);
 
-    // Thinking — a contemplative tilt + dip while a reply is in flight.
-    if (this.thinking) {
-      add('head', 0.06, 0.05 + Math.sin(t * 0.8) * 0.04);
-      add('neck', 0.03, 0.03);
-      add('spine', 0, Math.sin(t * 0.5) * 0.02);
+    // Thinking — a clear pondering pose while a reply is in flight: head tilted
+    // and dipped with a slow "hmm" nod, a slight lean, and a hand brought up
+    // toward the chin (best-effort, no hand bones). All eased by thinkWeight.
+    const tw = this.thinkWeight;
+    if (tw > 0.01) {
+      const hmm = Math.sin(t * 2.0);
+      add('head', (0.14 + hmm * 0.05) * tw, 0.1 * tw);
+      add('neck', 0.06 * tw, 0.05 * tw);
+      add('spine', 0, Math.sin(t * 0.5) * 0.03 * tw, 0.04 * tw);
+      // Right hand up toward the chin.
+      add('rightUpperArm', -0.6 * tw, 0.1 * tw, 1.15 * tw);
+      add('rightLowerArm', 0, 0, 1.4 * tw);
     }
 
     // Gaze head-follow (eyes via lookAt).
@@ -417,6 +433,10 @@ export class PetStage {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
 
+    // Mood is transient — fade it back to neutral so her eyes reopen.
+    if (this.emotion !== 'neutral' && this.clock.elapsedTime - this.emotionSetAt > MOOD_DECAY_S) {
+      this.emotion = 'neutral';
+    }
     this.emotionWeight = THREE.MathUtils.damp(
       this.emotionWeight, this.emotion === 'neutral' ? 0 : 1, 8, dt,
     );
@@ -426,24 +446,22 @@ export class PetStage {
       // layer (blink / lip-sync / emotion) can ride on top before vrm.update.
       const clipActive = this.currentAction !== null;
       if (this.mixer) this.mixer.update(dt);
+      this.thinkWeight = THREE.MathUtils.damp(this.thinkWeight, this.thinking ? 1 : 0, 6, dt);
 
-      // Gaze: pondering up-and-away while thinking; otherwise follow the cursor
-      // with a slow autonomous drift so her eyes wander — never a fixed stare.
-      if (this.thinking) {
-        this.lookTarget.position.set(
-          0.35,
-          this.gazeY + 0.4 + Math.sin(t * 0.7) * 0.05,
-          this.camera.position.z,
-        );
-      } else {
-        const driftX = Math.sin(t * 0.23) * 0.22 + Math.sin(t * 0.071) * 0.12;
-        const driftY = Math.sin(t * 0.17) * 0.12;
-        this.lookTarget.position.set(
-          (this.cursor.x + driftX) * 0.6,
-          this.gazeY + (this.cursor.y + driftY) * 0.4,
-          this.camera.position.z,
-        );
+      // Gaze: cursor-follow with a slow autonomous drift (never a fixed stare);
+      // while thinking, blend toward a wandering up-and-away look.
+      const driftX = Math.sin(t * 0.23) * 0.22 + Math.sin(t * 0.071) * 0.12;
+      const driftY = Math.sin(t * 0.17) * 0.12;
+      let gx = (this.cursor.x + driftX) * 0.6;
+      let gy = this.gazeY + (this.cursor.y + driftY) * 0.4;
+      if (this.thinkWeight > 0.01) {
+        const w = this.thinkWeight;
+        const tx = 0.4 + Math.sin(t * 0.5) * 0.3;
+        const ty = this.gazeY + 0.45 + Math.sin(t * 0.8) * 0.08;
+        gx = gx * (1 - w) + tx * w;
+        gy = gy * (1 - w) + ty * w;
       }
+      this.lookTarget.position.set(gx, gy, this.camera.position.z);
 
       if (!clipActive) {
         // A clip just ended → clear its residue on bones we don't manage

@@ -63,11 +63,14 @@ export function handlePetSpeak(item: UiEvent): void {
   useUiStore.getState().setPetThinking(false); // her reply has arrived
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
-  useUiStore.getState().showYinyueSpeech(text, emotion); // visual bubble + avatar emotion
-  void play(text); // voice + mouth-signal
+  // The bubble is shown *inside* play(), the moment the audio is ready — so her
+  // text and her voice land together. Synthesis lags the (now-fast) text by a
+  // few seconds, and showing the bubble first reads as out-of-sync.
+  void play(text, emotion);
 }
 
-async function play(text: string): Promise<void> {
+async function play(text: string, emotion: string): Promise<void> {
+  const showBubble = () => useUiStore.getState().showYinyueSpeech(text, emotion);
   try {
     // Direct HTTP (not the proxied window.fetch, which mangles binary over WebRTC).
     const resp = await _originalFetch('/api/tts', {
@@ -92,8 +95,11 @@ async function play(text: string): Promise<void> {
     src.onended = () => {
       if (current === src) { current = null; playback = null; }
     };
+    showBubble(); // text appears exactly as the voice begins
     src.start();
   } catch (err) {
+    // TTS failed — show the text anyway so she's never silent on screen.
     console.error('[yinyue] speak failed', err);
+    showBubble();
   }
 }
