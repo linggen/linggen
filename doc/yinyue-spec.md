@@ -261,15 +261,22 @@ conversation, and she already learns from it passively via shared memory.
 **Triggers.** Coarse events only; the per-token firehose
 (`Token`/`TextSegment`/`ContentBlock*`) is dropped at near-zero cost.
 
-- Shipped: `Notification(MissionCompleted)` for a non-Yinyue mission → she decides
-  whether to report.
+- Shipped: `Notification(MissionCompleted)` for a non-Yinyue mission → an **LLM
+  reaction** (she may have something to say).
+- Shipped: `Notification(RunFailed)` — an interactive/agent run errored
+  (`chat/runtime.rs`, genuine failures only, not cancels) → a **deterministic**
+  in-character apology over the speak spine (`emit_speak`, `sad`). Never an LLM
+  wake: the failure may *be* the model backend, so waking her agent to announce
+  it could fail too (and loop). Guarded `agent_id != yinyue` (no self-loop) + a
+  90s cooldown so an error storm doesn't make her repeat herself.
 - Planned: batch-of-runs-finished (`AgentStatus` working→idle count reaches zero),
-  `Outcome::Error`. Both gated to background-only and `agent_id != yinyue`.
+  gated to background-only and `agent_id != yinyue`.
 
 **Wake mechanism.** On a trigger she runs as a plain **agent run** (mirrors
 `api::agents::run_agent`), not a mission — no mission-store side effects, and she
-keeps her full `yinyue.md` system prompt. All reactions share one ongoing
-`sess-yinyue` session, so they serialize and read as a single thread.
+keeps her full `yinyue.md` system prompt. All reactions and avatar chats run on
+her current **rolling session** (see *Session & memory*), serialized through one
+engine lock so they read as a single thread.
 
 **Bounded autonomy.** Acts on her own only for the safe and reversible (e.g.
 restart a fallen service). Proposes — and waits — for anything heavier: spending,
@@ -279,6 +286,81 @@ upgrading, the irreversible. Headless, she never blocks on a question.
 1. No self-loop — an agent run emits no `MissionCompleted`, so a reaction can't
    re-trigger the loop.
 2. Cost — match only the coarse trigger; never wake the LLM on the firehose.
+
+## Session & memory
+
+**Principle.** Yinyue is an ordinary Linggen session running the `yinyue` agent —
+same engine build, persistence, memory, and compaction as Ling. Only four things
+differ: rolling session ids, her entry triggers (event / avatar tap), her output
+sink (spoken, not a chat panel), and her narrow tool list (from `yinyue.md`).
+
+**Shared turn-core.** The middle of Ling's chat turn carries no chat-panel
+assumptions and is extracted into one function both callers use:
+
+```
+run_session_turn(ctx, engine, message)
+  = restore_chat_history_if_empty   // reload messages.jsonl after a restart
+  → push_user_turn_with_recall      // auto-recall "From memory…" + capture nudge
+  → run_agent_loop                  // system prompt + tools + maybe_compact + persist
+```
+
+`chat_handler` (Ling) and `run_yinyue_turn` (Yinyue) both call it. Yinyue's
+bespoke `set_task` path is removed — that path was the entire reason she had no
+persistence, recall, or capture.
+
+**Rolling sessions.** Yinyue has no user-managed sessions; a resolver picks the
+current one on every wake:
+
+- Id scheme `sess-yinyue-YYYY-MM-DD`, plus a suffix segment on size roll
+  (`…-YYYY-MM-DD-2`).
+- **Day roll** — date advanced past the active session → start today's.
+- **Size roll** — engine token estimate ≥ a fraction of
+  `context_soft_token_limit` (e.g. 0.7) → next segment. She rolls to a fresh
+  context instead of compacting in place; memory is the bridge.
+- `get_or_create_session_agent` lazily builds/loads the resolved id.
+
+**Persistence / reload.** Each rolling session persists like any session —
+`~/.linggen/sessions/<id>/messages.jsonl` (append-only) + meta. On daemon start
+the resolver targets today's session and the first turn's
+`restore_chat_history_if_empty` rehydrates the engine from disk, so a mid-day
+restart resumes the same thread. Old daily sessions stay browsable; prune after N
+days.
+
+**Memory.** Full-store, like an owner session — `include_memory = true`, unscoped
+(`contexts = None`). She auto-recalls the user's whole biography each turn (she
+shares Ling's memory — no `yinyue` namespace) and still has `Memory_query` /
+`Memory_write` for targeted lookups and saves. Core block always loaded; per-turn
+capture writes episodic.
+
+**Companion latency tuning.** A companion does many small turns, so each must stay
+snappy. Three guards keep it that way (all Yinyue-only):
+- **Lean recall** — `run_yinyue_turn` sets her engine's `memory_recall_count = 1`
+  and `memory_inject_min_score = 0.8`: inject only the single most-relevant
+  memory, and only if it clears a high bar — not several long rows.
+- **Capped live context** — `run_session_turn(..., Some(10))` trims her live
+  prompt to the last ~10 messages after restore; older turns live on disk + in
+  recall, so a day-long session never drags its whole history into a quick reply.
+- **No reflexive recall** — her prompt tells her the relevant memory is already
+  injected each turn, so she answers from it instead of spending a round-trip on
+  `Memory_query`.
+
+Net: a "good morning" went from ~35s / 2 round-trips / 55K-char context to ~3s /
+1 round-trip / 38K, on the same model.
+
+**Continuity bridge.** A roll drops the prior transcript from context; memory
+carries the thread:
+
+- On close, Yinyue writes a short digest to episodic memory (salient threads +
+  open loops). The dream pass promotes/evicts.
+- The next session's first turn auto-recalls those rows plus the always-loaded
+  core, so she "wakes up knowing you." A one-line `Previously:` seed from the
+  latest digest keeps an in-progress thread from snapping across a midnight roll.
+
+**Build sequence.**
+1. Extract `run_session_turn` from `dispatch_turn` / `chat_handler`.
+2. Add the rolling-session resolver (`sess-yinyue-<date>` + size segment).
+3. Rewrite `run_yinyue_turn` to resolve → `run_session_turn` → `emit_speak`.
+4. Digest-on-roll write + `Previously:` seed.
 
 ## Environment
 
@@ -294,6 +376,9 @@ user's region and time without asking.
 |---|---|
 | Agent definition | `linggen/agents/yinyue.md` |
 | Event-reactive watch loop | `linggen/src/server/yinyue_watch.rs` |
+| Shared turn-core (`run_session_turn`) | `linggen/src/server/chat/` (extracted from `handler.rs`/`runtime.rs`, planned) |
+| Rolling-session resolver | `linggen/src/server/yinyue_watch.rs` (planned) |
+| Session persistence (`messages.jsonl`) | `linggen/src/state_fs/sessions.rs` (reused) |
 | Environment block | `linggen/prompts/system-prompt.toml`, `linggen/src/engine/prompt/mod.rs` |
 | Desktop pet (body) | `linggen-app/shell/pet-ui` + `linggen-app/shell/src/pet.rs` |
 | WebUI overlay renderer | `linggen/ui` (shared `PetStage`, planned) |
@@ -308,6 +393,16 @@ user's region and time without asking.
   (MissionCompleted), live-verified.
 - Next: broaden triggers (batch-finished, errors); wire the pet to her voice
   (speech bubble + emotion driven by her reactions); replace the placeholder model.
+- Shipped (engine, live-verified): session & memory — Yinyue as a standard
+  session on the shared `run_session_turn` core (`chat/handler.rs`), reused by both
+  the Web-UI chat handler and `run_yinyue_turn`. Rolling daily/size sessions
+  (`sess-yinyue-YYYY-MM-DD` + `-2` segments, roll at 0.7× soft limit via
+  `AgentManager::session_context_fraction`) persisted to `messages.jsonl`; full-store
+  auto-recall + per-turn capture; `Previously:` seed across rolls. Removes the bespoke
+  `set_task` path that left her ephemeral and memory-blind. Needs a daemon restart to
+  take effect (the cached `sess-yinyue` engine). Follow-ups: LLM roll-digest (capture
+  partly covers it); persona hot-reload (`/api/agents/reload` still doesn't drop the
+  cached session engine); `live=true` context export. (see *Session & memory*)
 - Designed (not built): singleton roaming pet — daemon-owned single instance,
   full-screen click-through overlay, walks the desktop and climbs Linggen's own app
   windows via cooperative window-rect reporting (no Accessibility API).

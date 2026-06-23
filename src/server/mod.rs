@@ -453,32 +453,29 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
                 "mission_id": mission_id,
             })),
         }),
-        ServerEvent::Notification(ref payload) => {
-            let data = serde_json::to_value(payload).ok();
-            let text = match payload {
-                NotificationPayload::MissionCompleted { mission_name, status, .. } => {
-                    format!("Mission '{}' {}", mission_name, status)
-                }
-            };
-            let id_str = match payload {
-                NotificationPayload::MissionCompleted { mission_id, .. } => {
-                    format!("notif-mission-{mission_id}-{seq}")
-                }
-            };
-            Some(UiEvent {
-                id: id_str,
+        ServerEvent::Notification(ref payload) => match payload {
+            NotificationPayload::MissionCompleted {
+                mission_id,
+                mission_name,
+                status,
+                ..
+            } => Some(UiEvent {
+                id: format!("notif-mission-{mission_id}-{seq}"),
                 seq,
                 rev: seq,
                 ts_ms,
                 kind: "notification".to_string(),
                 phase: None,
-                text: Some(text),
+                text: Some(format!("Mission '{}' {}", mission_name, status)),
                 agent_id: None,
                 session_id: Some("global".to_string()),
                 project_root: None,
-                data,
-            })
-        }
+                data: serde_json::to_value(payload).ok(),
+            }),
+            // Internal signal that drives Yinyue's spoken apology — not a UI
+            // banner (the failed turn already renders its own error message).
+            NotificationPayload::RunFailed { .. } => None,
+        },
         ServerEvent::TextSegment {
             agent_id,
             text,
@@ -808,6 +805,9 @@ async fn prepare_server(
         Some(&crate::prompts::PromptStore::default_override_dir()),
     ));
 
+    // Pet/voice settings drive the TTS engine choice + whether to pre-warm it.
+    let pet_cfg = manager.get_config_snapshot().await.pet;
+
     let state = Arc::new(ServerState {
         manager,
         dev_mode,
@@ -830,7 +830,7 @@ async fn prepare_server(
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
         token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
-        tts: api::tts::default_provider(),
+        tts: api::tts::make_tts_provider(&pet_cfg.voice_engine),
         bridge: Arc::new(bridge::BridgeHub::new()),
     });
 
@@ -870,11 +870,12 @@ async fn prepare_server(
         });
     }
 
-    // Pre-warm the voice model (Yinyue's TTS) off the hot path, so her first
-    // utterance is as fast as the rest. Non-blocking: boot continues; the model
-    // becomes resident a few seconds later. No-op for the stateless `say`
-    // provider; loads Kokoro onto the GPU for the Kokoro provider.
-    {
+    // Pre-warm the voice model (Yinyue's TTS) off the hot path — but ONLY when
+    // the pet is enabled AND the chosen engine is light enough to prefetch
+    // (Kokoro). A heavy engine (Qwen3, ~2 GB) stays lazy: its model downloads on
+    // her first actual speak, so a fresh install or a disabled pet never pulls
+    // it. The lazy `OnceCell` in the provider handles the on-demand load.
+    if pet_cfg.enabled && state.tts.prewarm_on_boot() {
         let tts = state.tts.clone();
         tokio::spawn(async move { tts.prewarm().await });
     }

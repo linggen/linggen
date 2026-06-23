@@ -385,6 +385,23 @@ impl AgentManager {
         self.session_engines.lock().await.remove(session_id);
     }
 
+    /// Fraction of its soft context limit a session's **live** engine is using,
+    /// or `None` when the session has no cached engine or is mid-turn (locked).
+    /// Yinyue's rolling-session resolver reads this to decide when to roll to a
+    /// fresh segment instead of compacting a long companion thread.
+    pub async fn session_context_fraction(&self, session_id: &str) -> Option<f32> {
+        let engine_arc = {
+            let engines = self.session_engines.lock().await;
+            engines.get(session_id).cloned()?
+        };
+        let engine = engine_arc.try_lock().ok()?;
+        let limit = engine.context_soft_token_limit();
+        if limit == 0 {
+            return None;
+        }
+        Some(engine.accumulated_token_estimate as f32 / limit as f32)
+    }
+
     /// Apply a runtime path-mode grant to the live engine for a session.
     ///
     /// Returns true if a live engine was found and mutated, false otherwise

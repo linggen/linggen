@@ -59,6 +59,13 @@ pub enum NotificationPayload {
         run_id: String,
         session_id: Option<String>,
     },
+    /// An interactive/agent run failed (the agent loop errored out). Yinyue's
+    /// watch loop turns this into a brief in-character apology to the user.
+    /// Carries the failing agent so she can skip her own failures (no self-loop).
+    RunFailed {
+        agent_id: String,
+        session_id: Option<String>,
+    },
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]

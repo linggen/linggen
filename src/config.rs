@@ -18,6 +18,66 @@ pub struct Config {
     /// Default working folder for new sessions. Defaults to `~` if not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_path: Option<String>,
+    /// Desktop pet / companion (Yinyue) settings — see [`PetConfig`].
+    /// Surfaced in Settings → General → Pet.
+    #[serde(default)]
+    pub pet: PetConfig,
+}
+
+/// Settings for the desktop pet / companion (Yinyue today). The recall fields
+/// are intentionally separate from the global `agent.memory_*` knobs: a
+/// companion does many small turns, so her recall stays tighter than a coding
+/// session's.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PetConfig {
+    /// Master switch. When false the pet doesn't render and her event-reactive
+    /// watch loop stays silent.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Which pet/avatar to show. One id per shipped model; "yinyue" today.
+    #[serde(default = "default_pet")]
+    pub pet: String,
+    /// Voice engine: "auto" (pick by machine RAM — Qwen3 on >16 GB, else
+    /// Kokoro), "qwen" (Qwen3-TTS VoiceDesign — her designed voice, ~4 GB RAM,
+    /// ~2 GB download), or "kokoro" (light preset voice, ~300 MB). Applied at
+    /// daemon start.
+    #[serde(default = "default_voice_engine")]
+    pub voice_engine: String,
+    /// Show the speech-bubble text alongside her spoken audio.
+    #[serde(default = "default_true")]
+    pub show_text: bool,
+    /// Memories injected per pet turn — kept tight for a snappy companion.
+    #[serde(default = "default_pet_recall_count")]
+    pub recall_count: usize,
+    /// Per-row cosine score floor for her auto-recall.
+    #[serde(default = "default_pet_recall_min_score")]
+    pub recall_min_score: f32,
+}
+
+impl Default for PetConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            pet: default_pet(),
+            voice_engine: default_voice_engine(),
+            show_text: true,
+            recall_count: default_pet_recall_count(),
+            recall_min_score: default_pet_recall_min_score(),
+        }
+    }
+}
+
+fn default_pet() -> String {
+    "yinyue".to_string()
+}
+fn default_voice_engine() -> String {
+    "auto".to_string()
+}
+fn default_pet_recall_count() -> usize {
+    1
+}
+fn default_pet_recall_min_score() -> f32 {
+    0.8
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -431,6 +491,7 @@ impl Default for Config {
             agents: Vec::new(),
             routing: RoutingConfig::default(),
             home_path: None,
+            pet: PetConfig::default(),
         }
     }
 }

@@ -64,6 +64,16 @@ pub(super) async fn run_loop_with_tracking(
                     run_id: None,
                     parent_run_id: None,
                 });
+                // Let Yinyue surface it in her own voice (her watch loop reacts).
+                // Only genuine failures — a user cancel isn't something to apologize for.
+                if matches!(status, crate::engine::agent::AgentRunStatus::Failed) {
+                    let _ = events_tx.send(ServerEvent::Notification(
+                        crate::server::events::NotificationPayload::RunFailed {
+                            agent_id: agent_id.to_string(),
+                            session_id: session_id.map(|s| s.to_string()),
+                        },
+                    ));
+                }
             }
         }
     }

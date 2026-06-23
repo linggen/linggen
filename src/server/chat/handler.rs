@@ -574,6 +574,39 @@ async fn dispatch_turn(
     run_structured_loop(ctx, engine).await;
 }
 
+/// The shared turn-core: rehydrate history after a restart, activate any
+/// session-bound skill, then dispatch. Both the Web-UI `chat_handler` and
+/// Yinyue's reaction/avatar path call this, so they get identical persistence,
+/// auto-recall, capture, and compaction. Everything that differs between Ling
+/// and Yinyue lives in the `ChatRunCtx` (agent, session id, policy) and in how
+/// the caller sources the message and consumes the reply.
+///
+/// `max_live_msgs` caps how many recent messages stay in the live prompt before
+/// the turn runs (`None` = no cap, the normal case for user sessions). Yinyue
+/// passes a small cap: her one rolling session would otherwise carry a whole
+/// day of accumulated turns + stale recall blocks into every quick reply, making
+/// each turn re-process a huge, ever-growing context. Her older context lives on
+/// disk and in recalled memory, so trimming the prompt costs nothing she can't
+/// recall — and keeps every turn fast.
+pub(crate) async fn run_session_turn(
+    ctx: &ChatRunCtx,
+    engine: &mut crate::engine::AgentEngine,
+    manager: &Arc<AgentManager>,
+    max_live_msgs: Option<usize>,
+) {
+    restore_chat_history_if_empty(engine, manager, ctx.session_id.as_deref(), &ctx.clean_msg).await;
+    // After restore (and before this turn's user message + fresh recall are
+    // pushed), the buffer holds only completed prior turns — safe to trim.
+    if let Some(cap) = max_live_msgs {
+        let len = engine.chat_history.len();
+        if len > cap {
+            engine.chat_history.drain(0..len - cap);
+        }
+    }
+    apply_session_bound_skill(engine, ctx).await;
+    dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
+}
+
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<ChatRequest>,
@@ -727,16 +760,7 @@ pub(crate) async fn chat_handler(
             policy,
         };
 
-        restore_chat_history_if_empty(
-            &mut engine,
-            &manager,
-            ctx.session_id.as_deref(),
-            &clean_msg_clone,
-        )
-        .await;
-        apply_session_bound_skill(&mut engine, &ctx).await;
-
-        dispatch_turn(&ctx, &mut engine, &manager, &clean_msg_clone).await;
+        run_session_turn(&ctx, &mut engine, &manager, None).await;
 
         // Emit TurnComplete so the Web UI has a single finalizer.
         let _ = state_clone.events_tx.send(ServerEvent::TurnComplete {

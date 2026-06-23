@@ -161,6 +161,99 @@ export const GeneralTab: React.FC<{
         </div>
       </section>
 
+      {/* Pet */}
+      <section className={sectionCls}>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">Pet</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelCls}>Enabled</label>
+            <select
+              className={inputCls}
+              value={(config.pet?.enabled ?? true) ? 'on' : 'off'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, enabled: e.target.value === 'on' } })}
+            >
+              <option value="on">On</option>
+              <option value="off">Off (disable)</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">When off, the pet stays silent — no reactions, no voice. Hiding the avatar takes a refresh.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Pet</label>
+            <select
+              className={inputCls}
+              value={config.pet?.pet ?? 'yinyue'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, pet: e.target.value } })}
+            >
+              <option value="yinyue">Yinyue</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Which companion to show. More avatars later.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Voice Engine</label>
+            <select
+              className={inputCls}
+              value={config.pet?.voice_engine ?? 'auto'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, voice_engine: e.target.value } })}
+            >
+              <option value="auto">Auto (by RAM)</option>
+              <option value="qwen">Qwen3 — designed voice (~4 GB RAM)</option>
+              <option value="kokoro">Kokoro — light preset (~300 MB)</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Auto picks Qwen3 (her designed voice) on machines &gt;16 GB RAM, else Kokoro. Qwen3 downloads ~2 GB on her first speak. Applied on restart.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Speech Text</label>
+            <select
+              className={inputCls}
+              value={(config.pet?.show_text ?? true) ? 'on' : 'off'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, show_text: e.target.value === 'on' } })}
+            >
+              <option value="on">Show bubble</option>
+              <option value="off">Voice only</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Whether her spoken line also shows as an on-screen bubble.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Recall Count</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              value={config.pet?.recall_count ?? 1}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (Number.isFinite(v) && v >= 1 && v <= 20) {
+                  onChange({ ...config, pet: { ...config.pet, recall_count: v } });
+                }
+              }}
+              placeholder="1 (default)"
+            />
+            <p className="text-[11px] text-slate-400 mt-0.5">Memories injected per pet turn. Kept tight (1) so she stays snappy. Range 1–20.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Threshold Score</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={config.pet?.recall_min_score ?? 0.8}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v >= 0 && v <= 1) {
+                  onChange({ ...config, pet: { ...config.pet, recall_min_score: v } });
+                }
+              }}
+              placeholder="0.8 (default)"
+            />
+            <p className="text-[11px] text-slate-400 mt-0.5">Min cosine score for an injected memory — higher = sharper, fewer hits. Range 0–1. Default 0.8.</p>
+          </div>
+        </div>
+      </section>
+
       {/* Server */}
       <section className={sectionCls}>
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4">Server</h2>
