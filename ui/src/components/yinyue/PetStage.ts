@@ -14,6 +14,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMHumanBoneName } from '@pixiv/three-vrm';
+import {
+  VRMAnimationLoaderPlugin,
+  createVRMAnimationClip,
+  type VRMAnimation,
+} from '@pixiv/three-vrm-animation';
 
 export type EmotionName = 'neutral' | 'happy' | 'angry' | 'sad' | 'relaxed';
 export type ActionName = 'nod' | 'shake' | 'wave' | 'bow' | 'dance' | 'cheer';
@@ -44,6 +49,9 @@ export class PetStage {
   private camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
   private clock = new THREE.Clock();
   private vrm: VRM | null = null;
+  private mixer: THREE.AnimationMixer | null = null; // drives .vrma clips
+  private currentAction: THREE.AnimationAction | null = null; // playing clip, if any
+  private clipCache = new Map<string, THREE.AnimationClip>();
   private raf = 0;
   private resizeObs: ResizeObserver;
   private rest = new Map<VRMHumanBoneName, THREE.Quaternion>();
@@ -60,6 +68,9 @@ export class PetStage {
   private mouthValue = 0;
   private mouthTarget = 0; // 0..1, set externally from the audio envelope
   private action: ActiveAction | null = null; // one-shot gesture overlay
+  private visible = true; // sustained show/hide target (appear / disappear)
+  private visibility = 1; // animated 0..1, damps toward visible ? 1 : 0
+  private visApplied = 1; // last opacity/scale written (skip churn once settled)
   private cursor = { x: 0, y: 0 };
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -102,6 +113,12 @@ export class PetStage {
     this.scene.add(vrm.scene);
     this.frameCamera(vrm);
     this.vrm = vrm;
+
+    this.mixer = new THREE.AnimationMixer(vrm.scene);
+    this.mixer.addEventListener('finished', () => {
+      // A one-shot clip ended → hand the body back to the procedural layer.
+      this.currentAction = null;
+    });
   }
 
   // --- Director API ---
@@ -114,6 +131,57 @@ export class PetStage {
   /** Play a one-shot gesture (overlays the idle/procedural layer, then clears). */
   playAction(name: ActionName) {
     this.action = { name, t: 0, dur: ACTION_DUR[name] };
+  }
+
+  /** Show or hide the whole avatar (appear / disappear) — eased via damping. */
+  setVisible(v: boolean) {
+    this.visible = v;
+  }
+
+  /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */
+  private async loadClip(url: string): Promise<THREE.AnimationClip | null> {
+    const cached = this.clipCache.get(url);
+    if (cached) return cached;
+    if (!this.vrm) return null;
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    const gltf = await loader.loadAsync(url);
+    const anims = gltf.userData.vrmAnimations as VRMAnimation[] | undefined;
+    if (!anims || anims.length === 0) {
+      console.warn(`[pet] ${url} contains no VRM animation`);
+      return null;
+    }
+    const clip = createVRMAnimationClip(anims[0], this.vrm);
+    this.clipCache.set(url, clip);
+    return clip;
+  }
+
+  /** Play a `.vrma` clip on the body, crossfading from whatever's playing.
+   *  Loops hold (idle / walk); one-shots clamp then hand the body back to the
+   *  procedural layer. While a clip plays it owns the managed bones — the face
+   *  (emotion, blink, lip-sync) keeps riding on top. */
+  async playClip(url: string, opts: { loop?: boolean } = {}): Promise<void> {
+    if (!this.mixer) {
+      console.warn('[pet] playClip before the model is ready — ignored');
+      return;
+    }
+    let clip: THREE.AnimationClip | null = null;
+    try {
+      clip = await this.loadClip(url);
+    } catch (e) {
+      console.warn(`[pet] clip load failed: ${url}`, e);
+    }
+    if (!clip || !this.mixer) return;
+
+    const next = this.mixer.clipAction(clip);
+    next.reset();
+    next.loop = opts.loop ? THREE.LoopRepeat : THREE.LoopOnce;
+    next.clampWhenFinished = !opts.loop;
+    next.play();
+    if (this.currentAction && this.currentAction !== next) {
+      next.crossFadeFrom(this.currentAction, 0.3, false);
+    }
+    this.currentAction = next;
   }
 
   setCursor(x: number, y: number) {
@@ -241,6 +309,27 @@ export class PetStage {
     s.position.set(0, y, 0);
   }
 
+  /** appear / disappear: scale + fade the whole avatar toward `visibility`.
+   *  Skips per-frame material churn once fully settled at visible. */
+  private applyVisibility() {
+    if (!this.vrm) return;
+    if (Math.abs(this.visibility - this.visApplied) < 0.004 && this.visibility > 0.999) return;
+    this.visApplied = this.visibility;
+    const v = this.visibility;
+    const s = this.vrm.scene;
+    s.scale.setScalar(Math.max(0.001, v));
+    s.visible = v > 0.01;
+    s.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      const list = Array.isArray(mats) ? mats : mats ? [mats] : [];
+      for (const m of list) {
+        m.transparent = true;
+        m.opacity = v;
+        m.depthWrite = v > 0.5;
+      }
+    });
+  }
+
   private animate = () => {
     this.raf = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -251,22 +340,33 @@ export class PetStage {
     );
 
     if (this.vrm) {
+      // A clip, while playing, drives the body. Advance it first so the face
+      // layer (blink / lip-sync / emotion) can ride on top before vrm.update.
+      const clipActive = this.currentAction !== null;
+      if (this.mixer) this.mixer.update(dt);
+
       this.lookTarget.position.set(
         this.cursor.x * 0.6,
         this.gazeY + this.cursor.y * 0.4,
         this.camera.position.z,
       );
-      // Advance / retire the one-shot gesture.
-      if (this.action) {
-        this.action.t += dt;
-        if (this.action.t >= this.action.dur) this.action = null;
+
+      if (!clipActive) {
+        // Procedural body: idle posture + one-shot gesture overlay.
+        if (this.action) {
+          this.action.t += dt;
+          if (this.action.t >= this.action.dur) this.action = null;
+        }
+        const breath = Math.sin(t * 1.4);
+        this.applyPose(this.computeOffsets(t, breath));
+        this.updateTransform(t);
       }
-      const breath = Math.sin(t * 1.4);
-      this.applyPose(this.computeOffsets(t, breath));
-      this.updateTransform(t);
+
       this.updateBlink(dt);
       this.updateLipSync(dt);
       this.applyExpressions();
+      this.visibility = THREE.MathUtils.damp(this.visibility, this.visible ? 1 : 0, 9, dt);
+      this.applyVisibility();
       this.vrm.update(dt);
     }
 
@@ -301,6 +401,7 @@ export class PetStage {
   dispose() {
     cancelAnimationFrame(this.raf);
     this.resizeObs.disconnect();
+    this.mixer?.stopAllAction();
     if (this.vrm) VRMUtils.deepDispose?.(this.vrm.scene);
     this.renderer.dispose();
   }

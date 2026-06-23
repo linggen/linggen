@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "_note": "Single source of truth for the pet's Express vocabulary. The engine include_str!s this to build the Express tool schema + validation (it reads name + use_when). The web UI fetches /anim/actions.json to dispatch each intent by render kind. Add an intent = add one entry here (+ drop a .vrma into /anim/ for render:clip). render: proc = procedural bones (PetStage.computeOffsets case), clip = .vrma via AnimationMixer (clips[] filled in Phase 2), visibility = scale+opacity show/hide. emotion = the face mood auto-applied if the model didn't set one.",
+  "intents": [
+    { "name": "idle",        "category": "idle",   "use_when": "default resting state when nothing else fits, or between turns", "type": "loop", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "look_around", "category": "idle",   "use_when": "waiting, searching, or 'let me look into that'",                 "type": "loop", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "sit",         "category": "idle",   "use_when": "settling in for a long task or a relaxed chat",                  "type": "pose", "render": "clip", "emotion": "relaxed", "clips": ["/anim/VRMA_07.vrma"] },
+    { "name": "stretch",     "category": "idle",   "use_when": "after a long stretch of work, or waking up — a 'phew' beat",     "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "sleep",       "category": "idle",   "use_when": "long idle, late at night, or saying goodnight",                  "type": "loop", "render": "clip", "emotion": "relaxed", "clips": [] },
+
+    { "name": "nod",         "category": "attend", "use_when": "agreeing, 'yes', 'got it', confirming",                          "type": "once", "render": "proc", "proc": "nod",   "emotion": null },
+    { "name": "shake_head",  "category": "attend", "use_when": "disagreeing, 'no', 'I wouldn't'",                                "type": "once", "render": "proc", "proc": "shake", "emotion": null },
+    { "name": "tilt_head",   "category": "attend", "use_when": "curiosity or mild confusion, a 'hmm?'",                          "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "lean_in",     "category": "attend", "use_when": "they start something serious; showing you're listening",         "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "think",       "category": "attend", "use_when": "a hard question, or you're working something out",               "type": "once", "render": "clip", "emotion": "relaxed", "clips": [] },
+    { "name": "point",       "category": "attend", "use_when": "directing their attention to a result or the screen",            "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/VRMA_04.vrma"] },
+
+    { "name": "wave",        "category": "social", "use_when": "greeting hello or goodbye; the start or end of a session",       "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/VRMA_02.vrma"] },
+    { "name": "bow",         "category": "social", "use_when": "thanks, respect, a first meeting, or a formal moment",           "type": "once", "render": "proc", "proc": "bow",   "emotion": null },
+    { "name": "beckon",      "category": "social", "use_when": "'come here', or inviting them to continue",                      "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "shrug",       "category": "social", "use_when": "'I don't know', 'your call', uncertainty",                       "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "peace_sign",  "category": "social", "use_when": "a playful, cute, lighthearted moment",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_03.vrma"] },
+    { "name": "pose",        "category": "social", "use_when": "striking a pose, presenting, or a photo moment",                  "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_06.vrma", "/anim/VRMA_01.vrma"] },
+
+    { "name": "clap",        "category": "joy",    "use_when": "praise — they succeeded, 'well done'",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "cheer",       "category": "joy",    "use_when": "a big win or great news; excitement",                            "type": "once", "render": "proc", "proc": "cheer", "emotion": "happy" },
+    { "name": "jump_joy",    "category": "joy",    "use_when": "delight or a pleasant surprise",                                 "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "bounce",      "category": "joy",    "use_when": "light, happy energy",                                            "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "dance",       "category": "joy",    "use_when": "playful celebration, 'dance for me', festive",                   "type": "once", "render": "proc", "proc": "dance", "emotion": "happy" },
+    { "name": "spin",        "category": "joy",    "use_when": "a playful twirl or flourish; showing off",                        "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_05.vrma"] },
+    { "name": "heart_hands", "category": "joy",    "use_when": "warm affection or heartfelt thanks",                             "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+
+    { "name": "bashful",     "category": "warmth", "use_when": "complimented, a little embarrassed, shy",                        "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "wave_shy",    "category": "warmth", "use_when": "a timid hello, unsure",                                          "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "reach_out",   "category": "warmth", "use_when": "empathy or comfort when they're down",                           "type": "once", "render": "clip", "emotion": "sad",     "clips": [] },
+
+    { "name": "sigh",        "category": "low",    "use_when": "mild frustration or tiredness, 'that didn't work'",              "type": "once", "render": "clip", "emotion": "sad",     "clips": [] },
+    { "name": "slump",       "category": "low",    "use_when": "disappointment or bad news",                                     "type": "once", "render": "clip", "emotion": "sad",     "clips": [] },
+    { "name": "facepalm",    "category": "low",    "use_when": "an 'oops', exasperation, a silly mistake",                       "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "flinch",      "category": "low",    "use_when": "alarm or a sudden error (good when a problem is found)",         "type": "once", "render": "clip", "emotion": "angry",   "clips": [] },
+    { "name": "dismiss",     "category": "low",    "use_when": "brushing something aside, 'never mind'",                         "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+
+    { "name": "walk",        "category": "move",   "use_when": "moving toward something, or heading off to do a task",           "type": "loop", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "run",         "category": "move",   "use_when": "urgency or excitement — hurrying",                               "type": "loop", "render": "clip", "emotion": null,      "clips": [] },
+
+    { "name": "appear",      "category": "presence", "use_when": "entering, coming into view, or starting up",                   "type": "once", "render": "visibility", "visible": true,  "emotion": null },
+    { "name": "disappear",   "category": "presence", "use_when": "leaving, fading out when done, or dismissed",                  "type": "once", "render": "visibility", "visible": false, "emotion": null }
+  ]
+}

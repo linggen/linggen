@@ -15,6 +15,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { PetStage, type EmotionName, type ActionName } from './PetStage';
+import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
 import { _originalFetch } from '../../lib/fetchProxy';
 import { useUiStore } from '../../stores/uiStore';
@@ -55,14 +56,42 @@ export const YinyueAvatar: React.FC = () => {
     };
   }, []);
 
-  // Express tool → drive emotion (sustained) + a one-shot gesture on the avatar.
+  // Express tool → set emotion (sustained), then dispatch the intent by its
+  // render kind (procedural gesture / .vrma clip / show-hide), per the manifest.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !express) return;
-    const e = asEmotion(express.emotion);
-    if (e) stage.setEmotion(e);
-    const a = asAction(express.action);
-    if (a) stage.playAction(a);
+    const { emotion, action } = express;
+    void loadIntents().then((intents) => {
+      if (stageRef.current !== stage) return; // remounted while loading
+      const intent = action ? intents.get(action) : undefined;
+      // Explicit emotion wins; otherwise the intent's default mood.
+      const e = asEmotion(emotion) ?? asEmotion(intent?.emotion ?? undefined);
+      if (e) stage.setEmotion(e);
+      if (!intent) {
+        // No manifest entry: treat a bare action as a raw procedural gesture
+        // (backward-compatible with the original six gesture names).
+        const a = asAction(action);
+        if (a) stage.playAction(a);
+        return;
+      }
+      switch (intent.render) {
+        case 'proc': {
+          const a = asAction(intent.proc);
+          if (a) stage.playAction(a);
+          break;
+        }
+        case 'visibility':
+          stage.setVisible(intent.visible !== false);
+          break;
+        case 'clip': {
+          const url = pickClip(intent);
+          if (url) void stage.playClip(url, { loop: intent.type === 'loop' });
+          else console.info(`[pet] '${intent.name}' has no clip yet — emotion only`);
+          break;
+        }
+      }
+    });
   }, [express?.id]);
 
   async function send() {

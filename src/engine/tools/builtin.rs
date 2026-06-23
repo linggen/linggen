@@ -646,6 +646,30 @@ struct ExpressArgs {
     action: Option<String>,
 }
 
+/// One entry of the pet animation manifest. Only the fields the engine needs
+/// to build the `Express` tool schema are deserialized; the renderer-side
+/// fields (`render`, `proc`, `clips`, `visible`, `type`, …) are ignored here
+/// and consumed by the web UI instead.
+#[derive(serde::Deserialize)]
+struct PetIntent {
+    name: String,
+    use_when: String,
+}
+
+/// The pet's `Express` vocabulary — the single source of truth shared with the
+/// web renderer. Baked in at compile time from the UI's manifest so the tool
+/// schema and the avatar can never drift; a malformed manifest fails the build.
+static PET_INTENTS: LazyLock<Vec<PetIntent>> = LazyLock::new(|| {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        intents: Vec<PetIntent>,
+    }
+    let raw = include_str!("../../../ui/public/anim/actions.json");
+    serde_json::from_str::<Manifest>(raw)
+        .expect("ui/public/anim/actions.json must be valid")
+        .intents
+});
+
 /// The mascot's body control — she shows a mood and/or a gesture on her avatar.
 /// Fire-and-forget: emits a `PetExpress` event to every surface and returns
 /// immediately. Carries no speech (her spoken line is just her reply text).
@@ -660,6 +684,15 @@ impl Tool for ExpressTool {
     }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
     fn args_schema(&self) -> Value {
+        let names: Vec<Value> = PET_INTENTS
+            .iter()
+            .map(|i| Value::String(i.name.clone()))
+            .collect();
+        let menu = PET_INTENTS
+            .iter()
+            .map(|i| format!("• {} — {}", i.name, i.use_when))
+            .collect::<Vec<_>>()
+            .join("\n");
         json!({
             "type": "object",
             "properties": {
@@ -670,18 +703,28 @@ impl Tool for ExpressTool {
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["nod", "shake", "wave", "bow", "dance", "cheer"],
-                    "description": "A one-shot gesture to perform once."
+                    "enum": names,
+                    "description": format!(
+                        "A gesture, pose, or movement. Choose by what fits the moment:\n{menu}"
+                    )
                 }
             }
         })
     }
     fn legacy_schema_entry(&self) -> Value {
+        let names = PET_INTENTS
+            .iter()
+            .map(|i| i.name.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
         json!({
             "name": "Express",
             "args": {"emotion": "string?", "action": "string?"},
             "returns": "ok",
-            "notes": "Show feeling on your avatar. emotion (sustained): neutral|happy|sad|angry|relaxed. action (one-shot): nod|shake|wave|bow|dance|cheer. At least one. Use sparingly; never narrate it."
+            "notes": format!(
+                "Show feeling on your avatar. emotion (sustained): neutral|happy|sad|angry|relaxed. \
+                 action: {names}. At least one. Use sparingly; never narrate it."
+            )
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
@@ -689,6 +732,11 @@ impl Tool for ExpressTool {
             .map_err(|e| anyhow::anyhow!("invalid args for Express: {}", e))?;
         if args.emotion.is_none() && args.action.is_none() {
             anyhow::bail!("Express needs at least one of: emotion, action");
+        }
+        if let Some(action) = &args.action {
+            if !PET_INTENTS.iter().any(|i| &i.name == action) {
+                anyhow::bail!("Express: unknown action '{action}' (not in the avatar vocabulary)");
+            }
         }
         if let Some(manager) = tools.get_manager() {
             manager
@@ -761,5 +809,29 @@ impl Tool for AskUserTool {
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         tools.ask_user(call.args).await
+    }
+}
+
+#[cfg(test)]
+mod express_tests {
+    use super::*;
+
+    /// The `Express` vocabulary is built from `ui/public/anim/actions.json` at
+    /// runtime — this proves the baked-in manifest parses and every intent
+    /// reaches the model-facing schema (the engine/renderer contract).
+    #[test]
+    fn express_vocab_loads_from_manifest() {
+        let schema = ExpressTool.args_schema();
+        let actions = schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum array");
+        assert_eq!(actions.len(), 36, "expected 36 intents from actions.json");
+
+        let names: Vec<&str> = actions.iter().filter_map(|v| v.as_str()).collect();
+        for expected in [
+            "nod", "wave", "dance", "appear", "disappear", "walk", "run", "think", "spin", "pose",
+        ] {
+            assert!(names.contains(&expected), "missing intent '{expected}'");
+        }
     }
 }
