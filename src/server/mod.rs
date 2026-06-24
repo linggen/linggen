@@ -837,6 +837,7 @@ async fn prepare_server(
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
         tts: api::tts::default_provider(),
         bridge: Arc::new(bridge::BridgeHub::new()),
+        current_view: Arc::new(std::sync::Mutex::new(None)),
     });
 
     // Flush token usage to disk every 30 seconds.

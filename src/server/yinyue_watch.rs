@@ -287,8 +287,11 @@ async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
 /// agent's turn so it responds in the chat. The session is marked
 /// `agent_chat`-triggered, so that turn can't relay onward (the loop-break).
 async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String, message: String) {
-    let Some((session_id, root)) = latest_session_for_agent(&state, &to) else {
-        tracing::info!("[agent-chat] '{from}'→'{to}': no open session to deliver to — dropped");
+    // Prefer the session the user is actually viewing; else the agent's latest.
+    let Some((session_id, root)) =
+        focused_session(&state).or_else(|| latest_session_for_agent(&state, &to))
+    else {
+        tracing::info!("[agent-chat] '{from}'→'{to}': no session to deliver to — dropped");
         return;
     };
     let agent = match state
@@ -308,7 +311,17 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
         .await
         .unwrap_or_else(|_| format!("run-{to}-agentchat"));
 
-    // Show the incoming message in the chat, attributed to the sender.
+    // Show the incoming message in the chat, attributed to the sender. The chat
+    // panel doesn't label cross-agent messages, so make the source explicit in
+    // the text: "[Yinyue]: …".
+    let label = {
+        let mut chars = from.chars();
+        match chars.next() {
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            None => from.clone(),
+        }
+    };
+    let shown = format!("[{label}]: {message}");
     crate::server::chat::helpers::persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -316,7 +329,7 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
         &to,
         &from,
         &to,
-        &message,
+        &shown,
         Some(&session_id),
         false,
     )
@@ -337,7 +350,7 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
             root: root.clone(),
             agent_id: to.clone(),
             session_id: Some(session_id.clone()),
-            clean_msg: message,
+            clean_msg: shown,
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
         };
@@ -351,6 +364,21 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
         .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
         .await;
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
+}
+
+/// The session the user is currently viewing (`set_view_context`), if any — so
+/// agent_chat lands in the chat they have open.
+fn focused_session(state: &Arc<ServerState>) -> Option<(String, std::path::PathBuf)> {
+    let (sid, root) = state.current_view.lock().unwrap().clone()?;
+    if sid.is_empty() {
+        return None;
+    }
+    let root = if root.is_empty() {
+        crate::util::resolve_path(std::path::Path::new("~/.linggen"))
+    } else {
+        std::path::PathBuf::from(root)
+    };
+    Some((sid, root))
 }
 
 /// The agent's most-recently-active top-level session + its repo root.

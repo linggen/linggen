@@ -65,6 +65,10 @@ pub struct ServerState {
     /// Browser bridge hub — the connected `linggen-browser` extension (if any)
     /// plus in-flight request correlation. See `server/bridge.rs`.
     pub bridge: Arc<BridgeHub>,
+    /// The session the user is currently viewing (latest `set_view_context`), as
+    /// `(session_id, project_root)`. Lets `agent_chat` deliver into the chat the
+    /// user actually has open; falls back to the agent's latest session.
+    pub current_view: Arc<std::sync::Mutex<Option<(String, String)>>>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveStatusRecord {

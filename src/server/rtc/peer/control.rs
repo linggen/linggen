@@ -81,6 +81,14 @@ pub(super) fn handle_control_message(
                 .get("view")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            // Remember the focused session so agent_chat can deliver into the
+            // chat the user actually has open.
+            if let Some(sid) = &view_ctx.session_id {
+                *state.current_view.lock().unwrap() = Some((
+                    sid.clone(),
+                    view_ctx.project_root.clone().unwrap_or_default(),
+                ));
+            }
             *force_page_state = true;
             tracing::debug!(
                 "View context updated: view={:?} session={:?} project={:?}",
