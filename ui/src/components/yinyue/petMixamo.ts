@@ -4,7 +4,7 @@
  * three-vrm example (`loadMixamoAnimation.js`): it remaps the `mixamorig*`
  * bone names to VRM humanoid bones, rebases each rotation into the VRM's rest
  * space, scales the hips translation by the height ratio, and flips signs for
- * VRM0 models (our Keqing placeholder is VRM0).
+ * VRM0 models (gated on `metaVersion`; Yinyue's own model is VRM1, so no flip).
  *
  * Returns a THREE.AnimationClip ready for the avatar's AnimationMixer.
  */

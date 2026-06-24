@@ -10,7 +10,7 @@
  * (she speaks + the bubble). The click also satisfies browser autoplay so her
  * voice can play.
  *
- * Dev note: loads `/yinyue.vrm` (Keqing placeholder — gitignored, dev-only).
+ * Loads `/yinyue.vrm` — Yinyue's original VRoid model (authored in-house).
  * Audio is independent of the model, so the voice still works if it fails.
  */
 import React, { useEffect, useRef, useState } from 'react';

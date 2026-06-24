@@ -445,11 +445,13 @@ export class PetStage {
       off.set(b, { x: cur.x + x, y: cur.y + y, z: cur.z + z });
     };
 
-    // Relax arms from the VRM T-pose into a natural A-pose.
-    add('leftUpperArm', 0, 0, 1.2);
-    add('rightUpperArm', 0, 0, -1.2);
-    add('leftLowerArm', 0, 0, 0.15);
-    add('rightLowerArm', 0, 0, -0.15);
+    // Relax arms from the normalized T-pose down into a natural A-pose. On our
+    // VRM1 rig the upper-arm roll is mirrored (+Z raises the left, -Z the
+    // right), so lowering to an A-pose takes the opposite sign on each side.
+    add('leftUpperArm', 0, 0, -1.2);
+    add('rightUpperArm', 0, 0, 1.2);
+    add('leftLowerArm', 0, 0, -0.15);
+    add('rightLowerArm', 0, 0, 0.15);
 
     // Breathing.
     add('upperChest', breath * 0.05);
@@ -492,8 +494,8 @@ export class PetStage {
           add('head', 0, Math.sin(p * Math.PI * 4) * 0.4);
           break;
         case 'wave':
-          add('rightUpperArm', 0, 0, env * 1.7);
-          add('rightLowerArm', 0, 0, env * 0.3 + Math.sin(p * Math.PI * 8) * 0.5 * env);
+          add('rightUpperArm', 0, 0, env * -1.7); // -Z raises the right arm
+          add('rightLowerArm', 0, 0, env * -0.3 + Math.sin(p * Math.PI * 8) * 0.5 * env);
           add('head', 0, env * 0.08);
           break;
         case 'bow':
@@ -506,13 +508,13 @@ export class PetStage {
           add('spine', 0, Math.sin(ph) * 0.12, Math.sin(ph * 0.5) * 0.1);
           add('upperChest', 0, 0, Math.sin(ph) * 0.06);
           add('head', 0, Math.sin(ph + 0.5) * 0.12);
-          add('leftUpperArm', 0, 0, Math.sin(ph) * 0.4);
-          add('rightUpperArm', 0, 0, -Math.sin(ph) * 0.4);
+          add('leftUpperArm', 0, 0, -Math.sin(ph) * 0.4);
+          add('rightUpperArm', 0, 0, Math.sin(ph) * 0.4);
           break;
         }
         case 'cheer':
-          add('leftUpperArm', 0, 0, env * -2.6);
-          add('rightUpperArm', 0, 0, env * 2.6);
+          add('leftUpperArm', 0, 0, env * 2.6); // raise both arms overhead
+          add('rightUpperArm', 0, 0, env * -2.6);
           add('head', env * -0.12);
           break;
       }
