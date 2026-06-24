@@ -67,24 +67,41 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         // permission approvals (the engine emits the same event for both).
         ServerEvent::AskUser {
             agent_id,
+            question_id,
             questions,
             ..
         } => {
             if agent_id == YINYUE_AGENT {
                 return; // she's the one asking — not a herald
             }
-            let summary = questions
-                .first()
+            let q0 = questions.first();
+            let summary = q0
                 .map(|q| q.question.clone())
                 .unwrap_or_else(|| "your input".to_string());
+            let options = q0
+                .map(|q| {
+                    q.options
+                        .iter()
+                        .map(|o| o.label.clone())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                })
+                .unwrap_or_default();
             let state = state.clone();
             tokio::spawn(async move {
+                let opts = if options.is_empty() {
+                    String::new()
+                } else {
+                    format!(" The options are: {options}.")
+                };
                 let kickoff = format!(
                     "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
-                     \"{summary}\". Tell the user in your voice — a gentle nudge if they're \
-                     here, more of a call-back if they've wandered off (glance with `sense`). \
-                     One brief line, spoken aloud, plain prose. If it truly doesn't warrant \
-                     interrupting, reply with exactly SILENT."
+                     \"{summary}\".{opts} Tell the user in your voice — a gentle nudge if they're \
+                     here, more of a call-back if they've wandered off (glance with `sense`). One \
+                     brief line, spoken aloud, plain prose. When they give you their answer, relay \
+                     it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
+                     words, never your own decision. If it truly doesn't warrant interrupting now, \
+                     reply with exactly SILENT."
                 );
                 wake_herald(state, kickoff, "neutral").await;
             });

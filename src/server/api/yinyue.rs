@@ -61,14 +61,46 @@ pub(crate) async fn chat_handler(
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
     }
     tracing::info!("[yinyue] chat from user ({} chars)", text.len());
+    // If a worker agent is currently blocked on a prompt, frame this turn so she
+    // can relay the answer with `answer_prompt` rather than just chatting — the
+    // user's reply and the open prompt land in the same turn (no cross-turn recall).
+    let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::yinyue_watch::run_yinyue_turn(&state, text).await {
+        if let Some(reply) = crate::server::yinyue_watch::run_yinyue_turn(&state, task).await {
             if !reply.eq_ignore_ascii_case("silent") {
                 emit_speak(&state, reply, None);
             }
         }
     });
     (StatusCode::OK, "ok").into_response()
+}
+
+/// If another agent is parked on a prompt, wrap the user's message with that
+/// context (question, options, `question_id`) so Yinyue can relay it with
+/// `answer_prompt`. Plain message through when nothing is waiting.
+async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> String {
+    let pending = state.pending_ask_user.lock().await;
+    let Some((qid, p)) = pending.iter().find(|(_, p)| p.agent_id != "yinyue") else {
+        return text.to_string();
+    };
+    let q0 = p.questions.first();
+    let question = q0.map(|q| q.question.as_str()).unwrap_or("their input");
+    let options = q0
+        .map(|q| {
+            q.options
+                .iter()
+                .map(|o| o.label.clone())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        })
+        .unwrap_or_default();
+    format!(
+        "[The agent \"{}\" is blocked, waiting on an answer to: \"{question}\" \
+         (options: {options}; question_id \"{qid}\"). If the user's message below is their \
+         answer, relay it with `answer_prompt` — only their actual words, never your own \
+         decision. Otherwise just talk with them normally.]\n\nUser says: {text}",
+        p.agent_id
+    )
 }
 
 #[derive(Deserialize)]
