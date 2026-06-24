@@ -119,11 +119,14 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             if to == YINYUE_AGENT {
                 tokio::spawn(async move {
                     let kickoff = format!(
-                        "The agent \"{from}\" sent you a message: \"{message}\". If it's worth \
-                         passing to the user, say it in your voice — glance with `sense` first \
-                         (a call-back if they're away, a quiet word if they're here). One brief \
-                         line, spoken aloud, plain prose. If it's not worth interrupting them, \
-                         reply with exactly SILENT."
+                        "The agent \"{from}\" sent you a message, addressed to YOU: \"{message}\". \
+                         Respond however fits — it's yours to act on:\n\
+                         • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
+                         • news worth telling the user → say one brief line in your voice (spoken, \
+                         plain prose); glance with `sense` first to read the room;\n\
+                         • you can do both — move and speak;\n\
+                         • if nothing fits, reply with exactly SILENT.\n\
+                         You're reached via agent_chat, so you can't pass it to a third agent."
                     );
                     if let Some(line) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
                         if line.eq_ignore_ascii_case("silent") {
