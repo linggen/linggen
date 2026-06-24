@@ -120,6 +120,14 @@ pub struct AskUserAnswer {
     pub custom_text: Option<String>,
 }
 
+/// Tools that belong to the on-screen pet/companion (Yinyue) — only an agent
+/// that lists them EXPLICITLY gets them. They're excluded from the `*` wildcard
+/// so a worker agent (Ling) can't drive the avatar; it asks Yinyue via
+/// `agent_chat` instead.
+pub(crate) fn is_pet_scoped(name: &str) -> bool {
+    matches!(name, "Express")
+}
+
 /// Bridge between the synchronous tool executor and the async server state,
 /// allowing the AskUser tool to emit events and block on user responses.
 pub struct AskUserBridge {

@@ -36,7 +36,18 @@ pub fn oai_tool_definitions(allowed: Option<&HashSet<String>>) -> Vec<Value> {
                     .unwrap_or(false)
             })
             .collect(),
-        None => all,
+        // Wildcard (`*`): everything EXCEPT pet-scoped tools (Express) — a worker
+        // agent shouldn't drive the avatar; only an explicit lister (Yinyue) gets it.
+        None => all
+            .into_iter()
+            .filter(|def| {
+                def.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|name| !super::is_pet_scoped(name))
+                    .unwrap_or(true)
+            })
+            .collect(),
     }
 }
 
