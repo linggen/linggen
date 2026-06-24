@@ -19,15 +19,21 @@ const ACCENTS: Record<string, { ring: string; dot: string }> = {
   alert: { ring: 'ring-rose-400/50', dot: 'bg-rose-400' },
 };
 
-export const YinyueBubble: React.FC = () => {
+export const YinyueBubble: React.FC<{ variant?: 'overlay' | 'pet' }> = ({ variant = 'overlay' }) => {
   const speech = useUiStore((s) => s.yinyueSpeech);
   const clear = useUiStore((s) => s.clearYinyueSpeech);
   if (!speech) return null;
 
   const accent = ACCENTS[speech.emotion] ?? ACCENTS.neutral;
 
+  // `pet` = the narrow transparent pet window (PetApp): float above her head,
+  // fit the window width. `overlay` = the in-page dock corner (MainApp).
+  const pos = variant === 'pet'
+    ? 'fixed top-3 inset-x-2 max-w-full'
+    : 'fixed bottom-[19rem] right-4 max-w-xs';
+
   return (
-    <div className="fixed bottom-[19rem] right-4 z-[9998] max-w-xs pointer-events-none">
+    <div className={`${pos} z-[9998] pointer-events-none`}>
       <div
         onClick={clear}
         title="Dismiss"

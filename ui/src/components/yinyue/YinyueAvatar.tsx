@@ -119,6 +119,15 @@ export const YinyueAvatar: React.FC = () => {
     stageRef.current?.setSpeaking(speaking);
   }, [speaking]);
 
+  // Close the talk-input when the window loses focus — clicking another window
+  // (app switch) doesn't fire the input's own blur in a webview, so it would
+  // otherwise stay open.
+  useEffect(() => {
+    const close = () => setComposing(false);
+    window.addEventListener('blur', close);
+    return () => window.removeEventListener('blur', close);
+  }, []);
+
   async function send() {
     const text = draft.trim();
     setDraft('');
@@ -142,6 +151,8 @@ export const YinyueAvatar: React.FC = () => {
     }
   }
 
+  // Click her to talk: the input opens + focuses; it hides again on blur. Her
+  // body is also a drag handle in the pet window, so the input is data-no-drag.
   return (
     <div className="relative h-full w-full">
       <canvas
@@ -151,9 +162,10 @@ export const YinyueAvatar: React.FC = () => {
         onClick={() => setComposing((c) => !c)}
       />
       {composing && (
-        <div className="absolute inset-x-2 bottom-2">
+        <div className="absolute inset-x-2 bottom-20" data-no-drag>
           <input
             autoFocus
+            data-no-drag
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {

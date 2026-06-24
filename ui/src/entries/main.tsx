@@ -22,6 +22,7 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { MainApp } from '../apps/MainApp';
 import { EmbedApp } from '../apps/EmbedApp';
 import { ConsumerApp } from '../apps/ConsumerApp';
+import { PetApp } from '../apps/PetApp';
 import { SettingsHome } from '../pages/Settings/SettingsHome';
 import { BareSection } from '../pages/Settings/BareSection';
 import { MissionEditorPage } from '../pages/Mission/MissionEditorPage';
@@ -41,8 +42,11 @@ const path = window.location.pathname;
 const urlParams = new URLSearchParams(window.location.search);
 const isEmbedPath = path === '/embed' || path.startsWith('/embed/')
   || urlParams.get('mode') === 'compact';
+// The desktop shell's transparent pet window loads `?pet=1` — render only the
+// avatar (PetApp), but still let Root mount the transport so her events flow.
+const isPetView = urlParams.get('pet') === '1';
 
-type View = 'main' | 'embed' | 'consumer';
+type View = 'main' | 'embed' | 'consumer' | 'pet';
 
 const Root: React.FC = () => {
   const currentPage = useUiStore((s) => s.currentPage);
@@ -55,17 +59,20 @@ const Root: React.FC = () => {
   // otherwise tear down the connection.
   useTransport({ sessionId });
 
-  const view: View = isEmbedPath
-    ? 'embed'
-    : currentPage === 'consumer'
-      ? 'consumer'
-      : 'main';
+  const view: View = isPetView
+    ? 'pet'
+    : isEmbedPath
+      ? 'embed'
+      : currentPage === 'consumer'
+        ? 'consumer'
+        : 'main';
 
   useEffect(() => {
     (window as { __LINGGEN_VIEW__?: View }).__LINGGEN_VIEW__ = view;
     sendViewContext();
   }, [view]);
 
+  if (view === 'pet') return <PetApp />;
   if (view === 'embed') return <EmbedApp />;
   if (view === 'consumer') return <ConsumerApp />;
 

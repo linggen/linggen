@@ -57,9 +57,11 @@ see "Adaptive presentation".
 
 - **Desktop pet** — a transparent, always-on-top VRM character; her body. Lives in
   the shell (`linggen-app`), shared across every branded app via `[features] pet`.
-  Built from `shell/pet-ui` (three.js + @pixiv/three-vrm). The shippable model is
-  an original VRM; a Genshin placeholder is used in dev only and is gitignored.
-  Evolving from a fixed window into a singleton roaming overlay — see below.
+  Renders the **same** `PetStage` the core web UI serves (`linggen/ui`, loaded as
+  `?pet=1`): the shell's pet window (`shell/src/pet.rs`) is a thin transparent frame
+  onto it over HTTP, not a separate copy — so app and browser never drift. The
+  shippable model is an original VRM; a Genshin placeholder is used in dev only and
+  is gitignored. Evolving from a fixed window into a singleton roaming overlay — see below.
 - **WebUI overlay** — the same character rendered inside the core web UI
   (`linggen/ui`) when no desktop shell is present (plain browser, remote/hosted web).
   Confined to the page.
@@ -380,8 +382,8 @@ user's region and time without asking.
 | Rolling-session resolver | `linggen/src/server/yinyue_watch.rs` (planned) |
 | Session persistence (`messages.jsonl`) | `linggen/src/state_fs/sessions.rs` (reused) |
 | Environment block | `linggen/prompts/system-prompt.toml`, `linggen/src/engine/prompt/mod.rs` |
-| Desktop pet (body) | `linggen-app/shell/pet-ui` + `linggen-app/shell/src/pet.rs` |
-| WebUI overlay renderer | `linggen/ui` (shared `PetStage`, planned) |
+| Desktop pet (body) | `linggen-app/shell/src/pet.rs` — thin native window → core `?pet=1` |
+| Pet renderer (web + native) | `linggen/ui` — `PetStage` + `PetApp` (`?pet=1`) + `YinyueAvatar` overlay |
 | Voice (TTS provider) | `linggen/src/server/api/tts.rs` (`TtsProvider`; Kokoro via any-tts) |
 | Pet coordination — lease + surface registry | `linggen/src/server/` (engine API, planned) |
 | Menubar tray + face animator | `linggen-app/shell/src/menubar.rs` (planned) |
@@ -413,8 +415,12 @@ user's region and time without asking.
 - Designed (not built): menubar daemon tier — `talk`/`mood` driven by the webview
   relaying `YinyueSpeak` to the Rust tray over Tauri IPC (see "Wiring the daemon
   tier"); the jump-out spawn rides the overlay.
-- Designed (not built): adaptive presentation — one renderer + one event spine,
-  shown as a native window in the desktop app and an in-page overlay in the browser;
-  app-vs-web behavior bounded by host (see "Adaptive presentation").
+- Shipped: adaptive presentation (renderer unify) — one `PetStage` in core, shown as
+  the in-page `YinyueAvatar` overlay in the browser and as a transparent native window
+  in the desktop app that loads the **same** page (`?pet=1`) over HTTP (`shell/src/pet.rs`
+  → `WebviewUrl::External`); `?app_mode=1` suppresses the in-page dock so the two never
+  double up. Retired the old bundled `shell/pet-ui` fork (and its `build.sh` staging).
+- Designed (not built): the locomotion/roaming half of adaptive presentation —
+  one state machine fed host-bounded walkable surfaces (see "Two environments").
 - Shipped (engine): voice — `TtsProvider` trait + Kokoro (any-tts/candle, Metal),
   `POST /api/tts`, lazy-loaded + pre-warmed at boot; `say` fallback. Sub-second synth.

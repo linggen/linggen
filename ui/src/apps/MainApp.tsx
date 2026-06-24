@@ -32,6 +32,9 @@ import { useLocation } from 'react-router-dom';
 
 const urlParams = new URLSearchParams(window.location.search);
 const isMobileParam = urlParams.get('mode') === 'mobile';
+// Inside a desktop app shell, Yinyue lives in a separate native pet window
+// (loaded from `?pet=1`), so suppress the in-page dock to avoid two of her.
+const isAppMode = urlParams.get('app_mode') === '1';
 
 /** Detect mobile viewport (< 768px) or explicit ?mode=mobile. */
 function useIsMobile(): boolean {
@@ -326,10 +329,13 @@ export const MainApp: React.FC = () => {
               <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
                 <InfoPanel {...infoPanelProps} />
               </div>
-              {/* Yinyue's dock — reserved space, click her to talk. */}
-              <div className="h-72 shrink-0 border-t border-slate-200 dark:border-white/5">
-                <YinyueAvatar />
-              </div>
+              {/* Yinyue's dock — reserved space, click her to talk. In an app
+                  shell she's a separate native window, so drop the dock. */}
+              {!isAppMode && (
+                <div className="h-72 shrink-0 border-t border-slate-200 dark:border-white/5">
+                  <YinyueAvatar />
+                </div>
+              )}
             </aside>
           )}
 
