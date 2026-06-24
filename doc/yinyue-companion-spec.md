@@ -9,6 +9,10 @@ Ling and Yinyue are **separate agents** (extensible to more). Yinyue is the
 herald / front-of-house voice for the whole roster; Ling and future workers do
 the technical work.
 
+**Status:** shipped in 1.2.0. All six build phases below are live. The only
+deferred item is the in-bubble Approve/Deny widget — the spoken `answer_prompt`
+path covers the same case.
+
 ## The one spine
 
 Every proactive surface funnels through one rule:
@@ -94,14 +98,19 @@ companion.
 
 ## `agent_chat` — general inter-agent messaging
 
-A built-in tool any agent can call: `agent_chat(to, message, data?)`. Replaces a
+A built-in tool any agent can call: `agent_chat(to, message)`. Replaces a
 Yinyue-specific report tool — *any* agent can message *any* other.
 
-- **Delivery = bus + watch** — emits `ServerEvent::AgentChat { from, to, message }`;
-  a recipient that watches the bus picks up messages addressed to it (Yinyue's
-  watcher adds one match arm → `run_yinyue_turn`). Zero new delivery infra for her.
+- **Delivery is by recipient.** The tool emits `ServerEvent::AgentChat
+  { from, to, message }` on the bus; `yinyue_watch.rs` routes it:
+  - **to Yinyue** → she receives it as addressed to her and *acts on it* —
+    speaks (`PetSpeak`), moves (`Express`), or stays silent.
+  - **to a chat agent** (Ling, …) → it lands in that agent's chat as a
+    `[Sender]: …` message and runs the agent's turn, so it responds there. The
+    target session is the one the user is viewing (`set_view_context`), else the
+    agent's latest top-level session.
 - **One-way, fire-and-forget** — the async-peer complement to `Task` (delegate-and-await).
-- **Discrete input** — read as a one-off, never spliced into the recipient's
+- **Discrete input** — read as a one-off, never spliced into a recipient's
   growing context (voice-leak guard).
 
 ### Loop break
@@ -114,20 +123,29 @@ structurally one-way (a receiver can't reply over it) and guarantees no
 autonomous agent gossip and no loops — every agent→agent message is rooted in a
 user action. Backstops: no self-send, hop-counter (drop at N=2–3), soft rate cap.
 
-## Phases
+## Build phases (all shipped, 1.2.0)
 
-Each ships and demos on its own. Order: 0 → 1 → 2 → 3 → 4 → (5).
+Built and verified in order 0 → 5:
 
 - **P0 — Foundations.** Pin a fast cheap model in `yinyue.md` (`model:`); prompt
   additions land per-phase as their tools appear.
-- **P1 — Senses** *(the gate)*. Client presence beat → `/api/presence` →
-  `Presence` in `AgentManager`; `sense` tool returns presence + work + tempo.
-- **P2 — Event herald.** Extend `yinyue_watch` with `AskUser` + new `RunCompleted`;
+- **P1 — Senses.** Client presence beat → `/api/presence` → `Presence` in
+  `AgentManager`; `sense` tool returns presence + work + tempo.
+- **P2 — Event herald.** `yinyue_watch` matches `AskUser` + new `RunCompleted`;
   presence-aware decision; skip self/Cancelled.
-- **P3 — Interactive loop-back.** Retain `question_id`; bubble widget + `answer_prompt`
-  tool; courier guardrail.
+- **P3 — Interactive loop-back.** Retain `question_id`; `answer_prompt` tool;
+  courier guardrail. (Bubble Approve/Deny widget deferred.)
 - **P4 — Ambient life-signs.** Server `tokio::interval`; jittered, mostly-silent.
 - **P5 — `agent_chat`.** General inter-agent messaging + the loop-break gate.
+
+Refinements shipped on top of the plan:
+
+- **`Express` is pet-scoped** — excluded from the `*` wildcard, granted only to
+  an agent that lists it. Workers ask Yinyue via `agent_chat` to drive the avatar.
+- **`agent_chat` is bidirectional** — a message to a chat agent renders in its
+  chat (`[Sender]: …`) and runs its turn; routed to the user's focused session.
+- **A message to Yinyue is hers to act on** — "Dance!" → `Express(dance)`, not a
+  relay-to-user.
 
 ## Reuses (already shipped)
 

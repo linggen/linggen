@@ -99,12 +99,15 @@ export class PetStage {
   private thinkingClipUrl = '/anim/thinking.fbx#0,2.5';
   private thinkingClip: THREE.AnimationClip | null | undefined = undefined;
   private thinkingAction: THREE.AnimationAction | null = null;
-  // Resting idle clip — auto-plays as the base whenever nothing else is active.
-  private idleClipUrl: string | null = '/anim/idle.fbx';
-  private idleClip: THREE.AnimationClip | null | undefined = undefined;
+  // Resting idle — a LOOPING mocap clip is her default pose (not a procedural
+  // A-pose). idleClipUrls[0] is the default she returns to; the engine
+  // crossfades to a different pool clip every so often for variety, so she's
+  // never a frozen statue. Procedural posing is only a pre-load fallback.
+  private idleClipUrls: string[] = ['/anim/idle2.fbx', '/anim/idle.fbx'];
   private idleAction: THREE.AnimationAction | null = null;
+  private idleActionUrl: string | null = null; // which pool clip is currently looping
   private idleStarting = false;
-  private idleRestUntil = 0; // clock time before which idle rests (just blink/breathe)
+  private idleSwapAt = 0; // clock time of the next variety swap
   // Talking body loop — plays while her voice is playing (gesture overrides it).
   private speaking = false;
   private talkingClipUrl: string | null = '/anim/talking.fbx';
@@ -249,12 +252,16 @@ export class PetStage {
     this.thinkingAction = null;
   }
 
-  /** The looping BASE layer whenever no gesture/thinking owns the body: the
-   *  talking clip while her voice plays, otherwise the idle clip on a play-once
-   *  + rest cadence. Procedural idle is the fallback if a clip is missing. */
+  /** The BASE layer whenever no gesture/thinking owns the body: the talking
+   *  clip while her voice plays, otherwise a LOOPING idle clip as her default
+   *  resting pose — crossfading to a different pool clip every so often for
+   *  variety. The procedural A-pose only shows before the first clip loads (or
+   *  if every idle clip fails to retarget). */
   private async ensureBase() {
     if (!this.mixer || !this.vrm || this.idleStarting) return;
-    if (this.currentAction || this.thinking) return; // a gesture or thinking owns the body
+    if (this.thinking) return; // thinking owns the body
+    // A non-idle clip (gesture / talking) owns the body → leave it be.
+    if (this.currentAction && this.currentAction !== this.idleAction) return;
 
     // Speaking → loop the talking body clip for the whole utterance.
     if (this.speaking && this.talkingClipUrl) {
@@ -263,35 +270,50 @@ export class PetStage {
         this.talkingClip = await this.loadClip(this.talkingClipUrl).catch(() => null);
         this.idleStarting = false;
       }
-      if (this.currentAction || this.thinking || !this.speaking || !this.talkingClip || !this.mixer) return;
+      if (!this.speaking || !this.talkingClip || !this.mixer) return;
+      const fromIdle = this.currentAction === this.idleAction ? this.idleAction : null;
       const a = this.mixer.clipAction(this.talkingClip);
       a.reset();
       a.loop = THREE.LoopRepeat;
       a.play();
+      if (fromIdle && fromIdle !== a) a.crossFadeFrom(fromIdle, 0.3, true);
       this.talkingAction = a;
       this.currentAction = a;
       this.resetPosePending = false;
       return;
     }
 
-    // Otherwise → idle clip, played once then resting (breathe + blink) between.
-    if (!this.idleClipUrl) return;
-    if (this.idleClip === undefined) {
-      this.idleStarting = true;
-      this.idleClip = await this.loadClip(this.idleClipUrl).catch(() => null);
-      this.idleStarting = false;
-    }
-    if (this.clock.elapsedTime < this.idleRestUntil) return; // resting between plays
-    if (this.currentAction || this.thinking || this.speaking || !this.idleClip || !this.mixer) return;
-    const a = this.mixer.clipAction(this.idleClip);
+    // Otherwise → a looping idle clip is her default. (Re)start on the default
+    // clip when nothing's playing; once it's looped a while, crossfade to a
+    // different pool clip so she varies.
+    if (this.idleClipUrls.length === 0) return;
+    const idleActive = !!this.idleAction && this.currentAction === this.idleAction;
+    if (idleActive && this.clock.elapsedTime < this.idleSwapAt) return; // current idle still has time
+    const url = idleActive ? this.pickIdleUrl() : this.idleClipUrls[0]; // default on entry, variety on swap
+    this.idleStarting = true;
+    const clip = await this.loadClip(url).catch(() => null);
+    this.idleStarting = false;
+    if (!clip || this.thinking || this.speaking || !this.mixer) return;
+    if (this.currentAction && this.currentAction !== this.idleAction) return; // a gesture slipped in while loading
+    const fromIdle = this.idleAction && this.currentAction === this.idleAction ? this.idleAction : null;
+    const a = this.mixer.clipAction(clip);
     a.reset();
-    a.loop = THREE.LoopOnce;
-    a.clampWhenFinished = false;
+    a.loop = THREE.LoopRepeat;
     a.play();
+    if (fromIdle && fromIdle !== a) a.crossFadeFrom(fromIdle, 0.5, true);
     this.idleAction = a;
+    this.idleActionUrl = url;
     this.currentAction = a;
     this.resetPosePending = false;
-    this.idleRestUntil = this.clock.elapsedTime + this.idleClip.duration + 5 + Math.random() * 5;
+    this.idleSwapAt = this.clock.elapsedTime + 12 + Math.random() * 10; // next variety swap in 12–22s
+  }
+
+  /** Pick a pool clip for an idle variety swap — preferring one different from
+   *  the clip currently looping so the change is visible. */
+  private pickIdleUrl(): string {
+    const choices = this.idleClipUrls.filter((u) => u !== this.idleActionUrl);
+    const from = choices.length > 0 ? choices : this.idleClipUrls;
+    return from[Math.floor(Math.random() * from.length)];
   }
 
   /** Load + cache a `.vrma`, retargeted to this VRM's humanoid rig. */

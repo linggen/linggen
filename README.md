@@ -68,6 +68,29 @@ vision and roadmap in [`doc/insight.md`](doc/insight.md).
 
 ---
 
+## Yinyue — your desktop companion
+
+A VRM avatar and conversational companion built into the runtime — the face the
+agents wear. She reads the room (whether you're typing, reading, or away), voices
+the moments that matter in her own words, and gives the agents a way to talk to
+each other and to you.
+
+- **She heralds your agents.** When one is blocked waiting on you, fails, or
+  finishes a background job, Yinyue says so — and stays quiet on the routine.
+- **Relay an answer.** When an agent is parked on a question or a permission,
+  just tell Yinyue "approve" — she carries your word back and it unblocks.
+- **`agent_chat`.** Agents message each other. Ask Yinyue to have Ling introduce
+  itself and the message lands in your chat (`[Yinyue]: …`) and Ling replies;
+  tell Ling to make Yinyue dance and she dances. A loop-break keeps you in the loop.
+- **She's present.** Gestures and moods (`Express`), occasional unprompted
+  remarks, a local voice with lip-sync.
+
+She's an ordinary Linggen session on the `yinyue` agent — swap her model, edit
+her persona, or build another companion the same way. See
+[`doc/yinyue-companion-spec.md`](doc/yinyue-companion-spec.md).
+
+---
+
 ## Apps built on Linggen
 
 - **[Sys Doctor](https://linggen.dev/apps/sysdoctor)** — AI health analyst for your Mac. Disk, security, performance, dormant apps, buyer's guide. Bundled `.app` available.

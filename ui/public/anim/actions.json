@@ -2,10 +2,10 @@
   "version": 1,
   "_note": "Single source of truth for the pet's Express vocabulary. The engine include_str!s this to build the Express tool schema + validation (it reads name + use_when). The web UI fetches /anim/actions.json to dispatch each intent by render kind. Add an intent = add one entry here (+ drop a .vrma into /anim/ for render:clip). render: proc = procedural bones (PetStage.computeOffsets case), clip = .vrma via AnimationMixer (clips[] filled in Phase 2), visibility = scale+opacity show/hide. emotion = the face mood auto-applied if the model didn't set one.",
   "intents": [
-    { "name": "idle",        "category": "idle",   "use_when": "default resting state when nothing else fits, or between turns", "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/idle.fbx"] },
+    { "name": "idle",        "category": "idle",   "use_when": "default resting state when nothing else fits, or between turns", "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/idle2.fbx", "/anim/idle.fbx"] },
     { "name": "look_around", "category": "idle",   "use_when": "waiting, searching, or 'let me look into that'",                 "type": "loop", "render": "clip", "emotion": null,      "clips": [] },
     { "name": "sit",         "category": "idle",   "use_when": "settling in for a long task or a relaxed chat",                  "type": "pose", "render": "clip", "emotion": "relaxed", "clips": ["/anim/VRMA_07.vrma"] },
-    { "name": "stretch",     "category": "idle",   "use_when": "after a long stretch of work, or waking up — a 'phew' beat",     "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "stretch",     "category": "idle",   "use_when": "after a long stretch of work, or waking up — a 'phew' beat",     "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/yawn.fbx"] },
     { "name": "sleep",       "category": "idle",   "use_when": "long idle, late at night, or saying goodnight",                  "type": "loop", "render": "clip", "emotion": "relaxed", "clips": [] },
 
     { "name": "nod",         "category": "attend", "use_when": "agreeing, 'yes', 'got it', confirming",                          "type": "once", "render": "proc", "proc": "nod",   "emotion": null },
@@ -24,13 +24,13 @@
 
     { "name": "clap",        "category": "joy",    "use_when": "praise — they succeeded, 'well done'",                           "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/clap.fbx#1,3.2"] },
     { "name": "cheer",       "category": "joy",    "use_when": "a big win or great news; excitement",                            "type": "once", "render": "proc", "proc": "cheer", "emotion": "happy" },
-    { "name": "jump_joy",    "category": "joy",    "use_when": "delight or a pleasant surprise",                                 "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/excited.fbx"] },
-    { "name": "bounce",      "category": "joy",    "use_when": "light, happy energy",                                            "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "jump_joy",    "category": "joy",    "use_when": "delight or a pleasant surprise",                                 "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/excited.fbx", "/anim/excited2.fbx", "/anim/happy.fbx"] },
+    { "name": "bounce",      "category": "joy",    "use_when": "light, happy energy",                                            "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/jump.fbx"] },
     { "name": "dance",       "category": "joy",    "use_when": "playful celebration, 'dance for me', festive",                   "type": "once", "render": "proc", "proc": "dance", "emotion": "happy" },
     { "name": "spin",        "category": "joy",    "use_when": "a playful twirl or flourish; showing off",                        "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/VRMA_05.vrma"] },
-    { "name": "heart_hands", "category": "joy",    "use_when": "warm affection or heartfelt thanks",                             "type": "once", "render": "clip", "emotion": "happy",   "clips": [] },
+    { "name": "heart_hands", "category": "joy",    "use_when": "warm affection or heartfelt thanks",                             "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/thankful.fbx"] },
 
-    { "name": "bashful",     "category": "warmth", "use_when": "complimented, a little embarrassed, shy",                        "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/standing_pose.fbx"] },
+    { "name": "bashful",     "category": "warmth", "use_when": "complimented, a little embarrassed, shy",                        "type": "once", "render": "clip", "emotion": "happy",   "clips": ["/anim/bashful.fbx", "/anim/standing_pose.fbx"] },
     { "name": "wave_shy",    "category": "warmth", "use_when": "a timid hello, unsure",                                          "type": "once", "render": "clip", "emotion": null,      "clips": [] },
     { "name": "reach_out",   "category": "warmth", "use_when": "empathy or comfort when they're down",                           "type": "once", "render": "clip", "emotion": "sad",     "clips": [] },
 
@@ -38,10 +38,18 @@
     { "name": "slump",       "category": "low",    "use_when": "disappointment or bad news",                                     "type": "once", "render": "clip", "emotion": "sad",     "clips": [] },
     { "name": "facepalm",    "category": "low",    "use_when": "an 'oops', exasperation, a silly mistake",                       "type": "once", "render": "clip", "emotion": null,      "clips": [] },
     { "name": "flinch",      "category": "low",    "use_when": "alarm or a sudden error (good when a problem is found)",         "type": "once", "render": "clip", "emotion": "angry",   "clips": [] },
-    { "name": "dismiss",     "category": "low",    "use_when": "brushing something aside, 'never mind'",                         "type": "once", "render": "clip", "emotion": null,      "clips": [] },
+    { "name": "dismiss",     "category": "low",    "use_when": "brushing something aside, 'never mind'",                         "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/no.fbx"] },
 
-    { "name": "walk",        "category": "move",   "use_when": "moving toward something, or heading off to do a task",           "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/walk.fbx"] },
-    { "name": "run",         "category": "move",   "use_when": "urgency or excitement — hurrying",                               "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/running.fbx"] },
+    { "name": "walk",        "category": "move",   "use_when": "moving toward something, or heading off to do a task",           "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/walk.fbx", "/anim/walking.fbx"] },
+    { "name": "run",         "category": "move",   "use_when": "urgency or excitement — hurrying",                               "type": "loop", "render": "clip", "emotion": null,      "clips": ["/anim/running.fbx", "/anim/treadmill_running.fbx"] },
+    { "name": "turn_left",   "category": "move",   "use_when": "turning to look or head to your left",                          "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/left_turn.fbx"] },
+    { "name": "turn_right",  "category": "move",   "use_when": "turning to look or head to your right",                         "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/right_turn.fbx"] },
+    { "name": "raise_hand",  "category": "attend", "use_when": "volunteering, 'ooh, me!', or raising a point to speak",         "type": "once", "render": "clip", "emotion": null,      "clips": ["/anim/hand_raising.fbx"] },
+
+    { "name": "angry",       "category": "edge",   "use_when": "genuinely cross, fed up, or indignant",                         "type": "once", "render": "clip", "emotion": "angry",   "clips": ["/anim/angry.fbx"] },
+    { "name": "threaten",    "category": "edge",   "use_when": "a mock warning or playful 'don't you dare'",                     "type": "once", "render": "clip", "emotion": "angry",   "clips": ["/anim/threatening.fbx"] },
+    { "name": "insult",      "category": "edge",   "use_when": "a scornful, unimpressed jab; teasing disdain",                   "type": "once", "render": "clip", "emotion": "angry",   "clips": ["/anim/insult.fbx"] },
+    { "name": "argue",       "category": "edge",   "use_when": "pushing back hard, debating, standing your ground",              "type": "once", "render": "clip", "emotion": "angry",   "clips": ["/anim/arguing.fbx"] },
 
     { "name": "appear",      "category": "presence", "use_when": "entering, coming into view, or starting up",                   "type": "once", "render": "visibility", "visible": true,  "emotion": null },
     { "name": "disappear",   "category": "presence", "use_when": "leaving, fading out when done, or dismissed",                  "type": "once", "render": "visibility", "visible": false, "emotion": null }

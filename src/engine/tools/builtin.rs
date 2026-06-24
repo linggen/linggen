@@ -1142,7 +1142,7 @@ mod express_tests {
         let actions = schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum array");
-        assert_eq!(actions.len(), 36, "expected 36 intents from actions.json");
+        assert_eq!(actions.len(), 43, "expected 43 intents from actions.json");
 
         let names: Vec<&str> = actions.iter().filter_map(|v| v.as_str()).collect();
         for expected in [

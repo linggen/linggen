@@ -27,6 +27,8 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/browser-bridge-spec.md` — browser bridge: linggen-browser extension ↔ daemon, logged-in session reads (X), on-demand WS
 - `doc/room-spec.md` — rooms: community model sharing, credits, auto-dispatch
 - `doc/permission-spec.md` — permission system: modes, layers, tool classification, remote trust
+- `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
+- `doc/yinyue-companion-spec.md` — Yinyue's proactive/interactive layer: senses, heralds, `agent_chat`, ambient life-signs
 
 ## Build, Test, Run
 

@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.2.0] - 2026-06-24
+
+### Yinyue — the desktop companion
+
+A VRM avatar and conversational companion built into the runtime. She lives at
+the edge of the web UI, reads the room, speaks in her own voice, and gives the
+agents a face and a way to talk to each other. She runs as an ordinary Linggen
+session on the `yinyue` agent — same engine, persistence, and shared memory as
+any agent, with a narrow tool set and a spoken output sink. Design in
+`doc/yinyue-companion-spec.md`.
+
+- **Presence sensing** (`sense` tool) — she reads whether you're *typing*,
+  *reading*, or *away* from a privacy-light client beat (`POST /api/presence`:
+  recency + focus only, never keystrokes). Reactions are gated on it — quiet
+  while you're heads-down, a word when you've stepped away.
+- **Agent heralds** — her watch loop voices the moments that matter, in her own
+  words: an agent blocked on you (question or permission), a run that failed, a
+  background job finished. Silent on the routine.
+- **Relay an answer** (`answer_prompt` tool) — when an agent is parked on a
+  prompt, approve or answer it by telling Yinyue; she carries your word back and
+  the agent unblocks. She relays, never decides.
+- **Ambient life-signs** — a server-side jittered loop where she glances at the
+  day and, now and then, says one small unprompted thing. Mostly silent.
+- **`agent_chat`** — general one-way inter-agent messaging; any agent can message
+  any other. A message to a chat agent lands in its chat as `[Sender]: …` and the
+  agent responds there (routed to the session you're viewing); a message to
+  Yinyue she acts on (speaks or moves). A one-hop loop-break (a turn reached via
+  `agent_chat` can't emit another) keeps the user in the loop.
+- **`Express`** — avatar body control: a sustained mood + one-shot gestures (nod,
+  wave, dance, …). **Pet-scoped** — granted only to an agent that lists it, so a
+  worker agent on `tools: ["*"]` can't drive the avatar; it asks Yinyue via
+  `agent_chat` instead.
+- **Local voice** — she speaks via on-device TTS; bubble + lip-sync track the
+  audio.
+
+### Added
+
+- `sense`, `answer_prompt`, `agent_chat` built-in tools; `Express` advertised to
+  the companion.
+- Per-agent presence (`POST /api/presence`) and a focused-session signal
+  (`set_view_context`) so `agent_chat` delivers into the chat you're viewing.
+- Pet-scoped tool grants — a tool may be excluded from the `*` wildcard and
+  granted only to agents that list it explicitly.
+
+### Fixed
+
+- Avatar rest pose — arms hang in a natural A-pose on VRM1 rigs (the upper-arm
+  roll is mirrored vs VRM0).
+
 ## [1.1.2] - 2026-06-17
 
 ### Added
