@@ -20,6 +20,13 @@ pub enum AgentEvent {
         emotion: Option<String>,
         action: Option<String>,
     },
+    /// One agent sends a one-way message to another. Routed on the bus; a
+    /// recipient that watches the bus (Yinyue) picks up messages addressed to it.
+    AgentChat {
+        from: String,
+        to: String,
+        message: String,
+    },
     TaskUpdate {
         agent_id: String,
         task: String,

@@ -80,6 +80,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(ExpressTool),
             Arc::new(SenseTool),
             Arc::new(AnswerPromptTool),
+            Arc::new(AgentChatTool),
             Arc::new(AskUserTool),
             // Memory_query / Memory_write — engine-built-in (HTTP to
             // `ling-mem`). Previously routed through the now-defunct
@@ -986,6 +987,86 @@ impl Tool for AnswerPromptTool {
         });
         let what = if selected.is_empty() { args.answer } else { selected.join(", ") };
         Ok(ToolResult::Success(format!("relayed the user's answer: {what}")))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// agent_chat — one agent sends a one-way message to another
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct AgentChatArgs {
+    /// The recipient agent's id (e.g. "yinyue").
+    to: String,
+    /// The message to deliver.
+    message: String,
+}
+
+pub struct AgentChatTool;
+#[async_trait]
+impl Tool for AgentChatTool {
+    fn name(&self) -> &'static str { "agent_chat" }
+    fn aliases(&self) -> &'static [&'static str] { &["AgentChat"] }
+    fn description(&self) -> &'static str {
+        "Send a brief one-way message to another agent (e.g. tell Yinyue something \
+         worth surfacing to the user). Fire-and-forget — if you need a reply, use Task \
+         instead. You can't send if you were yourself reached via agent_chat."
+    }
+    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "Recipient agent id, e.g. \"yinyue\"." },
+                "message": { "type": "string", "description": "The message to deliver." }
+            },
+            "required": ["to", "message"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "agent_chat",
+            "args": { "to": "string", "message": "string" },
+            "returns": "ok / why not",
+            "notes": "One-way message to another agent (fire-and-forget; use Task for a reply). \
+                      Refused if you were reached via agent_chat — one hop, the user re-arms it."
+        })
+    }
+    async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        let args: AgentChatArgs = serde_json::from_value(call.args)
+            .map_err(|e| anyhow::anyhow!("invalid args for agent_chat: {}", e))?;
+        let from = tools.agent_id().unwrap_or("agent").to_string();
+        let to = args.to.trim().to_string();
+        if to.is_empty() {
+            return Ok(ToolResult::Success("no recipient given — nothing sent.".to_string()));
+        }
+        if to == from {
+            return Ok(ToolResult::Success("you can't message yourself.".to_string()));
+        }
+        // Loop-break: a turn that was itself woken by an agent_chat can't relay
+        // onward — the chain stops at one hop; a fresh user message re-arms it.
+        if let (Some(m), Some(sid)) = (tools.get_manager(), tools.session_id.as_deref()) {
+            if m.is_agent_chat_session(sid) {
+                return Ok(ToolResult::Success(
+                    "you were reached via agent_chat — you can't pass it on without the user in \
+                     the loop. If they need to act, ask them directly."
+                        .to_string(),
+                ));
+            }
+        }
+        if let Some(manager) = tools.get_manager() {
+            manager
+                .send_event(
+                    crate::engine::agent::AgentEvent::AgentChat {
+                        from,
+                        to: to.clone(),
+                        message: args.message,
+                    },
+                    tools.session_id.clone(),
+                )
+                .await;
+        }
+        Ok(ToolResult::Success(format!("sent to {to}.")))
     }
 }
 

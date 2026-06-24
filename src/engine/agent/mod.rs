@@ -67,6 +67,11 @@ pub struct AgentManager {
     /// (`POST /api/presence`) — only recency, focus, and a typing flag, never
     /// keystroke content. Read by the `sense` tool.
     presence: std::sync::Mutex<Presence>,
+    /// Sessions whose current turn was woken by an `agent_chat` — that turn may
+    /// not emit another `agent_chat` (the one-hop loop-break; a fresh user
+    /// message re-arms it). Turns serialize per session, so a session key is
+    /// unambiguous.
+    agent_chat_sessions: std::sync::Mutex<HashSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,6 +312,7 @@ impl AgentManager {
                 session_engines: Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
                 presence: std::sync::Mutex::new(Presence::default()),
+                agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
             }),
             rx,
         )
@@ -349,6 +355,25 @@ impl AgentManager {
     /// Current presence snapshot, for the `sense` tool.
     pub fn presence_snapshot(&self) -> Presence {
         self.presence.lock().unwrap().clone()
+    }
+
+    /// Mark a session's current turn as woken by an `agent_chat` (loop-break).
+    pub fn mark_agent_chat_session(&self, session_id: &str) {
+        self.agent_chat_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string());
+    }
+
+    /// Clear the agent_chat mark once the turn finishes.
+    pub fn clear_agent_chat_session(&self, session_id: &str) {
+        self.agent_chat_sessions.lock().unwrap().remove(session_id);
+    }
+
+    /// True while this session's current turn was woken by an `agent_chat` — the
+    /// `agent_chat` tool refuses to relay onward, so the chain stops at one hop.
+    pub fn is_agent_chat_session(&self, session_id: &str) -> bool {
+        self.agent_chat_sessions.lock().unwrap().contains(session_id)
     }
 
     pub async fn get_or_create_project(&self, root: PathBuf) -> Result<Arc<ProjectContext>> {

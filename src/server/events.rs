@@ -97,6 +97,13 @@ pub enum ServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<String>,
     },
+    /// One agent's one-way message to another. Internal — consumed by the
+    /// recipient's watch loop (Yinyue), never rendered as a UI banner.
+    AgentChat {
+        from: String,
+        to: String,
+        message: String,
+    },
     Message {
         from: String,
         to: String,
@@ -348,6 +355,9 @@ impl ServerEvent {
             }),
             AgentEvent::PlanUpdate { agent_id, plan } => {
                 Some(Self::PlanUpdate { agent_id, plan, session_id })
+            }
+            AgentEvent::AgentChat { from, to, message } => {
+                Some(Self::AgentChat { from, to, message })
             }
             AgentEvent::PetExpress { emotion, action } => {
                 Some(Self::PetExpress { emotion, action })

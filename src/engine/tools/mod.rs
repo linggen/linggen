@@ -263,6 +263,11 @@ impl Tools {
         self.manager.clone()
     }
 
+    /// The calling agent's id (the sender, for `agent_chat`).
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
     pub(crate) fn workspace_root(&self) -> &Path {
         &self.root
     }

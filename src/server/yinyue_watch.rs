@@ -107,6 +107,31 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 wake_herald(state, kickoff, "neutral").await;
             });
         }
+        // A peer agent sent Yinyue a message — she reads the room and decides
+        // whether to pass it to the user. The turn is tagged `agent_chat`, so she
+        // can't relay it onward (the one-hop loop-break).
+        ServerEvent::AgentChat { from, to, message } => {
+            if to != YINYUE_AGENT || from == YINYUE_AGENT {
+                return; // only her inbox today; never her own message back
+            }
+            let state = state.clone();
+            tokio::spawn(async move {
+                let kickoff = format!(
+                    "The agent \"{from}\" sent you a message: \"{message}\". If it's worth passing \
+                     to the user, say it in your voice — glance with `sense` first (a call-back if \
+                     they're away, a quiet word if they're here). One brief line, spoken aloud, \
+                     plain prose. If it's not worth interrupting them, reply with exactly SILENT."
+                );
+                if let Some(line) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
+                    if line.eq_ignore_ascii_case("silent") {
+                        tracing::info!("[yinyue-watch] chose silence (agent_chat)");
+                    } else {
+                        tracing::info!("[yinyue-watch] relays agent_chat ({} chars)", line.len());
+                        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+                    }
+                }
+            });
+        }
         _ => {} // firehose + everything else dropped here, near-free
     }
 }
@@ -238,7 +263,7 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
 /// blocked on the user. She reads the room (`sense`) and decides whether it's
 /// worth a word; `SILENT` means say nothing (the never-nag discipline).
 async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
-    let Some(line) = run_yinyue_turn(&state, kickoff).await else {
+    let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
         return; // run failed or she produced nothing
     };
     if line.eq_ignore_ascii_case("silent") {
@@ -302,7 +327,11 @@ async fn ambient_glance(state: &Arc<ServerState>) {
 /// persistence, restart-reload, auto-recall, capture, and compaction as Ling.
 /// The only Yinyue-specific bits are the rolling session id, the spoken output
 /// (handled by callers via `emit_speak`), and her narrow tool list (`yinyue.md`).
-pub(crate) async fn run_yinyue_turn(state: &Arc<ServerState>, task: String) -> Option<String> {
+pub(crate) async fn run_yinyue_turn(
+    state: &Arc<ServerState>,
+    task: String,
+    trigger_source: &str,
+) -> Option<String> {
     let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
@@ -354,6 +383,12 @@ pub(crate) async fn run_yinyue_turn(state: &Arc<ServerState>, task: String) -> O
         false,
     )
     .await;
+
+    // Loop-break: if this turn was woken by an agent_chat, mark the session so
+    // the agent_chat tool refuses to relay onward (one hop; user re-arms).
+    if trigger_source == "agent_chat" {
+        state.manager.mark_agent_chat_session(&session_id);
+    }
 
     let spoken = {
         let mut engine = agent.lock().await;
@@ -409,6 +444,10 @@ pub(crate) async fn run_yinyue_turn(state: &Arc<ServerState>, task: String) -> O
         engine.set_run_id(None);
         engine.last_assistant_text.clone()
     };
+
+    if trigger_source == "agent_chat" {
+        state.manager.clear_agent_chat_session(&session_id);
+    }
 
     // The turn core handles + persists its own errors; record the run as
     // completed and let an empty reply mean "nothing to say".
