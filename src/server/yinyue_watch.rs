@@ -19,6 +19,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::events::{NotificationPayload, ServerEvent};
@@ -246,6 +247,49 @@ async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
     }
     tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, {emotion})", line.len());
     crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Ambient life-signs — she glances at the day on a jittered cadence and, now
+// and then, says one small unprompted thing. Mostly she stays quiet.
+// ---------------------------------------------------------------------------
+
+/// Base wake interval — she wakes *occasionally*, not every few minutes.
+const AMBIENT_BASE_SECS: u64 = 1800; // ~30 min
+/// Added jitter (0..=this) so a remark never lands on the dot.
+const AMBIENT_JITTER_SECS: u64 = 1200; // up to ~20 min
+/// Settle after boot before the first glance.
+const AMBIENT_STARTUP_SECS: u64 = 240;
+
+/// Yinyue's ambient loop — a sibling to the event-reactive watch. On a jittered
+/// ~30–50 min cadence she glances at the day; most glances she stays silent, now
+/// and then she says one small thing in her own voice. Not a mission (no run-
+/// history clutter); the Pet master switch disables it.
+pub async fn yinyue_ambient_loop(state: Arc<ServerState>) {
+    tracing::info!("[yinyue-ambient] started");
+    tokio::time::sleep(Duration::from_secs(AMBIENT_STARTUP_SECS)).await;
+    loop {
+        let jitter = crate::util::now_ts_secs() % (AMBIENT_JITTER_SECS + 1);
+        tokio::time::sleep(Duration::from_secs(AMBIENT_BASE_SECS + jitter)).await;
+        ambient_glance(&state).await;
+    }
+}
+
+/// One ambient glance. She reads the room and decides whether a small remark
+/// fits — most of the time, nothing. Never narrates the user's work.
+async fn ambient_glance(state: &Arc<ServerState>) {
+    if !state.manager.get_config_snapshot().await.pet.enabled {
+        return; // pet off → no ambient life
+    }
+    let kickoff = "A quiet moment — no event, just you. Glance at how things are with `sense`, \
+        then decide. Most of the time there's nothing worth saying — reply with exactly SILENT. \
+        Only now and then, if a small natural remark genuinely fits — the hour, how the day's \
+        gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
+        prose. This is just you being present, never a report: never narrate their work or what \
+        an agent did. If they're heads-down working, let them be. Don't repeat what you said last \
+        time. When in doubt, SILENT."
+        .to_string();
+    wake_herald(state.clone(), kickoff, "neutral").await;
 }
 
 /// Run one Yinyue turn on her current rolling session and return her final line

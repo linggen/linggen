@@ -1104,6 +1104,10 @@ async fn prepare_server(
     {
         let yinyue_state = state.clone();
         tokio::spawn(yinyue_watch::yinyue_watch_loop(yinyue_state));
+        // Ambient life-signs: on a jittered cadence she glances at the day and,
+        // now and then, makes one small unprompted remark in her own voice
+        // (mostly she stays quiet). Sibling to the watch loop, not a mission.
+        tokio::spawn(yinyue_watch::yinyue_ambient_loop(state.clone()));
     }
 
     // Spawn the agent_run sweeper. Reaps `Running` rows older than the
