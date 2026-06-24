@@ -19,6 +19,7 @@ use super::{ToolCall, ToolResult, Tools};
 use crate::engine::permission::PermissionMode;
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::Timelike;
 use serde_json::{json, Value};
 use std::sync::{Arc, LazyLock};
 
@@ -77,6 +78,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(WebSearchTool),
             Arc::new(WebFetchTool),
             Arc::new(ExpressTool),
+            Arc::new(SenseTool),
             Arc::new(AskUserTool),
             // Memory_query / Memory_write — engine-built-in (HTTP to
             // `ling-mem`). Previously routed through the now-defunct
@@ -777,6 +779,104 @@ impl Tool for ExpressTool {
                 .await;
         }
         Ok(ToolResult::Success("ok".to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sense — Yinyue's perception of the room (presence + work + tempo)
+// ---------------------------------------------------------------------------
+
+pub struct SenseTool;
+#[async_trait]
+impl Tool for SenseTool {
+    fn name(&self) -> &'static str { "sense" }
+    fn aliases(&self) -> &'static [&'static str] { &["Sense"] }
+    fn description(&self) -> &'static str {
+        "Glance at the room before you react: whether the user is here (typing), \
+         present but reading, or away; how busy the day is; the hour. Your \
+         perception — read it to decide whether and how to respond. Never read it aloud."
+    }
+    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "sense",
+            "args": {},
+            "returns": "presence + work + tempo snapshot (JSON)",
+            "notes": "Glance at the room: presence (typing|present_reading|away), how busy \
+                      the day is, the hour. Your perception — decide from it; never read it aloud."
+        })
+    }
+    async fn execute(&self, tools: &Tools, _call: ToolCall) -> Result<ToolResult> {
+        let Some(manager) = tools.get_manager() else {
+            return Ok(ToolResult::Success(
+                json!({ "error": "no environment to sense" }).to_string(),
+            ));
+        };
+        let now = crate::util::now_ts_secs();
+
+        // Presence — derive the three-state read from the latest client beat.
+        let p = manager.presence_snapshot();
+        let beat_age = now.saturating_sub(p.updated_at);
+        let idle = now.saturating_sub(p.last_input_at);
+        let state = if p.updated_at == 0 || beat_age > 60 {
+            "away" // no live client reporting
+        } else if !p.focused {
+            "away" // tab hidden or blurred
+        } else if p.typing || idle < 5 {
+            "typing"
+        } else if idle < 120 {
+            "present_reading"
+        } else {
+            "away" // focused tab, but long idle — stepped away
+        };
+
+        // Work — what the *other* agents are doing (exclude her own session so
+        // she doesn't count her own glance/herald turns as the day's work).
+        let own_session = tools.session_id.as_deref();
+        let runs: Vec<_> = manager
+            .run_store
+            .list_runs(None)
+            .into_iter()
+            .filter(|r| Some(r.session_id.as_str()) != own_session)
+            .collect();
+        let active_runs = runs
+            .iter()
+            .filter(|r| matches!(r.status, crate::engine::agent::AgentRunStatus::Running))
+            .count();
+        let lt = chrono::Local::now();
+        let secs_since_midnight =
+            lt.hour() as u64 * 3600 + lt.minute() as u64 * 60 + lt.second() as u64;
+        let today_start = now.saturating_sub(secs_since_midnight);
+        let runs_today = runs.iter().filter(|r| r.started_at >= today_start).count();
+
+        // Tempo — the hour, in human terms.
+        let hour = lt.hour();
+        let part_of_day = match hour {
+            5..=11 => "morning",
+            12..=16 => "afternoon",
+            17..=21 => "evening",
+            _ => "night",
+        };
+
+        let snapshot = json!({
+            "presence": {
+                "state": state,
+                "focused": p.focused,
+                "typing": p.typing,
+                "idle_seconds": idle,
+                "beat_age_seconds": beat_age,
+            },
+            "work": { "active_runs": active_runs, "runs_today": runs_today },
+            "tempo": {
+                "local_time": lt.format("%H:%M").to_string(),
+                "hour": hour,
+                "part_of_day": part_of_day,
+            },
+        });
+        Ok(ToolResult::Success(snapshot.to_string()))
     }
 }
 

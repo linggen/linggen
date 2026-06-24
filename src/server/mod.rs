@@ -1056,6 +1056,7 @@ async fn prepare_server(
         .route("/api/bridge/call", post(bridge::call_handler))
         .route("/api/bridge/status", get(bridge::status_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
+        .route("/api/presence", post(api::yinyue::presence_handler))
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))

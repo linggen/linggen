@@ -17,6 +17,7 @@ import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
 import { recordSkillUsage } from '../components/SkillsCard';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
+import { startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
@@ -58,6 +59,10 @@ export const MainApp: React.FC = () => {
   const uiStore = useUiStore();
 
   const openSettings = useOpenSettings();
+
+  // Presence beat — tell the server whether the user is here (typing / reading /
+  // away) so Yinyue's `sense` can read the room. Owner UI only; mounts once.
+  useEffect(() => startPresenceBeat(), []);
 
   // Hide the main shell when an overlay route (Settings, Mission editor) is
   // active. We keep MainApp mounted so WebRTC stays alive — only the visual

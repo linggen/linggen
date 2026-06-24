@@ -63,6 +63,10 @@ pub struct AgentManager {
     /// Monotonic per-agent seq counter for short, memorable run ids
     /// (e.g. `ling01`, `ling02`). Resets on process restart.
     run_id_counters: std::sync::Mutex<HashMap<String, u64>>,
+    /// Live user-presence signal, fed by a throttled client beat
+    /// (`POST /api/presence`) — only recency, focus, and a typing flag, never
+    /// keystroke content. Read by the `sense` tool.
+    presence: std::sync::Mutex<Presence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +76,21 @@ pub struct WorkingPlaceEntry {
     pub agent_id: String,
     pub run_id: Option<String>,
     pub last_modified: u64,
+}
+
+/// Live user-presence signal fed by the web UI's throttled beat. Only recency,
+/// focus, and a typing flag — never keystroke content. The `sense` tool reads it
+/// so Yinyue can tell whether the user is here, reading, or away.
+#[derive(Debug, Clone, Default)]
+pub struct Presence {
+    /// Unix secs of the user's last input (key/pointer). 0 = never reported.
+    pub last_input_at: u64,
+    /// Tab/window focused at the last beat.
+    pub focused: bool,
+    /// User was actively typing at the last beat.
+    pub typing: bool,
+    /// Unix secs of the last beat — a stale value means no live client.
+    pub updated_at: u64,
 }
 
 impl AgentManager {
@@ -268,6 +287,7 @@ impl AgentManager {
                 global_sessions: SessionStore::with_sessions_dir(crate::paths::global_sessions_dir()),
                 session_engines: Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
+                presence: std::sync::Mutex::new(Presence::default()),
             }),
             rx,
         )
@@ -293,6 +313,23 @@ impl AgentManager {
 
     pub fn clear_tool_cancel_flag(&self, block_id: &str) {
         self.tool_cancel_flags.lock().unwrap().remove(block_id);
+    }
+
+    /// Record a presence beat from a client surface. `idle_ms` is how long since
+    /// the user's last input (key/pointer), measured client-side. Carries no
+    /// keystroke content — only recency, focus, and a typing flag.
+    pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64) {
+        let now = crate::util::now_ts_secs();
+        let mut p = self.presence.lock().unwrap();
+        p.last_input_at = now.saturating_sub(idle_ms / 1000);
+        p.focused = focused;
+        p.typing = typing;
+        p.updated_at = now;
+    }
+
+    /// Current presence snapshot, for the `sense` tool.
+    pub fn presence_snapshot(&self) -> Presence {
+        self.presence.lock().unwrap().clone()
     }
 
     pub async fn get_or_create_project(&self, root: PathBuf) -> Result<Arc<ProjectContext>> {

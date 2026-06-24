@@ -70,3 +70,29 @@ pub(crate) async fn chat_handler(
     });
     (StatusCode::OK, "ok").into_response()
 }
+
+#[derive(Deserialize)]
+pub(crate) struct PresenceBeat {
+    #[serde(default)]
+    pub focused: bool,
+    #[serde(default)]
+    pub typing: bool,
+    /// Milliseconds since the user's last input (key/pointer), measured client-side.
+    #[serde(default)]
+    pub idle_ms: u64,
+}
+
+/// POST /api/presence — a throttled liveness beat from a client surface. Carries
+/// only recency + focus + a typing flag (never keystroke content); feeds the
+/// `sense` tool so Yinyue can tell whether the user is here, reading, or away.
+/// Generic (not Yinyue-specific) but lives here as the companion is its only
+/// consumer today.
+pub(crate) async fn presence_handler(
+    State(state): State<Arc<ServerState>>,
+    Json(beat): Json<PresenceBeat>,
+) -> impl IntoResponse {
+    state
+        .manager
+        .update_presence(beat.focused, beat.typing, beat.idle_ms);
+    (StatusCode::OK, "ok").into_response()
+}
