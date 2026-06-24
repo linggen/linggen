@@ -72,6 +72,10 @@ pub struct AgentManager {
     /// message re-arms it). Turns serialize per session, so a session key is
     /// unambiguous.
     agent_chat_sessions: std::sync::Mutex<HashSet<String>>,
+    /// The most recent top-level session per agent: `agent_id → (session_id,
+    /// repo_path)`. Survives run completion (the run store is in-flight only), so
+    /// `agent_chat` can deliver a message into the agent's current chat.
+    latest_session_by_agent: std::sync::Mutex<HashMap<String, (String, String)>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +317,7 @@ impl AgentManager {
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
                 presence: std::sync::Mutex::new(Presence::default()),
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
+                latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
             }),
             rx,
         )
@@ -374,6 +379,23 @@ impl AgentManager {
     /// `agent_chat` tool refuses to relay onward, so the chain stops at one hop.
     pub fn is_agent_chat_session(&self, session_id: &str) -> bool {
         self.agent_chat_sessions.lock().unwrap().contains(session_id)
+    }
+
+    /// Record the agent's current top-level session (for `agent_chat` delivery).
+    pub fn record_latest_session(&self, agent_id: &str, session_id: &str, repo_path: &str) {
+        self.latest_session_by_agent.lock().unwrap().insert(
+            agent_id.to_string(),
+            (session_id.to_string(), repo_path.to_string()),
+        );
+    }
+
+    /// The agent's most recent top-level `(session_id, repo_path)`, if any.
+    pub fn latest_session(&self, agent_id: &str) -> Option<(String, String)> {
+        self.latest_session_by_agent
+            .lock()
+            .unwrap()
+            .get(agent_id)
+            .cloned()
     }
 
     pub async fn get_or_create_project(&self, root: PathBuf) -> Result<Arc<ProjectContext>> {

@@ -46,6 +46,13 @@ impl AgentManager {
             ended_at: None,
         };
         self.run_store.add_run(&record);
+        // Remember the agent's current top-level session so agent_chat can later
+        // deliver a message into the chat the user is actually using.
+        if record.parent_run_id.is_none() {
+            if let Some(sid) = session_id {
+                self.record_latest_session(agent_id, sid, &repo_path);
+            }
+        }
         self.clear_working_place_for_agent(&repo_path, agent_id)
             .await;
         self.cancelled_runs.lock().await.remove(&run_id);

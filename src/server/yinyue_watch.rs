@@ -107,30 +107,38 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 wake_herald(state, kickoff, "neutral").await;
             });
         }
-        // A peer agent sent Yinyue a message — she reads the room and decides
-        // whether to pass it to the user. The turn is tagged `agent_chat`, so she
-        // can't relay it onward (the one-hop loop-break).
+        // A peer agent sent a message. TO YINYUE → she receives it in her own
+        // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
+        // chat as a message from the sender, and that agent responds. Either way
+        // the recipient's turn is tagged `agent_chat` (one-hop loop-break).
         ServerEvent::AgentChat { from, to, message } => {
-            if to != YINYUE_AGENT || from == YINYUE_AGENT {
-                return; // only her inbox today; never her own message back
+            if from == to {
+                return; // no self-send (also guarded in the tool)
             }
             let state = state.clone();
-            tokio::spawn(async move {
-                let kickoff = format!(
-                    "The agent \"{from}\" sent you a message: \"{message}\". If it's worth passing \
-                     to the user, say it in your voice — glance with `sense` first (a call-back if \
-                     they're away, a quiet word if they're here). One brief line, spoken aloud, \
-                     plain prose. If it's not worth interrupting them, reply with exactly SILENT."
-                );
-                if let Some(line) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                    if line.eq_ignore_ascii_case("silent") {
-                        tracing::info!("[yinyue-watch] chose silence (agent_chat)");
-                    } else {
-                        tracing::info!("[yinyue-watch] relays agent_chat ({} chars)", line.len());
-                        crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+            if to == YINYUE_AGENT {
+                tokio::spawn(async move {
+                    let kickoff = format!(
+                        "The agent \"{from}\" sent you a message: \"{message}\". If it's worth \
+                         passing to the user, say it in your voice — glance with `sense` first \
+                         (a call-back if they're away, a quiet word if they're here). One brief \
+                         line, spoken aloud, plain prose. If it's not worth interrupting them, \
+                         reply with exactly SILENT."
+                    );
+                    if let Some(line) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
+                        if line.eq_ignore_ascii_case("silent") {
+                            tracing::info!("[yinyue-watch] chose silence (agent_chat)");
+                        } else {
+                            tracing::info!("[yinyue-watch] relays agent_chat ({} chars)", line.len());
+                            crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+                        }
                     }
-                }
-            });
+                });
+            } else {
+                tokio::spawn(async move {
+                    deliver_to_chat_agent(state, from, to, message).await;
+                });
+            }
         }
         _ => {} // firehose + everything else dropped here, near-free
     }
@@ -272,6 +280,87 @@ async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
     }
     tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, {emotion})", line.len());
     crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
+}
+
+/// Deliver an `agent_chat` message to a CHAT agent (Ling, …): show it in that
+/// agent's most-recent session as a message from the sender, then run the
+/// agent's turn so it responds in the chat. The session is marked
+/// `agent_chat`-triggered, so that turn can't relay onward (the loop-break).
+async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String, message: String) {
+    let Some((session_id, root)) = latest_session_for_agent(&state, &to) else {
+        tracing::info!("[agent-chat] '{from}'→'{to}': no open session to deliver to — dropped");
+        return;
+    };
+    let agent = match state
+        .manager
+        .get_or_create_session_agent(&session_id, &root, &to)
+        .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("[agent-chat] could not load '{to}': {e}");
+            return;
+        }
+    };
+    let run_id = state
+        .manager
+        .begin_agent_run(&root, Some(session_id.as_str()), &to, None, Some(format!("from {from}")))
+        .await
+        .unwrap_or_else(|_| format!("run-{to}-agentchat"));
+
+    // Show the incoming message in the chat, attributed to the sender.
+    crate::server::chat::helpers::persist_and_emit_message(
+        &state.manager,
+        &state.events_tx,
+        &root,
+        &to,
+        &from,
+        &to,
+        &message,
+        Some(&session_id),
+        false,
+    )
+    .await;
+
+    // Loop-break: this turn was reached via agent_chat → can't agent_chat onward.
+    state.manager.mark_agent_chat_session(&session_id);
+
+    {
+        let mut engine = agent.lock().await;
+        engine.set_parent_agent(None);
+        engine.set_run_id(Some(run_id.clone()));
+        engine.last_assistant_text = None;
+        let ctx = crate::server::chat::ChatRunCtx {
+            state: state.clone(),
+            manager: state.manager.clone(),
+            events_tx: state.events_tx.clone(),
+            root: root.clone(),
+            agent_id: to.clone(),
+            session_id: Some(session_id.clone()),
+            clean_msg: message,
+            images: Vec::new(),
+            policy: crate::engine::session_policy::SessionPolicy::owner(),
+        };
+        crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
+        engine.set_run_id(None);
+    }
+
+    state.manager.clear_agent_chat_session(&session_id);
+    let _ = state
+        .manager
+        .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
+        .await;
+    tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
+}
+
+/// The agent's most-recently-active top-level session + its repo root.
+/// `None` if the agent has never run (nowhere to deliver yet).
+fn latest_session_for_agent(
+    state: &Arc<ServerState>,
+    agent: &str,
+) -> Option<(String, std::path::PathBuf)> {
+    let (session_id, repo_path) = state.manager.latest_session(agent)?;
+    Some((session_id, std::path::PathBuf::from(repo_path)))
 }
 
 // ---------------------------------------------------------------------------
