@@ -66,6 +66,13 @@ pub enum NotificationPayload {
         agent_id: String,
         session_id: Option<String>,
     },
+    /// A top-level interactive run completed successfully. Yinyue may herald it,
+    /// but it fires on every reply — her watch presence-gates it (only worth a
+    /// word when the user has stepped away).
+    RunCompleted {
+        agent_id: String,
+        session_id: Option<String>,
+    },
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]

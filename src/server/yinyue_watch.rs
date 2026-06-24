@@ -60,9 +60,41 @@ pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
 /// Cheap, synchronous classifier. Matches the coarse triggers and spawns any
 /// async follow-up; every other event returns immediately.
 fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
-    let ServerEvent::Notification(payload) = event else {
-        return; // firehose + all other events dropped here, near-free
-    };
+    match event {
+        ServerEvent::Notification(payload) => handle_notification(state, payload),
+        // An agent parked on a question or a permission prompt — Yinyue heralds
+        // "they need you". One hook covers both AskUser-tool questions and
+        // permission approvals (the engine emits the same event for both).
+        ServerEvent::AskUser {
+            agent_id,
+            questions,
+            ..
+        } => {
+            if agent_id == YINYUE_AGENT {
+                return; // she's the one asking — not a herald
+            }
+            let summary = questions
+                .first()
+                .map(|q| q.question.clone())
+                .unwrap_or_else(|| "your input".to_string());
+            let state = state.clone();
+            tokio::spawn(async move {
+                let kickoff = format!(
+                    "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
+                     \"{summary}\". Tell the user in your voice — a gentle nudge if they're \
+                     here, more of a call-back if they've wandered off (glance with `sense`). \
+                     One brief line, spoken aloud, plain prose. If it truly doesn't warrant \
+                     interrupting, reply with exactly SILENT."
+                );
+                wake_herald(state, kickoff, "neutral").await;
+            });
+        }
+        _ => {} // firehose + everything else dropped here, near-free
+    }
+}
+
+/// Dispatch a notification payload to its reaction.
+fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
     match payload {
         // A background mission finished — wake Yinyue to decide whether it's worth
         // a word. A real LLM reaction, because she may have something to say.
@@ -103,6 +135,31 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 }
                 tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue surfaces it");
                 crate::server::api::yinyue::emit_speak(&state, error_line(), Some("sad".to_string()));
+            });
+        }
+        // A run finished cleanly. This fires on every reply, so only herald when
+        // the user has stepped away — otherwise they already see it on screen.
+        NotificationPayload::RunCompleted { agent_id, .. } => {
+            if agent_id == YINYUE_AGENT {
+                return; // never herald her own turns
+            }
+            if state
+                .manager
+                .presence_snapshot()
+                .state(crate::util::now_ts_secs())
+                != "away"
+            {
+                return; // they're here; the reply is already on screen
+            }
+            let state = state.clone();
+            tokio::spawn(async move {
+                let kickoff = format!(
+                    "A task by the agent \"{agent_id}\" just finished while the user was away \
+                     from Linggen. If it's worth telling them when they're back, say one brief \
+                     line in your voice (glance with `sense` first). If it's routine, reply with \
+                     exactly SILENT. Spoken aloud: plain prose, no markdown. Never nag."
+                );
+                wake_herald(state, kickoff, "happy").await;
             });
         }
     }
@@ -151,19 +208,26 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
          single word SILENT and nothing else. Be brief. Never nag."
     );
 
-    let Some(line) = run_yinyue_turn(&state, task).await else {
+    let emotion = if status.eq_ignore_ascii_case("completed") || status.to_lowercase().contains("success") {
+        "happy"
+    } else {
+        "neutral"
+    };
+    wake_herald(state, task, emotion).await;
+}
+
+/// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
+/// blocked on the user. She reads the room (`sense`) and decides whether it's
+/// worth a word; `SILENT` means say nothing (the never-nag discipline).
+async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
+    let Some(line) = run_yinyue_turn(&state, kickoff).await else {
         return; // run failed or she produced nothing
     };
     if line.eq_ignore_ascii_case("silent") {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return;
     }
-    let emotion = if status.eq_ignore_ascii_case("completed") || status.to_lowercase().contains("success") {
-        "happy"
-    } else {
-        "neutral"
-    };
-    tracing::info!("[yinyue-watch] Yinyue speaks ({} chars, {emotion})", line.len());
+    tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, {emotion})", line.len());
     crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
 }
 

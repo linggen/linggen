@@ -93,6 +93,25 @@ pub struct Presence {
     pub updated_at: u64,
 }
 
+impl Presence {
+    /// Derive the three-state read at `now` (unix secs): `"typing"` /
+    /// `"present_reading"` / `"away"`. The single source of this logic — both the
+    /// `sense` tool and Yinyue's herald watch read through it.
+    pub fn state(&self, now: u64) -> &'static str {
+        let beat_age = now.saturating_sub(self.updated_at);
+        let idle = now.saturating_sub(self.last_input_at);
+        if self.updated_at == 0 || beat_age > 60 || !self.focused {
+            "away" // no live client, or tab hidden/blurred
+        } else if self.typing || idle < 5 {
+            "typing"
+        } else if idle < 120 {
+            "present_reading"
+        } else {
+            "away" // focused tab, but long idle — stepped away
+        }
+    }
+}
+
 impl AgentManager {
     fn normalize_agent_id(agent_id: &str) -> String {
         agent_id.trim().to_lowercase()

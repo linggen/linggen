@@ -817,21 +817,11 @@ impl Tool for SenseTool {
         };
         let now = crate::util::now_ts_secs();
 
-        // Presence — derive the three-state read from the latest client beat.
+        // Presence — the three-state read from the latest client beat.
         let p = manager.presence_snapshot();
         let beat_age = now.saturating_sub(p.updated_at);
         let idle = now.saturating_sub(p.last_input_at);
-        let state = if p.updated_at == 0 || beat_age > 60 {
-            "away" // no live client reporting
-        } else if !p.focused {
-            "away" // tab hidden or blurred
-        } else if p.typing || idle < 5 {
-            "typing"
-        } else if idle < 120 {
-            "present_reading"
-        } else {
-            "away" // focused tab, but long idle — stepped away
-        };
+        let state = p.state(now);
 
         // Work — what the *other* agents are doing (exclude her own session so
         // she doesn't count her own glance/herald turns as the day's work).

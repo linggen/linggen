@@ -17,9 +17,14 @@ let lastKeyAt = 0;
 
 function snapshot(): { focused: boolean; typing: boolean; idle_ms: number } {
   const now = Date.now();
+  // "Active in Linggen" means Linggen is the focused surface — keystrokes in
+  // another app never reach this page, and a blurred/hidden tab reads as away.
+  // Gate `typing` on focus so the raw field can't claim activity while the user
+  // is off in another window.
+  const focused = document.hasFocus() && document.visibilityState === 'visible';
   return {
-    focused: document.hasFocus() && document.visibilityState === 'visible',
-    typing: now - lastKeyAt < TYPING_WINDOW_MS,
+    focused,
+    typing: focused && now - lastKeyAt < TYPING_WINDOW_MS,
     idle_ms: now - lastInputAt,
   };
 }

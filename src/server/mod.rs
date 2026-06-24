@@ -475,6 +475,9 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             // Internal signal that drives Yinyue's spoken apology — not a UI
             // banner (the failed turn already renders its own error message).
             NotificationPayload::RunFailed { .. } => None,
+            // Internal trigger for Yinyue's herald watch — never a UI banner
+            // (the completed turn already renders its own reply).
+            NotificationPayload::RunCompleted { .. } => None,
         },
         ServerEvent::TextSegment {
             agent_id,
