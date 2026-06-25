@@ -110,6 +110,12 @@ export interface Transport {
 
   /** Send a room chat message (fire-and-forget). */
   sendRoomChat?(text: string, senderName: string): void;
+
+  /** Join the Yinyue presenter registry — this surface can render her. The
+   *  server grants the singleton lock to the first subscriber (FCFS). */
+  sendYinyueSubscribe?(): void;
+  /** Leave the Yinyue presenter registry (on unmount / before unload). */
+  sendYinyueRelease?(): void;
 }
 
 // ---------------------------------------------------------------------------

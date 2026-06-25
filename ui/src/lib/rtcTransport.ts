@@ -43,6 +43,9 @@ export class RtcTransport implements Transport {
   private config: RtcTransportConfig;
   private pc: RTCPeerConnection | null = null;
   private controlChannel: RTCDataChannel | null = null;
+  // Sticky intent: this surface wants to be a Yinyue presenter candidate.
+  // Re-sent on every (re)connect so the FCFS lock survives reconnects.
+  private yinyueSubscribed = false;
   private sessionChannels = new Map<string, RTCDataChannel>();
   private _status: TransportStatus = 'disconnected';
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -156,6 +159,23 @@ export class RtcTransport implements Transport {
     } else {
       // Queue — will be sent when control channel opens
       this.pendingViewContext = ctx;
+    }
+  }
+
+  /** Join the Yinyue presenter registry — this surface renders her if it wins
+   *  the FCFS lock. Intent is sticky so it re-subscribes after a reconnect. */
+  sendYinyueSubscribe(): void {
+    this.yinyueSubscribed = true;
+    if (this.controlChannel?.readyState === 'open') {
+      this.controlChannel.send(JSON.stringify({ type: 'yinyue_subscribe' }));
+    }
+  }
+
+  /** Leave the Yinyue presenter registry (unmount / before unload). */
+  sendYinyueRelease(): void {
+    this.yinyueSubscribed = false;
+    if (this.controlChannel?.readyState === 'open') {
+      this.controlChannel.send(JSON.stringify({ type: 'yinyue_release' }));
     }
   }
 
@@ -277,6 +297,10 @@ export class RtcTransport implements Transport {
       // Resolve the ready promise so pending controlRequest calls proceed.
       if (this.readyResolve) { this.readyResolve(); this.readyResolve = null; }
       this.flushPendingViewContext();
+      // Re-assert Yinyue presenter candidacy after a (re)connect.
+      if (this.yinyueSubscribed) {
+        this.controlChannel?.send(JSON.stringify({ type: 'yinyue_subscribe' }));
+      }
       this.callbacks.onReconnect?.();
       this.startHeartbeat();
       for (const sid of this.pendingSubscriptions) {

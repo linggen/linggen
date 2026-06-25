@@ -41,7 +41,14 @@ pub async fn run() -> Result<()> {
 
     let client = reqwest::Client::builder()
         .user_agent("linggen")
-        .timeout(Duration::from_secs(60))
+        // Release assets are ~70 MB. A single OVERALL `.timeout()` strangles the
+        // download on a slow link — 60s wasn't enough at ~1 MB/s, so the body
+        // read tripped "operation timed out" mid-transfer. Use a connect timeout
+        // (fail fast on a dead host) plus a read/stall timeout (fail only if the
+        // stream goes quiet), so a slow-but-progressing transfer of any size
+        // completes instead of being killed by a wall-clock cap.
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
         .build()
         .context("Failed to build HTTP client")?;
 

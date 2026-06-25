@@ -157,6 +157,9 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         }),
         // Internal: consumed by Yinyue's watch loop, never a UI banner.
         ServerEvent::AgentChat { .. } => None,
+        // Per-peer — handled directly in forward.rs (the present flag depends on
+        // the receiving peer's id), so it never goes through this shared mapping.
+        ServerEvent::YinyuePresenterChanged => None,
         ServerEvent::Message { from, to, content, session_id, run_id, parent_agent_id } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(UiEvent {
@@ -838,6 +841,8 @@ async fn prepare_server(
         tts: api::tts::default_provider(),
         bridge: Arc::new(bridge::BridgeHub::new()),
         current_view: Arc::new(std::sync::Mutex::new(None)),
+        yinyue_presenters: Arc::new(std::sync::Mutex::new(Vec::new())),
+        next_peer_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     });
 
     // Flush token usage to disk every 30 seconds.

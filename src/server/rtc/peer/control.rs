@@ -29,6 +29,7 @@ pub(super) fn handle_control_message(
     view_ctx: &mut crate::server::rtc::page_state::ViewContext,
     force_page_state: &mut bool,
     user_ctx: &crate::server::rtc::UserContext,
+    peer_id: u64,
 ) -> Option<ControlRequest> {
     let msg: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -96,6 +97,18 @@ pub(super) fn handle_control_message(
                 view_ctx.session_id,
                 view_ctx.project_root
             );
+            None
+        }
+
+        // Yinyue presenter lock (FCFS singleton). A surface that renders her
+        // subscribes on mount; the server grants the lock to the first
+        // subscriber and tells the others (via `yinyue_present`) to stay blank.
+        "yinyue_subscribe" => {
+            state.yinyue_subscribe(peer_id);
+            None
+        }
+        "yinyue_release" => {
+            state.yinyue_release(peer_id);
             None
         }
 

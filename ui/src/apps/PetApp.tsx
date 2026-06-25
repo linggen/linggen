@@ -13,8 +13,13 @@
 import React, { useEffect } from 'react';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { YinyueBubble } from '../components/YinyueBubble';
+import { useYinyuePresenter } from '../hooks/useTransport';
 
 export const PetApp: React.FC = () => {
+  // Subscribe to the server's FCFS presenter lock. The pet window normally wins
+  // (it opens first / stays open), but if another surface already holds her this
+  // window stays blank until it's free — one Yinyue, server-arbitrated.
+  const showYinyue = useYinyuePresenter();
   // She rides in a transparent always-on-top window; keep the page see-through
   // so only her body paints (the WebGL canvas already clears with alpha).
   useEffect(() => {
@@ -31,9 +36,9 @@ export const PetApp: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-transparent">
-      <YinyueAvatar />
+      {showYinyue && <YinyueAvatar />}
       {/* Her reply text — without this the pet window shows no response. */}
-      <YinyueBubble variant="pet" />
+      {showYinyue && <YinyueBubble variant="pet" />}
     </div>
   );
 };

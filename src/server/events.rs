@@ -78,6 +78,11 @@ pub enum NotificationPayload {
 #[serde(tag = "type")]
 pub enum ServerEvent {
     StateUpdated,
+    /// The Yinyue presenter set changed (a surface subscribed / released /
+    /// disconnected). Carries no payload: each peer re-evaluates whether IT is
+    /// the FCFS holder (against its own peer id) and the holder renders her
+    /// while every other surface stays blank. See `ServerState::yinyue_*`.
+    YinyuePresenterChanged,
     /// The pet has something to say — a pushed "speak" cue for every surface
     /// (pet / menubar / web overlay). Carries the line and an optional emotion;
     /// the surface fetches the audio from `/api/tts` and renders the bubble +

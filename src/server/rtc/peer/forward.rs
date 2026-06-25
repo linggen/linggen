@@ -28,6 +28,9 @@ pub(super) struct EventFilter<'a> {
     pub(super) view: Option<&'a str>,
     /// For embed: the pinned session id. Broadcasts from other sessions are dropped.
     pub(super) pinned_session_id: Option<&'a str>,
+    /// This peer's id in the Yinyue presenter registry — used to decide whether
+    /// THIS surface is the singleton holder (gets her voice/expression) or not.
+    pub(super) peer_id: u64,
 }
 
 pub(super) fn forward_event_to_channels(
@@ -47,6 +50,29 @@ pub(super) fn forward_event_to_channels(
         return;
     }
 
+    // Yinyue presenter changed → tell THIS peer whether it now holds the lock.
+    // The flag is per-peer (it compares the registry head to our own peer id),
+    // so it can't go through the shared event→ui mapping — write the present
+    // signal straight to the control channel.
+    if matches!(event, crate::server::ServerEvent::YinyuePresenterChanged) {
+        if let Some(cid) = control_channel_id {
+            let present = state.yinyue_holder() == Some(filter.peer_id);
+            let seq = state
+                .event_seq
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let msg = serde_json::json!({
+                "seq": seq,
+                "kind": "yinyue_present",
+                "session_id": serde_json::Value::Null,
+                "data": { "present": present },
+            });
+            if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                pending_dc_writes.push_back((cid, msg.to_string()));
+            }
+        }
+        return;
+    }
+
     // Prune expired pending event buffers (older than 60s)
     let now = Instant::now();
     pending_events.retain(|_, (created, _)| now.duration_since(*created) < Duration::from_secs(60));
@@ -58,6 +84,17 @@ pub(super) fn forward_event_to_channels(
         Some(msg) => msg,
         None => return,
     };
+
+    // Yinyue singleton: her voice (`pet_speak`) and expression (`pet_express`)
+    // go ONLY to the presenter — the FCFS lock holder — so that with multiple
+    // surfaces open (tabs, apps, the desktop pet) she renders and speaks in just
+    // one place. Applies to every peer, admin included (the gate sits above the
+    // user-filter, which otherwise whitelists these global kinds to all peers).
+    if matches!(ui_msg.kind.as_str(), "pet_speak" | "pet_express")
+        && state.yinyue_holder() != Some(filter.peer_id)
+    {
+        return;
+    }
 
     let dbg_sid = ui_msg.session_id.clone().unwrap_or_else(|| "-".to_string());
     let dbg_kind = ui_msg.kind.clone();

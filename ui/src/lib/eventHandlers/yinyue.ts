@@ -69,7 +69,18 @@ function flushExpress(): void {
 /** Pet expression cue — emotion and/or a one-shot gesture for the avatar. Held
  *  until her voice begins so it lands with the bubble + voice; if no speech
  *  follows shortly it fires on its own (a silent gesture). */
+/** Per-peer presenter push: does THIS surface hold the FCFS singleton lock?
+ *  Drives whether her avatar/bubble mount (parent gates on the store flag) and
+ *  guards her voice/expression below. */
+export function handleYinyuePresent(item: UiEvent): void {
+  const present = !!(item.data as { present?: boolean } | undefined)?.present;
+  useUiStore.getState().setYinyuePresenter(present);
+}
+
 export function handlePetExpress(item: UiEvent): void {
+  // Singleton guard: only the presenter renders her (server already unicasts
+  // pet events to the holder; this is belt-and-suspenders across handoffs).
+  if (!useUiStore.getState().yinyuePresenter) return;
   const emotion = item.data?.emotion as string | undefined;
   const action = item.data?.action as string | undefined;
   if (!emotion && !action) return;
@@ -95,6 +106,8 @@ export function handlePetExpress(item: UiEvent): void {
 }
 
 export function handlePetSpeak(item: UiEvent): void {
+  // Singleton guard: only the presenter speaks (see handlePetExpress).
+  if (!useUiStore.getState().yinyuePresenter) return;
   const text = ((item.data?.text as string | undefined) ?? item.text ?? '').trim();
   if (!text) return;
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';

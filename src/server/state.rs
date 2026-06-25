@@ -69,6 +69,13 @@ pub struct ServerState {
     /// `(session_id, project_root)`. Lets `agent_chat` deliver into the chat the
     /// user actually has open; falls back to the agent's latest session.
     pub current_view: Arc<std::sync::Mutex<Option<(String, String)>>>,
+    /// Yinyue presenter registry (FCFS singleton). Ordered list of subscribed
+    /// peer ids; the HEAD holds the presenter lock — the one surface that
+    /// renders her 3D model + plays her voice + bubble. Other surfaces stay
+    /// blank. On the holder's disconnect the next subscriber is promoted.
+    pub yinyue_presenters: Arc<std::sync::Mutex<Vec<u64>>>,
+    /// Monotonic id source for WebRTC peers (presenter-registry key).
+    pub next_peer_id: Arc<AtomicU64>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveStatusRecord {
@@ -77,6 +84,51 @@ pub(crate) struct ActiveStatusRecord {
     detail: Option<String>,
 }
 impl ServerState {
+    /// Mint a unique id for a new WebRTC peer (presenter-registry key).
+    pub fn mint_peer_id(&self) -> u64 {
+        self.next_peer_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The peer currently holding the Yinyue presenter lock (head of the FCFS
+    /// registry), if any.
+    pub fn yinyue_holder(&self) -> Option<u64> {
+        self.yinyue_presenters.lock().unwrap().first().copied()
+    }
+
+    /// Subscribe a peer as a Yinyue presenter candidate (append if absent). The
+    /// first subscriber becomes the holder; later ones queue behind it (FCFS).
+    /// Broadcasts `YinyuePresenterChanged` so every peer re-evaluates whether it
+    /// is now the holder.
+    pub fn yinyue_subscribe(&self, peer_id: u64) {
+        let changed = {
+            let mut reg = self.yinyue_presenters.lock().unwrap();
+            if reg.contains(&peer_id) {
+                false
+            } else {
+                reg.push(peer_id);
+                true
+            }
+        };
+        if changed {
+            let _ = self.events_tx.send(ServerEvent::YinyuePresenterChanged);
+        }
+    }
+
+    /// Remove a peer from the Yinyue registry (explicit release or disconnect).
+    /// If it was the holder, the next subscriber is promoted. No-op if the peer
+    /// never subscribed.
+    pub fn yinyue_release(&self, peer_id: u64) {
+        let changed = {
+            let mut reg = self.yinyue_presenters.lock().unwrap();
+            let before = reg.len();
+            reg.retain(|&id| id != peer_id);
+            reg.len() != before
+        };
+        if changed {
+            let _ = self.events_tx.send(ServerEvent::YinyuePresenterChanged);
+        }
+    }
+
     /// Back-compat shim — callers that don't yet thread run_id can keep using
     /// this. Internally forwards to `send_agent_status_with_ids` with None.
     pub async fn send_agent_status(

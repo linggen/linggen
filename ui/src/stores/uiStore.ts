@@ -96,6 +96,12 @@ interface UiState {
   petSpeaking: boolean;
   setPetSpeaking: (v: boolean) => void;
 
+  // Yinyue presenter — true when THIS surface holds the server's FCFS singleton
+  // lock and should render her avatar + bubble + play her voice. Set by the
+  // `yinyue_present` control push. Others stay false (blank + silent).
+  yinyuePresenter: boolean;
+  setYinyuePresenter: (v: boolean) => void;
+
   // Actions
   setCurrentPage: (page: Page) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -159,6 +165,9 @@ export const useUiStore = create<UiState>((set) => ({
     }, ms);
   },
   clearYinyueSpeech: () => set({ yinyueSpeech: null }),
+
+  yinyuePresenter: false,
+  setYinyuePresenter: (v) => set({ yinyuePresenter: v }),
 
   petExpress: null,
   pushPetExpress: (emotion, action) => {

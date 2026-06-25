@@ -26,7 +26,7 @@ import { useUserStore } from '../stores/userStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { useRunInfo } from '../hooks/useRunInfo';
 import { useChatActions } from '../hooks/useChatActions';
-import { sendViewContext } from '../hooks/useTransport';
+import { sendViewContext, useYinyuePresenter } from '../hooks/useTransport';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import { useLocation } from 'react-router-dom';
 
@@ -60,6 +60,11 @@ export const MainApp: React.FC = () => {
   const agentStore = useServerStore();
   const chatStore = useChatStore();
   const uiStore = useUiStore();
+
+  // Yinyue singleton: subscribe this surface (the in-page dock) to the server's
+  // FCFS presenter lock and render her only when this surface holds it. In an
+  // app shell the native pet window owns her, so the dock never presents.
+  const showYinyue = useYinyuePresenter(!isAppMode);
 
   const openSettings = useOpenSettings();
 
@@ -270,7 +275,7 @@ export const MainApp: React.FC = () => {
   return (
     <>
       <ToastContainer />
-      <YinyueBubble />
+      {showYinyue && <YinyueBubble />}
       <div className={`flex flex-col h-screen bg-slate-100/70 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 font-sans overflow-hidden${isOverlayRoute ? ' hidden' : ''}`}>
         {/* Header */}
         <HeaderBar
@@ -329,9 +334,10 @@ export const MainApp: React.FC = () => {
               <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
                 <InfoPanel {...infoPanelProps} />
               </div>
-              {/* Yinyue's dock — reserved space, click her to talk. In an app
-                  shell she's a separate native window, so drop the dock. */}
-              {!isAppMode && (
+              {/* Yinyue's dock — reserved space, click her to talk. Shown only
+                  when this surface holds the singleton presenter lock (and never
+                  in an app shell, where the native pet window owns her). */}
+              {showYinyue && (
                 <div className="h-72 shrink-0 border-t border-slate-200 dark:border-white/5">
                   <YinyueAvatar />
                 </div>

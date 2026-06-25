@@ -38,6 +38,9 @@ export const EVENT_KINDS = [
   'pet_speak',
   // Pet expression — emotion / one-shot gesture for the avatar (global).
   'pet_express',
+  // Pet presenter — per-peer push: does THIS surface hold the FCFS singleton
+  // lock (render + voice) or stay blank.
+  'yinyue_present',
 
   // Control-channel pushes (not strictly UiEvent, but routed through the same
   // dispatcher because they carry a `kind` discriminator).

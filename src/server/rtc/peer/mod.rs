@@ -111,15 +111,23 @@ async fn create_peer_inner(
     // Spawn the peer event loop. Track peer lifetime in active_peer_count
     // so the idle-shutdown watcher knows when no clients remain.
     let events_rx = state.events_tx.subscribe();
+    // Unique id for the Yinyue presenter registry (FCFS singleton lock).
+    let peer_id = state.mint_peer_id();
     state
         .active_peer_count
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let counter = state.active_peer_count.clone();
+    let cleanup_state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_peer(rtc, socket, candidate_addr, state, events_rx, user_ctx).await {
+        if let Err(e) =
+            run_peer(rtc, socket, candidate_addr, state, events_rx, user_ctx, peer_id).await
+        {
             tracing::warn!("WebRTC peer exited: {e:#}");
         }
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        // Release the Yinyue presenter lock on disconnect (no-op if this peer
+        // never subscribed); if it held the lock, the next subscriber is promoted.
+        cleanup_state.yinyue_release(peer_id);
     });
 
     Ok(answer_sdp)
@@ -137,6 +145,7 @@ async fn run_peer(
     state: Arc<ServerState>,
     mut events_rx: tokio::sync::broadcast::Receiver<crate::server::ServerEvent>,
     user_ctx: super::UserContext,
+    peer_id: u64,
 ) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut control_channel_id = None;
@@ -350,6 +359,7 @@ async fn run_peer(
                                 &mut view_ctx,
                                 &mut force_page_state,
                                 &user_ctx,
+                                peer_id,
                             ) {
                                 // Enforce consumer permissions: browser consumers can only chat
                                 // and load static assets. All dynamic data (sessions, models,
@@ -631,6 +641,7 @@ async fn run_peer(
                             } else {
                                 None
                             },
+                            peer_id,
                         };
                         forward_event_to_channels(
                             &event, &session_channels, control_channel_id,
