@@ -93,13 +93,21 @@ her persona, or build another companion the same way. See
 
 ## Apps built on Linggen
 
+- **[CFO](https://linggen.dev/apps/cfo)** — Personal CFO. Import bank and card CSV/PDF exports; it builds a spend report, catches subscriptions and price hikes, answers "why did I spend more this month?", and drafts cancellation emails. Data never leaves the machine. Bundled `.app` available.
 - **[Sys Doctor](https://linggen.dev/apps/sysdoctor)** — AI health analyst for your Mac. Disk, security, performance, dormant apps, buyer's guide. Bundled `.app` available.
-- **Memory** — `ling-mem` skill. LanceDB semantic store with typed facts, embeddings, first-class forgetting. Same store reachable from Linggen, Claude Code, or any tool that can shell out.
+- **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts for X and Reddit at launch time.
 - **Model Sharing** — Rooms. Open one and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman, owner controls budget and tools.
-- **Architecture Guardian** — Agent + mission. Reviews code and updates dependency graphs on a schedule, flags design violations.
-- **DevOps** — Mission. Monitor CI/CD, auto-fix flaky tests, manage deployments — all defined in markdown.
 
 Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [linggen.dev/skills](https://linggen.dev/skills).
+
+---
+
+## Memory
+
+Linggen's filesystem is a memory store. Facts live as core markdown plus a
+LanceDB semantic index — typed entries, embeddings, and first-class forgetting,
+reachable from Linggen, Claude Code, or Codex. Powered by
+[`ling-mem`](https://github.com/linggen/linggen-memory).
 
 ---
 
@@ -154,25 +162,6 @@ your machine; no VPN, no port forwarding.
 - [Insight](doc/insight.md) — vision, roadmap, problems Linggen solves
 - [Skill spec](doc/skill-spec.md) — how to write skills
 - [Full docs](https://linggen.dev/docs) — guides and reference
-
----
-
-## Telemetry
-
-Linggen sends a small amount of anonymous usage data to `https://linggen.dev/api/track` so we can see whether the project is being used and where to invest. Specifically:
-
-- **`install`** — once on first launch on a machine, and once after each upgrade. Includes the install source (`wrapper`, `brew`, `cargo`, `sys-doctor`, `unknown`) and the previous + current versions.
-- **`command`** — one event per meaningful action: `engine.start` (each daemon start), `session.start`, `skill.<name>.open`, etc. The verb is a short stable identifier; no chat content, no file paths, no model output.
-- **`system_state`** — included in `engine.start` payload: which sibling Linggen products (Sys Doctor, ling-mem) are detected on this machine via marker files in `~/.linggen/`. Lets us track adoption of those products without each needing its own phone-home.
-
-What's **never** sent: chat messages, prompts, model responses, file contents, paths, embeddings, your IP (the receiver doesn't store it), or any user-identifying string. The `installation_id` is a random UUIDv4 generated on first run and stored at `~/.linggen/installation_id`.
-
-**Disabling telemetry:**
-
-- Runtime: set `LINGGEN_NO_TELEMETRY=1`, or `touch ~/.linggen/no-telemetry`.
-- Compile time: build with `cargo build --release --no-default-features` (no telemetry code is even linked in).
-
-Source is open on both ends: client at [`src/telemetry/`](src/telemetry/), receiver at [`linggensite/functions/api/_lib/analytics.ts`](https://github.com/linggen/linggensite/blob/main/functions/api/_lib/analytics.ts). No third-party analytics — only `linggen.dev/api/track`.
 
 ---
 
