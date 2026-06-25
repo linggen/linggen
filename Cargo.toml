@@ -61,7 +61,15 @@ gethostname = "1.1.0"
 open = "5.3.3"
 urlencoding = "2.1.3"
 flate2 = "1.1.9"
+
+# any-tts (Kokoro voice). `metal` + `accelerate` are Apple-only candle backends
+# — they pull in objc2*, which `compile_error!`s on non-Apple targets — so enable
+# them only on macOS. Other platforms build the portable CPU candle backend.
+[target.'cfg(target_os = "macos")'.dependencies]
 any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "download"] }
 
 # Optimize dependencies even in dev builds. The engine crate itself stays at
 # opt-level 0 (fast incremental compiles), but numerical deps like candle
