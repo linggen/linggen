@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.1] - 2026-06-25
+
+### Fixed
+
+- **Self-updater on slow links** — `ling update` replaced its single 60s overall
+  request timeout (which killed the ~70 MB asset download mid-transfer on a slow
+  connection) with separate connect and read/stall timeouts, so a slow-but-
+  progressing download of any size now completes.
+- **Yinyue presenter across multiple surfaces** — with several tabs or apps open,
+  Yinyue now renders and speaks in exactly one place. The server arbitrates a
+  first-come-first-served presenter lock and unicasts speech/gestures to the
+  holder instead of broadcasting, and promotes the next surface when the holder
+  disconnects.
+
 ## [1.2.0] - 2026-06-24
 
 ### Yinyue — the desktop companion
