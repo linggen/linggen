@@ -683,7 +683,19 @@ export class PetStage {
     cancelAnimationFrame(this.raf);
     this.resizeObs.disconnect();
     this.mixer?.stopAllAction();
-    if (this.vrm) VRMUtils.deepDispose?.(this.vrm.scene);
+    if (this.vrm) {
+      this.mixer?.uncacheRoot(this.vrm.scene);
+      VRMUtils.deepDispose?.(this.vrm.scene);
+    }
+    this.clipCache.clear();
+    this.mixer = null;
+    this.vrm = null;
+    this.currentAction = null;
+    // renderer.dispose() frees GPU programs/buffers but NOT the WebGL context.
+    // Force the context loss so repeated mount/unmount cycles (route changes,
+    // React StrictMode) don't exhaust the browser's ~16-context cap — which
+    // would otherwise leave the avatar a black canvas.
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 }

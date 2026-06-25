@@ -151,6 +151,28 @@ impl AgentEngine {
             .unwrap_or(tool.as_str())
             .to_string();
 
+        // --- pet-scoping gate (defense-in-depth) ---
+        // Pet/companion tools (Express) drive the on-screen avatar and only run
+        // for an agent that lists them EXPLICITLY. The model-facing schema already
+        // hides them from `*` (wildcard) agents (tool_registry `is_allowed`), but
+        // the permission gate below is skipped when allowed_tools is None (`*`), so
+        // a hallucinated or legacy emission by a worker agent would otherwise
+        // execute. Mirror the schema rule here: only an explicit listing grants it.
+        if tools::is_pet_scoped(&canonical_tool)
+            && !matches!(allowed_tools, Some(set) if set.contains(canonical_tool.as_str()))
+        {
+            let rendered = format!(
+                "tool_not_allowed: tool={} reason=pet_scoped: only the pet agent may drive the avatar; ask Yinyue via agent_chat instead",
+                canonical_tool
+            );
+            self.upsert_observation("error", &canonical_tool, rendered.clone());
+            let _ = self
+                .persist_observation(&canonical_tool, &rendered, session_id)
+                .await;
+            messages.push(self.tool_result_msg_for(rendered, &tool_call_id, &canonical_tool));
+            return PreExecOutcome::Blocked(LoopControl::Continue);
+        }
+
         // --- permission gate ---
         if let Some(allowed) = allowed_tools {
             if !self.is_tool_allowed(allowed, &tool) {

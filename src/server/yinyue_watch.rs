@@ -338,11 +338,13 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
     )
     .await;
 
-    // Loop-break: this turn was reached via agent_chat → can't agent_chat onward.
-    state.manager.mark_agent_chat_session(&session_id);
-
     {
         let mut engine = agent.lock().await;
+        // Loop-break: this turn was reached via agent_chat → it can't agent_chat
+        // onward. Mark/clear INSIDE the engine lock so the flag's lifetime matches
+        // exactly the turn that owns the engine — a concurrent turn on the same
+        // session can't observe or clear another turn's mark.
+        state.manager.mark_agent_chat_session(&session_id);
         engine.set_parent_agent(None);
         engine.set_run_id(Some(run_id.clone()));
         engine.last_assistant_text = None;
@@ -359,9 +361,9 @@ async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         engine.set_run_id(None);
+        state.manager.clear_agent_chat_session(&session_id);
     }
 
-    state.manager.clear_agent_chat_session(&session_id);
     let _ = state
         .manager
         .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
@@ -504,14 +506,16 @@ pub(crate) async fn run_yinyue_turn(
     )
     .await;
 
-    // Loop-break: if this turn was woken by an agent_chat, mark the session so
-    // the agent_chat tool refuses to relay onward (one hop; user re-arms).
-    if trigger_source == "agent_chat" {
-        state.manager.mark_agent_chat_session(&session_id);
-    }
-
     let spoken = {
         let mut engine = agent.lock().await;
+        // Loop-break: if this turn was woken by an agent_chat, mark the session so
+        // the agent_chat tool refuses to relay onward (one hop; user re-arms).
+        // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the
+        // turn holding the engine — a concurrent same-session turn can't observe
+        // or clear another turn's mark.
+        if trigger_source == "agent_chat" {
+            state.manager.mark_agent_chat_session(&session_id);
+        }
         engine.set_parent_agent(None);
         engine.set_run_id(Some(run_id.clone()));
         // Clear so we read THIS turn's final line — the engine is reused across
@@ -562,12 +566,11 @@ pub(crate) async fn run_yinyue_turn(
         .await;
 
         engine.set_run_id(None);
+        if trigger_source == "agent_chat" {
+            state.manager.clear_agent_chat_session(&session_id);
+        }
         engine.last_assistant_text.clone()
     };
-
-    if trigger_source == "agent_chat" {
-        state.manager.clear_agent_chat_session(&session_id);
-    }
 
     // The turn core handles + persists its own errors; record the run as
     // completed and let an empty reply mean "nothing to say".
