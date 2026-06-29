@@ -111,7 +111,7 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
         // the recipient's turn is tagged `agent_chat` (one-hop loop-break).
-        ServerEvent::AgentChat { from, to, message } => {
+        ServerEvent::AgentChat { from, to, message, app } => {
             if from == to {
                 return; // no self-send (also guarded in the tool)
             }
@@ -139,7 +139,7 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 });
             } else {
                 tokio::spawn(async move {
-                    deliver_to_chat_agent(state, from, to, message).await;
+                    deliver_to_chat_agent(state, from, to, message, app).await;
                 });
             }
         }
@@ -289,12 +289,23 @@ async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
 /// agent's most-recent session as a message from the sender, then run the
 /// agent's turn so it responds in the chat. The session is marked
 /// `agent_chat`-triggered, so that turn can't relay onward (the loop-break).
-async fn deliver_to_chat_agent(state: Arc<ServerState>, from: String, to: String, message: String) {
-    // Prefer the session the user is actually viewing; else the agent's latest.
-    let Some((session_id, root)) =
-        focused_session(&state).or_else(|| latest_session_for_agent(&state, &to))
-    else {
-        tracing::info!("[agent-chat] '{from}'→'{to}': no session to deliver to — dropped");
+async fn deliver_to_chat_agent(
+    state: Arc<ServerState>,
+    from: String,
+    to: String,
+    message: String,
+    app: Option<String>,
+) {
+    // With an explicit app target, deliver into that app's (skill's) session so
+    // the recipient runs with that app's tools. Otherwise prefer the session the
+    // user is viewing; else the agent's latest.
+    let resolved = match app.as_deref() {
+        Some(skill) => session_for_skill(&state, skill),
+        None => focused_session(&state).or_else(|| latest_session_for_agent(&state, &to)),
+    };
+    let Some((session_id, root)) = resolved else {
+        tracing::info!("[agent-chat] '{from}'→'{to}'{}: no session to deliver to — dropped",
+            app.as_deref().map(|a| format!(" (app {a})")).unwrap_or_default());
         return;
     };
     let agent = match state
@@ -394,6 +405,45 @@ fn latest_session_for_agent(
 ) -> Option<(String, std::path::PathBuf)> {
     let (session_id, repo_path) = state.manager.latest_session(agent)?;
     Some((session_id, std::path::PathBuf::from(repo_path)))
+}
+
+/// Resolve the session bound to an app/skill — the latest existing one (so it
+/// lands in the open app tab when there is one), else a freshly minted
+/// skill-bound session so the request still runs with that app's tools.
+fn session_for_skill(state: &Arc<ServerState>, skill: &str) -> Option<(String, std::path::PathBuf)> {
+    let home = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
+    if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
+        if let Some(meta) = sessions
+            .into_iter()
+            .filter(|s| s.skill.as_deref() == Some(skill))
+            .max_by_key(|s| s.created_at)
+        {
+            let root = meta
+                .cwd
+                .or(meta.project)
+                .map(std::path::PathBuf::from)
+                .unwrap_or(home);
+            return Some((meta.id, root));
+        }
+    }
+    // None yet — mint a skill-bound session so "tell Yinyue → app" works first time.
+    let now = crate::util::now_ts_secs();
+    let sid = format!("sess-{skill}-{now}");
+    let meta = crate::state_fs::sessions::SessionMeta {
+        id: sid.clone(),
+        title: skill.to_string(),
+        created_at: now,
+        skill: Some(skill.to_string()),
+        creator: "agent".to_string(),
+        cwd: Some(home.to_string_lossy().to_string()),
+        title_locked: true,
+        ..Default::default()
+    };
+    if let Err(e) = state.manager.global_sessions.add_session(&meta) {
+        tracing::warn!("[agent-chat] could not create '{skill}' session: {e}");
+        return None;
+    }
+    Some((sid, home))
 }
 
 // ---------------------------------------------------------------------------

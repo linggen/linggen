@@ -1000,6 +1000,10 @@ struct AgentChatArgs {
     to: String,
     /// The message to deliver.
     message: String,
+    /// Optional target app/skill (e.g. "dj"): deliver into that app's session so
+    /// the recipient runs with that app's tools. Omit to use the focused session.
+    #[serde(default)]
+    app: Option<String>,
 }
 
 pub struct AgentChatTool;
@@ -1017,8 +1021,9 @@ impl Tool for AgentChatTool {
         json!({
             "type": "object",
             "properties": {
-                "to": { "type": "string", "description": "Recipient agent id, e.g. \"yinyue\"." },
-                "message": { "type": "string", "description": "The message to deliver." }
+                "to": { "type": "string", "description": "Recipient agent id, e.g. \"yinyue\" or \"ling\"." },
+                "message": { "type": "string", "description": "The message to deliver." },
+                "app": { "type": "string", "description": "Optional app/skill to deliver into (e.g. \"dj\"), so the recipient acts with that app's tools." }
             },
             "required": ["to", "message"]
         })
@@ -1026,7 +1031,7 @@ impl Tool for AgentChatTool {
     fn legacy_schema_entry(&self) -> Value {
         json!({
             "name": "agent_chat",
-            "args": { "to": "string", "message": "string" },
+            "args": { "to": "string", "message": "string", "app": "string?" },
             "returns": "ok / why not",
             "notes": "One-way message to another agent (fire-and-forget; use Task for a reply). \
                       Refused if you were reached via agent_chat — one hop, the user re-arms it."
@@ -1061,6 +1066,7 @@ impl Tool for AgentChatTool {
                         from,
                         to: to.clone(),
                         message: args.message,
+                        app: args.app.filter(|s| !s.trim().is_empty()),
                     },
                     tools.session_id.clone(),
                 )

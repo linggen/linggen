@@ -26,6 +26,9 @@ pub enum AgentEvent {
         from: String,
         to: String,
         message: String,
+        /// Optional target app/skill — deliver into that skill's session so the
+        /// recipient runs with that app's tools (e.g. "dj" to play music).
+        app: Option<String>,
     },
     TaskUpdate {
         agent_id: String,

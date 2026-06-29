@@ -108,6 +108,8 @@ pub enum ServerEvent {
         from: String,
         to: String,
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        app: Option<String>,
     },
     Message {
         from: String,
@@ -361,8 +363,8 @@ impl ServerEvent {
             AgentEvent::PlanUpdate { agent_id, plan } => {
                 Some(Self::PlanUpdate { agent_id, plan, session_id })
             }
-            AgentEvent::AgentChat { from, to, message } => {
-                Some(Self::AgentChat { from, to, message })
+            AgentEvent::AgentChat { from, to, message, app } => {
+                Some(Self::AgentChat { from, to, message, app })
             }
             AgentEvent::PetExpress { emotion, action } => {
                 Some(Self::PetExpress { emotion, action })
