@@ -20,5 +20,7 @@ pub trait SkillRegistry: Send + Sync {
     /// `(name, description)` for every installed skill exposed to the
     /// model — i.e. excluding skills with `disable_model_invocation: true`.
     /// Used to populate the system prompt's "available skills" listing.
-    async fn list_metadata(&self) -> Vec<(String, String)>;
+    /// (name, description, is_app) — is_app marks skills with an `app` launcher,
+    /// so prompts can flag which skills are routable apps.
+    async fn list_metadata(&self) -> Vec<(String, String, bool)>;
 }

@@ -534,12 +534,15 @@ impl crate::engine::skill::registry::SkillRegistry for SkillLoader {
         self.get_skill(name).await
     }
 
-    async fn list_metadata(&self) -> Vec<(String, String)> {
+    async fn list_metadata(&self) -> Vec<(String, String, bool)> {
         self.list_skills()
             .await
             .into_iter()
             .filter(|s| !s.disable_model_invocation)
-            .map(|s| (s.name, s.description))
+            .map(|s| {
+                let is_app = s.app.is_some();
+                (s.name, s.description, is_app)
+            })
             .collect()
     }
 }
