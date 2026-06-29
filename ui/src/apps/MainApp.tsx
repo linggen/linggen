@@ -13,6 +13,7 @@ import { ToastContainer } from '../components/ToastContainer';
 import { YinyueBubble } from '../components/YinyueBubble';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
+import { TabBar } from '../components/TabBar';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
 import { recordSkillUsage } from '../components/SkillsCard';
@@ -22,6 +23,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
+import { useTabsStore } from '../stores/tabsStore';
 import { useUserStore } from '../stores/userStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { useRunInfo } from '../hooks/useRunInfo';
@@ -60,6 +62,7 @@ export const MainApp: React.FC = () => {
   const agentStore = useServerStore();
   const chatStore = useChatStore();
   const uiStore = useUiStore();
+  const { tabs, activeTabId } = useTabsStore();
 
   // Yinyue singleton: subscribe this surface (the in-page dock) to the server's
   // FCFS presenter lock and render her only when this surface holds it. In an
@@ -285,8 +288,11 @@ export const MainApp: React.FC = () => {
           onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : undefined}
         />
 
-        {/* Main Layout */}
-        <div className="flex-1 flex overflow-hidden">
+        {/* App tab bar — unified Linggen launcher */}
+        <TabBar />
+
+        {/* Main Layout (Ling chat) — hidden while an app tab is active */}
+        <div className={`flex-1 flex overflow-hidden${activeTabId !== 'chat' ? ' hidden' : ''}`}>
 
           {/* Mobile slide-over session list */}
           {mobileMenuOpen && (
@@ -363,6 +369,18 @@ export const MainApp: React.FC = () => {
             </>
           )}
         </div>
+
+        {/* App tab surfaces — kept mounted so each app's state survives switching */}
+        {tabs.filter((t) => t.kind === 'app').map((t) => (
+          <div key={t.id} className={`flex-1 min-h-0${activeTabId === t.id ? '' : ' hidden'}`}>
+            <iframe
+              src={t.url}
+              title={t.title}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            />
+          </div>
+        ))}
 
         <FilePreview selectedFilePath={selectedFilePath} selectedFileContent={selectedFileContent} onClose={() => uiStore.closeFilePreview()} />
         <AgentSpecEditorModal open={showAgentSpecEditor} projectRoot={selectedProjectRoot}
