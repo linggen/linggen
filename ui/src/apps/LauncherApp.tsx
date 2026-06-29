@@ -30,6 +30,13 @@ const LABELS: Record<string, string> = {
 };
 const labelFor = (name: string) => LABELS[name] ?? name;
 
+/** Curated menu order — products first; anything else falls to the end
+ *  alphabetically (by label) so new apps still appear deterministically. */
+const PREFERRED_ORDER = ['cfo', 'sys-doctor', 'pulse', 'dj', 'shared-memory'];
+const orderIndex = (name: string) => {
+  const i = PREFERRED_ORDER.indexOf(name);
+  return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+};
 /** Preferred default app, first one that's installed. */
 const PREFERRED_DEFAULT = ['cfo', 'sys-doctor', 'pulse'];
 
@@ -46,7 +53,11 @@ export const LauncherApp: React.FC = () => {
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
         const list: any[] = Array.isArray(data) ? data : data?.skills ?? [];
-        setApps(list.filter((s) => s.app && s.app.launcher === 'web'));
+        const web = list.filter((s) => s.app && s.app.launcher === 'web');
+        web.sort((a, b) =>
+          orderIndex(a.name) - orderIndex(b.name) ||
+          labelFor(a.name).localeCompare(labelFor(b.name)));
+        setApps(web);
       })
       .catch(() => {});
   }, []);
