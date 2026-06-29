@@ -13,7 +13,6 @@ import { ToastContainer } from '../components/ToastContainer';
 import { YinyueBubble } from '../components/YinyueBubble';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
-import { TabBar } from '../components/TabBar';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
 import { recordSkillUsage } from '../components/SkillsCard';
@@ -289,10 +288,7 @@ export const MainApp: React.FC = () => {
           onToggleInfoPanel={isMobile ? () => setMobileInfoOpen(!mobileInfoOpen) : undefined}
         />
 
-        {/* App tab bar — unified Linggen launcher */}
-        <TabBar />
-
-        {/* Main Layout (Ling chat) — hidden while an app tab is active */}
+        {/* Main Layout (Ling chat) — hidden while an app is active (switched via the header app menu) */}
         <div className={`flex-1 flex overflow-hidden${activeTabId !== 'chat' ? ' hidden' : ''}`}>
 
           {/* Mobile slide-over session list */}

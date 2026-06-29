@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LogIn, Menu, Settings, Sparkles } from 'lucide-react';
+import { ChevronDown, LayoutGrid, LogIn, Menu, Settings, Sparkles } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUserStore } from '../stores/userStore';
+import { useTabsStore } from '../stores/tabsStore';
+import { useServerStore } from '../stores/serverStore';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import logoUrl from '../assets/logo.svg';
 
@@ -105,6 +107,77 @@ const UserAvatar: React.FC = () => {
   );
 };
 
+/**
+ * App switcher — a header menu listing Ling plus every installed web app.
+ * Selecting one switches the main area to that app (kept-mounted via tabsStore).
+ */
+const AppMenu: React.FC = () => {
+  const { tabs, activeTabId, setActiveTab, openAppTab } = useTabsStore();
+  const skills = useServerStore((s) => s.skills);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const apps = skills.filter((s: any) => s.app && s.app.launcher === 'web');
+  const activeLabel =
+    activeTabId === 'chat' ? 'Ling' : tabs.find((t) => t.id === activeTabId)?.title ?? 'Ling';
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Nothing to switch to — no apps installed.
+  if (apps.length === 0) return null;
+
+  const pickApp = (skill: any) => {
+    openAppTab(skill.name, skill.name, `/apps/${skill.name}/${skill.app.entry}?app_mode=1`);
+    setOpen(false);
+  };
+
+  const row = (label: string, active: boolean, onClick: () => void) => (
+    <button
+      key={label}
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center justify-between px-3 py-1.5 text-xs text-left transition-colors',
+        active
+          ? 'text-slate-900 dark:text-white font-medium bg-slate-50 dark:bg-white/5'
+          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5',
+      )}
+    >
+      <span>{label}</span>
+      {active && <span className="w-1.5 h-1.5 rounded-full bg-jade-500" />}
+    </button>
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+        title="Switch app"
+      >
+        <LayoutGrid size={14} />
+        <span className="hidden sm:inline">{activeLabel}</span>
+        <ChevronDown size={12} className="opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-lg shadow-lg py-1 z-50">
+          {row('Ling', activeTabId === 'chat', () => { setActiveTab('chat'); setOpen(false); })}
+          <div className="my-1 border-t border-slate-100 dark:border-white/5" />
+          {apps.map((s: any) =>
+            row(s.name, activeTabId === `app-${s.name}`, () => pickApp(s)),
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const HeaderBar: React.FC<{
   isRunning: boolean;
   onOpenSettings?: () => void;
@@ -181,6 +254,7 @@ export const HeaderBar: React.FC<{
           <img src={logoUrl} alt="Linggen" className="w-6 h-6 md:w-7 md:h-7" />
           <h1 className="text-sm md:text-base font-bold tracking-tight text-slate-900 dark:text-white">Linggen</h1>
         </a>
+        <AppMenu />
         {userRoomName && (
           <button
             onClick={() => {
