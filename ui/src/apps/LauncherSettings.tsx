@@ -31,7 +31,7 @@ async function bash(command: string): Promise<string> {
     const r = await fetch('/api/bash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_root: '~', command }),
+      body: JSON.stringify({ project_root: '/tmp', command }),
     });
     const d = await r.json().catch(() => ({}));
     return (d.stdout ?? d.output ?? '').toString();
@@ -51,11 +51,16 @@ const AccountPanel: React.FC = () => {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const signIn = () => {
-    const host = window.location.host;
-    window.open(`${window.location.protocol}//${host}/api/account/login?host=${encodeURIComponent(host)}`, '_blank', 'width=500,height=640');
+  const signIn = async () => {
+    // Matches the per-app flow: the daemon initiates the OS login; if it can't
+    // open the browser itself, it hands back a url for us to open. Then poll.
+    try {
+      const r = await fetch('/api/account/login', { method: 'POST' });
+      const out = await r.json().catch(() => ({}));
+      if (!out.opened && out.url) window.open(out.url, '_blank', 'noopener');
+    } catch { /* ignore */ }
     const t = setInterval(() => {
-      fetch('/api/account').then((r) => r.ok ? r.json() : null).then((d) => {
+      fetch('/api/account').then((r) => (r.ok ? r.json() : null)).then((d) => {
         if (d?.signed_in) { clearInterval(t); setAcct(d); }
       }).catch(() => {});
     }, 1500);
@@ -97,7 +102,7 @@ const YinyuePanel: React.FC = () => {
   const [onTop, setOnTop] = useState<boolean | null>(null);
 
   useEffect(() => {
-    bash('[ -f ~/.linggen/pet-disabled ] && echo off || echo on; [ -f ~/.linggen/pet-always-on ] && echo on || echo off')
+    bash('[ -f "$HOME/.linggen/pet-disabled" ] && echo off || echo on; [ -f "$HOME/.linggen/pet-always-on" ] && echo on || echo off')
       .then((out) => {
         const [s, t] = out.trim().split('\n');
         setShown(s !== 'off');
@@ -107,11 +112,11 @@ const YinyuePanel: React.FC = () => {
 
   const toggleShown = async () => {
     const next = !shown; setShown(next);
-    await bash(next ? 'rm -f ~/.linggen/pet-disabled' : 'touch ~/.linggen/pet-disabled');
+    await bash(next ? 'rm -f "$HOME/.linggen/pet-disabled"' : 'touch "$HOME/.linggen/pet-disabled"');
   };
   const toggleOnTop = async () => {
     const next = !onTop; setOnTop(next);
-    await bash(next ? 'touch ~/.linggen/pet-always-on' : 'rm -f ~/.linggen/pet-always-on');
+    await bash(next ? 'touch "$HOME/.linggen/pet-always-on"' : 'rm -f "$HOME/.linggen/pet-always-on"');
   };
 
   return (
