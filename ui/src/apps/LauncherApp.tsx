@@ -74,7 +74,10 @@ export const LauncherApp: React.FC = () => {
     setOpened((prev) => (prev.includes(name) ? prev : [...prev, name]));
   };
 
-  const urlFor = (a: AppSkill) => `/apps/${a.name}/${a.app.entry}?app_mode=1`;
+  // in_launcher=1 tells the app it's hosted inside the unified launcher (vs a
+  // standalone branded app) — apps use it to drop their own settings entry
+  // point in favor of the launcher's shared settings.
+  const urlFor = (a: AppSkill) => `/apps/${a.name}/${a.app.entry}?app_mode=1&in_launcher=1`;
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-200 overflow-hidden">
