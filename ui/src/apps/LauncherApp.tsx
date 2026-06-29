@@ -59,6 +59,16 @@ export const LauncherApp: React.FC = () => {
     setOpened([def]);
   }, [apps, activeName]);
 
+  // The shell's native Settings… menu (and the menubar tray) post
+  // {type:'linggen:show-settings'} to the main window — open the merged settings.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'linggen:show-settings') setSettingsOpen(true);
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
   const open = (name: string) => {
     setActiveName(name);
     setOpened((prev) => (prev.includes(name) ? prev : [...prev, name]));
