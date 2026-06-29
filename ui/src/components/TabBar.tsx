@@ -37,35 +37,39 @@ export const TabBar: React.FC = () => {
   if (tabs.length <= 1 && apps.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1 px-2 h-9 shrink-0 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f] overflow-x-auto">
-      {tabs.map((t) => {
-        const active = t.id === activeTabId;
-        return (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`group flex items-center gap-1.5 px-3 h-7 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
-              active
-                ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
-                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5'
-            }`}
-          >
-            <span>{t.title}</span>
-            {t.kind !== 'chat' && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
-                className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
-              >
-                <X size={12} />
-              </span>
-            )}
-          </button>
-        );
-      })}
+    <div className="flex items-center gap-1 px-2 h-9 shrink-0 border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0f0f0f]">
+      {/* Tabs scroll horizontally; the picker lives outside this overflow box
+          so its dropdown isn't clipped. */}
+      <div className="flex items-center gap-1 overflow-x-auto min-w-0">
+        {tabs.map((t) => {
+          const active = t.id === activeTabId;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`group flex items-center gap-1.5 px-3 h-7 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+                active
+                  ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5'
+              }`}
+            >
+              <span>{t.title}</span>
+              {t.kind !== 'chat' && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
+                  className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                >
+                  <X size={12} />
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-      <div className="relative" ref={pickerRef}>
+      <div className="relative shrink-0" ref={pickerRef}>
         <button
           onClick={() => setPickerOpen((o) => !o)}
           title="Open an app"
