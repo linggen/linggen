@@ -100,6 +100,7 @@ const AccountPanel: React.FC = () => {
 const YinyuePanel: React.FC = () => {
   const [shown, setShown] = useState<boolean | null>(null);
   const [onTop, setOnTop] = useState<boolean | null>(null);
+  const [config, setConfig] = useState<any>(null);
 
   useEffect(() => {
     bash('[ -f "$HOME/.linggen/pet-disabled" ] && echo off || echo on; [ -f "$HOME/.linggen/pet-always-on" ] && echo on || echo off')
@@ -109,6 +110,25 @@ const YinyuePanel: React.FC = () => {
         setOnTop(t === 'on');
       });
   }, []);
+
+  // Yinyue's model lives in config.pet.model (linggen config), separate from
+  // the show/always-on flag files. Read/write via /api/config like GeneralTab.
+  useEffect(() => {
+    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then(setConfig).catch(() => {});
+  }, []);
+
+  const setModel = async (model: string) => {
+    if (!config) return;
+    const updated = { ...config, pet: { ...config.pet, model } };
+    setConfig(updated);
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated),
+    }).catch(() => {});
+  };
+  // Only the user's configured models — never offer an id that isn't wired up.
+  const modelOptions: string[] = (config?.models ?? []).map((m: any) => m.id);
 
   const toggleShown = async () => {
     const next = !shown; setShown(next);
@@ -123,6 +143,25 @@ const YinyuePanel: React.FC = () => {
     <div className="lg-set-panel">
       <h2>Yinyue</h2>
       <p className="lg-set-desc">Your companion on screen. Drag her body to move her anywhere.</p>
+      <div className="lg-set-card">
+        <div className="lg-set-row">
+          <span>Model</span>
+          <select
+            className="lg-set-select"
+            value={config?.pet?.model ?? 'auto'}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={!config}
+          >
+            <option value="auto">Auto (cloud default / your model)</option>
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>{id}</option>
+            ))}
+          </select>
+        </div>
+        <p className="lg-set-muted" style={{ marginTop: 8 }}>
+          Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast configured model for snappier replies.
+        </p>
+      </div>
       <div className="lg-set-card">
         <label className="lg-set-row lg-set-toggle">
           <span>Show Yinyue</span>
@@ -197,6 +236,8 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
         .lg-set-btn:hover { background: rgba(120,120,120,0.1); }
         .lg-set-btn-primary { background: #10b981; color: #fff; border-color: #10b981; }
         .lg-set-btn-primary:hover { background: #059669; }
+        .lg-set-select { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(120,120,120,0.32); background: transparent; color: inherit; max-width: 60%; }
+        .lg-set-select:disabled { opacity: 0.5; }
       `}</style>
       <div className="lg-set-modal">
         <div className="lg-set-head">
