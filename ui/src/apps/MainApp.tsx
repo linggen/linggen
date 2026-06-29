@@ -224,7 +224,8 @@ export const MainApp: React.FC = () => {
           const relayOrigin = document.querySelector('meta[name="linggen-relay-origin"]')?.getAttribute('content') || '';
           window.open(`${relayOrigin}/app/connect/${instanceId}?app=${encodeURIComponent(appUrl)}`, '_blank');
         } else {
-          window.open(appUrl, '_blank');
+          // Local: open as a tab in the unified launcher (app_mode = branded, proxy-metered).
+          useTabsStore.getState().openAppTab(skill.name, skill.name, `${appUrl}?app_mode=1`);
         }
       } else if (skill.app.launcher === 'url') {
         window.open(skill.app.entry, '_blank');
