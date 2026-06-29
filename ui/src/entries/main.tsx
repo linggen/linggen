@@ -23,6 +23,7 @@ import { MainApp } from '../apps/MainApp';
 import { EmbedApp } from '../apps/EmbedApp';
 import { ConsumerApp } from '../apps/ConsumerApp';
 import { PetApp } from '../apps/PetApp';
+import { LauncherApp } from '../apps/LauncherApp';
 import { SettingsHome } from '../pages/Settings/SettingsHome';
 import { BareSection } from '../pages/Settings/BareSection';
 import { MissionEditorPage } from '../pages/Mission/MissionEditorPage';
@@ -45,8 +46,11 @@ const isEmbedPath = path === '/embed' || path.startsWith('/embed/')
 // The desktop shell's transparent pet window loads `?pet=1` — render only the
 // avatar (PetApp), but still let Root mount the transport so her events flow.
 const isPetView = urlParams.get('pet') === '1';
+// The desktop Linggen app opens `?launcher=1` — the app-host (tabview + app
+// pages), NOT the dev console (MainApp), which stays web-UI-only.
+const isLauncherView = urlParams.get('launcher') === '1';
 
-type View = 'main' | 'embed' | 'consumer' | 'pet';
+type View = 'main' | 'embed' | 'consumer' | 'pet' | 'launcher';
 
 const Root: React.FC = () => {
   const currentPage = useUiStore((s) => s.currentPage);
@@ -61,11 +65,13 @@ const Root: React.FC = () => {
 
   const view: View = isPetView
     ? 'pet'
-    : isEmbedPath
-      ? 'embed'
-      : currentPage === 'consumer'
-        ? 'consumer'
-        : 'main';
+    : isLauncherView
+      ? 'launcher'
+      : isEmbedPath
+        ? 'embed'
+        : currentPage === 'consumer'
+          ? 'consumer'
+          : 'main';
 
   useEffect(() => {
     (window as { __LINGGEN_VIEW__?: View }).__LINGGEN_VIEW__ = view;
@@ -73,6 +79,7 @@ const Root: React.FC = () => {
   }, [view]);
 
   if (view === 'pet') return <PetApp />;
+  if (view === 'launcher') return <LauncherApp />;
   if (view === 'embed') return <EmbedApp />;
   if (view === 'consumer') return <ConsumerApp />;
 
