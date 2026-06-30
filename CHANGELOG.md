@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.2] - 2026-06-30
+
+### Linggen Launcher — one shell for every app
+
+The web UI is now a native app-host: a single Linggen shell that hosts the
+products and skill apps side by side, instead of one app per window.
+
+- **Header app menu** — switch between apps from a menu in the launcher header.
+  Local skill apps open as tabs in the same shell rather than spawning new
+  windows, and the menu is ordered products-first.
+- **Merged settings** — a single ⚙ in the launcher header opens unified Linggen
+  settings (account sign-in plus the Yinyue panel with a model picker), reached
+  from the shell's native Settings menu.
+- **App-aware routing** — `agent_chat` takes an optional `app` target to route a
+  message into that app's session, and Yinyue routes apps by the live
+  available-skills list. Skills carry `is_app` metadata and are marked "(app)"
+  in the prompt list; hosted app iframes receive `in_launcher=1`.
+
 ## [1.2.1] - 2026-06-25
 
 ### Fixed
