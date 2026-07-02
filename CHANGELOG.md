@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.3] - 2026-07-02
+
+- **Account avatar in both shells** — the launcher header and the dev console
+  now show the signed-in billing account (avatar + name, Dashboard, Account
+  settings, Sign out) so it's always visible which account the daemon spends
+  from. The dev console previously showed the remote-relay identity, which
+  fails on a local daemon.
+- **Dream mission hardening** — survive already-deleted rows, cross-table
+  dedup search, 25-row worklist pages with a re-list loop, provenance notes;
+  no delete after promote.
+- **Compaction** — token usage re-measured at the trigger point.
+- **In-page dialogs** — native `confirm()`/`prompt()` replaced with in-page
+  dialogs (no-ops inside app shells).
+- **Model routing** — fallback error classifiers match real provider status
+  formats; cancel recorded as cancelled; reconnect model fallback.
+
 ## [1.2.2] - 2026-06-30
 
 ### Linggen Launcher — one shell for every app
