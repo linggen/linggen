@@ -567,7 +567,7 @@ impl AgentEngine {
 
                 // Execute actions (reusing shared dispatch logic)
                 let tc_ids: Vec<String> = native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
-                if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &tc_ids).await {
+                if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &tc_ids).await? {
                     return Ok(outcome);
                 }
                 continue;
@@ -753,7 +753,7 @@ impl AgentEngine {
             state.invalid_json_streak = 0;
 
             // Execute actions with parallel delegation support.
-            if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &[]).await {
+            if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &[]).await? {
                 return Ok(outcome);
             }
         }
@@ -798,21 +798,25 @@ impl AgentEngine {
 
     /// Execute a list of model actions with batching (delegation, parallel, sequential).
     /// Shared by both native tool-call and legacy JSON paths.
-    /// Returns `Some(outcome)` if the loop should exit early.
+    /// Returns `Ok(Some(outcome))` if the loop should exit early; errs with
+    /// "run cancelled" on user cancel so finalizers record `Cancelled` — a
+    /// plain outcome here made a mid-batch cancel indistinguishable from
+    /// success (mission runs logged `completed`, Yinyue announced them).
     async fn execute_action_loop(
         &mut self,
         actions: Vec<ModelAction>,
         state: &mut LoopState,
         session_id: Option<&str>,
         tc_ids: &[String],
-    ) -> Option<AgentOutcome> {
+    ) -> Result<Option<AgentOutcome>> {
         let mut actions = actions;
         let mut action_idx: usize = 0;
 
         while !actions.is_empty() {
-            // Check cancellation before dispatching each tool/batch.
+            // Check cancellation before dispatching each tool/batch. Same
+            // bail string as the loop-top checks — finalizers match on it.
             if self.is_cancelled().await {
-                return Some(AgentOutcome::None);
+                anyhow::bail!("run cancelled");
             }
 
             let front_is_delegation = {
@@ -881,7 +885,7 @@ impl AgentEngine {
                     .await
                 {
                     self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Some(outcome);
+                    return Ok(Some(outcome));
                 }
             } else if parallel_batch_size >= 2 {
                 let batch: Vec<ModelAction> =
@@ -894,7 +898,7 @@ impl AgentEngine {
                     .await
                 {
                     self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Some(outcome);
+                    return Ok(Some(outcome));
                 }
             } else {
                 let action = actions.remove(0);
@@ -912,7 +916,7 @@ impl AgentEngine {
                     .await
                 {
                     self.drain_tool_progress(&mut state.progress_rx).await;
-                    return Some(outcome);
+                    return Ok(Some(outcome));
                 }
             }
         }
@@ -920,7 +924,7 @@ impl AgentEngine {
         self.drain_tool_progress(&mut state.progress_rx).await;
         // Check if the agent cd'd into/out of a git project
         self.check_working_folder_change();
-        None
+        Ok(None)
     }
 }
 

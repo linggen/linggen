@@ -112,10 +112,14 @@ Keep `limit` at 25 — full memory rows are big, and a larger page blows
 the context window (a 200-row page is ~400 KB and killed a past run).
 
 If the list is empty, say *"No expired episodic memory found — nothing
-to consolidate tonight."* and stop. On a real error (daemon down,
-schema mismatch), say *"Consolidation failed: \<short reason\>."* and
-stop. Otherwise, say *"Found \<n\> episodic rows past TTL — starting
-review."* and proceed to Step 2.
+to consolidate tonight."* and stop. On a real error — a **tool_error**
+(daemon unreachable, HTTP failure, schema mismatch) — say
+*"Consolidation failed: \<short reason\>."* and stop. **Only a
+tool_error counts as failure.** Successful tool responses that merely
+look surprising — `removed: false` / `already_gone`, a 404 on get,
+`"action": "merged"` on add — are normal outcomes, never grounds to
+declare failure. Otherwise, say *"Found \<n\> episodic rows past TTL —
+starting review."* and proceed to Step 2.
 
 `limit: 25` caps one page. After finishing Step 2 for every listed
 row, call the same list again and process the new page — repeat until
@@ -144,7 +148,7 @@ the near-dup cluster mates to fold into this row's decision.
 | You see | Action |
 |:---|:---|
 | Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Dedup.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deduped (already in semantic)`. The semantic store already represents this fact. |
-| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** Call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts>, "occurred_at": "<row.occurred_at, else row.created_at>", "source_session": "<row.source_session, if present>" }` — carrying `occurred_at` forward preserves the event time recall sorting relies on; the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. The daemon removes the episodic original in the same call (cross-tier dedup on the byte-identical content) — **do NOT call delete after a promote**; the add alone is the whole action. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** Call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts>, "occurred_at": "<row.occurred_at, else row.created_at>", "source_session": "<row.source_session, if present>" }` — carrying `occurred_at` forward preserves the event time recall sorting relies on; the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. The daemon removes the episodic original in the same call (cross-tier dedup on the byte-identical content) — **do NOT call delete after a promote**; the add alone is the whole action. An add answering `"action": "merged"` means the fact was already in semantic and the daemon folded them — equally success. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
 | Pure noise — activity / re-derivable from files / single-mention chatter / a secret that slipped through | **Delete.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deleted`. No semantic write. |
 
 ### Hard rules

@@ -677,7 +677,7 @@ async fn dispatch_mission_prompt(
             let _ = manager
                 .finish_agent_run(&run_id, run_status, Some(msg))
                 .await;
-            "failed"
+            if cancelled { "cancelled" } else { "failed" }
         }
     };
 

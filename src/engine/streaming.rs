@@ -387,7 +387,15 @@ impl AgentEngine {
         })
     }
 
-    /// Call the LLM using the configured model (no fallback).
+    /// Call the LLM using the configured model, falling back through the
+    /// routing chain on rate-limit / context-limit / transient errors
+    /// (`is_fallback_worthy_error`). Candidates: `routing.default_models`
+    /// in order, then the always-injected Linggen Cloud model as last
+    /// resort. Gated by `routing.auto_fallback`. A quota error on one
+    /// backend cascades — a same-backend sibling that 429s too just moves
+    /// the chain along. A successful fallback sticks for the rest of the
+    /// run via `self.model_id`; `default_model_id` restores the preferred
+    /// model next turn.
     ///
     /// When `tools` is `Some`, uses native function calling via `stream_with_tool_calling()`.
     /// When `tools` is `None`, uses legacy JSON action format via `stream_with_thinking_model()`.
@@ -396,22 +404,57 @@ impl AgentEngine {
         messages: &[ChatMessage],
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<StreamResult> {
-        let model_id = self.model_id.clone();
+        let preferred = self.model_id.clone();
+        let mut tried: Vec<String> = Vec::new();
+        let mut model_id = preferred.clone();
 
-        let result = if let Some(ref tool_defs) = tools {
-            self.stream_with_tool_calling(&model_id, messages, tool_defs.clone())
-                .await
-        } else {
-            self.stream_with_thinking_model(&model_id, messages).await
-        };
+        loop {
+            let result = if let Some(ref tool_defs) = tools {
+                self.stream_with_tool_calling(&model_id, messages, tool_defs.clone())
+                    .await
+            } else {
+                self.stream_with_thinking_model(&model_id, messages).await
+            };
 
-        match result {
-            Ok(result) => {
-                self.last_token_usage = result.token_usage.clone();
-                Ok(result)
+            match result {
+                Ok(result) => {
+                    self.last_token_usage = result.token_usage.clone();
+                    if model_id != preferred {
+                        self.model_id = model_id.clone();
+                    }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    tried.push(model_id.clone());
+                    if !self.auto_fallback
+                        || !crate::provider::models::is_fallback_worthy_error(&e)
+                    {
+                        return Err(e);
+                    }
+                    let Some(next) = self.next_fallback_model(&tried) else {
+                        return Err(e);
+                    };
+                    warn!(
+                        "model '{model_id}' failed with fallback-worthy error ({e}); \
+                         falling back to '{next}'"
+                    );
+                    self.emit_model_fallback_event(&preferred, &next, &e.to_string())
+                        .await;
+                    model_id = next;
+                }
             }
-            Err(e) => Err(e),
         }
+    }
+
+    /// Next untried, registered fallback candidate: the routing chain in
+    /// order, then the always-injected Linggen Cloud model.
+    fn next_fallback_model(&self, tried: &[String]) -> Option<String> {
+        let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string();
+        self.default_models
+            .iter()
+            .cloned()
+            .chain(std::iter::once(cloud))
+            .find(|m| !tried.contains(m) && self.model_manager.has_model(m))
     }
 
     /// Emit a ModelFallback event via the agent manager.

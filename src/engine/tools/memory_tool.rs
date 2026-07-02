@@ -287,7 +287,7 @@ pub async fn call_memory_http(
     };
     tracing::info!("memory_tool dispatch → POST {url} body={args_preview}");
 
-    let value = match post_once(&url, &args).await {
+    let mut value = match post_once(&url, &args).await {
         Ok(v) => v,
         Err(DispatchError::NoDaemon) => {
             autostart()
@@ -297,6 +297,26 @@ pub async fn call_memory_http(
         }
         Err(DispatchError::Other(e)) => return Err(e),
     };
+
+    // Deleting an already-absent row is success, not an anomaly — the row is
+    // gone either way (commonly the daemon's cross-tier dedup removed the
+    // episodic copy during a promote add). A bare `removed:false` reads as
+    // an error signal to LLM callers (observed: three dream runs aborted
+    // claiming "store inconsistency" over it), so say what it means.
+    if verb == "delete" {
+        if let Some(obj) = value.as_object_mut() {
+            if obj.get("removed").and_then(|v| v.as_bool()) == Some(false) {
+                obj.insert("already_gone".to_string(), Value::Bool(true));
+                obj.insert(
+                    "note".to_string(),
+                    Value::String(
+                        "row was already absent — treat as success; do not retry or verify"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+    }
 
     let summary = match &value {
         Value::Array(a) => format!("array len={}", a.len()),

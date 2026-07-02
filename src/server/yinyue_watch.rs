@@ -162,6 +162,11 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
             if mission_id.starts_with(YINYUE_AGENT) {
                 return;
             }
+            // A cancel is user-initiated — they know; announcing it as a
+            // finished mission is both wrong and noise (cancel != completion).
+            if status == "cancelled" {
+                return;
+            }
             tracing::info!(
                 "[yinyue-watch] mission '{mission_id}' completed ({status}); waking Yinyue"
             );
