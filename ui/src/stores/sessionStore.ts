@@ -4,6 +4,7 @@
 import { create } from 'zustand';
 import type { SessionInfo } from '../types';
 import { sessions as sessionsApi } from '../lib/api';
+import { confirmDialog } from '../lib/confirmDialog';
 
 const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
@@ -95,7 +96,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: async (id) => {
     const { allSessions } = get();
-    if (!confirm('Remove this session?')) return;
+    if (!(await confirmDialog('Remove this session?'))) return;
     const session = allSessions.find(s => s.id === id);
     try {
       await sessionsApi.remove({
@@ -128,7 +129,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (ids.length === 0) return;
     const { allSessions } = get();
     const msg = ids.length === 1 ? 'Remove this session?' : `Remove ${ids.length} sessions?`;
-    if (!confirm(msg)) return;
+    if (!(await confirmDialog(msg))) return;
     const idSet = new Set(ids);
     const targets = allSessions.filter(s => idSet.has(s.id));
     await Promise.allSettled(targets.map(session =>

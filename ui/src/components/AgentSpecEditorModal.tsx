@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FilePlus2, FileText, Save, Trash2, X } from 'lucide-react';
 import type { AgentFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
+import { confirmDialog } from '../lib/confirmDialog';
 
 const defaultAgentTemplate = (agentName: string) => `---
 name: ${agentName}
@@ -82,8 +83,8 @@ export const AgentSpecEditorModal: React.FC<{
     loadFile(selectedPath);
   }, [open, selectedPath, loadFile]);
 
-  const selectFile = (path: string) => {
-    if (dirty && !confirm('Discard unsaved changes?')) return;
+  const selectFile = async (path: string) => {
+    if (dirty && !(await confirmDialog('Discard unsaved changes?'))) return;
     setSelectedPath(path);
   };
 
@@ -145,7 +146,7 @@ export const AgentSpecEditorModal: React.FC<{
 
   const deleteFile = async () => {
     if (!projectRoot || !selectedPath) return;
-    if (!confirm(`Delete ${selectedPath}?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedPath}?`))) return;
     const resp = await fetch('/api/agent-file', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -163,8 +164,8 @@ export const AgentSpecEditorModal: React.FC<{
     onChanged?.();
   };
 
-  const close = () => {
-    if (dirty && !confirm('Discard unsaved changes?')) return;
+  const close = async () => {
+    if (dirty && !(await confirmDialog('Discard unsaved changes?'))) return;
     onClose();
   };
 

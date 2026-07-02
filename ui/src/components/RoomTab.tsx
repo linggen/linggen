@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Copy, Check, Trash2, RefreshCw, Users, Shield, Link, Wifi, WifiOff, LogOut, Loader2 } from 'lucide-react';
 import type { SkillInfoFull } from '../types';
 import { useUserStore } from '../stores/userStore';
+import { confirmDialog } from '../lib/confirmDialog';
 
 
 // ---------------------------------------------------------------------------
@@ -429,7 +430,7 @@ export const RoomTab: React.FC = () => {
   };
 
   const deleteRoom = async () => {
-    if (!confirm('Delete your room? All members will be removed.')) return;
+    if (!(await confirmDialog('Delete your room? All members will be removed.'))) return;
     setSaving(true);
     try {
       await fetch('/api/rooms', { method: 'DELETE' });
@@ -438,7 +439,7 @@ export const RoomTab: React.FC = () => {
   };
 
   const regenerateInvite = async () => {
-    if (!confirm('Regenerate invite link? The old link will stop working.')) return;
+    if (!(await confirmDialog('Regenerate invite link? The old link will stop working.'))) return;
     setSaving(true);
     try {
       await fetch('/api/rooms/invite', { method: 'POST' });
@@ -447,7 +448,7 @@ export const RoomTab: React.FC = () => {
   };
 
   const removeMember = async (userId: string) => {
-    if (!confirm('Remove this member?')) return;
+    if (!(await confirmDialog('Remove this member?'))) return;
     try {
       await fetch(`/api/rooms/${room!.id}/members/${userId}`, { method: 'DELETE' });
       fetchRoom();
@@ -496,7 +497,7 @@ export const RoomTab: React.FC = () => {
   };
 
   const leaveRoom = async (roomId: string, instanceId: string) => {
-    if (!confirm('Leave this room?')) return;
+    if (!(await confirmDialog('Leave this room?'))) return;
     try {
       // Disconnect proxy FIRST so no in-flight offers hit the relay after membership is removed
       const conn = proxyConnections.find(c => c.instance_id === instanceId);
@@ -525,7 +526,7 @@ export const RoomTab: React.FC = () => {
       setError('Sign in to linggen.dev to join a public room. Click the avatar in the top bar.');
       return;
     }
-    if (!confirm('Privacy Notice: The room owner can see your messages. Don\'t share sensitive information.\n\nJoin this room?')) return;
+    if (!(await confirmDialog('Privacy Notice: The room owner can see your messages. Don\'t share sensitive information.\n\nJoin this room?'))) return;
     setJoining(true); setError(null);
     try {
       const resp = await fetch('/api/rooms/join-public', {

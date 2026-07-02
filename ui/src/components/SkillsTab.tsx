@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePlus2, Package, Pencil, RefreshCw, Save, Search, ShieldAlert, Sparkles, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { BuiltInSkillInfo, MarketplaceSkill, SkillInfoFull, SkillFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
+import { confirmDialog } from '../lib/confirmDialog';
 
 /* ── Helpers ── */
 function formatRelativeDate(dateStr: string): string {
@@ -388,8 +389,8 @@ export const SkillsTab: React.FC<{
         <div className="px-4 py-2 border-b border-slate-200 dark:border-white/10 flex items-center justify-between bg-slate-50/50 dark:bg-white/[0.02]">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                if (editDirty && !confirm('Discard unsaved changes?')) return;
+              onClick={async () => {
+                if (editDirty && !(await confirmDialog('Discard unsaved changes?'))) return;
                 setEditingSkill(null);
               }}
               className="p-1 rounded hover:bg-slate-200 dark:hover:bg-white/10"

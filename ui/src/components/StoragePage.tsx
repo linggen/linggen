@@ -12,6 +12,7 @@ import {
 import { CM6Editor } from './CM6Editor';
 import type { StorageEntry, StorageRoot } from '../types';
 import { cn } from '../lib/cn';
+import { confirmDialog } from '../lib/confirmDialog';
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -214,7 +215,7 @@ export const StoragePage: React.FC<{
   // --- Delete ---
   const handleDelete = useCallback(async () => {
     if (!selectedFile) return;
-    if (!confirm(`Delete ${selectedFile}?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedFile}?`))) return;
     const ok = await deleteFile(activeRoot, selectedFile);
     if (ok) {
       setSelectedFile(null);

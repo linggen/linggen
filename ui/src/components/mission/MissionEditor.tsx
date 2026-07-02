@@ -3,6 +3,7 @@ import { FileText, Save, Trash2 } from 'lucide-react';
 import type { CronMission } from '../../types';
 import { CM6Editor } from '../CM6Editor';
 import { deleteMission, getMissionFile, saveMissionFile } from '../../lib/missions-api';
+import { confirmDialog, promptDialog } from '../../lib/confirmDialog';
 
 /** Default body for a brand-new mission. Frontmatter is the source of truth
  *  for all metadata; users edit it directly. Keep this minimal — the user
@@ -62,8 +63,8 @@ export const MissionEditor: React.FC<{
   }, [editing?.id, loadFile]);
 
   // New-mission flow: prompt for an id, seed template.
-  const startNewMission = useCallback(() => {
-    const raw = window.prompt(
+  const startNewMission = useCallback(async () => {
+    const raw = await promptDialog(
       'New mission id (lowercase, no spaces — used as the folder name):',
       'new-mission',
     );
@@ -104,7 +105,7 @@ export const MissionEditor: React.FC<{
 
   const handleDelete = async () => {
     if (!editing?.id) return;
-    if (!window.confirm(`Delete mission "${editing.id}"? This removes the folder under ~/.linggen/missions/.`)) return;
+    if (!(await confirmDialog(`Delete mission "${editing.id}"? This removes the folder under ~/.linggen/missions/.`))) return;
     try {
       await deleteMission(editing.id);
       onCancel();
@@ -113,8 +114,8 @@ export const MissionEditor: React.FC<{
     }
   };
 
-  const handleCancel = () => {
-    if (dirty && !window.confirm('Discard unsaved changes?')) return;
+  const handleCancel = async () => {
+    if (dirty && !(await confirmDialog('Discard unsaved changes?'))) return;
     onCancel();
   };
 
