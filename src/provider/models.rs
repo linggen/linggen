@@ -880,14 +880,20 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
 }
 
 pub fn is_rate_limit_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string();
-    msg.contains("(429)") || msg.to_lowercase().contains("rate limit")
+    // NOTE: provider errors format the status as `({})` with reqwest's
+    // StatusCode, whose Display includes the canonical reason — the live
+    // string is "(429 Too Many Requests)", never "(429)". Match the prefix.
+    let msg = err.to_string().to_lowercase();
+    msg.contains("(429")
+        || msg.contains("rate limit")
+        || msg.contains("too many requests")
+        || msg.contains("usage_limit_reached")
 }
 
 /// Check if an error indicates a context/token limit exceeded (HTTP 400 + context keywords).
 pub fn is_context_limit_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
-    (msg.contains("(400)") || msg.contains("(413)"))
+    (msg.contains("(400") || msg.contains("(413"))
         && (msg.contains("context")
             || msg.contains("token")
             || msg.contains("too long")
@@ -900,8 +906,8 @@ fn is_transient_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
     msg.contains("timed out")
         || msg.contains("timeout")
-        || msg.contains("(502)")
-        || msg.contains("(503)")
+        || msg.contains("(502")
+        || msg.contains("(503")
         || msg.contains("connection refused")
         || msg.contains("connection reset")
         || msg.contains("dns error")
@@ -926,6 +932,13 @@ mod tests {
     fn test_rate_limit() {
         assert!(is_fallback_worthy_error(&err("HTTP error (429) Too Many Requests")));
         assert!(is_fallback_worthy_error(&err("rate limit exceeded")));
+        // The live openai.rs shape — StatusCode Display puts the reason
+        // INSIDE the parens; "(429)" alone never occurs. Regression for the
+        // dream run that died un-fallen-back on the team quota.
+        assert!(is_fallback_worthy_error(&err(
+            "openai error (429 Too Many Requests): {\"error\":{\"type\":\"usage_limit_reached\",\
+             \"message\":\"The usage limit has been reached\",\"plan_type\":\"team\"}}"
+        )));
     }
 
     #[test]
