@@ -15,10 +15,14 @@ enabled: true
 # the only restriction that matters.
 agent: ling
 cwd: ~/.linggen
-# Single-item kickoff: it lands as the first visible user turn and
-# asks for a one-line intro plus the first tool call in the same
-# reply. (Multi-item kickoffs drain one per assistant final reply
-# via the engine's kickoff_queue — not needed here.)
+# Multi-item kickoff: item 0 starts the run; each later item lands as
+# the next user turn after the model's final reply (engine drains one
+# per assistant final-response). The repeated nudge items make the
+# page loop ENGINE-driven — models reliably process one page per turn
+# but skip the "re-list until empty" instruction on their own (three
+# observed runs stopped after one page with invented reasons). Seven
+# nudges + the opener cover a 200-row backlog per run; on an empty
+# list each leftover nudge costs one cheap DONE turn.
 kickoff:
   - >-
     You are ling, in the dream mission. All steps are in your system
@@ -26,6 +30,48 @@ kickoff:
     start by calling
     `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
     (those four keys only, no `type`/`from`/`outcome`).
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
+  - >-
+    If the last worklist page had rows, call
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
+    again and process that page per your system prompt. If the list
+    comes back empty (or the last one already did), reply exactly:
+    DONE.
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not
 # in the tool list — uncertainty must resolve to "skip the row" per
