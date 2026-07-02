@@ -144,17 +144,19 @@ the near-dup cluster mates to fold into this row's decision.
 | You see | Action |
 |:---|:---|
 | Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Dedup.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deduped (already in semantic)`. The semantic store already represents this fact. |
-| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** First call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts>, "occurred_at": "<row.occurred_at, else row.created_at>", "source_session": "<row.source_session, if present>" }` — carrying `occurred_at` forward preserves the event time recall sorting relies on; the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. Then call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }` — this often returns `removed=false` because the daemon already deleted the episodic copy during your add (cross-tier dedup on identical content); that is success, not an error. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** Call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts>, "occurred_at": "<row.occurred_at, else row.created_at>", "source_session": "<row.source_session, if present>" }` — carrying `occurred_at` forward preserves the event time recall sorting relies on; the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. The daemon removes the episodic original in the same call (cross-tier dedup on the byte-identical content) — **do NOT call delete after a promote**; the add alone is the whole action. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
 | Pure noise — activity / re-derivable from files / single-mention chatter / a secret that slipped through | **Delete.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deleted`. No semantic write. |
 
 ### Hard rules
 
-- **Already-gone rows are success, not errors.** A `removed=false` on
-  delete or a 404 on get means the worklist row is already gone —
-  usually because your promote-add triggered the daemon's cross-tier
-  dedup, which deletes the episodic original itself when the content
-  matches byte-for-byte. Report the action you intended and move on.
-  Never abort the run because a row is missing.
+- **Already-gone rows are success — move on, never investigate.** A
+  `removed=false` on delete or a 404 on get means the row is already
+  gone (a promote-add's cross-tier dedup, or an earlier cluster
+  delete). Count the row as done. Never retry the delete, never `get`
+  to double-check, never conclude the store is inconsistent. The
+  Step-1 list is the only source of truth: when a page is done, your
+  one and only next step is calling that list again — an **empty list
+  is the only stop condition**.
 - **Append only to semantic.** Never edit, never delete an existing
   semantic row in this pass — those need the user present. The
   "related but not identical" case is resolved by appending the new
