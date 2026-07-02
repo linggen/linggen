@@ -19,7 +19,7 @@
 //!   marketplace install ships skill files but no binary), then autostart
 //!   `ling-mem start` and retry once. The daemon is idempotent — re-running
 //!   `start` while up exits 0. The engine owns this dependency: callers (the
-//!   23:00 dream, auto-recall) reach memory over HTTP, never via the CLI, so
+//!   3am dream, auto-recall) reach memory over HTTP, never via the CLI, so
 //!   nothing else would install/start the daemon for them.
 //!
 //! Schemas mirror what `engine::capabilities::CAPABILITIES` used to expose.

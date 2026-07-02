@@ -15,10 +15,10 @@ enabled: true
 # the only restriction that matters.
 agent: ling
 cwd: ~/.linggen
-# The kickoff drives the session: item 0 lands as the first visible
-# user turn (greeting), and item 1 fires after the agent's reply
-# (the actual work). The engine drains item 1 from kickoff_queue on
-# the assistant's final-response transition — no scheduler polling.
+# Single-item kickoff: it lands as the first visible user turn and
+# asks for a one-line intro plus the first tool call in the same
+# reply. (Multi-item kickoffs drain one per assistant final reply
+# via the engine's kickoff_queue — not needed here.)
 kickoff:
   - >-
     You are ling, in the dream mission. All steps are in your system
@@ -114,6 +114,11 @@ schema mismatch), say *"Consolidation failed: \<short reason\>."* and
 stop. Otherwise, say *"Found \<n\> episodic rows past TTL — starting
 review."* and proceed to Step 2.
 
+`limit: 200` caps one page. After finishing Step 2 for every listed
+row, call the same list again and process the new page — repeat until
+it returns empty, so a backlog larger than 200 still drains tonight.
+Only then go to Step 3.
+
 ## Step 2 — Per-row decision
 
 For **each** worklist row, make exactly ONE terminal decision. **Every
@@ -125,16 +130,28 @@ them and re-defers; drift accumulates.
 
 Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "limit": 8 }`.
 
+The search spans **both** tables, so the hits will usually include the
+candidate row itself and its episodic siblings. **A hit with
+`"tier": "episodic"` never counts as "already in semantic"** — only
+`semantic` / `core` hits do. Episodic hits are still useful: they are
+the near-dup cluster mates to fold into this row's decision.
+
 ### 2b. Decide one of three outcomes
 
 | You see | Action |
 |:---|:---|
 | Semantic has a row **clearly meaning the same thing** as this candidate (paraphrase / functionally interchangeable for retrieval) | **Dedup.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deduped (already in semantic)`. The semantic store already represents this fact. |
-| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** First call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts> }` — the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. Then call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
+| The row is durable signal (user biography, cross-project preference, decision-with-reasoning, re-hit gotcha) — AND no semantic paraphrase exists, OR the closest semantic row is *related but not identical* (different emphasis, partial overlap, even a contradiction) | **Promote with a new ID.** First call `Memory_write` with `{ "verb": "add", "content": "<row.content>", "type": "<row.type>", "from": "<row.from>", "contexts": <row.contexts>, "occurred_at": "<row.occurred_at, else row.created_at>", "source_session": "<row.source_session, if present>" }` — carrying `occurred_at` forward preserves the event time recall sorting relies on; the daemon assigns a fresh UUID; do NOT pass `id` or `replace_ids`. Then call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }` — this often returns `removed=false` because the daemon already deleted the episodic copy during your add (cross-tier dedup on identical content); that is success, not an error. Report `promoted to semantic`. **Don't try to reconcile contradictions yourself** — both rows coexist in semantic until recall time, when the user is present to pick a winner via AskUser. Pass `"tier": "core"` only for narrow universals about the person (name, role, location, languages, pets/family). |
 | Pure noise — activity / re-derivable from files / single-mention chatter / a secret that slipped through | **Delete.** Call `Memory_write` with `{ "verb": "delete", "tier": "episodic", "id": "<row.id>" }`. Report `deleted`. No semantic write. |
 
 ### Hard rules
 
+- **Already-gone rows are success, not errors.** A `removed=false` on
+  delete or a 404 on get means the worklist row is already gone —
+  usually because your promote-add triggered the daemon's cross-tier
+  dedup, which deletes the episodic original itself when the content
+  matches byte-for-byte. Report the action you intended and move on.
+  Never abort the run because a row is missing.
 - **Append only to semantic.** Never edit, never delete an existing
   semantic row in this pass — those need the user present. The
   "related but not identical" case is resolved by appending the new
@@ -159,25 +176,22 @@ Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "
 
 ## Step 3 — Report
 
-End with a human-readable summary the user can skim later. A markdown
-list of every row you processed, one bullet each:
+End with a short human-readable summary. List only the rows you
+**promoted** — the per-row `ROW` status lines already cover the rest:
 
 ```
-- `<row.id>` — "<one-line gist, ≤60 chars>" → <action>
+- `<row.id>` — "<one-line gist, ≤60 chars>" → promoted to semantic
 ```
 
-Use `promoted to semantic`, `deduped (already in semantic)`, or
-`deleted`. Then a blank line, then a single plain-language sentence
-summarizing the run — e.g. *"Promoted 2 rows, deduped 1, deleted 1 —
-done."* No fixed status format.
+Then a blank line, then a single plain-language sentence with the
+totals — e.g. *"Promoted 2 rows, deduped 1, deleted 12 — episodic is
+clear."* No fixed status format.
 
 ### Example output
 
 ```
-- `ep-a1b2c3` — "User prefers main, never branch" → promoted to semantic
-- `ep-d4e5f6` — "Conflicts with project_compaction_redesign" → promoted to semantic
-- `ep-g7h8i9` — "Linggen ui builds via npm run build" → deduped (already in semantic)
-- `ep-j0k1l2` — "Fixed scheduler short-circuit in dispatch" → deleted
+- `hpvsGPvTaJ` — "User prefers main, never branch" → promoted to semantic
+- `IoT1UTv8jn` — "Compaction redesign: CC-aligned two-tier" → promoted to semantic
 
-Promoted 2 rows, deduped 1, deleted 1 — done.
+Promoted 2 rows, deduped 3, deleted 11 — episodic is clear.
 ```

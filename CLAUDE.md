@@ -77,11 +77,9 @@ Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. De
   - `mission/record.rs` (`Mission`/`MissionRunEntry`) + `mission/registry.rs` (`MissionRegistry`) + `mission/runs.rs` (`MissionRunStore` trait, disk-persistent).
   Disk loaders all live under `extensions/` and implement the corresponding trait: `SkillLoader` / `AgentLoader` / `MissionLoader`. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
 - **`provider/`** — Wire-format clients (`ollama.rs`, `openai.rs`, `anthropic.rs`), `models.rs` for multi-provider dispatch + streaming + fallback error classification, and `routing.rs` for model selection policies with fallback chains. `proxy_provider.rs` dispatches to a room-shared backend.
-- **`server/`** — Axum HTTP server. `chat_api.rs` handles chat/run endpoints. `projects_api.rs` for project/session CRUD. `workspace_api.rs` serves file tree. `config_api.rs` for runtime config. `mission_scheduler.rs` for cron mission scheduling. `rtc/` handles WebRTC transport.
-- **`project_store/`** — Persistent state using filesystem JSON files.
+- **`server/`** — Axum HTTP server. `chat/` handles chat/run requests (`handler.rs`, `runtime.rs`). `api/` holds the REST endpoints (`sessions.rs`, `missions.rs`, `config.rs`, `workspace.rs`, `agents.rs`, …). `rtc/` handles WebRTC transport. Mission cron scheduling lives in `extensions/missions/scheduler.rs`.
 - **`extensions/`** — Markdown-frontmatter artifacts the engine loads. `agents/` (disk loader for `agents/*.md`, `AgentRegistry` impl), `skills/` (interactive runtime), `missions/` (scheduled headless runtime), and shared helpers (`frontmatter.rs`, `script.rs`, `scope.rs`, `marketplace.rs`).
 - **`state_fs/`** — Filesystem-backed session state (`.linggen/sessions/`).
-- **`check.rs`** — Bash command safety validation (allowlist, not yet wired up).
 - **`eval/`** — Evaluation framework: task runner, grader, report generation.
 - **`cli/`** — Standalone CLI commands: `daemon.rs`, `doctor.rs`, `self_update.rs`, `init.rs`, `skills_cmd.rs`.
 
@@ -89,10 +87,11 @@ Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. De
 
 React 19 + TypeScript + Tailwind CSS v4 + Vite.
 
-- **`App.tsx`** — Root component. Project/session management, event handling, page routing.
-- **`components/ChatPanel.tsx`** — Chat interface, message rendering, tool activity display.
+- **`apps/MainApp.tsx`** — Root app shell. Project/session management, event handling, page routing. (Other shells: `ConsumerApp.tsx`, `EmbedApp.tsx`, `LauncherApp.tsx`, `PetApp.tsx`.)
+- **`components/chat/ChatPanel.tsx`** — Chat interface, message rendering, tool activity display.
 - **`components/MissionPage.tsx`** — Mission management (editor, agent config, history, activity tabs).
-- **`components/SettingsPage.tsx`** — Settings (models, agents, skills, general).
+- **`pages/Settings/SettingsHome.tsx`** — Settings shell; per-section tabs live in `components/` (`GeneralTab.tsx`, `ModelsTab.tsx`, `AgentsTab.tsx`, `SkillsTab.tsx`, `RoomTab.tsx`, `ToolsTab.tsx`, `StoragePage.tsx`).
+- **`stores/`** — Zustand stores for session/chat/UI state (`sessionStore.ts`, `chatStore.ts`, `serverStore.ts`, `uiStore.ts`, `userStore.ts`, `interactionStore.ts`, `roomChatStore.ts`). This is the primary state pattern; some Settings tabs still use local `useState` + direct `fetch` instead.
 - **`types.ts`** — Shared TypeScript type definitions.
 
 ### Agent Definitions (`agents/`)

@@ -50,14 +50,14 @@ The mission name is the directory name. One mission per directory. Run history i
 ---
 name: dream
 description: >-
-  Nightly memory consolidation. Collects sessions from the last 24h,
-  extracts durable facts, dedupes, and routes into core markdown / RAG.
+  Nightly memory consolidation. Promotes durable episodic memories
+  into the long-term semantic store and forgets the rest.
 
 # Schedule
 schedule: "0 3 * * *"
 catchup_hours: 24                  # optional — fire from the post-turn seam if last run is older than this
 enabled: true
-agent: ling-mem                    # optional — engine agent to run this mission (default: ling)
+agent: ling                        # optional — engine agent to run this mission (default: ling)
 cwd: ~/.linggen                    # working directory for the agent
 model: <optional override>
 
@@ -154,7 +154,7 @@ Tools come from `allowed-tools`, permission from `permission`. Everything else t
 
 If `kickoff:` is omitted or empty, the scheduler falls back to a single generic line (`Run the "<name>" mission per your system prompt.`).
 
-There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a built-in capability tool like `Memory_query`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at the dispatch boundary in `engine/capabilities.rs` — see the ling-mem `past_ttl=true` strip rule.
+There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a built-in capability tool like `Memory_query`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at the dispatch boundary in `engine/tools/memory_tool.rs` — see the ling-mem `past_ttl=true` strip rule.
 
 ## Cron syntax
 
@@ -198,11 +198,11 @@ The engine's hardcoded deny floor (`sudo`, `rm -rf /`, forkbomb, etc.) applies t
 Missions and skills are independent subsystems — a mission **cannot** delegate to a skill, and the `Skill` tool is not part of any mission's tool surface. A mission lists what it needs in `allowed-tools` and the engine resolves each name against:
 
 1. **Built-in engine tools** — `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, etc.
-2. **Built-in capability tools** — e.g. `Memory_query` / `Memory_write`. These ship with the engine and dispatch directly to the daemon URL in `agent.ling_mem_url` (see `engine/capability_tools.rs` and `engine/capabilities.rs`). The `ling-mem` daemon is installed alongside `ling` by the Linggen installer; no skill is consulted.
+2. **Built-in capability tools** — e.g. `Memory_query` / `Memory_write`. These ship with the engine and dispatch directly to the daemon URL in `agent.ling_mem_url` (see `engine/tools/memory_tool.rs`). The `ling-mem` daemon is installed alongside `ling` by the Linggen installer; no skill is consulted.
 
 If a listed tool name doesn't resolve to either bucket, the call fails at runtime with `unknown tool: <name>`. There is no separate `requires:` field — `allowed-tools` is the complete contract.
 
-The `dream` mission lists `Bash`, `Memory_query`, `Memory_write` — all built-ins. It runs without any installed skill being present.
+The `dream` mission lists `Memory_query`, `Memory_write` — both built-ins. It runs without any installed skill being present.
 
 ## Session per run
 
@@ -319,7 +319,7 @@ Missions and skills are sibling subsystems inside linggen. They share shape (mar
 | Registers capabilities | Yes (`provides` + `implements`) | No (consumer only) |
 | Interactive (`AskUser`, UI) | Yes | Opt-in via `allowed-tools`; no skill-style app launcher |
 | Stored under | `skills/<name>/` | `missions/<name>/` |
-| Manager module | `skills/` | `project_store/missions.rs` |
+| Manager module | `extensions/skills/` | `extensions/missions/` |
 
 Both subsystems are first-class — engine boot treats them symmetrically.
 
