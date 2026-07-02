@@ -24,7 +24,7 @@ kickoff:
     You are ling, in the dream mission. All steps are in your system
     prompt — introduce the mission briefly in one short line, then
     start by calling
-    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":200})`
+    `Memory_query({"verb":"list","tier":"episodic","past_ttl":true,"limit":25})`
     (those four keys only, no `type`/`from`/`outcome`).
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not
@@ -106,7 +106,10 @@ one-by-one as if they were independent candidates.
 
 ## Step 1 — Read the worklist
 
-Call `Memory_query({ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 200 })`.
+Call `Memory_query({ "verb": "list", "tier": "episodic", "past_ttl": true, "limit": 25 })`.
+
+Keep `limit` at 25 — full memory rows are big, and a larger page blows
+the context window (a 200-row page is ~400 KB and killed a past run).
 
 If the list is empty, say *"No expired episodic memory found — nothing
 to consolidate tonight."* and stop. On a real error (daemon down,
@@ -114,10 +117,10 @@ schema mismatch), say *"Consolidation failed: \<short reason\>."* and
 stop. Otherwise, say *"Found \<n\> episodic rows past TTL — starting
 review."* and proceed to Step 2.
 
-`limit: 200` caps one page. After finishing Step 2 for every listed
+`limit: 25` caps one page. After finishing Step 2 for every listed
 row, call the same list again and process the new page — repeat until
-it returns empty, so a backlog larger than 200 still drains tonight.
-Only then go to Step 3.
+it returns empty, so a backlog larger than one page still drains
+tonight. Only then go to Step 3.
 
 ## Step 2 — Per-row decision
 
@@ -128,7 +131,7 @@ them and re-defers; drift accumulates.
 
 ### 2a. Search semantic for a match (every row, every time)
 
-Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "limit": 8 }`.
+Invoke `Memory_query` with `{ "verb": "search", "query": "<row content gist>", "limit": 5 }`.
 
 The search spans **both** tables, so the hits will usually include the
 candidate row itself and its episodic siblings. **A hit with

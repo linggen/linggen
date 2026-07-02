@@ -415,11 +415,16 @@ impl AgentEngine {
         let soft_token_limit = self.context_soft_token_limit();
         let soft_message_limit = self.context_soft_message_limit();
 
-        let mut token_est = if self.accumulated_token_estimate > 0 {
-            self.accumulated_token_estimate
-        } else {
-            Self::estimate_tokens_for_messages(messages)
-        };
+        // Always re-measure. The incremental `accumulated_token_estimate`
+        // misses every raw `messages.push` site (native tool results among
+        // them) — a stale low estimate blinds this trigger while the actual
+        // request grows past the provider's window. Observed: a ~400 KB
+        // Memory_query list result never entered the accumulator; requests
+        // reached ~670 KB with the check stuck under the 64k threshold and
+        // the provider killed the run. One pass over message strings per
+        // loop iteration is negligible next to the model call.
+        let mut token_est = Self::estimate_tokens_for_messages(messages);
+        self.accumulated_token_estimate = token_est;
 
         let over = |t: usize, n: usize| t > soft_token_limit || n > soft_message_limit;
         if !over(token_est, messages.len()) {
