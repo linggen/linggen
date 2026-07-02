@@ -10,6 +10,7 @@ import React, { useState, useEffect } from 'react';
 import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
+import { AccountAvatar } from '../components/AccountAvatar';
 
 interface AppSkill {
   name: string;
@@ -116,13 +117,19 @@ export const LauncherApp: React.FC = () => {
             );
           })}
         </div>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          title="Settings"
-          className="ml-auto shrink-0 flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-        >
-          <Settings size={16} />
-        </button>
+        <div className="ml-auto shrink-0 flex items-center gap-2">
+          {/* Billing account the daemon spends from — always visible.
+              Remounts when Settings closes so a sign in/out done there
+              reflects immediately. */}
+          <AccountAvatar key={String(settingsOpen)} onManage={() => setSettingsOpen(true)} />
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            className="flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+          >
+            <Settings size={16} />
+          </button>
+        </div>
       </header>
 
       {/* Body: each opened app kept mounted; only the active one is visible. */}

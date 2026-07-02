@@ -3,7 +3,11 @@ import { LogIn, Menu, Settings, Sparkles } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useUserStore } from '../stores/userStore';
 import { useOpenSettings } from '../hooks/useOpenSettings';
+import { AccountAvatar } from './AccountAvatar';
 import logoUrl from '../assets/logo.svg';
+
+/** Remote/tunnel mode — the UI reached this daemon via the relay. */
+const isRemoteUi = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
 /** Cached user profile from linggen.dev (fetched once on mount). */
 let _userCache: { avatar_url?: string; display_name?: string } | null | undefined;
@@ -247,7 +251,10 @@ export const HeaderBar: React.FC<{
             </button>
           </>
         )}
-        <UserAvatar />
+        {/* Remote (relay) sessions keep the relay identity flow; a local
+            daemon shows the billing account (account.toml) — the identity
+            every app's LLM spend is metered against. */}
+        {isRemoteUi ? <UserAvatar /> : <AccountAvatar />}
       </div>
     </header>
   );
