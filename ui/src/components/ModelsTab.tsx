@@ -305,12 +305,21 @@ export const ModelsTab: React.FC<{
           {(() => {
             const modelId = defaultModels[0];
             const model = config.models.find((m) => m.id === modelId);
+            // A built-in default (e.g. Linggen Cloud) isn't in config.models —
+            // resolve it from the runtime list so the row keeps its provider
+            // chip and doesn't read as an unknown model.
+            const builtin = builtinModels.find((m) => m.id === modelId);
             const health = healthMap[modelId];
             return (
               <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/[0.02] rounded-lg border border-slate-100 dark:border-white/5">
                 <span className="text-xs font-medium flex-1">
                   {modelId}
                   {model && model.model && <span className="text-[11px] text-slate-400 ml-1.5">({model.model})</span>}
+                  {builtin?.provided_by && (
+                    <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      {builtin.provided_by}
+                    </span>
+                  )}
                 </span>
                 <HealthDot health={health} ollamaStatus={model ? getOllamaStatus(model) : 'na'} />
                 <button
