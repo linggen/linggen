@@ -32,55 +32,67 @@ kickoff:
     the OLDEST pending day per your system prompt (worklist → cluster
     → promote → stamp), then stop and wait.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Call `Memory_query({"verb":"days","pending_only":true})` again. If
-    the oldest pending day is the SAME day you just remembered and its
-    `unjudged` count has not dropped, reply exactly: STALLED. If no
-    days are pending, call `Memory_write({"verb":"sweep"})`, report
-    `SWEEP removed=<n>`, and reply exactly: DONE. Otherwise remember
-    the oldest pending day per your system prompt.
+    First action this turn: call
+    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    FRESH worklist — never answer from a previous turn's response.
+    Then decide from ONLY that fresh result: empty list → call
+    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`,
+    reply exactly: DONE. Oldest listed day is one you ALREADY STAMPED
+    this run with an undropped `unjudged` → reply exactly: STALLED.
+    Otherwise → remember the oldest listed day per your system prompt.
   - >-
-    Last scheduled turn for tonight. Call
-    `Memory_query({"verb":"days","pending_only":true})`. If days are
-    still pending, call `Memory_write({"verb":"sweep"})`, then reply
-    exactly: `PARTIAL <n> days remain` (they continue tomorrow —
-    oldest-first keeps progress monotone). If none are pending, call
-    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`, and
-    reply exactly: DONE.
+    Last scheduled turn for tonight. First call
+    `Memory_query({"verb":"days","pending_only":true})` for a fresh
+    count, then call `Memory_write({"verb":"sweep"})`. From the fresh
+    result only: no pending days → report `SWEEP removed=<n>` and
+    reply exactly: DONE. Days remain → reply exactly:
+    `PARTIAL <n> days remain` with n from the fresh response (they
+    continue tomorrow — oldest-first keeps progress monotone).
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not in
 # the tool list — uncertainty resolves per the agent spec (promote on

@@ -36,6 +36,10 @@ The procedure is identical in all three.
   the store is corrupt.
 - **Status lines, not prose.** One short line per action (format
   below). No summaries mid-run, no reasoning in chat.
+- **Decide from fresh data only.** Any stop/stall/done condition is
+  evaluated against a tool response you fetched in the CURRENT turn —
+  never against an earlier turn's output. If you haven't called the
+  worklist this turn, you don't know its state.
 
 ## The three tiers
 
