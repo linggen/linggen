@@ -201,6 +201,23 @@ Skills that want to be hostable by an app shell ship a tiny `app-mode.js` that:
 
 The shell never reaches into skill DOM; it only posts these messages. Reference: `sys-doctor/scripts/app-mode.js`.
 
+### Persisted UI prefs (`<skill>:ui`)
+
+App skills persist UI selections (active tab, selected playlist, time range, toggles) client-side so the user lands where they left off. Convention:
+
+- One versioned localStorage blob per skill, key `<skill>:ui`, e.g. `{ "v": 1, "collection": {...}, "shuffle": true }`. All skills share the daemon origin — the key prefix is the namespace.
+- Copy the standard helper into the skill's JS:
+
+```js
+const UI_KEY = '<skill>:ui';
+const loadUi = () => { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } };
+const saveUi = (patch) => { try { localStorage.setItem(UI_KEY, JSON.stringify({ ...loadUi(), ...patch, v: 1 })); } catch { /* ignore */ } };
+```
+
+- Write on change, merge into state at boot, and **validate restored values against live data** (a saved playlist may be deleted; a saved month may fall outside the imported range) — fall back to defaults, never render a dangling selection.
+- UI prefs only — data lives in the skill's `data/` files. localStorage is per-browser and clearable; the page must render correctly from an empty blob.
+- The launcher shell keeps its own blob (`linggen:launcher`, currently `{ v, active }`) to reopen the last active app. References: `dj/scripts/dj.js`, `cfo/scripts/cfo.js`, `ui/src/apps/LauncherApp.tsx`.
+
 ## Install
 
 Skills can declare an `install` field pointing to a script that runs once when the skill is installed. Used to seed directories, copy mission files into `~/.linggen/missions/`, fetch binaries via `requires:`, or perform any other one-time setup.
