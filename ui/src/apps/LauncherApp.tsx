@@ -25,7 +25,6 @@ const LABELS: Record<string, string> = {
   pulse: 'Pulse',
   dj: 'DJ',
   'shared-memory': 'Memory',
-  'arcade-game': 'Arcade',
   'game-table': 'Games',
   'linggen-guide': 'Guide',
   xbot: 'X',
