@@ -24,6 +24,12 @@ people and projects in their life. Memory must help every kind of user
 > Linggen, Claude Code, Codex, and OpenClaw. The `dream` mission still
 > owns bulk consolidation. §2 below reflects the new architecture.
 
+> **2026-07-03:** dream redesigned day-granular with three stages —
+> **harvest, remember, forget**. Remembering (consolidation) no longer
+> deletes; episodic is short-term memory kept for its full TTL. Per-day
+> dream state lives in ling-mem as the single truth for the mission,
+> the calendar UI, and third-party hosts. §2 reflects the new pipeline.
+
 ## 1. What is memory
 
 Memory is the **user's biography across sessions**, not the agent's
@@ -44,9 +50,10 @@ to see it*:
   Tiny. No markdown files — one substrate, no two-places sync.
 - **Semantic** — everything else durable. Curated, deduplicated,
   similarity-retrieved on demand. The live recall hot path.
-- **Episodic** — recent extracted experience, awaiting consolidation.
-  Decays. **On the recall path** (recall spans both tables — see §2
-  Recall) *and* the consolidator's input.
+- **Episodic** — short-term memory: recent experience, kept for its
+  full TTL even after the dream pass has judged it (like human short-
+  term memory, it lingers, then fades). **On the recall path** (recall
+  spans both tables — see §2 Recall) *and* the dream pipeline's input.
 
 If a candidate earns none of the three, **drop it.** Memory never writes
 to project files (`AGENTS.md`, `CLAUDE.md`, source, docs) — those are
@@ -117,52 +124,103 @@ Cross-tool memory comes from the **shared store** — one `~/.linggen`
 backed by the daemon, every host writes through `Memory_*` — never from
 one tool scraping another's logs.
 
-**Consolidate + evict — global, the built-in `dream` mission.** A
-normal, **visible** built-in mission (`~/.linggen/missions/dream/`,
-installed once on setup/upgrade, user-stoppable per run, deletable as a
-supported opt-out). Engine-driven, not a free-form agent prompt: the
-engine owns TTL policy and selects the past-TTL worklist (the binary
-stays policy-free). Each run, strictly ordered:
+**Dream — global, offline, the built-in `dream` mission.** A normal,
+**visible** built-in mission (`~/.linggen/missions/dream/`, installed
+once on setup/upgrade, user-stoppable per run, deletable as a supported
+opt-out). Dream is **day-granular**: it walks **pending days, oldest
+first** (a day is pending when it has episodic rows not yet judged) and
+runs three strictly-ordered stages per pass:
 
-1. **Consolidate** — process **past-TTL rows only**; each gets one
-   terminal decision: promote worthy rows → semantic (a plain append;
-   never a destructive rewrite of an existing row) or delete.
-   Generalizing / merging / contradiction-resolution stay user-present
-   (Reconcile, below) — the no-user dream run does mechanical,
-   high-confidence promote/delete only. May propose **semantic →
-   `tier=core`** for a stable universal (user-confirmed; rule 1).
-   Re-entrant by construction — a handled row leaves episodic.
-2. **Evict** — delete episodic rows older than `EPISODIC_TTL` by
-   last-edit time (a touch resets retention).
+1. **Harvest** — backfill capture. For days live per-turn capture
+   missed (gap days), walk host sessions (the `shared-memory` skill's
+   scan scripts — zero-LLM; the binary stays out of session files) and
+   encode that day's candidates into episodic, stamping the day
+   `harvested`. Steady-state no-op on hosts where live capture runs —
+   so harvest is a **user/skill-triggered backfill action**, not part
+   of the unattended nightly run (which is remember + forget only; a
+   gap day simply shows on the calendar until backfilled).
+2. **Remember** — consolidation. Judge one pending day's episodic rows:
+   promote durable signal → semantic (a plain append; never a
+   destructive rewrite), then stamp the day `remembered_at` in the
+   per-day dream state. **Remembering never deletes** — episodic rows
+   stay as short-term memory for their full TTL. Generalizing /
+   merging / contradiction-resolution stay user-present (Reconcile,
+   below). Any pending day qualifies, including yesterday —
+   consolidation latency is one night, decoupled from TTL. May propose
+   **semantic → `tier=core`** for a stable universal (user-confirmed;
+   rule 1).
+3. **Forget** — mechanical eviction, **no LLM**: delete episodic rows
+   past `EPISODIC_TTL` whose day is remembered and whose creation
+   precedes the day's `remembered_at`. Nothing is deleted unjudged: an
+   undreamed day's rows survive past TTL until a remember pass judges
+   them. Rows arriving after `remembered_at` (late capture, harvest
+   backfill, cross-host lag) re-pend the day for a follow-up remember.
 
-`EPISODIC_TTL` default **7 days** (Settings). Losslessness comes from
-**consolidate-before-evict ordering** within a run: a past-TTL row
-always gets a final promotion pass before it can be evicted. Episodic
-is therefore bounded and lossless except for rows the consolidator
-judged not worth keeping — which is correct.
+The stage contracts compose into the full decision table with no
+per-case logic: a recent pending day gets remembered and keeps its
+episodic (not yet past TTL); an old remembered day is forgotten
+mechanically; an old never-dreamed day gets the full pass — remember,
+then forget. Remember writes only promotions (no per-row deletes), so
+a dream run's cost is bounded by one day's durable signal, not its row
+count.
+
+**Per-day dream state lives in ling-mem** — `{date, harvested_at,
+remembered_at, per-run counts}`, a small sidecar beside the two tables
+(not memory rows; the frozen store schema is untouched). It is the
+single source of truth read by the mission, the memory app's calendar,
+and third-party hosts, exposed as a per-day rollup (`days`: pending /
+staging / remembered / forgotten) over the CLI and HTTP. State is
+stored, not derived, because remembering keeps rows — "judged" can no
+longer be inferred from row absence.
+
+`EPISODIC_TTL` default **7 days** (Settings) — purely the short-term
+retention length, no longer a consolidation gate. Losslessness comes
+from **forget-only-touches-remembered-days**, replacing the old
+consolidate-before-evict ordering. Episodic is therefore bounded and
+lossless except for rows the remember pass judged not worth promoting —
+which is correct.
 
 **Schedule = daily cron + turn-seam catch-up.** Cron alone is missed
 when the machine is off/asleep, so on each completed owner turn, if the
 mission has not run within `dream_catchup_hours` (default 24) it is
 triggered as a catch-up — the next time Linggen is used after a missed
 night. A shared in-flight guard prevents a cron run and a catch-up (or
-two catch-ups) from overlapping. Each run produces a mission run-record
-(the audit trail of automated promote/delete) and is per-run stoppable;
-no-op runs stay quiet.
+two catch-ups) from overlapping, and catch-up retries are **capped per
+day** so a failing run cannot re-fire indefinitely. A run that sees the
+same worklist twice in a row aborts as stalled rather than looping.
+Each run produces a mission run-record (the audit trail of automated
+promotes) and is per-run stoppable; no-op runs stay quiet.
+
+**Without Linggen there is no auto-dream — the stages still run.**
+Every stage is driven through binary primitives (`days` rollup, per-day
+worklist, `forget` sweep), so on Claude Code / Codex / OpenClaw the
+`shared-memory` skill exposes the same pipeline as commands: fetch
+pending days, remember the earliest, invoke forget — on demand or via
+the host's own scheduler. The runbook is canonical in the skill; the
+Linggen mission body is synced from it at release time (one procedure,
+per-host triggers). The memory app's calendar is a rendering of the
+`days` rollup; clicking a day triggers the same pipeline, never a
+second implementation.
 
 ### Binary vs judgment split
 
-- The **`ling-mem` binary** owns both tables + the mechanical primitives
-  (embed, dedup, decay). **No LLM in the binary** — it is the
-  portable, deterministic data layer, the single shared source every
-  caller goes through.
+- The **`ling-mem` binary** owns both tables, the per-day dream state,
+  and the mechanical primitives (embed, dedup, the `days` rollup, the
+  `forget` sweep). **No LLM in the binary** — it is the portable,
+  deterministic data layer, the single shared source every caller goes
+  through.
 - **Judgment** ("is this worth saving", "is this a contradiction") needs
   an LLM. Capture judgment lives in whichever agent is currently talking
   to the user — `ling` on Linggen, the host-resident agent on
-  Claude Code / Codex / OpenClaw. The `dream` mission owns the offline
-  consolidation pass; on Linggen it runs in the engine's mission
-  scheduler, on third-party hosts via the `shared-memory` skill's
-  `dream` slash-command. Both call the same `Memory_*` surface.
+  Claude Code / Codex / OpenClaw. Offline judgment (the remember stage)
+  lives in the built-in **`memory` agent** (`agents/memory.md`,
+  tools = `Memory_query` + `Memory_write` only, unattended-safe: no
+  AskUser, uncertainty resolves to promote). Every entry point borrows
+  that one brain: the `dream` mission runs under it (`agent: memory`),
+  the memory app's calendar day-click Tasks to it, and on third-party
+  hosts the `shared-memory` skill's dream runbook drives the host agent
+  through the same daemon primitives (`days`, day-scoped `list`,
+  `remember_day`, `sweep` — CLI or MCP). One procedure, N triggers.
 - The store lives under `~/.linggen`, owned by the binary, **not** in
   the skill bundle: deleting the skill / plugin degrades capture, never
   loses data.
@@ -193,8 +251,9 @@ same turn — the difference is the target table, not who writes:
   stable universals; `tier=semantic` otherwise). Immediate.
 - **Incidental / observed** — a decision that emerged, ambient context
   the agent judged worth preserving across sessions. The live agent
-  writes it to **episodic** in the same turn. The `dream` mission
-  later promotes-or-evicts past-TTL.
+  writes it to **episodic** in the same turn. The dream pass remembers
+  the durable rows the following night; forget evicts the rest after
+  `EPISODIC_TTL`.
 - **Core** is *not* a counter or a fast lane: salience gets a row to
   semantic; only a **stable universal** (name, role, enduring rule)
   becomes `tier=core`. A volatile fact ("age 18") goes semantic but is
@@ -202,8 +261,8 @@ same turn — the difference is the target table, not who writes:
   many times it was said.
 
 Redundancy across paths is safe and self-healing: cross-table recall
-dedup keeps the semantic copy; the `dream` mission later deletes the
-episodic twin.
+dedup keeps the semantic copy; the episodic twin ages out at the
+forget stage.
 
 **Repetition.** An *explicit* restatement reinforces via the live path
 above. An *implicit* pattern (the user keeps doing A but never states a
@@ -249,8 +308,9 @@ against existing memory:
   near-dup → skip; contradiction → ask the user via the host's primitive;
   on answer, write the resolved row then delete the losers.
 - **`dream` mission** (no user present) — reads the store, mechanical +
-  high-confidence promote/evict only; defers contradictions entirely (no
-  rows are silently rewritten without the user).
+  high-confidence promotion only (forgetting is a rule, not a
+  judgment); defers contradictions entirely (no rows are silently
+  rewritten without the user).
 
 The encoder subagent and its dedicated `SubagentPane` widget routing are
 **gone** — the live agent's ask-user widget lands wherever it is
@@ -308,13 +368,13 @@ time, not row count alone.
 
 **5. Consolidation promotes mechanically; judgment is user-present.**
 
-The dream consolidator (§2) autonomously does **mechanical + high-
-confidence** work: promote clear-cut episodic → semantic, exact-rephrase
-dedup, and consolidate-before-evict. It does **not**
-merge distinct facts, generalize utterances into rules, or resolve
-contradictions — those are judgment, and per Reconcile (§2) they happen
-only with the **user present** (live write or recall), never in the
-no-user dream run. Explicit user confirmation is still required for
+The dream pass (§2) autonomously does **mechanical + high-confidence**
+work: remember clear-cut episodic → semantic, exact-rephrase dedup, and
+forget-after-judgment (the sweep only touches remembered days past
+TTL). It does **not** merge distinct facts, generalize utterances into
+rules, or resolve contradictions — those are judgment, and per
+Reconcile (§2) they happen only with the **user present** (live write
+or recall), never in the no-user dream run. Explicit user confirmation is still required for
 **bulk forget and any destructive rewrite of an existing semantic row**
 (rule 1).
 
@@ -517,20 +577,25 @@ described in §4 rule 2. The split is responsibility, not packaging.
 
 Ordered. Each is a design decision not yet locked.
 
-1. **Decay model** — *resolved* (§2): clock = `updated_at` (touch
-   resets it); wall-clock `EPISODIC_TTL` (7d default,
-   Settings-configurable); consolidate-before-evict. Capture is inline
-   on every live turn (no encoder subagent, no every-N counter — retired
-   2026-05-28); consolidate + evict run on the `dream` mission (daily
-   cron + turn-seam catch-up).
-2. **Consolidator contract** — *resolved* (§2): consolidate processes
-   past-TTL rows only; each is terminally promoted (→ semantic, a plain
-   append, never destructive) or deleted; re-entrancy needs
-   no watermark — a handled row leaves episodic. Lives entirely on the
-   built-in **`dream` mission** (global, visible, daily cron + turn-seam
-   catch-up). Split off the per-session subagent on 2026-05-19; the
-   subagent itself was retired 2026-05-28 (capture is now inline on the
-   live agent's turn).
+1. **Decay model** — *resolved*, revised 2026-07-03 (§2): clock =
+   `updated_at` (touch resets it); wall-clock `EPISODIC_TTL` (7d
+   default, Settings-configurable) is **pure short-term retention**, no
+   longer a consolidation gate. Forget is a mechanical sweep gated on
+   remembered days (past TTL + day remembered + row created before
+   `remembered_at`). Capture is inline on every live turn (no encoder
+   subagent — retired 2026-05-28); the dream pipeline runs on the
+   `dream` mission (daily cron + capped turn-seam catch-up).
+2. **Consolidator contract** — *resolved*, revised 2026-07-03 (§2):
+   **day-granular** — walk pending days oldest-first; remember = judge
+   one day's rows, promote durable signal (plain append, never
+   destructive), stamp `remembered_at`; **never deletes**. Re-entrancy
+   comes from the per-day dream state in ling-mem (late-arriving rows
+   re-pend the day), replacing "a handled row leaves episodic". The
+   runbook is canonical in the `shared-memory` skill; the built-in
+   `dream` mission body is synced from it at release time. Prior model
+   (past-TTL worklist, terminal promote-or-delete per row) retired
+   2026-07-03 — it coupled consolidation latency to TTL and spent most
+   of its tokens on per-row deletes.
 3. **Dedup threshold** — *resolved*: `DEDUP_SIMILARITY_THRESHOLD = 0.75`,
    retuned 2026-05-15 against the real Qwen3-Embedding-0.6B distribution
    (restatements 0.78–0.97, distinct pairs ≤0.65; 0.75 sits in the gap,
@@ -547,8 +612,9 @@ Ordered. Each is a design decision not yet locked.
    by anyone; this is the opening. Build it next.
 5. **Capture ↔ consolidation boundary** — *resolved* (§2): the live
    agent applies §4's hard exclusions **+ a write-time usefulness bar**
-   (episodic is recall-visible immediately); the `dream` mission remains
-   the terminal promote/delete gate for past-TTL rows. Revised
+   (episodic is recall-visible immediately); the dream pass remains
+   the promotion gate (remember), with eviction a separate mechanical
+   sweep (forget). Revised
    2026-05-19 from "liberal capture" once recall began spanning episodic
    — server-side dedup (`insert_with_dedup`) collapses byte-identical
    restatements (exact-content only; reworded/contradiction is the LLM's).

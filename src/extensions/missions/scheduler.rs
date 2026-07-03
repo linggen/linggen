@@ -13,6 +13,43 @@ const CHECK_INTERVAL_SECS: u64 = 10;
 /// Maximum triggers per mission per day to prevent runaway cost.
 const MAX_TRIGGERS_PER_DAY: u32 = 100;
 
+/// Maximum catch-up attempts per mission per local day. A mission that
+/// keeps *failing* must not burn the day's token budget by re-firing on
+/// every turn seam — observed with the dream mission (a dozen ~50k-token
+/// sessions in one evening ending in a provider 429). Cron fires and
+/// manual triggers are not counted against this cap.
+const CATCHUP_MAX_ATTEMPTS_PER_DAY: usize = 3;
+
+/// In-flight guard shared by **every** dispatch path — cron tick,
+/// turn-seam catch-up, and the manual trigger API. The tick keeps its own
+/// per-mission `running` flag, but catch-up and manual runs used to
+/// bypass it entirely, so two dream runs could overlap and double-spend.
+/// All paths funnel through `dispatch_mission_prompt`, so the guard
+/// lives there.
+static IN_FLIGHT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// RAII claim on a mission id in [`IN_FLIGHT`]. Dropping releases the
+/// claim, including on early returns and panics inside the run.
+struct InFlightGuard(String);
+
+impl InFlightGuard {
+    /// Claim `mission_id`; `None` when a run is already in flight.
+    fn claim(mission_id: &str) -> Option<Self> {
+        let mut set = IN_FLIGHT.lock().expect("IN_FLIGHT lock poisoned");
+        set.insert(mission_id.to_string())
+            .then(|| Self(mission_id.to_string()))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = IN_FLIGHT.lock() {
+            set.remove(&self.0);
+        }
+    }
+}
+
 /// Per-mission tracking state.
 struct MissionState {
     /// Last minute we fired this mission (to dedup within the same minute).
@@ -309,17 +346,18 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
 
             // Last *attempt* (completed or failed; skipped doesn't count).
             // None ⇒ never run ⇒ overdue.
-            let last_run_secs = match state.manager.missions.list_mission_runs(&mission.id) {
-                Ok(runs) => runs
-                    .iter()
-                    .filter(|r| !r.skipped)
-                    .map(|r| r.triggered_at)
-                    .max(),
+            let runs = match state.manager.missions.list_mission_runs(&mission.id) {
+                Ok(runs) => runs,
                 Err(e) => {
                     debug!("catchup: list_mission_runs failed for '{}': {e}", mission.id);
                     continue;
                 }
             };
+            let last_run_secs = runs
+                .iter()
+                .filter(|r| !r.skipped)
+                .map(|r| r.triggered_at)
+                .max();
 
             let threshold_secs = catchup_hours.saturating_mul(3600);
             let overdue = match last_run_secs {
@@ -327,6 +365,29 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                 Some(last) => now.saturating_sub(last) >= threshold_secs,
             };
             if !overdue {
+                continue;
+            }
+
+            // Retry cap: a mission that keeps failing (each failure resets
+            // nothing — the catch-up would otherwise re-fire once the
+            // threshold re-elapses, or immediately for sub-day thresholds)
+            // gets at most CATCHUP_MAX_ATTEMPTS_PER_DAY attempts per local
+            // day before we stop trying until tomorrow.
+            let day_start_secs = Local::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .and_then(|n| n.and_local_timezone(Local).earliest())
+                .map(|dt| dt.timestamp().max(0) as u64)
+                .unwrap_or(0);
+            let attempts_today = runs
+                .iter()
+                .filter(|r| !r.skipped && r.triggered_at >= day_start_secs)
+                .count();
+            if attempts_today >= CATCHUP_MAX_ATTEMPTS_PER_DAY {
+                info!(
+                    "catchup: mission '{}' already attempted {}x today — capped until tomorrow",
+                    mission.id, attempts_today
+                );
                 continue;
             }
 
@@ -360,6 +421,22 @@ async fn dispatch_mission_prompt(
     let refreshed = state.manager.missions.reload_one(&mission.id);
     let mission = refreshed.as_ref().unwrap_or(mission);
     let agent_id = mission.agent_id.as_str();
+
+    // One run per mission at a time, across ALL trigger paths (cron,
+    // catch-up, manual). Held for the whole run; released on drop.
+    let Some(_in_flight) = InFlightGuard::claim(&mission.id) else {
+        info!(
+            "Mission '{}': a run is already in flight — skipping this trigger",
+            mission.id
+        );
+        let skip_id = format!(
+            "mission-run-{}-{}",
+            crate::util::now_ts_secs(),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
+        record_mission_run(&state, mission, &skip_id, None, "skipped", true);
+        return;
+    };
 
     // Mission-level run id. Keys MissionRunEntry.run_id and the
     // MissionTriggered event.

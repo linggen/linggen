@@ -50,8 +50,8 @@ The mission name is the directory name. One mission per directory. Run history i
 ---
 name: dream
 description: >-
-  Nightly memory consolidation. Promotes durable episodic memories
-  into the long-term semantic store and forgets the rest.
+  Nightly memory dream. Remembers each pending day's episodic staging
+  into long-term memory, then runs the forget sweep.
 
 # Schedule
 schedule: "0 3 * * *"
@@ -231,7 +231,7 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. After every owner-session user turn, a non-blocking sweep walks all enabled missions whose last non-skipped run is older than their `catchup_hours` and triggers them — same dispatch path as a normal cron fire. Catch-up overlaps are prevented by the same busy-skip used for cron. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
-The built-in `dream` consolidation mission uses `catchup_hours: 24`: missed 3am fires re-run opportunistically the next time the user sends a turn.
+The built-in `dream` mission uses `catchup_hours: 24`: missed 3am fires re-run opportunistically the next time the user sends a turn. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 
 ## Run history
 

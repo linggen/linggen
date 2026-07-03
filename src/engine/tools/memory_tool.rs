@@ -62,7 +62,7 @@ impl Tool for MemoryQueryTool {
         "Memory_query"
     }
     fn description(&self) -> &'static str {
-        "Read memory. Verb-dispatched: `get` (fetch one row by id), `search` (semantic search; ranked by relevance — takes `query`), `list` (filter-only browse, no ranking — for audits or sweeps). Memory holds the user's biography across sessions — identity, cross-project preferences, decisions with their reasoning. For codebase facts, read project files directly.\n\n**All filters are optional and AND-combined.** Speculatively passing `type`, `from`, or `outcome` is the #1 cause of empty results — start with just `verb` (+ `query` for search) and add filters only after seeing what's there.\n\n**Example — dream's worklist (every past-TTL episodic row in one call):**\n```\n{ \"verb\": \"list\", \"tier\": \"episodic\", \"past_ttl\": true, \"limit\": 200 }\n```\nNo `type`/`from`/`outcome` — those would narrow the sweep to zero rows."
+        "Read memory. Verb-dispatched: `get` (fetch one row by id), `search` (semantic search; ranked by relevance — takes `query`), `list` (filter-only browse, no ranking — for audits or sweeps), `days` (per-day dream-state rollup: each day's episodic counts + pipeline state today/staging/pending/remembered/forgotten; `pending_only` = the dream worklist, oldest first). Memory holds the user's biography across sessions — identity, cross-project preferences, decisions with their reasoning. For codebase facts, read project files directly.\n\n**All filters are optional and AND-combined.** Speculatively passing `type`, `from`, or `outcome` is the #1 cause of empty results — start with just `verb` (+ `query` for search) and add filters only after seeing what's there.\n\n**Example — the dream worklist (days awaiting a remember pass):**\n```\n{ \"verb\": \"days\", \"pending_only\": true }\n```\n**Example — one day's remember worklist:**\n```\n{ \"verb\": \"list\", \"tier\": \"episodic\", \"day\": \"2026-07-01\", \"limit\": 50 }\n```\nNo `type`/`from`/`outcome` — those would narrow the sweep to zero rows."
     }
     fn tier(&self) -> PermissionMode {
         // Memory ops are conversation primitives — the user's own data
@@ -75,7 +75,7 @@ impl Tool for MemoryQueryTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":     {"type": "string", "enum": ["get", "search", "list"], "description": "Read operation."},
+                "verb":     {"type": "string", "enum": ["get", "search", "list", "days"], "description": "Read operation."},
                 "id":       {"type": "string", "description": "Required for verb=get. Fact UUID."},
                 "query":    {"type": "string", "description": "Required for verb=search. Natural-language description of what you're looking for."},
                 "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND semantics). For verb=search, narrows ranked results; for verb=list, primary filter. Omit to skip."},
@@ -85,7 +85,9 @@ impl Tool for MemoryQueryTool {
                 "outcome":  {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "**DEFAULT: do not pass.** Filter by outcome. Almost no rows have `outcome=neutral`; passing it returns 0 rows even when the store has data. Pass only when the user explicitly asked to see only positive / negative outcomes."},
                 "since":    {"type": "string", "description": "RFC-3339 lower bound on effective timestamp. Omit to skip."},
                 "until":    {"type": "string", "description": "RFC-3339 upper bound (verb=list only). Omit to skip."},
-                "past_ttl": {"type": "boolean", "description": "verb=list only. When true, ask the daemon for rows that are past its configured episodic TTL (resolves the cutoff server-side using `episodic_ttl_days`). Used by the dream consolidator so the mission body doesn't have to know the TTL value. An explicit `until` wins."},
+                "past_ttl": {"type": "boolean", "description": "verb=list only. When true, ask the daemon for rows that are past its configured episodic TTL (resolves the cutoff server-side using `episodic_ttl_days`). An explicit `until` wins."},
+                "day":      {"type": "string", "description": "verb=list only. One local calendar day, YYYY-MM-DD — sugar over since/until covering exactly that day. The remember stage lists a single day's worklist with this."},
+                "pending_only": {"type": "boolean", "description": "verb=days only. Return only days awaiting a remember pass, oldest first — the dream worklist."},
                 "sort":     {"type": "string", "enum": ["newest", "oldest"], "description": "verb=list only. Defaults to newest."},
                 "limit":    {"type": "integer", "description": "Max rows. Defaults to 10 for search, 50 for list."},
                 "offset":   {"type": "integer", "description": "verb=list only. Skip this many rows in sort order."}
@@ -115,7 +117,7 @@ impl Tool for MemoryWriteTool {
         "Memory_write"
     }
     fn description(&self) -> &'static str {
-        "Modify memory. Verb-dispatched: `add` (insert a new row), `update` (edit fields of an existing row by id), `delete` (hard-delete a single row by id). **Follow `[memory_protocol]` in your system prompt** — every `add` MUST be preceded by a `Memory_query`, dups are skipped, contradictions go through `AskUser`. Memory should grow with genuinely durable signal: cross-project user identity / goals (`fact`), commitment-language behavioral rules (`preference`), decisions whose reasoning is the retrieval value (`decision`), cross-project tech gotchas (`learned`). Don't store project-internal architecture, conventions, or implementation detail — drop those candidates entirely. Memory does NOT write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are user-curated, and the agent reads them directly when needed. Reserve `verb=update` for mechanical rephrasing of the same fact and `verb=delete` for explicit user requests to forget (or for the post-AskUser resolution of a contradiction). Bulk forget is not on this tool surface — handle it via the dashboard or by iterating verb=delete after explicit user confirmation."
+        "Modify memory. Verb-dispatched: `add` (insert a new row), `update` (edit fields of an existing row by id), `delete` (hard-delete a single row by id), `remember_day` (stamp a day judged after a remember pass — pass `date` + `judged`/`promoted` counts), `sweep` (the forget stage: mechanically evict episodic rows that are past TTL, on a remembered day, and were judged; never touches un-judged rows — safe anytime). **Follow `[memory_protocol]` in your system prompt** — every `add` MUST be preceded by a `Memory_query`, dups are skipped, contradictions go through `AskUser`. Memory should grow with genuinely durable signal: cross-project user identity / goals (`fact`), commitment-language behavioral rules (`preference`), decisions whose reasoning is the retrieval value (`decision`), cross-project tech gotchas (`learned`). Don't store project-internal architecture, conventions, or implementation detail — drop those candidates entirely. Memory does NOT write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are user-curated, and the agent reads them directly when needed. Reserve `verb=update` for mechanical rephrasing of the same fact and `verb=delete` for explicit user requests to forget (or for the post-AskUser resolution of a contradiction). Bulk forget is not on this tool surface — handle it via the dashboard or by iterating verb=delete after explicit user confirmation."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Chat
@@ -124,8 +126,12 @@ impl Tool for MemoryWriteTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":          {"type": "string", "enum": ["add", "update", "delete"], "description": "Write operation."},
+                "verb":          {"type": "string", "enum": ["add", "update", "delete", "remember_day", "sweep"], "description": "Write operation."},
                 "id":            {"type": "string", "description": "Required for verb=update / verb=delete. The row UUID."},
+                "date":          {"type": "string", "description": "Required for verb=remember_day. The local calendar day that was judged, YYYY-MM-DD. Only past days are accepted."},
+                "judged":        {"type": "integer", "description": "verb=remember_day. Rows judged in this pass (accumulates onto the day's total)."},
+                "promoted":      {"type": "integer", "description": "verb=remember_day. Rows promoted to semantic in this pass (accumulates)."},
+                "dry_run":       {"type": "boolean", "description": "verb=sweep. Report what would be evicted without deleting."},
                 "content":       {"type": "string", "description": "verb=add/update. The fact text the model will see when the row is recalled."},
                 "type":          {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "verb=add/update. Fact category. Default `fact`."},
                 "from":          {"type": "string", "enum": ["user", "agent", "derived"], "description": "verb=add/update. Origin of the fact. Default `derived`."},

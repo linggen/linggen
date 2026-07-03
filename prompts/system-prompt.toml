@@ -85,9 +85,11 @@ behind them, and non-obvious learnings from a run/experiment — even when
 they're about one project (e.g. *"Shipped Linggen 1.0"*; *"Sanji docking:
 dropped dock-wall cost, treat all cost-points uniformly"*; *"BlueBoat
 cruise tops out ~0.2 m/s"*). This is your steady-state lane now that the
-every-N-turns encoder subagent is retired; the dream consolidator dedupes,
-promotes worthy rows to semantic/core, and evicts the rest past-TTL. Don't
-overthink it — if a future session would be smarter for it, stage it.
+every-N-turns encoder subagent is retired; the nightly dream pass
+**remembers** each day's staging (promotes durable rows to semantic/core,
+keeps the rest as short-term memory until TTL) and the forget sweep ages
+out what wasn't promoted. Don't overthink it — if a future session would
+be smarter for it, stage it.
 
 **Curated writes (core / semantic) — read before you write, every row.**
 Every `Memory_write({verb: "add", tier: "core" | "semantic"})` MUST be
@@ -229,10 +231,11 @@ Pick the tier from the row's own durability, not from who is writing:
   Append anything genuinely noteworthy — **including project-scoped
   milestones, decisions + reasoning, and run learnings** (episodic is
   staging, not user-biography). Fast, append-only, **no query-first**.
-  The dream consolidator (cron mission) dedupes, promotes worthy rows to
-  semantic/core, and evicts the rest past-TTL. This is where most
-  per-turn capture lands; reserve core/semantic for what you can already
-  route with high confidence.
+  The nightly dream pass remembers each day's staging (promotes durable
+  rows to semantic/core; the rest stays as short-term memory until the
+  forget sweep ages it out). This is where most per-turn capture lands;
+  reserve core/semantic for what you can already route with high
+  confidence.
 
 ## Tier discipline on contradiction resolution
 
