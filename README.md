@@ -5,9 +5,10 @@
 <h1 align="center">Linggen</h1>
 
 <p align="center">
-  <strong>A local AI app engine — and your general-purpose personal assistant.</strong><br>
-  Two faces of one runtime: out of the box, the assistant chats and acts;
-  install skills and the same runtime hosts them as full apps.
+  <strong>Local-first AI apps on your own machine.</strong><br>
+  A personal CFO that reads your bank statements without uploading them, a Mac
+  health doctor, a music DJ — full apps on one open runtime, with a
+  general-purpose assistant built in.
 </p>
 
 <p align="center">
@@ -28,12 +29,34 @@
 
 ## Install
 
+**The Mac app** — launcher with all apps below, menubar companion included:
+
+```bash
+curl -fsSL https://linggen.dev/install-app.sh | bash
+```
+
+**Engine only** — CLI + web UI, macOS and Linux:
+
 ```bash
 curl -fsSL https://linggen.dev/install.sh | bash
 ling
 ```
 
-Opens the web UI at `http://localhost:9898`. macOS and Linux.
+Opens the web UI at `http://localhost:9898`.
+
+---
+
+## The apps
+
+- **[CFO](https://linggen.dev/apps/cfo)** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/apps/cfo).
+- **[Sys Doctor](https://linggen.dev/apps/sysdoctor)** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
+- **DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
+- **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
+- **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
+- **Memory** — cross-agent semantic memory via [`ling-mem`](https://github.com/linggen/linggen-memory): the same store reachable from Linggen, Claude Code, or Codex.
+- **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
+
+Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [linggen.dev/skills](https://linggen.dev/skills).
 
 ---
 
@@ -88,26 +111,6 @@ each other and to you.
 She's an ordinary Linggen session on the `yinyue` agent — swap her model, edit
 her persona, or build another companion the same way. See
 [`doc/yinyue-companion-spec.md`](doc/yinyue-companion-spec.md).
-
----
-
-## Apps built on Linggen
-
-- **[CFO](https://linggen.dev/apps/cfo)** — Personal CFO. Import bank and card CSV/PDF exports; it builds a spend report, catches subscriptions and price hikes, answers "why did I spend more this month?", and drafts cancellation emails. Data never leaves the machine. Bundled `.app` available.
-- **[Sys Doctor](https://linggen.dev/apps/sysdoctor)** — AI health analyst for your Mac. Disk, security, performance, dormant apps, buyer's guide. Bundled `.app` available.
-- **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts for X and Reddit at launch time.
-- **Model Sharing** — Rooms. Open one and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman, owner controls budget and tools.
-
-Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [linggen.dev/skills](https://linggen.dev/skills).
-
----
-
-## Memory
-
-Linggen's filesystem is a memory store. Facts live as core markdown plus a
-LanceDB semantic index — typed entries, embeddings, and first-class forgetting,
-reachable from Linggen, Claude Code, or Codex. Powered by
-[`ling-mem`](https://github.com/linggen/linggen-memory).
 
 ---
 
