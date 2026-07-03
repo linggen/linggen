@@ -11,6 +11,7 @@ import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
+import { UsageMeter } from '../components/UsageMeter';
 
 interface AppSkill {
   name: string;
@@ -41,6 +42,16 @@ const orderIndex = (name: string) => {
 /** Preferred default app, first one that's installed. */
 const PREFERRED_DEFAULT = ['cfo', 'sys-doctor', 'pulse'];
 
+/** Persisted launcher UI state — restores the last active app across
+ *  restarts. One versioned blob; skills keep their own `<skill>:ui` blobs. */
+const UI_KEY = 'linggen:launcher';
+const loadUi = (): { active?: string } => {
+  try { return JSON.parse(localStorage.getItem(UI_KEY) ?? '') || {}; } catch { return {}; }
+};
+const saveUi = (patch: Record<string, unknown>) => {
+  try { localStorage.setItem(UI_KEY, JSON.stringify({ ...loadUi(), ...patch, v: 1 })); } catch { /* ignore */ }
+};
+
 export const LauncherApp: React.FC = () => {
   const [apps, setApps] = useState<AppSkill[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
@@ -63,10 +74,15 @@ export const LauncherApp: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  // Open the default app once the list arrives.
+  // Open the last active app (if still installed) once the list arrives,
+  // falling back to the preferred default. Only the active app is mounted
+  // at startup; other tabs lazy-mount on click.
   useEffect(() => {
     if (activeName || apps.length === 0) return;
-    const def = PREFERRED_DEFAULT.find((n) => apps.some((a) => a.name === n)) ?? apps[0].name;
+    const saved = loadUi().active;
+    const def = (saved && apps.some((a) => a.name === saved) ? saved : null)
+      ?? PREFERRED_DEFAULT.find((n) => apps.some((a) => a.name === n))
+      ?? apps[0].name;
     setActiveName(def);
     setOpened([def]);
   }, [apps, activeName]);
@@ -84,6 +100,7 @@ export const LauncherApp: React.FC = () => {
   const open = (name: string) => {
     setActiveName(name);
     setOpened((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    saveUi({ active: name });
   };
 
   // in_launcher=1 tells the app it's hosted inside the unified launcher (vs a
@@ -118,6 +135,7 @@ export const LauncherApp: React.FC = () => {
           })}
         </div>
         <div className="ml-auto shrink-0 flex items-center gap-2">
+          <UsageMeter />
           {/* Billing account the daemon spends from — always visible.
               Remounts when Settings closes so a sign in/out done there
               reflects immediately. */}
