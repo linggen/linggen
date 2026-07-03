@@ -6,6 +6,7 @@ import { SubagentTreeView } from './SubagentTreeView';
 import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
 import { AuthRequiredBlock } from './AuthRequiredBlock';
+import { BillingRequiredBlock } from './BillingRequiredBlock';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
 import { stripEmbeddedStructuredJson, isPlanMessage } from '../../lib/messageUtils';
@@ -46,6 +47,16 @@ function renderAuthRequired(text?: string): React.ReactNode | null {
   }
 
   return null;
+}
+
+/** Render the inline subscribe CTA when a turn fails on a spent allowance —
+ *  the engine surfaces Linggen Cloud 402s as `BILLING_REQUIRED: <msg>`
+ *  (optionally `Error:`-prefixed). Returns null for anything else. */
+function renderBillingRequired(text?: string): React.ReactNode | null {
+  if (!text) return null;
+  const body = text.trim().replace(/^Error:\s*/i, '');
+  if (!body.startsWith('BILLING_REQUIRED:')) return null;
+  return <BillingRequiredBlock message={body.slice('BILLING_REQUIRED:'.length).trim()} />;
 }
 
 /** Top-level agent message renderer — unified widget-list model.
@@ -106,6 +117,10 @@ export const AgentMessage: React.FC<{
   // partial output the failed turn produced before the 401.
   const authBlock = renderAuthRequired(msg.text);
   if (authBlock) return <>{authBlock}</>;
+
+  // A spent-allowance turn (trial/monthly 402) surfaces a subscribe card.
+  const billingBlock = renderBillingRequired(msg.text);
+  if (billingBlock) return <>{billingBlock}</>;
 
   // Error messages get a prominent banner style.
   if (msg.isError) {

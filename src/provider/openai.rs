@@ -183,7 +183,8 @@ impl OpenAiClient {
 
     /// Format a non-success provider response into a user-facing error.
     /// Payment errors carry the proxy's message (subscribe / trial CTA)
-    /// verbatim; live-auth 401s become sign-in CTAs.
+    /// verbatim — Linggen Cloud 402s get a `BILLING_REQUIRED:` prefix so the
+    /// chat UI renders the subscribe card; live-auth 401s become sign-in CTAs.
     fn provider_error(&self, status: reqwest::StatusCode, text: String) -> anyhow::Error {
         if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
             return anyhow::anyhow!(
@@ -197,6 +198,9 @@ impl OpenAiClient {
         }
         if status == reqwest::StatusCode::PAYMENT_REQUIRED {
             if let Some(msg) = extract_error_message(&text) {
+                if self.linggen_account_live {
+                    return anyhow::anyhow!("BILLING_REQUIRED: {msg}");
+                }
                 return anyhow::anyhow!("{msg}");
             }
         }
