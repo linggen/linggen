@@ -30,6 +30,12 @@ people and projects in their life. Memory must help every kind of user
 > dream state lives in ling-mem as the single truth for the mission,
 > the calendar UI, and third-party hosts. §2 reflects the new pipeline.
 
+> **2026-07-06:** the offline half is now **two user-facing functions**:
+> **scan** (per-day backfill staging, incremental by `source_session`)
+> and **dream** (= remember + forget). On Linggen every dream trigger
+> converges on the day-parameterizable `dream` mission — the skill owns
+> only scan and the calendar UI, never a second dream implementation.
+
 ## 1. What is memory
 
 Memory is the **user's biography across sessions**, not the agent's
@@ -124,42 +130,54 @@ Cross-tool memory comes from the **shared store** — one `~/.linggen`
 backed by the daemon, every host writes through `Memory_*` — never from
 one tool scraping another's logs.
 
-**Dream — global, offline, the built-in `dream` mission.** A normal,
-**visible** built-in mission (`~/.linggen/missions/dream/`, installed
-once on setup/upgrade, user-stoppable per run, deletable as a supported
-opt-out). Dream is **day-granular**: it walks **pending days, oldest
-first** (a day is pending when it has episodic rows not yet judged) and
-runs three strictly-ordered stages per pass:
+**Two user-facing functions** drive the offline half: **scan** (stage
+what live capture missed) and **dream** (turn staging into long-term
+memory, then age the rest out). Dream = remember + forget; scan is a
+separate, always user-triggered action — never part of the unattended
+run.
 
-1. **Harvest** — backfill capture. For days live per-turn capture
-   missed (gap days), walk host sessions (the `shared-memory` skill's
-   scan scripts — zero-LLM; the binary stays out of session files) and
-   encode that day's candidates into episodic, stamping the day
-   `harvested`. Steady-state no-op on hosts where live capture runs —
-   so harvest is a **user/skill-triggered backfill action**, not part
-   of the unattended nightly run (which is remember + forget only; a
-   gap day simply shows on the calendar until backfilled).
-2. **Remember** — consolidation. Judge one pending day's episodic rows:
-   promote durable signal → semantic (a plain append; never a
-   destructive rewrite), then stamp the day `remembered_at` in the
-   per-day dream state. **Remembering never deletes** — episodic rows
-   stay as short-term memory for their full TTL. (One mechanical
-   exception: a *verbatim* promote trips the store's cross-tier
-   exact-dup collapse, which removes the byte-identical episodic twin
-   — the content lives on in semantic, so nothing is lost.) Generalizing /
-   merging / contradiction-resolution stay user-present (Reconcile,
-   below). Any pending day qualifies, including yesterday —
-   consolidation latency is one night, decoupled from TTL. May propose
-   **semantic → `tier=core`** for a stable universal (user-confirmed;
-   rule 1).
-3. **Forget** — mechanical eviction, **no LLM**: delete episodic rows
+**Scan — per-day backfill staging.** For a past day the user picks,
+walk host session logs (the `shared-memory` skill's scan scripts —
+zero-LLM; the binary stays out of session files) and encode that day's
+worthwhile candidates into episodic carrying the day's own timestamps,
+stamping the day scanned. **Incremental by `source_session`**: sessions
+that already contributed rows (live capture or a prior scan) are
+skipped, so scanning is idempotent and double-capture cannot happen —
+safe even on partially-captured days. Scan matters exactly where live
+capture wasn't running (host without the memory hook, daemon off,
+pre-install history); a day nobody worked scans to nothing, which is
+why it stays a per-day human call. A gap day simply sits on the
+calendar until backfilled.
+
+**Dream — the built-in `dream` mission, the single executor.** A
+normal, **visible** built-in mission (`~/.linggen/missions/dream/`,
+installed once on setup/upgrade, user-stoppable per run, deletable as
+a supported opt-out). Dream is **day-granular**: it walks **pending
+days, oldest first** (a day is pending when it has episodic rows not
+yet judged) and runs two strictly-ordered phases per pass:
+
+1. **Remember** — consolidation. Judge one pending day's episodic rows:
+   skip what long-term already holds, pick one representative per
+   near-duplicate cluster, promote durable signal → semantic (a plain
+   append; never a destructive rewrite), then stamp the day
+   `remembered_at` in the per-day dream state. **Remembering never
+   deletes** — episodic rows stay as short-term memory for their full
+   TTL. (One mechanical exception: a *verbatim* promote trips the
+   store's cross-tier exact-dup collapse, which removes the
+   byte-identical episodic twin — the content lives on in semantic, so
+   nothing is lost.) Generalizing / merging / contradiction-resolution
+   stay user-present (Reconcile, below). Any pending day qualifies,
+   including yesterday — consolidation latency is one night, decoupled
+   from TTL. May propose **semantic → `tier=core`** for a stable
+   universal (user-confirmed; rule 1).
+2. **Forget** — mechanical eviction, **no LLM**: delete episodic rows
    past `EPISODIC_TTL` whose day is remembered and whose creation
    precedes the day's `remembered_at`. Nothing is deleted unjudged: an
    undreamed day's rows survive past TTL until a remember pass judges
-   them. Rows arriving after `remembered_at` (late capture, harvest
+   them. Rows arriving after `remembered_at` (late capture, scan
    backfill, cross-host lag) re-pend the day for a follow-up remember.
 
-The stage contracts compose into the full decision table with no
+The phase contracts compose into the full decision table with no
 per-case logic: a recent pending day gets remembered and keeps its
 episodic (not yet past TTL); an old remembered day is forgotten
 mechanically; an old never-dreamed day gets the full pass — remember,
@@ -168,7 +186,8 @@ a dream run's cost is bounded by one day's durable signal, not its row
 count.
 
 **Per-day dream state lives in ling-mem** — `{date, harvested_at,
-remembered_at, per-run counts}`, a small sidecar beside the two tables
+remembered_at, per-run counts}` (`harvested_at` is the scan stamp; the
+field keeps its original name), a small sidecar beside the two tables
 (not memory rows; the frozen store schema is untouched). It is the
 single source of truth read by the mission, the memory app's calendar,
 and third-party hosts, exposed as a per-day rollup (`days`: today /
@@ -199,16 +218,24 @@ run ends with an **engine-composed report** appended to the run session
 mechanically from the tool results, never from model prose (the model's
 own status lines are best-effort narration only).
 
-**Without Linggen there is no auto-dream — the stages still run.**
-Every stage is driven through binary primitives (`days` rollup, per-day
-worklist, `forget` sweep), so on Claude Code / Codex / OpenClaw the
-`shared-memory` skill exposes the same pipeline as commands: fetch
-pending days, remember the earliest, invoke forget — on demand or via
-the host's own scheduler. The runbook is canonical in the skill; the
-Linggen mission body is synced from it at release time (one procedure,
-per-host triggers). The memory app's calendar is a rendering of the
-`days` rollup; clicking a day triggers the same pipeline, never a
-second implementation.
+**One dream executor per host.** On Linggen, every dream trigger —
+nightly cron, turn-seam catch-up, the memory app's Run-dream button, a
+calendar day's dream button — converges on a `dream` **mission run**
+(day-scoped via the trigger's `day` argument when a specific day was
+clicked): same `memory` agent, same in-flight guard, same run record
+and engine-composed report on every path. The skill never
+re-implements the dream procedure; it owns **scan** (its session
+scripts need the skill's tools) and the calendar UI. Without Linggen
+there is no mission runtime — on Claude Code / Codex / OpenClaw the
+`shared-memory` skill's runbook drives the same daemon primitives
+(fetch pending days, remember the earliest, invoke forget) from the
+host agent, on demand or via the host's own scheduler.
+
+The memory app's **calendar** renders the per-day `days` rollup as two
+controls per past day, each explained by a tooltip: `scan | scanned`
+and `dream (n) | dreamed` (today is disabled — a day is judged only
+once it's over). State lives in the daemon, so a day reads `dreamed`
+identically whether the nightly run or a day button got there.
 
 ### Binary vs judgment split
 
@@ -225,10 +252,11 @@ second implementation.
   tools = `Memory_query` + `Memory_write` only, unattended-safe: no
   AskUser, uncertainty resolves to promote). Every entry point borrows
   that one brain: the `dream` mission runs under it (`agent: memory`),
-  the memory app's calendar day-click Tasks to it, and on third-party
-  hosts the `shared-memory` skill's dream runbook drives the host agent
-  through the same daemon primitives (`days`, day-scoped `list`,
-  `remember_day`, `sweep` — CLI or MCP). One procedure, N triggers.
+  the memory app's day buttons trigger day-scoped runs of that same
+  mission, and on third-party hosts the `shared-memory` skill's dream
+  runbook drives the host agent through the same daemon primitives
+  (`days`, day-scoped `list`, `remember_day`, `sweep` — CLI or MCP).
+  One procedure, N triggers.
 - The store lives under `~/.linggen`, owned by the binary, **not** in
   the skill bundle: deleting the skill / plugin degrades capture, never
   loses data.
