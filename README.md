@@ -13,8 +13,7 @@
 
 <p align="center">
   <a href="https://linggen.dev">Website</a> &middot;
-  <a href="https://linggen.dev/apps/sysdoctor">Apps</a> &middot;
-  <a href="https://linggen.dev/skills">Skills</a> &middot;
+  <a href="https://linggen.dev/#inside">Apps</a> &middot;
   <a href="https://linggen.dev/docs">Docs</a> &middot;
   <a href="https://discord.gg/linggen">Discord</a>
 </p>
@@ -55,15 +54,15 @@ Opens the web UI at `http://localhost:9898`.
 
 ## The apps
 
-- **[CFO](https://linggen.dev/apps/cfo)** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/apps/cfo).
-- **[Sys Doctor](https://linggen.dev/apps/sysdoctor)** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
+- **CFO** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/cfo-demo.mp4).
+- **Sys Doctor** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
 - **DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
 - **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
 - **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.
 - **Memory** — cross-agent semantic memory via [`ling-mem`](https://github.com/linggen/linggen-memory): the same store reachable from Linggen, Claude Code, or Codex.
 - **Model sharing** — open a room and let friends use your models over P2P WebRTC. No keys for the consumer, no cloud middleman; the owner controls budget and tools.
 
-Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [linggen.dev/skills](https://linggen.dev/skills).
+Skills, agents, missions — all files. New apps are a folder away. Browse community skills at [github.com/linggen/skills](https://github.com/linggen/skills).
 
 ---
 
