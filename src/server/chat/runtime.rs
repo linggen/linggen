@@ -403,15 +403,18 @@ pub(super) async fn push_user_turn_with_recall(
             .push(crate::message::ChatMessage::new("system", model_text.clone()));
 
         // What the user sees: persisted as a chat message with
-        // from_id="memory" so the UI can render a collapsible widget and
-        // the chat export naturally includes the recall. Content is the
+        // from_id="memory-recall" so the UI can render a collapsible
+        // widget and the chat export naturally includes the recall. A
+        // distinct pseudo-sender, NOT "memory": that's the memory
+        // agent's id, and the dream mission's replies were being
+        // swallowed into recall chips by the collision. Content is the
         // same text the model received — no separate channel — so what
         // the user sees is exactly what the model saw.
         crate::server::chat::helpers::persist_and_emit_to_store(
             &ctx.manager.global_sessions,
             &ctx.events_tx,
             &ctx.agent_id,
-            "memory",
+            "memory-recall",
             &ctx.agent_id,
             &model_text,
             ctx.session_id.as_deref(),

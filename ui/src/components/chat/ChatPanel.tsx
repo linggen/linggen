@@ -141,9 +141,12 @@ const ChatMessageRow = React.memo<{
     else userMsgRefs.current.delete(userMsgIndex);
   }, [userMsgIndex, userMsgRefs]);
   // Auto-recall messages get their own collapsible chip. Backend
-  // persists them with from_id="memory" (runtime.rs::push_user_turn_with_recall),
-  // so the role is "agent" — branch on `from` instead.
-  if (msg.from === 'memory') {
+  // persists them with from_id="memory-recall" (runtime.rs::
+  // push_user_turn_with_recall). Legacy sessions used from_id="memory",
+  // which collides with the memory *agent's* id (its dream-mission
+  // replies rendered as recall chips) — so the legacy match also
+  // requires the recall text shape.
+  if (msg.from === 'memory-recall' || (msg.from === 'memory' && msg.text.startsWith('From memory'))) {
     return <MemoryRecallMessage text={msg.text} />;
   }
   // Auto-compaction notice, injected by handleContextUsage on `compressed`.
