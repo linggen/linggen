@@ -1,6 +1,7 @@
 pub mod cron;
 pub mod draft;
 pub mod parser;
+mod report;
 pub mod scheduler;
 
 use anyhow::{bail, Result};

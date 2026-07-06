@@ -448,8 +448,6 @@ impl AgentManager {
         project_root: &PathBuf,
         agent_id: &str,
     ) -> Result<Arc<Mutex<AgentEngine>>> {
-        let normalized_id = Self::normalize_agent_id(agent_id);
-
         // Check if this session already has an engine
         {
             let engines = self.session_engines.lock().await;
@@ -458,8 +456,28 @@ impl AgentManager {
             }
         }
 
+        // A session pinned to an agent/cwd (session.yaml, e.g. mission
+        // sessions) wins over the caller's guess: the UI routes into a
+        // fresh mission session before the scheduler dispatches, and
+        // whoever touches the session first builds the engine everyone
+        // else reuses. Without the pin, that engine could carry the
+        // wrong agent spec and workspace root for the session's life.
+        let meta = self.global_sessions.get_session_meta(session_id).ok().flatten();
+        let pinned_agent = meta
+            .as_ref()
+            .and_then(|m| m.agent_id.as_deref())
+            .filter(|s| !s.trim().is_empty());
+        let normalized_id = Self::normalize_agent_id(pinned_agent.unwrap_or(agent_id));
+        let pinned_root = meta
+            .as_ref()
+            .filter(|m| m.agent_id.is_some())
+            .and_then(|m| m.cwd.as_deref())
+            .filter(|s| !s.trim().is_empty())
+            .map(|cwd| crate::util::resolve_path(std::path::Path::new(cwd)));
+
         // Create a new engine for this session (reuse existing creation logic)
-        let project_root = Self::canonical_project_root(project_root);
+        let project_root =
+            pinned_root.unwrap_or_else(|| Self::canonical_project_root(project_root));
         let mut engine = self
             .build_engine_for_agent(&project_root, &normalized_id, true)
             .await?;
@@ -467,9 +485,9 @@ impl AgentManager {
         // Apply any per-session compact config persisted in session.yaml so a
         // skill's previously-set threshold + focus survive engine restart
         // without needing to be re-pushed on every iframe mount.
-        if let Ok(Some(meta)) = self.global_sessions.get_session_meta(session_id) {
+        if let Some(meta) = &meta {
             engine.compact_threshold = meta.compact_threshold;
-            engine.compact_focus = meta.compact_focus;
+            engine.compact_focus = meta.compact_focus.clone();
         }
 
         let agent = Arc::new(Mutex::new(engine));

@@ -380,6 +380,23 @@ pub(crate) async fn trigger_mission(
         },
     };
 
+    // In-flight check BEFORE pre-creating the session: a skipped
+    // trigger must not leave an orphan empty session row behind
+    // (observed 2026-07-06 — manual trigger while a run was live).
+    // The guard inside dispatch stays authoritative; this early check
+    // avoids the pre-created session in the common case.
+    if crate::extensions::missions::scheduler::mission_in_flight(&mission.id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "in_flight": true,
+                "message": "A run of this mission is already in flight",
+            })),
+        )
+            .into_response();
+    }
+
     // Determine project root: from request, mission cwd (or legacy project), or env cwd.
     // Expand `~` and `$VAR` so `cwd: ~/.linggen` resolves to an absolute path
     // the agent's Bash tool can spawn in.

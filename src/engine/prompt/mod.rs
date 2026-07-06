@@ -150,24 +150,23 @@ impl AgentEngine {
             (false, false) => format!("## Identity\n\n{}\n\n{}", identity_preface, personality.trim()),
         };
 
-        // Mission frame: same persona/identity treatment as skills, but the
-        // mission body replaces the agent's spec body entirely (the spec's
-        // workflow / planning / delegation guidance doesn't apply to a
-        // headless cron). Agent's `## Identity` block (name + personality)
-        // still leads — mission authors get a warm voice for free without
-        // duplicating "You are Ling" prose into every mission.md.
+        // Mission frame: identity leads, then the agent's full spec body,
+        // then the mission body layered on top. The spec body is the
+        // agent's doctrine — for a custom mission agent (e.g. `memory`,
+        // whose body carries the judgment rules and status-line format)
+        // stripping it leaves the mission pointing at instructions the
+        // model never sees (the 2026-07-06 dream run failure).
         if let Some(mission) = &self.active_mission {
             let resolved = if let Some(ref dir) = mission.mission_dir {
                 mission.body.replace("$MISSION_DIR", &dir.to_string_lossy())
             } else {
                 mission.body.clone()
             };
-            return match (identity_block.is_empty(), resolved.is_empty()) {
-                (true, true) => String::new(),
-                (false, true) => identity_block,
-                (true, false) => resolved,
-                (false, false) => format!("{}\n\n{}", identity_block, resolved),
-            };
+            let parts: Vec<String> = [identity_block, body_rest.to_string(), resolved]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect();
+            return parts.join("\n\n");
         }
 
         let body = if is_app_skill || self.prompt_profile.consumer_frame {
@@ -438,9 +437,14 @@ impl AgentEngine {
         // tools — no files, code, shell, delegation, or planning. It gets a lean
         // prompt and a bare task message (not the coding-framed response format
         // and autonomous-loop bootstrap), so it talks like a person, not a dev agent.
-        let conversational = !["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task", "EnterPlanMode", "UpdatePlan"]
-            .iter()
-            .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
+        // Mission runs are never conversational, whatever their tool set: the
+        // lean block's "just reply / never end with a status line" voice
+        // countermands a mission's turn protocol (observed derailing the
+        // dream mission's memory agent, whose tools are Memory-only).
+        let conversational = self.active_mission.is_none()
+            && !["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task", "EnterPlanMode", "UpdatePlan"]
+                .iter()
+                .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
 
         // Dynamic content appended after cached stable prefix.
 

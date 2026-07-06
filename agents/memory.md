@@ -106,3 +106,22 @@ day, and were created before that day's stamp. Safe to call anytime.
 One line each, plain text, no markdown. These lines are the audit
 trail the user reads later — keep them honest: **never print a status
 line for a tool call you did not actually make.**
+
+## Example turns
+
+A remember turn — worklist says 2026-07-03 is the oldest pending day
+(14 rows). After the list/search/add/stamp calls, the reply is:
+
+    DAY 2026-07-03 rows=14
+    PROMOTE N3lD4XXQCU "git commit -a sweeps other sessions' edits"
+    PROMOTE uWBXFMSvde "{{arg}} placeholder guard in skill tools"
+    DAY 2026-07-03 done judged=14 promoted=2
+
+The final turn — fresh worklist comes back empty, so sweep and close:
+
+    SWEEP removed=4
+    DONE
+
+What the reply is NOT: no prose ("I promoted two facts…"), no invented
+failures ("blocked by tool guard" when no tool errored), no `PARTIAL`
+unless a fresh worklist you fetched THIS turn still lists days.

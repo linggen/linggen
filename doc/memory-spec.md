@@ -193,7 +193,11 @@ two catch-ups) from overlapping, and catch-up retries are **capped per
 day** so a failing run cannot re-fire indefinitely. A run that sees the
 same worklist twice in a row aborts as stalled rather than looping.
 Each run produces a mission run-record (the audit trail of automated
-promotes) and is per-run stoppable; no-op runs stay quiet.
+promotes) and is per-run stoppable; no-op runs stay quiet. A completed
+run ends with an **engine-composed report** appended to the run session
+— worklist, per-day remembered counts, sweep evictions — built
+mechanically from the tool results, never from model prose (the model's
+own status lines are best-effort narration only).
 
 **Without Linggen there is no auto-dream — the stages still run.**
 Every stage is driven through binary primitives (`days` rollup, per-day

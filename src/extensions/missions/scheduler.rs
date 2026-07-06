@@ -50,6 +50,16 @@ impl Drop for InFlightGuard {
     }
 }
 
+/// True while a run of `mission_id` holds the in-flight claim. The
+/// trigger API checks this before pre-creating a session, so a skipped
+/// trigger doesn't leave an orphan empty session row behind.
+pub(crate) fn mission_in_flight(mission_id: &str) -> bool {
+    IN_FLIGHT
+        .lock()
+        .map(|set| set.contains(mission_id))
+        .unwrap_or(false)
+}
+
 /// Per-mission tracking state.
 struct MissionState {
     /// Last minute we fired this mission (to dedup within the same minute).
@@ -260,6 +270,10 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
             std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string())
         }),
         mission_id: Some(mission.id.clone()),
+        // Pin the mission's agent so engine creation resolves to it no
+        // matter which code path (UI routing vs scheduler dispatch)
+        // touches the session first.
+        agent_id: Some(mission.agent_id.clone()),
         // Pin the mission's configured model onto the session so the UI header
         // shows the right model and follow-up chat turns (which go through
         // chat_api with the session's model_id) don't reset back to the global
@@ -429,6 +443,13 @@ async fn dispatch_mission_prompt(
             "Mission '{}': a run is already in flight — skipping this trigger",
             mission.id
         );
+        // A pre-created session (a manual trigger that raced another
+        // start past the API's in-flight check) would linger as an
+        // empty orphan row in the session list — remove it.
+        if let Some(sid) = pre_session_id.as_deref() {
+            let _ = state.manager.global_sessions.remove_session(sid);
+            let _ = state.events_tx.send(ServerEvent::StateUpdated);
+        }
         let skip_id = format!(
             "mission-run-{}-{}",
             crate::util::now_ts_secs(),
@@ -758,6 +779,14 @@ async fn dispatch_mission_prompt(
         }
     };
 
+    // Engine-composed run report — mechanical truth from the run's
+    // memory tool results, appended after the model's final reply so
+    // the session always ends with what actually happened (the model's
+    // own status lines are best-effort and have been observed wrong).
+    if status == "completed" {
+        append_run_report(&state, agent_id, session_id.as_deref());
+    }
+
     state
         .send_agent_status(
             agent_id.to_string(),
@@ -809,6 +838,30 @@ fn apply_mission_tool_scope(engine: &mut crate::engine::AgentEngine, mission: &M
 }
 
 use crate::extensions::scope::compute_tool_scope as compute_mission_tool_scope;
+
+/// Append the engine-composed run report (see `super::report`) to the
+/// run's session as an agent message, then ping the UI to reload.
+fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id: Option<&str>) {
+    let Some(sid) = session_id else { return };
+    let Ok(messages) = state.manager.global_sessions.get_chat_history(sid) else {
+        return;
+    };
+    let Some(report) = super::report::compose_memory_report(&messages) else {
+        return;
+    };
+    let _ = state.manager.global_sessions.add_chat_message(
+        sid,
+        &crate::state_fs::sessions::ChatMsg {
+            agent_id: agent_id.to_string(),
+            from_id: agent_id.to_string(),
+            to_id: "user".to_string(),
+            content: report,
+            timestamp: crate::util::now_ts_secs(),
+            is_observation: false,
+        },
+    );
+    let _ = state.events_tx.send(ServerEvent::StateUpdated);
+}
 
 fn record_mission_run(
     state: &Arc<ServerState>,

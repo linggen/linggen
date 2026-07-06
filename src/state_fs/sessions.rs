@@ -49,6 +49,13 @@ pub struct SessionMeta {
     /// Originating mission ID (when creator is "mission").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission_id: Option<String>,
+    /// Agent this session is pinned to (e.g. a mission's `agent:`
+    /// frontmatter). Engine creation resolves this before any
+    /// caller-supplied agent id, so whichever code path touches the
+    /// session first still builds the right engine — the UI routes
+    /// into a fresh mission session before the scheduler dispatches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     /// User ID of the session creator (owner or consumer's linggen.dev user_id).
     /// Used to isolate sessions by user in proxy rooms.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "consumer_user_id")]
@@ -423,7 +430,7 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+            cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
             compact_threshold: None, compact_focus: None, title_locked: false,
         };
         store.add_session(&meta).unwrap();
@@ -458,7 +465,7 @@ mod tests {
                     created_at: ts,
                     skill: None,
                     creator: "user".into(),
-                    cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                    cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                     compact_threshold: None, compact_focus: None, title_locked: false,
                 })
                 .unwrap();
@@ -477,7 +484,7 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+            cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
             compact_threshold: None, compact_focus: None, title_locked: false,
         };
         store.add_session(&meta).unwrap();
@@ -517,7 +524,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
@@ -566,7 +573,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
@@ -599,7 +606,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .unwrap();
@@ -632,7 +639,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());
@@ -643,7 +650,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());
@@ -654,7 +661,7 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, model_id: None, user_id: None,
+                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
                 compact_threshold: None, compact_focus: None, title_locked: false,
             })
             .is_err());

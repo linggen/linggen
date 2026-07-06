@@ -146,6 +146,7 @@ async fn ensure_session(
         project: None,
         project_name: None,
         mission_id: req.mission_id.clone(),
+        agent_id: None,
         model_id: req.model_id.clone(),
         user_id: req.user_id.clone(),
         compact_threshold: None,
