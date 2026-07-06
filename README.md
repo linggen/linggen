@@ -25,6 +25,13 @@
   <a href="https://github.com/linggen/linggen/stargazers"><img src="https://img.shields.io/github/stars/linggen/linggen?style=flat-square" alt="Stars" /></a>
 </p>
 
+<p align="center">
+  <img src="doc/media/cfo-demo.gif" width="800" alt="Personal CFO — bank statements parsed locally into a spend report; the AI catches a duplicate charge and reviews it in chat" />
+</p>
+<p align="center">
+  <sub><strong>Personal CFO</strong> — statements parsed on your Mac, nothing uploaded; it catches a double charge and the AI reviews it in chat. <a href="https://linggen.dev">More demos →</a></sub>
+</p>
+
 ---
 
 ## Install
