@@ -367,11 +367,10 @@ impl AgentEngine {
             ));
             // Canonical memory protocol — single source of truth for the
             // read-before-write rule, AskUser shape, tier selection, and
-            // tier discipline on resolution. Injected once per session
-            // and inherited by both the live agent and the encoder
-            // subagent (both see `include_memory == true`). All other
+            // tier discipline on resolution. Injected once into every
+            // memory-enabled session (`include_memory == true`). All other
             // memory prompt surfaces (agent specs, capability tool
-            // descriptions, encoder task template) defer to this block.
+            // descriptions) defer to this block.
             stable.push_str(&self.prompt_store.render_or_fallback(
                 keys::MEMORY_PROTOCOL,
                 &[],
@@ -581,8 +580,8 @@ impl AgentEngine {
         // durable" nudge that used to fire here has been deleted — the
         // canonical Memory protocol block (`[memory_protocol]` in
         // system-prompt.toml) is already injected into every memory-enabled
-        // session, and the N-turn encoder subagent is the dedicated
-        // periodic backstop. A third nudge layer was redundant.
+        // session, and the nightly dream mission is the offline backstop.
+        // A second nudge layer was redundant.
 
         for obs in &self.observations {
             messages.push(ChatMessage::new("user", self.observation_for_model(obs)));

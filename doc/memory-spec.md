@@ -143,7 +143,10 @@ runs three strictly-ordered stages per pass:
    promote durable signal → semantic (a plain append; never a
    destructive rewrite), then stamp the day `remembered_at` in the
    per-day dream state. **Remembering never deletes** — episodic rows
-   stay as short-term memory for their full TTL. Generalizing /
+   stay as short-term memory for their full TTL. (One mechanical
+   exception: a *verbatim* promote trips the store's cross-tier
+   exact-dup collapse, which removes the byte-identical episodic twin
+   — the content lives on in semantic, so nothing is lost.) Generalizing /
    merging / contradiction-resolution stay user-present (Reconcile,
    below). Any pending day qualifies, including yesterday —
    consolidation latency is one night, decoupled from TTL. May propose
@@ -168,8 +171,9 @@ count.
 remembered_at, per-run counts}`, a small sidecar beside the two tables
 (not memory rows; the frozen store schema is untouched). It is the
 single source of truth read by the mission, the memory app's calendar,
-and third-party hosts, exposed as a per-day rollup (`days`: pending /
-staging / remembered / forgotten) over the CLI and HTTP. State is
+and third-party hosts, exposed as a per-day rollup (`days`: today /
+staging / pending / remembered / forgotten / harvested) over the CLI
+and HTTP. State is
 stored, not derived, because remembering keeps rows — "judged" can no
 longer be inferred from row absence.
 
@@ -228,8 +232,10 @@ second implementation.
 ### Recall
 
 Live path is unchanged: core inlined every session; semantic queried via
-`Memory_query` (verbs `get`/`search`/`list`) and surfaced at turn start.
-Writes via `Memory_write` (`add`/`update`/`delete`). Recall spans
+`Memory_query` (verbs `get`/`search`/`list`, plus `days` for the
+per-day dream-state rollup) and surfaced at turn start. Writes via
+`Memory_write` (`add`/`update`/`delete`, plus the dream verbs
+`remember_day`/`sweep`). Recall spans
 **both** tables: `Memory_query` queries semantic *and* episodic and
 returns one union — **exact-content** duplicates collapsed (semantic
 copy wins); a high-cosine *contradiction* is deliberately kept so recall
@@ -260,9 +266,10 @@ same turn — the difference is the target table, not who writes:
   a poor core candidate. The *kind* of fact decides core, never how
   many times it was said.
 
-Redundancy across paths is safe and self-healing: cross-table recall
-dedup keeps the semantic copy; the episodic twin ages out at the
-forget stage.
+Redundancy across paths is safe and self-healing: a byte-identical
+episodic twin is collapsed into the semantic copy at promote time
+(cross-tier write dedup); a reworded twin is kept by recall dedup
+(semantic copy wins on exact match) and ages out at the forget stage.
 
 **Repetition.** An *explicit* restatement reinforces via the live path
 above. An *implicit* pattern (the user keeps doing A but never states a
@@ -293,9 +300,11 @@ against existing memory:
   interaction: surface the conflicting rows **with their dates** and ask
   the user to choose/correct via the host's ask-user primitive (Linggen
   `AskUser`, Claude Code `AskUserQuestion`, plain chat on Codex/OpenClaw).
-  On answer, write the resolved row and delete the losers — ordered
-  `memory_add` then `memory_delete` so a concurrent recall sees the old
-  rows or both, never an empty hole on the subject. When **not material**,
+  On answer, write the resolved row and retire the losers — atomically
+  via `replace_ids` on the write surface (one call inserts the new row
+  and deletes every listed loser); surfaces without it order
+  `memory_add` then `memory_delete`. Either way a concurrent recall
+  sees the old rows or both, never an empty hole on the subject. When **not material**,
   or in a context that **cannot ask**: append the new row, leave the old
   one, defer the ask. Cosine **cannot** separate a contradiction from a
   restatement — both score high — so this classification needs the LLM,
@@ -306,7 +315,8 @@ against existing memory:
 
 - **Live `Memory_write`** (the live agent, on every turn) — reads first;
   near-dup → skip; contradiction → ask the user via the host's primitive;
-  on answer, write the resolved row then delete the losers.
+  on answer, write the resolved row with `replace_ids` carrying the
+  losers.
 - **`dream` mission** (no user present) — reads the store, mechanical +
   high-confidence promotion only (forgetting is a rule, not a
   judgment); defers contradictions entirely (no rows are silently
@@ -566,10 +576,10 @@ described in §4 rule 2. The split is responsibility, not packaging.
   methodology: `linggen-memory/benchmark/`. It measures the *retrieval
   subsystem only* — a regression check and a comparable number, **not**
   the system's worth. It cannot see extraction, consolidation, dedup,
-  supersession, or decay, and it rewards the store-everything
+  reconciliation, or decay, and it rewards the store-everything
   anti-pattern this design rejects. Frame any published number that way.
 - **Write side** — extraction precision, dedup correctness,
-  supersession accuracy, decay calibration. No standard benchmark
+  reconciliation accuracy, decay calibration. No standard benchmark
   exists; this is the eval that measures the hard part. Unbuilt — see
   Open / next.
 
@@ -596,19 +606,22 @@ Ordered. Each is a design decision not yet locked.
    (past-TTL worklist, terminal promote-or-delete per row) retired
    2026-07-03 — it coupled consolidation latency to TTL and spent most
    of its tokens on per-row deletes.
-3. **Dedup threshold** — *resolved*: `DEDUP_SIMILARITY_THRESHOLD = 0.75`,
-   retuned 2026-05-15 against the real Qwen3-Embedding-0.6B distribution
-   (restatements 0.78–0.97, distinct pairs ≤0.65; 0.75 sits in the gap,
-   leaning toward under-merge). Lives in `linggen-memory`.
+3. **Dedup threshold** — *resolved, then retired as a gate*: mechanical
+   dedup is exact-content only (cosine is never a sameness gate).
+   `DEDUP_SIMILARITY_THRESHOLD = 0.75` (retuned 2026-05-15 against the
+   real Qwen3-Embedding-0.6B distribution: restatements 0.78–0.97,
+   distinct pairs ≤0.65) survives in `linggen-memory` only as a
+   relevance/tuning reference, never a merge gate.
 4. **Write-side eval — the next concrete deliverable.** Decided: do
    not optimize toward LongMemEval (it scores retrieval over a frozen
    store-everything haystack — structurally the opposite of curation;
    our designed system scores *lower* on it by construction, and that
    is correct). LongMemEval stays a regression check on the raw
    retrieval subsystem only (query pre-consolidation episodic,
-   turn-granularity; add BM25+fusion to be respectable). The real
+   turn-granularity; hybrid scoring — cosine + IDF-weighted keyword
+   boost — shipped 2026-06-09). The real
    scorecard is a new eval measuring extraction precision, dedup
-   correctness, supersession accuracy, and decay calibration — unbuilt
+   correctness, reconciliation accuracy, and decay calibration — unbuilt
    by anyone; this is the opening. Build it next.
 5. **Capture ↔ consolidation boundary** — *resolved* (§2): the live
    agent applies §4's hard exclusions **+ a write-time usefulness bar**
@@ -623,7 +636,8 @@ Ordered. Each is a design decision not yet locked.
 6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
    (any reactivation), gated action; exact-dup→mechanical collapse
    (cosine is never a sameness gate — it can't tell a restatement from a
-   contradiction); contradiction→user-present AskUser(dated)→append resolved row,
+   contradiction); contradiction→user-present AskUser(dated)→resolved
+   row via atomic `replace_ids`,
    no-user→defer; similarity can't detect contradiction (needs the
    engine LLM); never synthesize-into-storage / destructive-delete;
    no structural replaces-link (append + read-time + user delete). One contract, three
