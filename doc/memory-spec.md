@@ -338,9 +338,16 @@ against existing memory:
   `memory_add` then `memory_delete`. Either way a concurrent recall
   sees the old rows or both, never an empty hole on the subject. When **not material**,
   or in a context that **cannot ask**: append the new row, leave the old
-  one, defer the ask. Cosine **cannot** separate a contradiction from a
+  one, and defer the ask **onto the condense queue** (below) — a
+  deferral is a work item, never a dropped thought. Cosine **cannot**
+  separate a contradiction from a
   restatement — both score high — so this classification needs the LLM,
   never the binary's dedup.
+- **Stale supersession** (same subject, the newer row *completes or
+  obsoletes* the older — "design locked, impl not started" → "shipped").
+  Not a duplicate, not a contradiction; the dominant rot in a store of
+  project truths. Never resolved inline (rarely material to the turn) —
+  **enqueue** the cluster on the condense queue.
 - **New** → write.
 
 **Same protocol across every host.** Two write surfaces remain:
@@ -358,6 +365,38 @@ The encoder subagent and its dedicated `SubagentPane` widget routing are
 **gone** — the live agent's ask-user widget lands wherever it is
 already talking (Linggen's main chat, CC's UI, Codex's terminal). Same
 contract on all four hosts.
+
+### Condense — curing stale long-term memory
+
+Semantic is append-mostly, so it accumulates stale chains. The cure is
+**merge, not link**: a chain is *computed* at detection time — a
+same-subject cluster of rows — never a stored edge (the removed
+`supersedes` link stays removed; a link leaves the stale row
+recallable and adds graph traversal to every read). Condensing
+replaces N rows with one current-truth row whose content carries the
+history as narrative with its dated span.
+
+- **Detect — ambient, at every reactivation seam** (the Reconcile
+  seams): recall co-retrieval (rows that arrive together on one query
+  are already a chain candidate — retrieval is the finder), the write
+  path's read-before-write search, and the dream pass's promote-time
+  neighborhood checks. Whoever notices a stale cluster **enqueues** it
+  on the daemon's **condense queue** — a small sidecar beside the dream
+  state, not memory rows. Enqueueing is mechanical and unattended-safe;
+  the live turn never stalls on it.
+- **Judge — user-present only.** The memory app renders the queue as
+  review cards: the drafted condensed row beside the rows it replaces;
+  approve applies `replace_ids` (atomic add + delete), skip discards
+  the proposal. The unattended dream never destroys a semantic row —
+  it only enqueues what it trips over (rules 1 and 5 unchanged).
+- **Type-aware policy.** Task/status rows (`built`, `fixed`, `tried`,
+  decision-status) condense aggressively; **user-biography facts stay
+  append + read-time** (§4 rule 3 — a flattened row destroys
+  "when/how-long" questions). A cluster containing a genuine
+  contradiction is presented as a choice, never auto-merged.
+- **Backlog.** One initial sweep may seed the queue over the existing
+  store; steady-state, real usage feeds it — curation effort follows
+  what recall actually touches.
 
 **Floors.** Synthesis *for the answer* is encouraged (merge rows into a
 dated narrative in the reply); synthesis *into a stored row* is
@@ -680,6 +719,14 @@ Ordered. Each is a design decision not yet locked.
    per-run stoppable; no-op runs stay quiet. Still deferred: a
    dedicated inspectable/undoable *memory* widget distinct from the
    generic mission/subagent surface.
+8. **Condense queue — designed 2026-07-06, unbuilt.** §2 Condense:
+   daemon sidecar queue + enqueue/list/drop primitives; protocol text
+   on all three surfaces naming the stale-supersession category and
+   the enqueue duty; memory app review cards applying `replace_ids`;
+   optional one-time backlog sweep to seed the queue. Also from the
+   same audit: seed `tier=core` (currently empty), and re-route
+   per-event `built`/`fixed` capture to episodic staging (71% of
+   semantic was written directly, bypassing the dream's judgment).
 
 Carried gaps (not blocking the rebuild): no row-level confidence
 calibration; privacy isolation is by convention not enforcement;
