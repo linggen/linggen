@@ -784,7 +784,7 @@ async fn dispatch_mission_prompt(
     // the session always ends with what actually happened (the model's
     // own status lines are best-effort and have been observed wrong).
     if status == "completed" {
-        append_run_report(&state, agent_id, session_id.as_deref());
+        append_run_report(&state, agent_id, session_id.as_deref()).await;
     }
 
     state
@@ -841,14 +841,30 @@ use crate::extensions::scope::compute_tool_scope as compute_mission_tool_scope;
 
 /// Append the engine-composed run report (see `super::report`) to the
 /// run's session as an agent message, then ping the UI to reload.
-fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id: Option<&str>) {
+async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id: Option<&str>) {
     let Some(sid) = session_id else { return };
     let Ok(messages) = state.manager.global_sessions.get_chat_history(sid) else {
         return;
     };
-    let Some(report) = super::report::compose_memory_report(&messages) else {
+    let Some(mut report) = super::report::compose_memory_report(&messages) else {
         return;
     };
+
+    // Close with where the store stands — one `stats` call to the
+    // daemon; skipped silently if it's unreachable.
+    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    if let Ok(stats) = crate::engine::tools::memory_tool::call_memory_http(
+        &ling_mem_url,
+        "Memory_query",
+        serde_json::json!({ "verb": "stats" }),
+    )
+    .await
+    {
+        if let Some(line) = super::report::store_state_line(&stats) {
+            report.push_str("\n- ");
+            report.push_str(&line);
+        }
+    }
     let _ = state.manager.global_sessions.add_chat_message(
         sid,
         &crate::state_fs::sessions::ChatMsg {

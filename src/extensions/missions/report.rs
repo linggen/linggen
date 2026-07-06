@@ -78,6 +78,30 @@ fn remember_line(v: &serde_json::Value) -> Option<String> {
     ))
 }
 
+/// One store-state line from the daemon's `stats` response — appended
+/// to the run report so every dream run ends with where the store
+/// stands: `store now: 312 rows (core 9 · long-term 184 · short-term
+/// 119) · 71.2 MB on disk`.
+pub(crate) fn store_state_line(stats: &serde_json::Value) -> Option<String> {
+    let total = stats.get("total")?.as_u64()?;
+    let tier = stats.get("per_tier")?;
+    let n = |k: &str| tier.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+    let disk = stats
+        .get("disk_bytes")
+        .and_then(|d| d.get("total"))
+        .and_then(|v| v.as_u64())
+        .map(|b| format!(" · {:.1} MB on disk", b as f64 / 1e6))
+        .unwrap_or_default();
+    Some(format!(
+        "store now: {} rows (core {} · long-term {} · short-term {}){}",
+        total,
+        n("core"),
+        n("semantic"),
+        n("episodic"),
+        disk
+    ))
+}
+
 /// A `sweep` result: `{"days": {"<date>": n, ...}, "dry_run": bool, "removed": n}`.
 fn sweep_line(v: &serde_json::Value) -> Option<String> {
     let removed = v.get("removed")?.as_u64()?;
