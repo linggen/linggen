@@ -360,6 +360,11 @@ pub(crate) async fn upsert_mission_file(
 pub(crate) struct TriggerMissionRequest {
     #[serde(default)]
     project_root: Option<String>,
+    /// Optional target day (`YYYY-MM-DD`). Swaps in the mission's
+    /// day-scoped kickoff (`kickoff-day` frontmatter) — the memory
+    /// app's calendar dream button passes this.
+    #[serde(default)]
+    day: Option<String>,
 }
 
 /// POST /api/missions/:id/trigger — run a mission immediately
@@ -397,6 +402,22 @@ pub(crate) async fn trigger_mission(
             .into_response();
     }
 
+    // Validate the optional target day early — a malformed date must not
+    // reach the kickoff template.
+    let day = match req.day.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(d) if chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok() => {
+            Some(d.to_string())
+        }
+        Some(d) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("invalid day '{d}' — expected YYYY-MM-DD"),
+            )
+                .into_response();
+        }
+        None => None,
+    };
+
     // Determine project root: from request, mission cwd (or legacy project), or env cwd.
     // Expand `~` and `$VAR` so `cwd: ~/.linggen` resolves to an absolute path
     // the agent's Bash tool can spawn in.
@@ -425,7 +446,10 @@ pub(crate) async fn trigger_mission(
     // cluttered. The remaining kickoff items are seeded into the engine's
     // kickoff_queue by the scheduler and drain one-per-assistant-final-reply.
     if let Some(ref sid) = session_id {
-        let kickoff = crate::extensions::missions::scheduler::mission_kickoff_messages(&mission);
+        let kickoff = crate::extensions::missions::scheduler::mission_kickoff_messages(
+            &mission,
+            day.as_deref(),
+        );
         if let Some(first) = kickoff.first() {
             let _ = state.manager.global_sessions.add_chat_message(
                 sid,
@@ -456,6 +480,7 @@ pub(crate) async fn trigger_mission(
 
     let state_clone = state.clone();
     let session_id_clone = session_id.clone();
+    let day_clone = day.clone();
 
     tokio::spawn(async move {
         crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
@@ -464,6 +489,7 @@ pub(crate) async fn trigger_mission(
             &project_path,
             &mission,
             session_id_clone,
+            day_clone,
         )
         .await;
     });

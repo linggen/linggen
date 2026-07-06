@@ -188,6 +188,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                     &project_path_owned,
                     &mission_owned,
                     None,
+                    None,
                 )
                 .await;
                 running_flag.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -237,7 +238,20 @@ fn mission_session_title(mission: &Mission) -> String {
 ///
 /// Missions without an explicit `kickoff:` list fall back to a single
 /// generic "run the X mission" line.
-pub fn mission_kickoff_messages(mission: &Mission) -> Vec<String> {
+pub fn mission_kickoff_messages(mission: &Mission, day: Option<&str>) -> Vec<String> {
+    if let Some(day) = day {
+        if !mission.kickoff_day.is_empty() {
+            return mission
+                .kickoff_day
+                .iter()
+                .map(|item| item.replace("$DAY", day))
+                .collect();
+        }
+        let label = mission.name.as_deref().unwrap_or(&mission.id);
+        return vec![format!(
+            "Run the \"{label}\" mission scoped to the single day {day}, per your system prompt."
+        )];
+    }
     if !mission.kickoff.is_empty() {
         return mission.kickoff.clone();
     }
@@ -295,15 +309,18 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
 }
 
 /// Public wrapper for triggering a mission manually (from API).
-/// Accepts an optional pre-created `session_id` so the caller can return it immediately.
+/// Accepts an optional pre-created `session_id` so the caller can return
+/// it immediately, and an optional target `day` (YYYY-MM-DD) that swaps
+/// in the mission's day-scoped kickoff (`kickoff-day` frontmatter).
 pub async fn dispatch_mission_prompt_public(
     state: Arc<ServerState>,
     root: std::path::PathBuf,
     project_path: &str,
     mission: &Mission,
     session_id: Option<String>,
+    day: Option<String>,
 ) {
-    dispatch_mission_prompt(state, root, project_path, mission, session_id).await;
+    dispatch_mission_prompt(state, root, project_path, mission, session_id, day).await;
 }
 
 /// Resolve a mission's working dir the same way the scheduler loop does:
@@ -412,7 +429,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                 catchup_hours
             );
             let (root, project_path) = mission_root(&mission);
-            dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None)
+            dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None, None)
                 .await;
         }
     });
@@ -425,6 +442,7 @@ async fn dispatch_mission_prompt(
     project_path: &str,
     mission: &Mission,
     pre_session_id: Option<String>,
+    day: Option<String>,
 ) {
     use crate::server::AgentStatusKind;
 
@@ -539,7 +557,7 @@ async fn dispatch_mission_prompt(
     // item 0 becomes the first user turn that drives the agent loop; the
     // remainder fire one-per-assistant-final-reply via the engine's
     // kickoff_queue (see AgentEngine.try_drain_kickoff).
-    let kickoff_items = mission_kickoff_messages(mission);
+    let kickoff_items = mission_kickoff_messages(mission, day.as_deref());
     let (first_message, queued) = kickoff_items
         .split_first()
         .map(|(first, rest)| (first.clone(), rest.to_vec()))

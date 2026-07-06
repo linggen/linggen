@@ -9,10 +9,10 @@ schedule: "0 3 * * *"
 catchup_hours: 24
 enabled: true
 # The `memory` agent is the one brain for the remember stage — the
-# same agent the memory app's calendar day-click invokes via Task, so
-# the mission and the UI can never drift apart. Its spec is
-# unattended-safe by construction: tools are Memory-only, no AskUser,
-# uncertainty resolves to promote.
+# same brain the memory app's calendar reaches by triggering this
+# mission day-scoped (`kickoff-day` below), so the mission and the UI
+# can never drift apart. Its spec is unattended-safe by construction:
+# tools are Memory-only, no AskUser, uncertainty resolves to promote.
 agent: memory
 cwd: ~/.linggen
 # Multi-item kickoff: item 0 starts the run; each later item lands as
@@ -93,6 +93,21 @@ kickoff:
     reply exactly: DONE. Days remain → reply exactly:
     `PARTIAL <n> days remain` with n from the fresh response (they
     continue tomorrow — oldest-first keeps progress monotone).
+# Day-scoped variant: used when a trigger passes a target day (the
+# memory app's calendar dream button). $DAY is replaced by the engine
+# with the YYYY-MM-DD date. Same procedure, one day, then the sweep.
+kickoff-day:
+  - >-
+    You are in the dream mission, scoped to a single day: $DAY.
+    Introduce it in one short line, then run the remember procedure
+    for $DAY per your system prompt (context → day worklist → cluster
+    → promote → stamp via
+    `Memory_write({"verb":"remember_day","date":"$DAY",...}` with the
+    judged/promoted counts). If the day has no episodic rows, reply
+    exactly: CLEAN. Then stop and wait.
+  - >-
+    Last turn for this run: call `Memory_write({"verb":"sweep"})`,
+    report `SWEEP removed=<n>`, then reply exactly: DONE.
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not in
 # the tool list — uncertainty resolves per the agent spec (promote on

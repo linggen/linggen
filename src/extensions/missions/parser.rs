@@ -48,6 +48,13 @@ struct MissionFrontmatter {
     kickoff: Vec<String>,
 
     #[serde(
+        rename = "kickoff-day",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    kickoff_day: Vec<String>,
+
+    #[serde(
         rename = "allowed-tools",
         default,
         skip_serializing_if = "Vec::is_empty"
@@ -126,6 +133,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         cwd: fm.cwd,
         model: fm.model,
         kickoff: fm.kickoff,
+        kickoff_day: fm.kickoff_day,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
         prompt: body,
@@ -146,6 +154,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         cwd: None,
         model: None,
         kickoff: Vec::new(),
+        kickoff_day: Vec::new(),
         allowed_tools: Vec::new(),
         permission: None,
         prompt,
@@ -189,6 +198,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         cwd: fm.project.clone(),
         model: fm.model,
         kickoff: Vec::new(),
+        kickoff_day: Vec::new(),
         allowed_tools: Vec::new(),
         permission,
         prompt,
@@ -218,6 +228,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         model: mission.model.clone(),
         agent: agent_fm,
         kickoff: mission.kickoff.clone(),
+        kickoff_day: mission.kickoff_day.clone(),
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),
         project: mission.project.clone(),

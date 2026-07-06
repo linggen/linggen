@@ -53,6 +53,13 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kickoff: Vec<String>,
 
+    /// Day-scoped kickoff variant (frontmatter `kickoff-day`), used when
+    /// a trigger passes a target day (e.g. the memory app's calendar day
+    /// buttons). `$DAY` in each item is replaced with the `YYYY-MM-DD`
+    /// date. Empty list falls back to a generic day-scoped line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kickoff_day: Vec<String>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
