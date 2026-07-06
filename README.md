@@ -24,10 +24,10 @@
 </p>
 
 <p align="center">
-  <img src="doc/media/cfo-demo.gif" width="800" alt="Personal CFO — bank statements parsed locally into a spend report; the AI catches a duplicate charge and reviews it in chat" />
+  <img src="doc/media/demo.gif" width="800" alt="Linggen — CFO catches a double charge in locally-parsed statements, Sys Doctor scores your Mac's health, DJ runs karaoke with synced lyrics" />
 </p>
 <p align="center">
-  <sub><strong>Personal CFO</strong> — statements parsed on your Mac, nothing uploaded; it catches a double charge and the AI reviews it in chat. <a href="https://linggen.dev">More demos →</a></sub>
+  <sub><strong>CFO</strong> catches a $389 double charge (statements never leave your Mac) · <strong>Sys Doctor</strong> scores your Mac's health · <strong>DJ</strong> runs karaoke night. <a href="https://linggen.dev">Full demo →</a></sub>
 </p>
 
 ---
