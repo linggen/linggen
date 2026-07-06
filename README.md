@@ -14,8 +14,7 @@
 <p align="center">
   <a href="https://linggen.dev">Website</a> &middot;
   <a href="https://linggen.dev/#inside">Apps</a> &middot;
-  <a href="https://linggen.dev/docs">Docs</a> &middot;
-  <a href="https://discord.gg/linggen">Discord</a>
+  <a href="https://linggen.dev/docs">Docs</a>
 </p>
 
 <p align="center">
@@ -130,7 +129,7 @@ Drop a markdown file in `~/.linggen/` — available immediately, no restart:
 name: reviewer
 description: Code review specialist.
 tools: ["Read", "Glob", "Grep"]
-model: claude-sonnet-4-20250514
+model: claude-sonnet-5
 ---
 
 You review code for bugs, style issues, and security vulnerabilities.
