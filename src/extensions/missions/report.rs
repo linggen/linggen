@@ -50,18 +50,25 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
     Some(format!("Mission report:\n- {}", lines.join("\n- ")))
 }
 
-/// The run's first `days` worklist — which days were pending at start.
-/// Search/list results are JSON arrays and `get` returns a bare fact,
-/// so only the days-rollup object (a `days` array) matches here.
+/// The run's first `days` rollup — how many days were pending at
+/// start. Search/list results are JSON arrays and `get` returns a bare
+/// fact, so only the days-rollup object (a `days` array) matches here.
+/// The rollup may be the FULL calendar (a day-scoped run's context
+/// fetch), so count only `state == "pending"` entries — never the raw
+/// array length.
 fn worklist_line(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let days = v.get("days")?.as_array()?;
-    let Some(oldest) = days.first() else {
+    let pending: Vec<&serde_json::Value> = days
+        .iter()
+        .filter(|d| d.get("state").and_then(|s| s.as_str()) == Some("pending"))
+        .collect();
+    let Some(oldest) = pending.first() else {
         return Some("worklist: no pending days".to_string());
     };
     let date = oldest.get("date")?.as_str()?;
     let rows = oldest.get("rows").and_then(|r| r.as_u64()).unwrap_or(0);
-    Some(match days.len() {
+    Some(match pending.len() {
         1 => format!("worklist: 1 pending day — {date} ({rows} rows)"),
         n => format!("worklist: {n} pending days, oldest {date} ({rows} rows)"),
     })
