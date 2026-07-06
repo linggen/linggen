@@ -126,9 +126,9 @@ impl Tool for MemoryWriteTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":          {"type": "string", "enum": ["add", "update", "delete", "remember_day", "sweep"], "description": "Write operation."},
+                "verb":          {"type": "string", "enum": ["add", "update", "delete", "remember_day", "harvest_day", "sweep"], "description": "Write operation. `harvest_day` stamps a day scanned (a session backfill covered it) WITHOUT marking it remembered — its staged rows go pending for the next dream pass."},
                 "id":            {"type": "string", "description": "Required for verb=update / verb=delete. The row UUID."},
-                "date":          {"type": "string", "description": "Required for verb=remember_day. The local calendar day that was judged, YYYY-MM-DD. Only past days are accepted."},
+                "date":          {"type": "string", "description": "Required for verb=remember_day / verb=harvest_day. The local calendar day, YYYY-MM-DD. Only past days are accepted."},
                 "judged":        {"type": "integer", "description": "verb=remember_day. Rows judged in this pass (accumulates onto the day's total)."},
                 "promoted":      {"type": "integer", "description": "verb=remember_day. Rows promoted to semantic in this pass (accumulates)."},
                 "dry_run":       {"type": "boolean", "description": "verb=sweep. Report what would be evicted without deleting."},
