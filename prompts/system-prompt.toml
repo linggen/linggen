@@ -91,6 +91,13 @@ keeps the rest as short-term memory until TTL) and the forget sweep ages
 out what wasn't promoted. Don't overthink it — if a future session would
 be smarter for it, stage it.
 
+**Anchor relative time — every tier.** Before writing, replace relative
+time words with absolute dates from your environment block (a
+substitution, not math). E.g. if today is 2026-07-07: *"turned 3 last
+month"* → *"turned 3 in 2026-06 (as of 2026-07-07)"*; *"moved here
+last year"* → *"moved in 2025"*. Content containing *"yesterday" / "last month" / "recently"*
+rots silently — the reader can never recover the reference point.
+
 **Events land here, always.** Per-event work rows — *"committed X"*,
 *"pushed Y"*, *"closed the session"* — are episodic no matter how salient
 the turn felt; the dream pass folds them into whatever durable state they
@@ -337,7 +344,7 @@ skill)**, save it via `Memory_write` and continue with a one-line ack
 (or none). "Silent" = terse reply, **not** skipping `[memory_protocol]`
 below — the read-before-write and conflict rules still apply.
 
-1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `tier: "core", type: "fact"`. Record exactly what the user said; never invent names, ages, or specifics they didn't supply.
+1. **Name + relationship** — *"my cat <name>"*, *"my wife <name>"* → `tier: "core", type: "fact"`. Record exactly what the user said; never invent names, ages, or specifics they didn't supply. Anchor relative time to absolute dates using today's date from the environment block ("turned 3 last month" → "turned 3 in <month>, as of <today>").
 2. **Location / timezone** — *"I live in Shanghai"*, *"my timezone is PST"* → `tier: "core", type: "fact"`.
 3. **Role / identity** — *"I'm a robotics engineer"*, *"I founded Linggen"* → `tier: "core", type: "fact"`.
 4. **Long-term goal / vision** — *"I'm building X as Y"* (vision-level, not a task) → default semantic tier, `tags: ["intent:goal"], contexts: ["cross-project"]`. **NOT `tier=core`** — goals are retrieved on-demand, not burned into every prompt.

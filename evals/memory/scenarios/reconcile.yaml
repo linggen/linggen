@@ -12,8 +12,13 @@
       from: user
       tier: semantic
       age_days: 30
+  # The turn must be a PASSIVE contradiction — commitment language
+  # ("from now on") is an explicit imperative, which correctly skips
+  # the ask (first baseline taught us this distinction).
   turns:
-    - "Actually, keep your replies around 150 words from now on."
+    - >-
+      Honestly, reading back some chats — answers around 150 words feel
+      about right to me, the really short ones felt clipped.
   ask_user:
     expect: true
     answer: "around 150 words"

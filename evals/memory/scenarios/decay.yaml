@@ -21,7 +21,10 @@
     must:
       - predicate: a row recording the WebRTC-only transport decision with its reasoning
         tier: semantic
-      - predicate: the original WebRTC decision row still present in short-term staging (remember never deletes within TTL)
+      # NOTE: a VERBATIM promote may collapse the episodic twin via
+      # cross-tier dedup (documented spec exception) — so the staying-put
+      # check uses the noise row, which is never promoted.
+      - predicate: the row about opening the dashboard / checking the queue page still present in short-term staging (within TTL, never deleted by remember)
         tier: episodic
     must_not:
       - predicate: a row about opening the dashboard / checking the queue page

@@ -80,7 +80,7 @@ pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflictin
 /// recalled memory). Word-for-word aligned with CC/Codex `recall.sh` so the
 /// per-turn reminder reads identically across every host. Definitions /
 /// routing live in `[memory_protocol]` (session start); this only nudges.
-pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental). Nothing worth keeping? Skip silently.";
+pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
 /// Query `tier=core` rows from `ling-mem` and render them as a bullet
 /// list. Returns `None` when there are no core rows (or the binary is
