@@ -62,7 +62,7 @@ impl Tool for MemoryQueryTool {
         "Memory_query"
     }
     fn description(&self) -> &'static str {
-        "Read memory. Verb-dispatched: `get` (fetch one row by id), `search` (semantic search; ranked by relevance — takes `query`), `list` (filter-only browse, no ranking — for audits or sweeps), `days` (per-day dream-state rollup: each day's episodic counts + pipeline state today/staging/pending/remembered/forgotten; `pending_only` = the dream worklist, oldest first). Memory holds the user's biography across sessions — identity, cross-project preferences, decisions with their reasoning. For codebase facts, read project files directly.\n\n**All filters are optional and AND-combined.** Speculatively passing `type`, `from`, or `outcome` is the #1 cause of empty results — start with just `verb` (+ `query` for search) and add filters only after seeing what's there.\n\n**Example — the dream worklist (days awaiting a remember pass):**\n```\n{ \"verb\": \"days\", \"pending_only\": true }\n```\n**Example — one day's remember worklist:**\n```\n{ \"verb\": \"list\", \"tier\": \"episodic\", \"day\": \"2026-07-01\", \"limit\": 50 }\n```\nNo `type`/`from`/`outcome` — those would narrow the sweep to zero rows."
+        "Read memory. Verb-dispatched: `get` (fetch one row by id), `search` (semantic search; ranked by relevance — takes `query`), `list` (filter-only browse, no ranking — for audits or sweeps), `days` (per-day dream-state rollup: each day's episodic counts + pipeline state today/staging/pending/remembered/forgotten; `pending_only` = the dream worklist, oldest first), `chains` (condense scan — mechanical, read-only detection of stale same-subject chains in long-term memory; `kind=cited` groups rows citing another row's id verbatim, `kind=marker` lists provisional-state rows with nearest neighbors for confirmation; each cluster carries `derived_only` — merge unattended only when true). Memory holds the user's biography across sessions — identity, cross-project preferences, decisions with their reasoning. For codebase facts, read project files directly.\n\n**All filters are optional and AND-combined.** Speculatively passing `type`, `from`, or `outcome` is the #1 cause of empty results — start with just `verb` (+ `query` for search) and add filters only after seeing what's there.\n\n**Example — the dream worklist (days awaiting a remember pass):**\n```\n{ \"verb\": \"days\", \"pending_only\": true }\n```\n**Example — one day's remember worklist:**\n```\n{ \"verb\": \"list\", \"tier\": \"episodic\", \"day\": \"2026-07-01\", \"limit\": 50 }\n```\nNo `type`/`from`/`outcome` — those would narrow the sweep to zero rows."
     }
     fn tier(&self) -> PermissionMode {
         // Memory ops are conversation primitives — the user's own data
@@ -75,7 +75,7 @@ impl Tool for MemoryQueryTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":     {"type": "string", "enum": ["get", "search", "list", "days"], "description": "Read operation."},
+                "verb":     {"type": "string", "enum": ["get", "search", "list", "days", "chains"], "description": "Read operation."},
                 "id":       {"type": "string", "description": "Required for verb=get. Fact UUID."},
                 "query":    {"type": "string", "description": "Required for verb=search. Natural-language description of what you're looking for."},
                 "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND semantics). For verb=search, narrows ranked results; for verb=list, primary filter. Omit to skip."},
@@ -88,9 +88,11 @@ impl Tool for MemoryQueryTool {
                 "past_ttl": {"type": "boolean", "description": "verb=list only. When true, ask the daemon for rows that are past its configured episodic TTL (resolves the cutoff server-side using `episodic_ttl_days`). An explicit `until` wins."},
                 "day":      {"type": "string", "description": "verb=list only. One local calendar day, YYYY-MM-DD — sugar over since/until covering exactly that day. The remember stage lists a single day's worklist with this."},
                 "pending_only": {"type": "boolean", "description": "verb=days only. Return only days awaiting a remember pass, oldest first — the dream worklist."},
+                "kind":     {"type": "string", "enum": ["cited", "marker"], "description": "verb=chains only. `cited` (default) = id-citation chains, auto-accept quality; `marker` = provisional-state candidates, confirm before merging."},
+                "derived_only": {"type": "boolean", "description": "verb=chains only. Only clusters mergeable unattended (every row from=derived, tier=semantic). Unattended condense passes MUST set true."},
                 "sort":     {"type": "string", "enum": ["newest", "oldest"], "description": "verb=list only. Defaults to newest."},
-                "limit":    {"type": "integer", "description": "Max rows. Defaults to 10 for search, 50 for list."},
-                "offset":   {"type": "integer", "description": "verb=list only. Skip this many rows in sort order."}
+                "limit":    {"type": "integer", "description": "Max rows. Defaults to 10 for search, 50 for list. For verb=chains: clusters per page (default 10)."},
+                "offset":   {"type": "integer", "description": "verb=list / verb=chains. Skip this many rows (or clusters) in sort order."}
             },
             "required": ["verb"]
         })
