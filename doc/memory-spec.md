@@ -747,13 +747,15 @@ Ordered. Each is a design decision not yet locked.
    per-run stoppable; no-op runs stay quiet. Still deferred: a
    dedicated inspectable/undoable *memory* widget distinct from the
    generic mission/subagent surface.
-8. **Condense — designed 2026-07-06, unbuilt.** (Second design that
-   day; supersedes the same-day condense-*queue* draft — see-it-solve-it
-   replaced ambient enqueueing.) §2 Condense: v1 chain-collapse (tier-1
-   ID-citation edges auto-accept, tier-2 marker+search LLM-confirm),
-   v2 subject digests; monthly mission, ships cron-disabled, supervised
-   first runs with `ling-mem export` backup; new `chains` verb in the
-   ling-mem daemon for the mechanical scan. Store audit behind it
+8. **Condense — v1 BUILT 2026-07-07; v2 (subject digests) unbuilt.**
+   (Design 2026-07-06 — second that day; supersedes the same-day
+   condense-*queue* draft — see-it-solve-it replaced ambient
+   enqueueing.) §2 Condense: v1 chain-collapse (tier-1 ID-citation
+   edges auto-accept, tier-2 marker+search LLM-confirm) shipped as the
+   `chains` verb (CLI/HTTP/MCP) + the monthly `condense` mission
+   (cron-disabled, supervised first runs with `ling-mem export`
+   backup) + the skill's condense-flow runbook. First supervised run
+   collapsed 12 chains on the real store. Store audit behind it
    (2026-07-06, 748 semantic rows): 151 provable tier-1 chain members,
    277 asserting provisional state ("uncommitted"/"OPEN:"), 71% written
    directly by hosts bypassing episodic staging — the state+lessons
