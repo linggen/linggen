@@ -1,12 +1,13 @@
 ---
 name: condense
 description: Monthly long-term memory maintenance. Collapses stale same-subject chains in semantic memory into current-truth rows — the only pass that revisits semantic-at-rest. Built-in.
-# Monthly, 4am on the 1st. SHIPS DISABLED: first runs are supervised —
-# trigger manually from the memory app / API after taking a backup
-# (`ling-mem export ~/condense-backup.ndjson`), watch the merges, then
-# enable the cron once trusted.
+# Monthly, 4am on the 1st. Enabled 2026-07-07 after five clean
+# supervised runs (backups verified, zero unexplained deletions).
+# Fresh installs may still ship this disabled until their first
+# supervised run; `ling-mem export` before early runs stays good
+# practice.
 schedule: "0 4 1 * *"
-enabled: false
+enabled: true
 # No turn-seam catch-up: a missed month is fine, and an unattended
 # catch-up would defeat the supervised rollout. Cron only, once enabled.
 agent: memory
