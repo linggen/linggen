@@ -1054,6 +1054,7 @@ async fn prepare_server(
         .route("/api/plan/edit", post(edit_plan_handler))
         .route("/api/plan/reject", post(reject_plan_handler))
         .route("/api/ask-user-response", post(ask_user_response_handler))
+        .route("/api/pending-ask-user", get(pending_ask_user_handler))
         // Files & workspace
         .route("/api/workspace/tree", get(get_agent_tree))
         .route("/api/files", get(list_files))

@@ -1,0 +1,79 @@
+{
+  "name": "identity-fact",
+  "axis": "extraction",
+  "expect": {
+    "must": [
+      {
+        "predicate": "a row stating the user is a violinist (or plays violin in an orchestra)"
+      },
+      {
+        "predicate": "a row stating the user lives in (or moved to) Halifax"
+      }
+    ]
+  },
+  "ask_user_cfg": null,
+  "events": [],
+  "error": null,
+  "store": {
+    "semantic": [
+      {
+        "content": "User shared that they are a violinist who plays second violin in a community orchestra and moved to Halifax last year.",
+        "contexts": [
+          "cross-project"
+        ],
+        "created_at": "2026-07-07T19:04:03.352343Z",
+        "from": "user",
+        "host": "linggen",
+        "id": "n5QiUQbUxW",
+        "source_session": "sess-1783451033-e7db5fd5",
+        "tags": [],
+        "tier": "episodic",
+        "type": "fact"
+      },
+      {
+        "content": "User moved to Halifax last year.",
+        "contexts": [
+          "cross-project"
+        ],
+        "created_at": "2026-07-07T19:04:03.311693Z",
+        "from": "user",
+        "host": "linggen",
+        "id": "V2NmES5LIy",
+        "source_session": "sess-1783451033-e7db5fd5",
+        "tags": [],
+        "tier": "core",
+        "type": "fact"
+      },
+      {
+        "content": "User is a violinist and plays second violin in a community orchestra.",
+        "contexts": [
+          "cross-project"
+        ],
+        "created_at": "2026-07-07T19:04:03.234239Z",
+        "from": "user",
+        "host": "linggen",
+        "id": "pjKJoc3QNG",
+        "source_session": "sess-1783451033-e7db5fd5",
+        "tags": [],
+        "tier": "core",
+        "type": "fact"
+      }
+    ],
+    "episodic": [
+      {
+        "content": "User shared that they are a violinist who plays second violin in a community orchestra and moved to Halifax last year.",
+        "contexts": [
+          "cross-project"
+        ],
+        "created_at": "2026-07-07T19:04:03.352343Z",
+        "from": "user",
+        "host": "linggen",
+        "id": "n5QiUQbUxW",
+        "source_session": "sess-1783451033-e7db5fd5",
+        "tags": [],
+        "tier": "episodic",
+        "type": "fact"
+      }
+    ]
+  }
+}
