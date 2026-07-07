@@ -1,0 +1,90 @@
+# Extraction — save the durable, skip the noise.
+# Traps here are the store's real historic failure modes: fabricated
+# specifics, undated ages, codebase facts, smalltalk.
+
+- name: identity-fact
+  axis: extraction
+  description: Plain identity statements must be captured durably.
+  turns:
+    - >-
+      By the way, a bit about me: I'm a violinist — I play second violin
+      in a community orchestra — and I moved to Halifax last year.
+  expect:
+    must:
+      - predicate: a row stating the user is a violinist (or plays violin in an orchestra)
+      - predicate: a row stating the user lives in (or moved to) Halifax
+
+- name: commitment-preference
+  axis: extraction
+  description: Commitment language ("from now on") is a durable behavioral rule.
+  turns:
+    - >-
+      From now on, when you explain anything technical to me, always
+      start with a one-line summary before the details. Never skip it.
+  expect:
+    must:
+      - predicate: a preference row stating explanations must start with a one-line summary
+    must_not:
+      - predicate: a row treating the summary-first instruction as a one-off request rather than a standing rule
+
+- name: decision-with-reasoning
+  axis: extraction
+  description: A decision's retrieval value is its reasoning — both must survive.
+  turns:
+    - >-
+      I've thought about it and we're going with SQLite instead of
+      Postgres for the recipe app — it's single-user and local-first,
+      so a server database is pure overhead. Decision made.
+  expect:
+    must:
+      - predicate: a decision row stating SQLite was chosen over Postgres AND carrying the reason (single-user / local-first / server overhead)
+    must_not:
+      - predicate: a row asserting Postgres was chosen
+
+- name: noise-skip
+  axis: extraction
+  description: Smalltalk and answered-and-done questions earn no durable row.
+  turns:
+    - "What's a good way to convert a PNG to JPEG on the command line?"
+    - "Nice, that worked. Thanks!"
+  expect:
+    must_not:
+      - predicate: a core or semantic row about PNG/JPEG conversion or this exchange
+        tier: semantic
+      - predicate: a core row about PNG/JPEG conversion
+        tier: core
+
+- name: file-derivable-skip
+  axis: extraction
+  description: Codebase facts are re-readable from files — never memory rows.
+  turns:
+    - >-
+      Quick orientation for you: in this repo the planner module exposes
+      a facade that returns a context object per tick, and the sensor
+      layer publishes on a shared bus. Keep that in mind while we work.
+  expect:
+    must_not:
+      - predicate: a core or semantic row describing the repo's planner facade, context object, or sensor bus architecture
+        tier: semantic
+
+- name: age-dated-not-absolute
+  axis: extraction
+  description: Ages must be anchored to a date or they rot silently.
+  turns:
+    - "My cat turned 3 last month, she's finally calming down."
+  expect:
+    must:
+      - predicate: a row recording the user's cat's age in a date-anchored form (age as-of a stated date/year), not a bare undated "is 3"
+    must_not:
+      - predicate: a row stating the cat's age with no date anchor at all
+
+- name: no-invented-specifics
+  axis: extraction
+  description: Record only what was said — no fabricated names or details.
+  turns:
+    - "I have a dog, by the way. He keeps stealing my socks."
+  expect:
+    must:
+      - predicate: a row stating the user has a dog
+    must_not:
+      - predicate: a row asserting the dog's name, breed, or age (none were given)

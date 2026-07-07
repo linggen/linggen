@@ -1,0 +1,53 @@
+# Decay — the dream pass promotes durable staging; the sweep evicts
+# only judged, past-TTL rows. Fixture timestamps are backdated so both
+# stages fire inside one eval run.
+
+- name: dream-promotes-durable-only
+  axis: decay
+  description: Remember promotes the decision, not the activity log; originals stay within TTL.
+  fixture:
+    - content: "Decided to use WebRTC as the only transport for remote access — SSE removed; reasoning: one path to maintain, NAT traversal built in."
+      type: decision
+      from: derived
+      tier: episodic
+      age_days: 2
+    - content: "Opened the dashboard and checked the queue page; nothing unusual."
+      type: fact
+      from: derived
+      tier: episodic
+      age_days: 2
+  dream: true
+  expect:
+    must:
+      - predicate: a row recording the WebRTC-only transport decision with its reasoning
+        tier: semantic
+      - predicate: the original WebRTC decision row still present in short-term staging (remember never deletes within TTL)
+        tier: episodic
+    must_not:
+      - predicate: a row about opening the dashboard / checking the queue page
+        tier: semantic
+
+- name: sweep-evicts-judged-past-ttl
+  axis: decay
+  description: Past-TTL noise on a remembered day is evicted; its durable sibling lives on in long-term.
+  fixture:
+    - content: "Learned: the boat's cruise speed tops out around 0.2 m/s under load — plan missions around it."
+      type: learned
+      from: derived
+      tier: episodic
+      age_days: 10
+    - content: "Ran the simulator twice this morning, both runs completed."
+      type: fact
+      from: derived
+      tier: episodic
+      age_days: 10
+  dream: true
+  expect:
+    must:
+      - predicate: a row recording the 0.2 m/s cruise-speed lesson
+        tier: semantic
+    must_not:
+      - predicate: a row about running the simulator twice, surviving in short-term staging after the sweep
+        tier: episodic
+      - predicate: a row about running the simulator twice
+        tier: semantic

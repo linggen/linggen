@@ -1,0 +1,45 @@
+# Routing — events vs state; which tier a fact belongs to.
+# The 71%-bypass audit finding: per-event work rows were flooding
+# long-term. Events go episodic ALWAYS; state + lessons go semantic;
+# core is narrow person-facts only.
+
+- name: event-goes-episodic
+  axis: routing
+  description: Per-event work rows land in short-term, never long-term.
+  turns:
+    - >-
+      Done for today — I just pushed the parser fix as commit 4f9c2aa
+      and closed the ticket. Wrapping up.
+  expect:
+    must_not:
+      - predicate: a row about pushing the parser fix or commit 4f9c2aa
+        tier: semantic
+      - predicate: a row about pushing the parser fix or commit 4f9c2aa
+        tier: core
+
+- name: state-goes-semantic
+  axis: routing
+  description: State changes and re-usable lessons are long-term material.
+  turns:
+    - >-
+      Status update worth remembering: the auth feature is fully shipped
+      now. Big lesson from it — token checks must always happen
+      server-side; client-side gating burned us twice.
+  expect:
+    must:
+      - predicate: a row stating the auth feature is shipped OR the server-side token-check lesson
+        tier: semantic
+
+- name: goal-not-core
+  axis: routing
+  description: Goals are retrieved on demand — never burned into every prompt.
+  turns:
+    - >-
+      Long term, I'm building a robotics startup around harbor
+      automation — that's the big picture behind all these projects.
+  expect:
+    must:
+      - predicate: a row recording the robotics/harbor-automation startup goal
+    must_not:
+      - predicate: a row about the robotics startup goal stored as an always-on core fact
+        tier: core

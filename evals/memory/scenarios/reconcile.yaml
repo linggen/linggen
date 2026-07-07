@@ -1,0 +1,112 @@
+# Reconcile — the merge law. User-voice contradictions ASK (never a
+# silent third drifted row); explicit imperatives act without asking;
+# the agent's own notes merge freely; patterns never generalize into
+# minted rules.
+
+- name: user-contradiction-asks
+  axis: reconcile
+  description: A user-voice conflict must go through AskUser, then resolve to ONE row.
+  fixture:
+    - content: "User wants assistant replies kept under 100 words."
+      type: preference
+      from: user
+      tier: semantic
+      age_days: 30
+  turns:
+    - "Actually, keep your replies around 150 words from now on."
+  ask_user:
+    expect: true
+    answer: "around 150 words"
+  expect:
+    must:
+      - predicate: a preference row stating replies should be around 150 words
+    must_not:
+      - predicate: a preference row still asserting under-100-words as the current rule
+    subject_max_one:
+      - "assistant reply length preference"
+
+- name: explicit-update-no-ask
+  axis: reconcile
+  description: An explicit "update X" is the user's decision — act, don't re-ask.
+  fixture:
+    - content: "User lives in Halifax."
+      type: fact
+      from: user
+      tier: semantic
+      age_days: 90
+  turns:
+    - "Update my memory: I moved to Toronto last week."
+  ask_user:
+    expect: false
+  expect:
+    must:
+      - predicate: a row stating the user lives in (or moved to) Toronto
+    must_not:
+      - predicate: a row still asserting Halifax as the user's current home
+    subject_max_one:
+      - "where the user lives"
+
+- name: explicit-forget
+  axis: reconcile
+  description: An explicit "forget X" deletes the matching rows.
+  fixture:
+    - content: "User is learning French, practicing 20 minutes daily."
+      type: fact
+      from: user
+      tier: semantic
+      age_days: 45
+  turns:
+    - "Please forget that I'm learning French — I dropped it."
+  ask_user:
+    expect: false
+  expect:
+    must_not:
+      - predicate: a row asserting the user is learning or practicing French
+
+- name: derived-notes-merge-freely
+  axis: reconcile
+  description: The agent's own stale derived chain merges to current truth without asking.
+  fixture:
+    - content: "Recipe-app export feature design locked, implementation not started."
+      type: built
+      from: derived
+      tier: semantic
+      age_days: 20
+    - content: "Recipe-app export feature implementation in progress, CSV writer done, PDF pending."
+      type: built
+      from: derived
+      tier: semantic
+      age_days: 10
+  turns:
+    - >-
+      Good news to note down: the recipe-app export feature is fully
+      shipped now — CSV and PDF both work.
+  ask_user:
+    expect: false
+  expect:
+    must:
+      - predicate: a row stating the recipe-app export feature is shipped/complete
+    must_not:
+      - predicate: a row still asserting the export feature is not started or only in progress, presented as current state
+    subject_max_one:
+      - "recipe-app export feature status"
+
+- name: pattern-not-generalized
+  axis: reconcile
+  description: Repeated similar asks never mint an unstated "user always X" rule.
+  fixture:
+    - content: "User asked to split the parser module into smaller files (2026-05-10)."
+      type: fact
+      from: user
+      tier: semantic
+      age_days: 40
+    - content: "User asked to break the renderer into per-concern modules (2026-06-01)."
+      type: fact
+      from: user
+      tier: semantic
+      age_days: 25
+  turns:
+    - "Can you split this utils file into smaller modules too?"
+  expect:
+    must_not:
+      - predicate: a newly minted general rule row asserting the user ALWAYS wants modules split / prefers continual decoupling (a generalization none of the utterances stated)

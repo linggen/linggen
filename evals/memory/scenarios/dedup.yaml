@@ -1,0 +1,38 @@
+# Dedup — restatements collapse to one row; distinct facts never merge.
+
+- name: restatement-not-duplicated
+  axis: dedup
+  description: A reworded restatement of a stored fact must not mint a second row.
+  fixture:
+    - content: "User's favorite editor is Neovim; they do all their writing and coding in it."
+      type: preference
+      from: user
+      tier: semantic
+      age_days: 30
+  turns:
+    - >-
+      As you probably know, I use Neovim as my main editor for
+      everything — just mentioning it in case it matters here.
+  expect:
+    subject_max_one:
+      - "user's favorite text editor"
+    must:
+      - predicate: a row stating the user's editor is Neovim
+
+- name: distinct-facts-stay-separate
+  axis: dedup
+  description: Similar-shaped but distinct facts must both survive.
+  fixture:
+    - content: "User has a cat named Momo."
+      type: fact
+      from: user
+      tier: semantic
+      age_days: 60
+  turns:
+    - "We also have a dog now — his name is Rex."
+  expect:
+    must:
+      - predicate: a row stating the user has a cat named Momo
+      - predicate: a row stating the user has a dog named Rex
+    must_not:
+      - predicate: a single merged row conflating the cat and the dog into one pet or mixing up their names
