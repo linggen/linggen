@@ -131,6 +131,15 @@ notes). Two kinds:
   neighbors. Guesses: collapse only after confirming a neighbor is the
   same subject AND one row completes or obsoletes the other; otherwise
   `SKIP <id> unrelated`.
+- **`subject`** (v2 digests) — same-subject vector clusters, 3+ rows.
+  These are parallel notes on one subject, not a newest-wins chain:
+  write one focused per-subject **digest** row. Vector neighbors
+  include boundary noise — find the largest subset that genuinely
+  shares one subject, digest that subset (`replace_ids` only its
+  ids), and leave outliers untouched. No coherent 3+ subset →
+  `SKIP <seed_id> unrelated`. Never one mega state row: if a cluster
+  spans a whole project, digest the one concrete subject the seed
+  names, not the project.
 
 **Collapse = ONE current-truth row replacing the cluster**, via a
 single `Memory_write {"verb":"add", ..., "replace_ids":[<every member

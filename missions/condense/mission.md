@@ -87,6 +87,22 @@ kickoff:
     confirmed ones, `SKIP <id> unrelated` for the rest. Empty page →
     reply exactly: MARKER-CLEAN.
   - >-
+    Digest phase (v2). First action this turn: call
+    `Memory_query({"verb":"chains","kind":"subject","limit":2,"offset":0,"derived_only":true})`.
+    For each cluster, find the largest subset of rows that genuinely
+    share ONE subject (vector neighbors include boundary noise). A
+    coherent subset of 3+ → write one focused digest row per the
+    condense procedure in your system prompt, with `replace_ids`
+    listing ONLY that subset's ids — outliers stay untouched. No
+    coherent 3+ subset → `SKIP <seed_id> unrelated`.
+    No clusters → reply exactly: SUBJECT-CLEAN.
+  - >-
+    First action this turn: call
+    `Memory_query({"verb":"chains","kind":"subject","limit":2,"offset":2,"derived_only":true})`
+    for a FRESH page. Same procedure: digest single-subject clusters,
+    `SKIP <seed_id> unrelated` for the rest. Empty page → reply
+    exactly: SUBJECT-CLEAN.
+  - >-
     Last turn for this run. Call
     `Memory_query({"verb":"chains","kind":"cited","limit":1,"derived_only":true})`
     for a fresh count, then reply exactly:
@@ -118,11 +134,16 @@ the status-line format — is in your system prompt (you are the
   (`derived_only:true`, always), collapse what it returns, stop. The
   next kickoff nudge continues the loop. Cited chains re-fetch at
   offset 0 — merged chains vanish from the next scan; marker
-  candidates page by fixed offsets.
+  candidates and subject clusters page by fixed offsets.
 - **Cited chains are pre-confirmed.** An id-citation edge is proof of
   reference — collapse without re-litigating. Marker candidates are
   guesses: confirm same-subject supersession against the neighbors
   before merging, `SKIP <id> unrelated` otherwise.
+- **Subject clusters are digests, not supersessions.** The rows are
+  parallel notes on one subject, not a newest-wins chain — write one
+  focused per-subject digest (never a mega state row). Vector
+  clusters carry boundary noise: digest the coherent 3+ subset,
+  `replace_ids` only those ids, leave outliers in place.
 - **Stop conditions.** Fresh cited scan total 0 → `CITED-CLEAN`.
   First returned chain already merged this run → `STALLED` (a merge
   did not take; a human will look — do not loop). Empty marker page →
