@@ -153,9 +153,10 @@ worthwhile candidates into episodic carrying the day's own timestamps,
 stamping the day scanned. **Incremental by `source_session`**: sessions
 that already contributed rows (live capture or a prior scan) are
 skipped, making scanning idempotent — safe even on partially-captured
-days. (Contract, not yet reality: live capture doesn't stamp
-`source_session` today, so the skip only covers scan-authored rows —
-Open #9.) Scan matters exactly where live
+days. Live capture stamps the field on every write: the Linggen
+engine fills the current session id automatically; third-party hosts
+pass theirs per the recall hook's per-turn session line (Open #9,
+resolved). Scan matters exactly where live
 capture wasn't running (host without the memory hook, daemon off,
 pre-install history); a day nobody worked scans to nothing, which is
 why it stays a per-day human call. A gap day simply sits on the
@@ -765,13 +766,17 @@ Ordered. Each is a design decision not yet locked.
    routing (§2) closes the faucet; condense drains the pool. Also from
    the audit: `tier=core` is empty (never seeded post-wipe) — seeding
    still pending.
-9. **`source_session` gap — open.** No episodic row today carries
-   `source_session`: the write schema documents that the engine fills
-   it, but no engine code does, and third-party hosts never pass it.
-   Scan's skip-by-session idempotency (§2) is therefore contract, not
-   reality — it currently holds only for scan-authored rows. Fix:
-   the engine stamps `source_session` on every live write; hosts pass
-   their session id where they have one.
+9. **`source_session` gap — *resolved 2026-07-07*.** The audit found
+   no live-captured row carried `source_session` (the schema claimed
+   engine fill; no code did it), so scan's skip-by-session idempotency
+   only covered scan-authored rows. Fixed on both paths: the engine's
+   `Memory_write` dispatch stamps the current session id whenever the
+   model omits it (an explicit value wins — the dream promote path
+   carries the original row's session forward), and the recall hook
+   prints the host session id each turn with the instruction to pass
+   it on every add. Rows written before the fix stay unstamped; a scan
+   over pre-fix days may re-encode those sessions as near-dups once,
+   which the dream pass's clustering absorbs.
 
 Carried gaps (not blocking the rebuild): no row-level confidence
 calibration; privacy isolation is by convention not enforcement;

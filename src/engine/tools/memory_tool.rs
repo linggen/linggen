@@ -147,7 +147,7 @@ impl Tool for MemoryWriteTool {
                 "contexts":      {"type": "array", "items": {"type": "string"}, "description": "verb=add/update. Scope tags (e.g. `cross-project`, `project/foo`)."},
                 "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "verb=add/update. Optional outcome marker."},
                 "occurred_at":   {"type": "string", "description": "verb=add/update. RFC-3339 user-event timestamp; falls back to `created_at` if unset."},
-                "source_session":{"type": "string", "description": "verb=add/update. Engine session id that authored this row. The engine fills this on each call; the model usually omits it."},
+                "source_session":{"type": "string", "description": "verb=add/update. Session id that authored this content. The engine fills the current session id when omitted — pass explicitly ONLY to carry forward an original row's session (the dream promote path)."},
                 "replace_ids":   {"type": "array", "items": {"type": "string"}, "description": "verb=add only. **Atomic contradiction resolution.** Pass the ids of every conflicting prior row the user picked against via AskUser. The daemon inserts the new row AND deletes every id in this list in the same call — both tables are searched, you don't need to know each loser's tier. Use this whenever you're resolving a same-subject conflict. Never call add then delete separately for resolution."}
             },
             "required": ["verb"]
@@ -209,6 +209,18 @@ async fn dispatch_memory(
                     }
                 }
             }
+        }
+    }
+
+    // Stamp the writing session on writes so scan's skip-by-session
+    // idempotency is real (memory-spec Open#9). Only when the model didn't
+    // supply one — the dream promote path carries the ORIGINAL row's
+    // source_session forward, which must win. Session-scoped by design:
+    // sessionless callers of call_memory_http (auto-recall, admin
+    // dispatch) have no authoring session to stamp.
+    if tool_name == "Memory_write" && !args.get("source_session").is_some_and(|v| !v.is_null()) {
+        if let (Some(sid), Some(obj)) = (&tools.session_id, args.as_object_mut()) {
+            obj.insert("source_session".to_string(), Value::String(sid.clone()));
         }
     }
 
