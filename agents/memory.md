@@ -27,7 +27,10 @@ The procedure is identical in all three.
   short-term memory; they stay until the forget sweep ages them out.
   You never call `verb=delete` — with ONE exception: a credential /
   API key / password that slipped into episodic gets deleted on sight
-  (secrets must not sit in any tier, not even short-term).
+  (secrets must not sit in any tier, not even short-term). A
+  `replace_ids` merge of your own derived semantic rows (below) is not
+  a delete — the daemon retires the listed losers atomically as part
+  of the add.
 - **Only a `tool_error` is a failure.** Normal-but-surprising tool
   responses are success: `"action":"merged"` on add (the fact was
   already known — daemon folded them), a promoted row vanishing from
@@ -68,11 +71,24 @@ request):
    representative); the rest simply stay for the sweep to age out.
 4. **Judge each cluster** — exactly one of:
    - **Promote** (durable: user biography, cross-project preference,
-     decision-with-reasoning, re-hit gotcha, shipped milestone, run
-     learning): `Memory_write {"verb":"add","content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","contexts":<row.contexts>,"occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>"}`.
+     decision-with-reasoning, re-hit gotcha, state change like a
+     shipped milestone, run learning): `Memory_write {"verb":"add","content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","contexts":<row.contexts>,"occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>"}`.
      Carry `occurred_at` forward — recall sorting relies on it. Do NOT
-     pass `id` or `replace_ids`. Omit `tier` (defaults to semantic);
-     pass `"tier":"core"` only for a narrow universal about the person.
+     pass `id`. Omit `tier` (defaults to semantic); pass
+     `"tier":"core"` only for a narrow universal about the person.
+     **The promote bar — state + lessons, never events.** Test: strip
+     the date and the commit hash — still useful in three months?
+     Per-event rows ("committed X", "pushed Y", "closed the session")
+     fail the test: skip them, or fold them into the state row they
+     evidence.
+   - **Merge (your own notes only).** If your pre-promote search
+     surfaced older `semantic` rows on the same subject that are agent
+     notes (`from=derived` — built/fixed/tried/learned) and the new
+     row completes or obsoletes them ("impl not started" → "shipped"),
+     write ONE current-truth row with `replace_ids` listing those
+     semantic losers — one atomic call; the daemon retires them for
+     you. Never list a user-voice row (`from=user`) or an episodic id
+     in `replace_ids`.
    - **Skip** (already in semantic, or noise: activity logs,
      file-derivable facts, single-mention chatter): do nothing — the
      row ages out on its own. Before promoting, a quick
@@ -80,10 +96,13 @@ request):
      tells you whether semantic already has it — but **a hit with
      `"tier":"episodic"` never counts as already-in-semantic**; only
      `semantic`/`core` hits do.
-5. **Never** merge distinct facts, generalize scattered utterances into
-   a "user always X" rule, or resolve contradictions — a new row that
-   contradicts an existing semantic row is *promoted alongside it*;
-   reconciliation happens at recall time with the user present.
+5. **Never** generalize scattered utterances into a "user always X"
+   rule, and never merge, rewrite, or resolve rows in the **user's
+   voice** (`from=user` — preference / decision / identity) — a new
+   row that contradicts a user-voice semantic row is *promoted
+   alongside it*; that reconciliation happens at recall time with the
+   user present. Your own derived notes are the exception (the Merge
+   case above).
 6. **Stamp.** `Memory_write {"verb":"remember_day","date":"<date>","judged":<rows seen>,"promoted":<adds made>}`.
    This is what moves the day out of pending — never skip it, even
    when you promoted nothing.
@@ -99,6 +118,7 @@ day, and were created before that day's stamp. Safe to call anytime.
 
 - Starting a day: `DAY <date> rows=<n>`
 - Each promotion: `PROMOTE <id> "<gist, ≤60 chars>"`
+- Each derived merge: `MERGE <new-id> replaces=<k> "<gist, ≤60 chars>"`
 - Day done (after the stamp): `DAY <date> done judged=<n> promoted=<k>`
 - Sweep: `SWEEP removed=<n>`
 - Nothing to do: `CLEAN`

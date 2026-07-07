@@ -91,6 +91,11 @@ keeps the rest as short-term memory until TTL) and the forget sweep ages
 out what wasn't promoted. Don't overthink it — if a future session would
 be smarter for it, stage it.
 
+**Events land here, always.** Per-event work rows — *"committed X"*,
+*"pushed Y"*, *"closed the session"* — are episodic no matter how salient
+the turn felt; the dream pass folds them into whatever durable state they
+evidence. Semantic holds **state + lessons, never events**.
+
 **Curated writes (core / semantic) — read before you write, every row.**
 Every `Memory_write({verb: "add", tier: "core" | "semantic"})` MUST be
 preceded by a `Memory_query` on the candidate's subject in the same turn.
@@ -99,9 +104,18 @@ captures are exempt — they're staging, not curated rows.)
 
 ## NEVER ignore a conflict — the load-bearing floor
 
-If `Memory_query` returned **any** row on the same subject with a
-different value (or with a *similar kind of claim* that drifts from the
-candidate), you MUST call `AskUser` before writing. **No exceptions.**
+**Voice check first — merge authority follows voice.** If **every**
+conflicting row is your own note (`from: "derived"` — built / fixed /
+tried / learned rows), no AskUser is needed: they're your notebook —
+merge them yourself into one current-truth row with a single
+`replace_ids` write. The moment **any** row on the subject is in the
+user's voice (`from: "user"` — preference, decision, identity), the
+floor below applies.
+
+If `Memory_query` returned **any user-voice** row on the same subject
+with a different value (or with a *similar kind of claim* that drifts
+from the candidate), you MUST call `AskUser` before writing. **No
+exceptions.**
 
 Forbidden moves:
 
@@ -226,6 +240,8 @@ Pick the tier from the row's own durability, not from who is writing:
 - `tier: "semantic"` (default) — **cross-project durable signal.**
   Long-term goals, decisions whose reasoning is the value, commitment-
   language preferences, reusable tech gotchas. Retrieved on demand.
+  **State + lessons, never events** — test: strip the date and the
+  commit hash; still useful in three months? If not, episodic.
   **High confidence required.** If unsure, drop to episodic.
 - `tier: "episodic"` — **per-turn working capture (the default lane).**
   Append anything genuinely noteworthy — **including project-scoped
@@ -249,12 +265,19 @@ drift this protocol is meant to prevent.
 
 ## Floors
 
-- Never silently merge or overwrite into storage. *Synthesis for the
-  answer* is fine; *synthesis into a stored row* is the false-memory
-  mechanism.
-- Never destructively delete except as part of an explicit user
-  contradiction resolution (above) or an explicit user *"forget X"*
-  imperative.
+- Merge authority follows voice. Your own notes (`from: "derived"` —
+  built / fixed / tried / learned rows) are your notebook: merge,
+  rewrite, and retire them freely, always via `replace_ids` so the
+  survivor lands atomically. Rows in the user's voice (`from: "user"`
+  — preferences, decisions, identity) change only with the user:
+  AskUser first (step 3 above), or append and leave both.
+- Never silently merge or overwrite a **user-voice** row. *Synthesis
+  for the answer* is fine; unconfirmed *synthesis into a stored
+  user-voice row* is the false-memory mechanism.
+- Never destructively delete a **user-voice** row except as part of an
+  explicit user contradiction resolution (above) or an explicit user
+  *"forget X"* imperative. Secrets are the one exception — delete on
+  sight, any tier, any voice.
 - Skill/mission sessions don't get this block (`include_memory=false`)
   — they don't write memory by default. If a skill explicitly needs to
   query, the Memory_* tools remain available; the read-before-write

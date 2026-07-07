@@ -29,12 +29,21 @@ people and projects in their life. Memory must help every kind of user
 > deletes; episodic is short-term memory kept for its full TTL. Per-day
 > dream state lives in ling-mem as the single truth for the mission,
 > the calendar UI, and third-party hosts. §2 reflects the new pipeline.
+> *(Stage naming superseded 2026-07-06: harvest → **scan**, pulled out
+> of dream; **condense** added as stage 4 — see the notes below.)*
 
 > **2026-07-06:** the offline half is now **two user-facing functions**:
 > **scan** (per-day backfill staging, incremental by `source_session`)
 > and **dream** (= remember + forget). On Linggen every dream trigger
 > converges on the day-parameterizable `dream` mission — the skill owns
 > only scan and the calendar UI, never a second dream implementation.
+
+> **2026-07-06 (merge law):** merge doctrine rewritten around **voice**:
+> the agent merges and rewrites its own notes (`from=derived`) freely,
+> always via `replace_ids`; the user's voice (`from=user`) changes only
+> with the user. Semantic holds **state + lessons, never events**.
+> **Condense** joins as stage 4 — the only pass over semantic-at-rest.
+> §2 Reconcile, §2 Condense, and §3 rules 1/5 carry the new law.
 
 ## 1. What is memory
 
@@ -74,8 +83,9 @@ forgetting of what didn't earn permanence.
 ### Stores — two LanceDB tables, no markdown
 
 - **Semantic table** — durable, curated, append-mostly (changed by a
-  new row + read-time reconciliation, or explicit user edit/delete —
-  never silent in-place rewrite). Rows
+  new row + read-time reconciliation, `replace_ids` merges of the
+  agent's own notes, or explicit user edit/delete — user-voice rows are
+  never silently rewritten; §3 rules 1/5). Rows
   carry a `tier`: `core` (always injected, no similarity gate) or
   `semantic` (similarity-retrieved on demand). Core and semantic share
   one table because they share a churn/volume profile (low-churn,
@@ -142,8 +152,10 @@ zero-LLM; the binary stays out of session files) and encode that day's
 worthwhile candidates into episodic carrying the day's own timestamps,
 stamping the day scanned. **Incremental by `source_session`**: sessions
 that already contributed rows (live capture or a prior scan) are
-skipped, so scanning is idempotent and double-capture cannot happen —
-safe even on partially-captured days. Scan matters exactly where live
+skipped, making scanning idempotent — safe even on partially-captured
+days. (Contract, not yet reality: live capture doesn't stamp
+`source_session` today, so the skip only covers scan-authored rows —
+Open #9.) Scan matters exactly where live
 capture wasn't running (host without the memory hook, daemon off,
 pre-install history); a day nobody worked scans to nothing, which is
 why it stays a per-day human call. A gap day simply sits on the
@@ -158,15 +170,16 @@ yet judged) and runs two strictly-ordered phases per pass:
 
 1. **Remember** — consolidation. Judge one pending day's episodic rows:
    skip what long-term already holds, pick one representative per
-   near-duplicate cluster, promote durable signal → semantic (a plain
-   append; never a destructive rewrite), then stamp the day
+   near-duplicate cluster, promote durable signal → semantic (an
+   append, or a `replace_ids` merge into the agent's own derived rows —
+   user-voice rows are never rewritten; §3 rule 5), then stamp the day
    `remembered_at` in the per-day dream state. **Remembering never
    deletes** — episodic rows stay as short-term memory for their full
    TTL. (One mechanical exception: a *verbatim* promote trips the
    store's cross-tier exact-dup collapse, which removes the
    byte-identical episodic twin — the content lives on in semantic, so
-   nothing is lost.) Generalizing / merging / contradiction-resolution
-   stay user-present (Reconcile, below). Any pending day qualifies,
+   nothing is lost.) Generalizing utterances into rules and resolving
+   user-voice contradictions stay user-present (Reconcile, below). Any pending day qualifies,
    including yesterday — consolidation latency is one night, decoupled
    from TTL. May propose **semantic → `tier=core`** for a stable
    universal (user-confirmed; rule 1).
@@ -298,6 +311,15 @@ same turn — the difference is the target table, not who writes:
   a poor core candidate. The *kind* of fact decides core, never how
   many times it was said.
 
+**Semantic holds state + lessons, never events.** The routing test:
+strip the date and the commit hash — still useful in three months?
+Per-event work rows ("committed X", "pushed Y", "closed the session")
+go to **episodic always**, however salient the turn felt; the dream
+pass folds them into whatever durable state they evidence. State
+changes ("X is now shipped") and re-hit gotchas are the semantic
+material. Episodic's TTL is the event horizon — if 7 days proves
+short, the Settings knob bumps it (14), not the routing.
+
 Redundancy across paths is safe and self-healing: a byte-identical
 episodic twin is collapsed into the semantic copy at promote time
 (cross-tier write dedup); a reworded twin is kept by recall dedup
@@ -319,91 +341,100 @@ write compares a candidate, the dream run holds a worklist: each is a
 reconcile opportunity. (Brain-faithful: reconsolidation fires on
 reactivation, and core is reactivated every turn.)
 
-**Detection is ambient; the action is gated** — otherwise every turn
-becomes a memory interrogation. Classify the candidate / surfaced rows
-against existing memory:
+**The merge law — authority follows voice.** Every row is either the
+agent's note or the user's word, and that decides who may change it:
 
-- **Exact duplicate** (byte-identical content, same type) → mechanical
-  collapse, anytime, no prompt. The binary does this on write. A
-  *reworded* restatement is **not** mechanically merged (cosine can't
-  tell it from a contradiction) — it's left for the LLM to reconcile.
-- **Contradiction** (same subject, *incompatible* value) → resolve
-  **only with the user present and only when material** to the current
-  interaction: surface the conflicting rows **with their dates** and ask
-  the user to choose/correct via the host's ask-user primitive (Linggen
-  `AskUser`, Claude Code `AskUserQuestion`, plain chat on Codex/OpenClaw).
-  On answer, write the resolved row and retire the losers — atomically
-  via `replace_ids` on the write surface (one call inserts the new row
-  and deletes every listed loser); surfaces without it order
-  `memory_add` then `memory_delete`. Either way a concurrent recall
-  sees the old rows or both, never an empty hole on the subject. When **not material**,
-  or in a context that **cannot ask**: append the new row, leave the old
-  one, and defer the ask **onto the condense queue** (below) — a
-  deferral is a work item, never a dropped thought. Cosine **cannot**
-  separate a contradiction from a
-  restatement — both score high — so this classification needs the LLM,
-  never the binary's dedup.
-- **Stale supersession** (same subject, the newer row *completes or
-  obsoletes* the older — "design locked, impl not started" → "shipped").
-  Not a duplicate, not a contradiction; the dominant rot in a store of
-  project truths. Never resolved inline (rarely material to the turn) —
-  **enqueue** the cluster on the condense queue.
-- **New** → write.
+- **The agent's notebook** (`from=derived` — `built`, `fixed`, `tried`,
+  `learned`): the agent merges, rewrites, and retires its own notes
+  freely, at any seam — write, recall, dream, condense — always via
+  `replace_ids`, so one call inserts the survivor and deletes every
+  listed loser (a concurrent recall sees the old rows or both, never an
+  empty hole on the subject; surfaces without `replace_ids` order add
+  then delete).
+- **The user's voice** (`from=user` — preferences, decisions, identity):
+  changes only with the user. Surface the conflicting rows **with their
+  dates** and ask via the host's ask-user primitive (Linggen `AskUser`,
+  Claude Code `AskUserQuestion`, plain chat on Codex/OpenClaw); write
+  the resolved row with `replace_ids` carrying the losers. When the
+  conflict is **not material** to the turn, or the context **cannot
+  ask**: append the new row, leave the old — recall keeps surfacing
+  both until a user-present seam resolves it.
+
+**See-it-solve-it.** Whichever agent surfaces garbage owns it in that
+moment — there is no cleanup queue. The taxonomy:
+
+| Seen | Action |
+|:--|:--|
+| Exact duplicate (byte-identical, same type) | Mechanical collapse — the binary does this on write |
+| Superseded / chain member, derived ("impl not started" → "shipped") | `replace_ids` merge into one current-truth row |
+| Reworded derived near-dup | Merge, keep the best phrasing |
+| Old pure-event row | Mechanical retire — fold into a state row if one exists |
+| User-voice contradiction | AskUser with dates; can't ask / not material → append, leave both |
+| Secret | Delete |
+| New | Write |
+
+Cosine **cannot** separate a contradiction from a restatement — both
+score high — so everything below the first row needs the LLM, never
+the binary's dedup. The tact rule stands: this is for *incidental*
+hits — when the user is explicitly steering memory, follow their
+instruction; don't side-quest into cleanup.
 
 **Same protocol across every host.** Two write surfaces remain:
 
 - **Live `Memory_write`** (the live agent, on every turn) — reads first;
-  near-dup → skip; contradiction → ask the user via the host's primitive;
-  on answer, write the resolved row with `replace_ids` carrying the
-  losers.
-- **`dream` mission** (no user present) — reads the store, mechanical +
-  high-confidence promotion only (forgetting is a rule, not a
-  judgment); defers contradictions entirely (no rows are silently
-  rewritten without the user).
+  applies the taxonomy; user-voice conflicts go through the host's
+  ask-user primitive.
+- **Unattended missions** (`dream` nightly, `condense` monthly — no
+  user present) — promote durable signal and freely merge the agent's
+  own derived rows via `replace_ids`; user-voice rows are never
+  rewritten there — those conflicts wait for a user-present seam.
 
 The encoder subagent and its dedicated `SubagentPane` widget routing are
 **gone** — the live agent's ask-user widget lands wherever it is
 already talking (Linggen's main chat, CC's UI, Codex's terminal). Same
 contract on all four hosts.
 
-### Condense — curing stale long-term memory
+### Condense — stage 4, semantic-at-rest maintenance
 
-Semantic is append-mostly, so it accumulates stale chains. The cure is
-**merge, not link**: a chain is *computed* at detection time — a
-same-subject cluster of rows — never a stored edge (the removed
-`supersedes` link stays removed; a link leaves the stale row
-recallable and adds graph traversal to every read). Condensing
-replaces N rows with one current-truth row whose content carries the
-history as narrative with its dated span.
+Semantic is append-mostly, so project truths accumulate **chains** —
+same-subject rows where the newest completes or obsoletes the rest
+("design locked, impl not started" → "shipped"). Every other merge
+point gates entry (write-time dedup, the dream's promotion judgment)
+or works a recall window (turn-start recall, read-before-write);
+**nothing revisits semantic-at-rest**. Condense is that pass — the
+only one whose input is old semantic rows.
 
-- **Detect — ambient, at every reactivation seam** (the Reconcile
-  seams): recall co-retrieval (rows that arrive together on one query
-  are already a chain candidate — retrieval is the finder), the write
-  path's read-before-write search, and the dream pass's promote-time
-  neighborhood checks. Whoever notices a stale cluster **enqueues** it
-  on the daemon's **condense queue** — a small sidecar beside the dream
-  state, not memory rows. Enqueueing is mechanical and unattended-safe;
-  the live turn never stalls on it.
-- **Judge — user-present only.** The memory app renders the queue as
-  review cards: the drafted condensed row beside the rows it replaces;
-  approve applies `replace_ids` (atomic add + delete), skip discards
-  the proposal. The unattended dream never destroys a semantic row —
-  it only enqueues what it trips over (rules 1 and 5 unchanged).
-- **Type-aware policy.** Task/status rows (`built`, `fixed`, `tried`,
-  decision-status) condense aggressively; **user-biography facts stay
-  append + read-time** (§4 rule 3 — a flattened row destroys
-  "when/how-long" questions). A cluster containing a genuine
-  contradiction is presented as a choice, never auto-merged.
-- **Backlog.** One initial sweep may seed the queue over the existing
-  store; steady-state, real usage feeds it — curation effort follows
-  what recall actually touches.
+The cure is **merge, not link**: a chain is *computed* at detection
+time — never a stored edge (the removed `supersedes` link stays
+removed; a link leaves the stale row recallable and adds graph
+traversal to every read). Condensing replaces N rows with one
+current-truth row whose content carries the history as narrative with
+its dated span, applied via `replace_ids` under the merge law: derived
+chains collapse freely; a chain touching user-voice rows is never
+auto-merged (supervised runs may ask; unattended runs skip it).
 
-**Floors.** Synthesis *for the answer* is encouraged (merge rows into a
-dated narrative in the reply); synthesis *into a stored row* is
-forbidden offline — that is the false-memory mechanism. Never
-destructively delete (user-explicit only). The dream run updates only at
-high confidence (clear-cut promote / exact dup); it never resolves
-nuance or contradiction.
+- **v1 — chain-collapse.** Two confidence tiers: a *tier-1* edge is a
+  verbatim row-ID citation inside another row's content — mechanical,
+  auto-accepted; a *tier-2* candidate carries only provisional-state
+  markers ("uncommitted", "OPEN:", "pending") — found by marker +
+  search, LLM-confirmed before merging.
+- **v2 — subject digests.** Focused per-subject current-truth rows —
+  never one mega state row.
+- **Runs as a monthly mission** under the same `memory` agent. Ships
+  cron-disabled; first runs supervised, with a `ling-mem export`
+  backup taken before the pass.
+- **Split.** The mechanical scan is a new **`chains` verb in the
+  ling-mem daemon** — the mission agent is Memory-tools-only and can't
+  script the scan, and doing it in-context costs ~140k tokens.
+  Judgment (confirm tier-2, draft the merged row) lives in the linggen
+  mission + `memory` agent; the procedure doc lives in the
+  `shared-memory` skill.
+
+**Floors.** Synthesis *for the answer* is always encouraged (merge rows
+into a dated narrative in the reply). Offline synthesis *into a stored
+row* is forbidden exactly where the false-memory risk lives —
+user-voice rows (rule 1); the agent's own notes carry no such floor
+(rule 5). Bulk forget stays user-initiated.
 
 ### Extraction contract
 
@@ -415,12 +446,14 @@ rules, runtimes differ only by user-presence.
 
 Six anchors. When a design decision is unclear, they break the tie.
 
-**1. Human in the loop for destructive operations.**
+**1. Human in the loop for destructive operations on the user's voice.**
 
-Forgets, merges of distinct facts, and any rewrite that changes the
-meaning of a row require explicit user confirmation. Append and
-mechanical maintenance are the safe defaults. Never silently overwrite
-a user-stated fact based on inference.
+Bulk forgets, and any merge or rewrite that changes the meaning of a
+row **in the user's voice** (`from=user` — preferences, decisions,
+identity), require explicit user confirmation. Append and mechanical
+maintenance are the safe defaults. Never silently overwrite a
+user-stated fact based on inference. The agent's own notes are
+governed by rule 5.
 
 **2. The user is the source of truth.**
 
@@ -445,43 +478,34 @@ The store grows with genuinely durable signal — the user's life, work,
 and decisions accumulate over years, and that growth is the whole point.
 What it must not do is drift: expired facts get retired, conflicting
 rows get reconciled, noisy duplicates get merged. Net value goes up over
-time, not row count alone.
+time, not row count alone. **Ownership is see-it-solve-it** (§2
+Reconcile): whichever agent surfaces the garbage owns fixing it in that
+moment; what no recall ever touches falls to the condense pass (§2).
+Curation has no other queue.
 
-**5. Consolidation promotes mechanically; judgment is user-present.**
+**5. Merge authority follows voice — the notebook/voice law.**
 
-The dream pass (§2) autonomously does **mechanical + high-confidence**
-work: remember clear-cut episodic → semantic, exact-rephrase dedup, and
-forget-after-judgment (the sweep only touches remembered days past
-TTL). It does **not** merge distinct facts, generalize utterances into
-rules, or resolve contradictions — those are judgment, and per
-Reconcile (§2) they happen only with the **user present** (live write
-or recall), never in the no-user dream run. Explicit user confirmation is still required for
-**bulk forget and any destructive rewrite of an existing semantic row**
-(rule 1).
+The agent's own notes (`from=derived`: `built`, `fixed`, `tried`,
+`learned`) are its notebook: it merges, rewrites, and retires them
+freely — in dream, at recall, in condense — always via `replace_ids`
+so the survivor lands atomically. Rows in the user's voice
+(`from=user`: preferences, decisions, identity) change only with the
+user present (rule 1): AskUser first; otherwise append and reconcile
+at read time.
 
-The table below maps where each operation runs.
+Why the split: append-only defers the merge cost onto every future
+recall — the moment with the *least* context — while the false-memory
+risk that motivated "never silently merge" concentrates almost
+entirely in user-voice rows, not the agent's notes. (Claude Code's own
+auto-memory, the alignment reference, trusts the model to rewrite its
+notes.)
 
-*Mechanical maintenance* — exact-rephrase dedup, extending contexts/tags,
-retiring rows that meet a fixed obsolescence rule — runs offline in the
-mission. The decisions are mechanical: a rule fires, the action follows.
-
-*Semantic maintenance* — merging facts into a story, generalizing
-patterns into rules, choosing between contradicting rows — runs only in
-the live session. The user is there to see the synthesis and correct it
-before anything commits.
-
-Bulk forget is user-initiated only, regardless of where it would run.
-
-| Operation | Where | Why |
-|:--|:--|:--|
-| Append a new row | Offline mission OR live session | Pure additive |
-| Exact-content dedup (byte-identical restatement, same type) | Offline OR live | Mechanical — collapse, keep one. A *reworded* near-dup is **not** mechanical (cosine ≠ sameness) → it's the Live-only judgment rows below |
-| Extend `contexts[]` / `tags[]` from new evidence | Offline OR live | Mechanical — array union |
-| Retire by fixed obsolescence rule (session-arc leak, hard TTL) | Offline OR live | Mechanical — the criterion is a fixed rule |
-| Merge distinct facts into a synthesized story | **Live only** | Content rewrite — hallucination risk |
-| Generalize utterances into a "user always X" rule | **Live only** | Over-fit risk |
-| Resolve a contradiction between rows | **Live only** | Needs context the offline run may lack |
-| Bulk delete by filter | **User-initiated only — not a model tool** | The whole point is intentional cleanup; users invoke via the dashboard or `ling-mem forget` CLI. The model can iterate `Memory_query` → `Memory_write({verb: "delete"})` for small sets when explicitly asked. |
+Two judgments stay user-present regardless of voice: generalizing
+utterances into a "user always X" rule, and resolving user-voice
+contradictions (§2 Reconcile). Bulk delete by filter is user-initiated
+only — dashboard or `ling-mem forget` CLI, never a model tool; the
+model can iterate `Memory_query` → `Memory_write({verb: "delete"})`
+for small sets when explicitly asked.
 
 **6. Never store secrets, at any layer.**
 
@@ -672,8 +696,10 @@ Ordered. Each is a design decision not yet locked.
    destructive), stamp `remembered_at`; **never deletes**. Re-entrancy
    comes from the per-day dream state in ling-mem (late-arriving rows
    re-pend the day), replacing "a handled row leaves episodic". The
-   runbook is canonical in the `shared-memory` skill; the built-in
-   `dream` mission body is synced from it at release time. Prior model
+   `dream` mission body is maintained in the linggen repo (installed
+   to `~/.linggen/missions/dream/`); the skill's dream runbook
+   documents the same procedure for third-party hosts — aligned by
+   hand, neither generated from the other. Prior model
    (past-TTL worklist, terminal promote-or-delete per row) retired
    2026-07-03 — it coupled consolidation latency to TTL and spent most
    of its tokens on per-row deletes.
@@ -704,29 +730,43 @@ Ordered. Each is a design decision not yet locked.
    restatements (exact-content only; reworded/contradiction is the LLM's).
    Updated 2026-05-28: capture moved off a per-session subagent onto the
    live agent's inline turn writes.
-6. **Reconcile contract** — *resolved* (§2 Reconcile): ambient trigger
-   (any reactivation), gated action; exact-dup→mechanical collapse
-   (cosine is never a sameness gate — it can't tell a restatement from a
-   contradiction); contradiction→user-present AskUser(dated)→resolved
-   row via atomic `replace_ids`,
-   no-user→defer; similarity can't detect contradiction (needs the
-   engine LLM); never synthesize-into-storage / destructive-delete;
-   no structural replaces-link (append + read-time + user delete). One contract, three
-   call sites, differ only by user-presence. Implementation mechanism
-   (shared engine module vs shared prompt) deferred to build time.
+6. **Reconcile contract** — *resolved*, revised 2026-07-06 (§2
+   Reconcile): ambient trigger (any reactivation), see-it-solve-it
+   ownership, merge authority by voice — derived rows merge freely via
+   atomic `replace_ids`; user-voice contradiction→AskUser(dated),
+   no-user→append and leave both. Exact-dup→mechanical collapse;
+   cosine is never a sameness gate (it can't tell a restatement from a
+   contradiction — that classification needs the LLM). Offline
+   synthesize-into-storage / destructive-delete forbidden for
+   user-voice rows only (was: everywhere); no structural replaces-link
+   (append + read-time + user delete). One contract, every call site,
+   differ only by user-presence. Implementation mechanism (shared
+   engine module vs shared prompt) deferred to build time.
 7. **Consolidation widget polish** — the dream mission now carries a
    per-run mission record (the promote/delete audit trail) and is
    per-run stoppable; no-op runs stay quiet. Still deferred: a
    dedicated inspectable/undoable *memory* widget distinct from the
    generic mission/subagent surface.
-8. **Condense queue — designed 2026-07-06, unbuilt.** §2 Condense:
-   daemon sidecar queue + enqueue/list/drop primitives; protocol text
-   on all three surfaces naming the stale-supersession category and
-   the enqueue duty; memory app review cards applying `replace_ids`;
-   optional one-time backlog sweep to seed the queue. Also from the
-   same audit: seed `tier=core` (currently empty), and re-route
-   per-event `built`/`fixed` capture to episodic staging (71% of
-   semantic was written directly, bypassing the dream's judgment).
+8. **Condense — designed 2026-07-06, unbuilt.** (Second design that
+   day; supersedes the same-day condense-*queue* draft — see-it-solve-it
+   replaced ambient enqueueing.) §2 Condense: v1 chain-collapse (tier-1
+   ID-citation edges auto-accept, tier-2 marker+search LLM-confirm),
+   v2 subject digests; monthly mission, ships cron-disabled, supervised
+   first runs with `ling-mem export` backup; new `chains` verb in the
+   ling-mem daemon for the mechanical scan. Store audit behind it
+   (2026-07-06, 748 semantic rows): 151 provable tier-1 chain members,
+   277 asserting provisional state ("uncommitted"/"OPEN:"), 71% written
+   directly by hosts bypassing episodic staging — the state+lessons
+   routing (§2) closes the faucet; condense drains the pool. Also from
+   the audit: `tier=core` is empty (never seeded post-wipe) — seeding
+   still pending.
+9. **`source_session` gap — open.** No episodic row today carries
+   `source_session`: the write schema documents that the engine fills
+   it, but no engine code does, and third-party hosts never pass it.
+   Scan's skip-by-session idempotency (§2) is therefore contract, not
+   reality — it currently holds only for scan-authored rows. Fix:
+   the engine stamps `source_session` on every live write; hosts pass
+   their session id where they have one.
 
 Carried gaps (not blocking the rebuild): no row-level confidence
 calibration; privacy isolation is by convention not enforcement;
