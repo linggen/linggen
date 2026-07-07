@@ -71,6 +71,12 @@ impl Tool for MemoryQueryTool {
         // prompt.
         PermissionMode::Chat
     }
+    fn cacheable(&self) -> bool {
+        // The store is live mutable state shared across sessions and
+        // hosts — an identical query can legitimately return new data
+        // (the condense mission re-scans at offset 0 after every merge).
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",

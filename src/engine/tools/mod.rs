@@ -1,5 +1,6 @@
 mod builtin;
 pub use builtin::builtin_tier;
+pub(crate) use builtin::tool_cacheable;
 
 mod file_tools;
 pub(crate) mod json_schema;

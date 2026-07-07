@@ -446,14 +446,22 @@ impl AgentEngine {
         }
 
         // --- redundancy / cache gates ---
-        if sig == *last_tool_sig {
-            *redundant_tool_streak += 1;
-        } else {
-            *redundant_tool_streak = 0;
-            *last_tool_sig = sig.clone();
+        // Tools that read live mutable state (Memory_query: the store is
+        // shared across sessions and hosts) opt out entirely: an identical
+        // call can legitimately return new data, so it is neither served
+        // from cache nor counted toward the redundant-loop nudge.
+        let cacheable = tools::tool_cacheable(&canonical_tool);
+
+        if cacheable {
+            if sig == *last_tool_sig {
+                *redundant_tool_streak += 1;
+            } else {
+                *redundant_tool_streak = 0;
+                *last_tool_sig = sig.clone();
+            }
         }
 
-        if *redundant_tool_streak >= 3 {
+        if cacheable && *redundant_tool_streak >= 3 {
             let loop_breaker_prompt = self
                 .cfg
                 .prompt_loop_breaker
@@ -478,13 +486,15 @@ impl AgentEngine {
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
 
-        if let Some(cached) = tool_cache.get(&sig) {
-            self.upsert_observation("tool", &canonical_tool, cached.model.clone());
-            messages.push(self.tool_result_msg_for(
-                self.observation_text("tool", &canonical_tool, &cached.model),
-                &tool_call_id, &canonical_tool,
-            ));
-            return PreExecOutcome::Blocked(LoopControl::Continue);
+        if cacheable {
+            if let Some(cached) = tool_cache.get(&sig) {
+                self.upsert_observation("tool", &canonical_tool, cached.model.clone());
+                messages.push(self.tool_result_msg_for(
+                    self.observation_text("tool", &canonical_tool, &cached.model),
+                    &tool_call_id, &canonical_tool,
+                ));
+                return PreExecOutcome::Blocked(LoopControl::Continue);
+            }
         }
 
         // --- status lines ---
@@ -597,12 +607,14 @@ impl AgentEngine {
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 
-                tool_cache.insert(
-                    sig,
-                    CachedToolObs {
-                        model: rendered_model.clone(),
-                    },
-                );
+                if tools::tool_cacheable(&canonical_tool) {
+                    tool_cache.insert(
+                        sig,
+                        CachedToolObs {
+                            model: rendered_model.clone(),
+                        },
+                    );
+                }
 
                 // Invalidate cached Read results for the same file after a successful mutation.
                 if matches!(canonical_tool.as_str(), "Write" | "Edit") {
@@ -776,12 +788,14 @@ impl AgentEngine {
             Err(e) => {
                 warn!("Tool failed: {} err={}", canonical_tool, e);
                 let rendered = format!("tool_error: tool={} error={}", canonical_tool, e);
-                tool_cache.insert(
-                    sig,
-                    CachedToolObs {
-                        model: rendered.clone(),
-                    },
-                );
+                if tools::tool_cacheable(&canonical_tool) {
+                    tool_cache.insert(
+                        sig,
+                        CachedToolObs {
+                            model: rendered.clone(),
+                        },
+                    );
+                }
                 self.upsert_observation("error", &canonical_tool, rendered.clone());
                 let _ = self
                     .persist_observation(&canonical_tool, &rendered, session_id)

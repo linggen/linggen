@@ -55,6 +55,15 @@ pub trait Tool: Send + Sync {
         true
     }
 
+    /// True when an identical later call may be served from the per-run
+    /// tool cache and counted toward the redundant-loop nudge. Tools
+    /// that read live mutable state outside the session (the memory
+    /// store is shared across sessions and hosts) return false — an
+    /// identical call can legitimately return new data.
+    fn cacheable(&self) -> bool {
+        true
+    }
+
     /// Run the tool.
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult>;
 }
@@ -101,6 +110,12 @@ pub(super) fn lookup(name: &str) -> Option<&'static Arc<dyn Tool>> {
 /// Public tier lookup used by `engine::permission::tool_action_tier`.
 pub fn builtin_tier(name: &str) -> Option<PermissionMode> {
     lookup(name).map(|t| t.tier())
+}
+
+/// Cache/redundancy-gate participation, used by `engine::tool_exec`.
+/// Unknown (custom / skill) tools default to cacheable.
+pub fn tool_cacheable(name: &str) -> bool {
+    lookup(name).map(|t| t.cacheable()).unwrap_or(true)
 }
 
 /// JSON-Schema entries for the model-facing built-in tools. Used by
