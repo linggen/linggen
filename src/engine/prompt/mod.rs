@@ -333,11 +333,12 @@ impl AgentEngine {
 
         // --- Core memory (owner only) ---
         // Core = `tier=core` rows from the memory store, inlined
-        // unconditionally (no similarity gate). Pulled via the `ling-mem`
-        // CLI in `core_block::load_core`. Empty / unreachable store ⇒
-        // the bootstrap block fires instead, telling the model how to
-        // populate core. Semantic retrieval over the rest of the store
-        // reaches the model through the built-in `Memory_query` /
+        // unconditionally (no similarity gate). Pulled over HTTP from
+        // `agent.ling_mem_url` in `core_block::load_core` — the same
+        // daemon every other memory surface reads. Empty / unreachable
+        // store ⇒ the bootstrap block fires instead, telling the model
+        // how to populate core. Semantic retrieval over the rest of the
+        // store reaches the model through the built-in `Memory_query` /
         // `Memory_write` tools (see `engine/tools/memory_tool.rs`) —
         // not through here.
         tracing::info!(
@@ -350,7 +351,7 @@ impl AgentEngine {
             // Head differs by whether the store has `tier=core` rows; the
             // shared tail (save triggers, retrieval-visibility, usage rules)
             // is one fragment so the two heads can't drift apart.
-            match core_block::load_core() {
+            match core_block::load_core(&self.cfg.ling_mem_url) {
                 Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
                     keys::CORE_MEMORY_BLOCK,
                     &[("core_facts", &c.facts)],

@@ -3,37 +3,31 @@
 //!
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
-//! them via the `ling-mem` CLI (which transparently routes through the
-//! HTTP daemon when one is running) and renders the bodies as a bullet
+//! them over HTTP from the daemon at `agent.ling_mem_url` — the same
+//! wire path recall and `Memory_*` dispatch use, so every memory
+//! surface reads the same store — and renders the bodies as a bullet
 //! list for the prompt template. Promotion in and out of the core tier
 //! happens through ordinary memory writes
 //! (`Memory_write({verb: "add", tier: "core", ...})`) and the dashboard
 //! — there is no second markdown substrate to keep in sync.
 
 use serde::Deserialize;
-use std::io::Read;
-use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-
-/// Binary name. Resolved against `$PATH`; the installer puts `ling-mem`
-/// there. Missing binary degrades gracefully: `load_core` returns `None`
-/// and the prompt falls through to the empty-core block.
-const LING_MEM_BIN: &str = "ling-mem";
 
 /// Upper bound on rows pulled into the system prompt. Core is meant to
 /// be tiny (a handful of universals); the cap keeps a runaway tag from
 /// silently inflating every prompt.
 const CORE_LIMIT: usize = 200;
 
-/// Wall-clock cap on the `ling-mem list --tier core` subprocess.
-/// `load_core` runs on every stable-prompt build (per session start /
-/// rebuild), so a hung daemon — e.g. ling-mem holding a LanceDB lock
-/// during an encoder run — would freeze the whole engine loop before
-/// the model request ever fires. The cap means "no core injected this
-/// turn" instead of "agent stuck indefinitely". 2s is generous for a
-/// localhost JSON list call yet still bounds the worst case.
+/// Wall-clock cap on the core list call. `load_core` runs on every
+/// stable-prompt build (per session start / rebuild), so a hung daemon
+/// — e.g. ling-mem holding a LanceDB lock during an encoder run —
+/// would freeze the whole engine loop before the model request ever
+/// fires. The cap means "no core injected this turn" instead of "agent
+/// stuck indefinitely". 2s is generous for a localhost JSON list call
+/// yet still bounds the worst case.
 const LOAD_CORE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Pre-rendered core memory block. `facts` is the markdown body the
@@ -82,13 +76,13 @@ pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflictin
 /// routing live in `[memory_protocol]` (session start); this only nudges.
 pub(crate) const CAPTURE_REMINDER: &str = "Memory capture: before finishing this turn, recognize anything worth remembering and write it at the right tier per the memory protocol (core/semantic = search-first; episodic = incidental); anchor relative time to absolute dates (\"last month\" → \"2026-06\"). Nothing worth keeping? Skip silently.";
 
-/// Query `tier=core` rows from `ling-mem` and render them as a bullet
-/// list. Returns `None` when there are no core rows (or the binary is
-/// unavailable / errors out — the caller emits the empty-block prompt
-/// in that case so a fresh install still starts cleanly).
-pub(crate) fn load_core() -> Option<CoreContent> {
-    let stdout = run_with_timeout(LOAD_CORE_TIMEOUT)?;
-    let rows = parse_ndjson_rows(&stdout)?;
+/// Query `tier=core` rows from the daemon at `ling_mem_url` and render
+/// them as a bullet list. Returns `None` when there are no core rows
+/// (or the daemon is unreachable / errors out — the caller emits the
+/// empty-block prompt in that case so a fresh install still starts
+/// cleanly).
+pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
+    let rows = fetch_core_rows(ling_mem_url, LOAD_CORE_TIMEOUT)?;
     if rows.is_empty() {
         return None;
     }
@@ -124,96 +118,63 @@ fn render_row(r: &CoreRow) -> String {
     }
 }
 
-/// Spawn `ling-mem list --tier core` and bound the wait by `timeout`.
-/// Returns stdout on success; `None` on spawn error, non-zero exit,
-/// timeout, or stdout that isn't valid UTF-8. On timeout the child is
-/// killed so it doesn't linger zombie.
-fn run_with_timeout(timeout: Duration) -> Option<String> {
-    let mut child = Command::new(LING_MEM_BIN)
-        .args([
-            "--format",
-            "json",
-            "list",
-            "--tier",
-            "core",
-            "--limit",
-        ])
-        .arg(CORE_LIMIT.to_string())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-
-    // Wait for the child on a side thread so we can race it against a
-    // wall-clock timeout. `child.wait_timeout` would be cleaner but
-    // needs the `wait-timeout` crate; this approach uses only std.
+/// List `tier=core` rows over HTTP, bounded by `timeout`. Goes through
+/// `call_memory_http` — the exact wire path recall and `Memory_*`
+/// dispatch use — so the core block honors `agent.ling_mem_url` like
+/// every other memory surface (a non-default URL, e.g. an eval's
+/// throwaway store, reads the right daemon). The request runs on a side
+/// thread with its own tiny runtime because prompt assembly is sync; on
+/// timeout the engine proceeds with no core injected this turn and the
+/// orphan request finishes in the background (including the dispatch
+/// layer's one autostart retry, which helps the next turn).
+fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>> {
     let (tx, rx) = mpsc::channel();
-    let stdout = child.stdout.take();
-    let pid = child.id();
+    let url = ling_mem_url.to_string();
     thread::spawn(move || {
-        let result = (|| -> Option<(std::process::ExitStatus, String)> {
-            let mut buf = String::new();
-            if let Some(mut out) = stdout {
-                let _ = out.read_to_string(&mut buf);
-            }
-            let status = child.wait().ok()?;
-            Some((status, buf))
+        let result = (|| -> Option<Vec<CoreRow>> {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()?;
+            let value = rt
+                .block_on(crate::engine::tools::memory_tool::call_memory_http(
+                    &url,
+                    "Memory_query",
+                    serde_json::json!({"verb": "list", "tier": "core", "limit": CORE_LIMIT}),
+                ))
+                .map_err(|e| tracing::debug!(error = %e, "core list over ling-mem HTTP failed; treating core as empty"))
+                .ok()?;
+            parse_rows(&value)
         })();
         let _ = tx.send(result);
     });
 
     match rx.recv_timeout(timeout) {
-        Ok(Some((status, buf))) => {
-            if !status.success() {
-                tracing::debug!(
-                    status = ?status.code(),
-                    "ling-mem list --tier core exited non-zero; treating core as empty"
-                );
-                return None;
-            }
-            Some(buf)
-        }
-        Ok(None) => None,
+        Ok(rows) => rows,
         Err(_) => {
-            // Subprocess overran the budget. The engine loop proceeds
-            // with no core injected this turn; the orphan finishes
-            // whenever the daemon unblocks. (Cleaner kill-on-timeout
-            // would require sharing the child handle across threads
-            // or pulling in `wait-timeout` — not worth the complexity
-            // for a 2s budget; an idle ling-mem invocation is cheap.)
             tracing::warn!(
-                pid,
                 ?timeout,
-                "ling-mem list --tier core timed out; treating core as empty"
+                "core list over ling-mem HTTP timed out; treating core as empty"
             );
             None
         }
     }
 }
 
-/// Parse `ling-mem`'s NDJSON list output (one JSON object per line).
-/// Tolerates trailing whitespace and blank lines. Returns `None` only if
-/// every non-blank line failed to parse — a partial parse keeps the rows
-/// it did get so a single malformed row can't blank out the entire core.
-fn parse_ndjson_rows(stdout: &str) -> Option<Vec<CoreRow>> {
-    let mut rows = Vec::new();
-    let mut had_any_line = false;
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        had_any_line = true;
-        match serde_json::from_str::<CoreRow>(trimmed) {
-            Ok(row) => rows.push(row),
+/// Parse the daemon's list payload (a JSON array of rows). A malformed
+/// row degrades to a skipped line instead of blanking the whole core.
+fn parse_rows(value: &serde_json::Value) -> Option<Vec<CoreRow>> {
+    let arr = value.as_array()?;
+    let rows = arr
+        .iter()
+        .filter_map(|v| match serde_json::from_value::<CoreRow>(v.clone()) {
+            Ok(row) => Some(row),
             Err(e) => {
                 tracing::debug!(error = %e, "skipping malformed ling-mem row");
+                None
             }
-        }
-    }
-    if !had_any_line {
-        return Some(Vec::new());
-    }
+        })
+        .collect();
     Some(rows)
 }
 
@@ -222,26 +183,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_ndjson_list_output() {
-        let stdout = "{\"content\":\"I'm a founder\"}\n{\"content\":\"Prefer terse replies\"}\n";
-        let rows = parse_ndjson_rows(stdout).unwrap();
+    fn parses_list_payload() {
+        let value = serde_json::json!([
+            {"content": "I'm a founder"},
+            {"content": "Prefer terse replies"},
+        ]);
+        let rows = parse_rows(&value).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].content, "I'm a founder");
         assert_eq!(rows[1].content, "Prefer terse replies");
     }
 
     #[test]
-    fn empty_stdout_returns_empty_rows() {
-        let rows = parse_ndjson_rows("").unwrap();
+    fn empty_payload_returns_empty_rows() {
+        let rows = parse_rows(&serde_json::json!([])).unwrap();
         assert!(rows.is_empty());
     }
 
     #[test]
-    fn malformed_lines_are_skipped_not_fatal() {
-        let stdout = "{\"content\":\"keep me\"}\nnot-json\n{\"content\":\"and me\"}\n";
-        let rows = parse_ndjson_rows(stdout).unwrap();
+    fn malformed_rows_are_skipped_not_fatal() {
+        let value = serde_json::json!([
+            {"content": "keep me"},
+            {"no_content_field": true},
+            {"content": "and me"},
+        ]);
+        let rows = parse_rows(&value).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].content, "keep me");
         assert_eq!(rows[1].content, "and me");
+    }
+
+    #[test]
+    fn non_array_payload_returns_none() {
+        assert!(parse_rows(&serde_json::json!({"ok": true})).is_none());
     }
 }
