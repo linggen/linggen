@@ -37,14 +37,14 @@ never writes to project files.
 
 ## Tiers
 
-- **Core** — a handful of universals about the person (name, role,
-  hard work rules), present in every session. User-confirmed.
+- **Core** — a handful of high-confidence universals about the person
+  (name, role, hard work rules), present in every session.
 - **Long-term** — everything else durable, retrieved on demand. Holds
   *state and lessons, never events*: would the row still matter in
   three months?
 - **Short-term** — per-turn working capture. Events and uncertain
-  signal land here; it fades after about a week unless the dream pass
-  promotes it.
+  signal land here; once the dream pass has judged a day, its rows
+  fade after about a week unless promoted.
 
 ## Features
 
@@ -58,8 +58,10 @@ never writes to project files.
   Anything fuzzier is judgment, not mechanics.
 - **Reconcile** — authority follows voice: the agent freely merges
   and rewrites *its own* notes into current truth; anything the
-  *user* said changes only with the user (ask first). Whoever sees
-  garbage fixes it in that moment — there is no cleanup queue.
+  *user* said changes only with the user (ask first). The store
+  itself enforces the floor — a silent rewrite of the user's voice
+  is refused, on every host. Whoever sees garbage fixes it in that
+  moment — there is no cleanup queue.
 - **Dream** (nightly) — reviews each day's short-term staging,
   promotes what's durable, and lets the rest fade. Never deletes
   unjudged rows. Day-by-day, with a visible per-day state on the
@@ -90,18 +92,14 @@ never writes to project files.
 
 LongMemEval is a retrieval regression check only — it rewards
 hoarding, the opposite of this design; never optimize toward it. The
-real scorecard is a write-side eval (extraction precision, dedup
-correctness, reconciliation accuracy, decay calibration) — unbuilt,
-the next eval deliverable.
+real scorecard is the write-side eval (six axes: extraction, routing,
+dedup, reconcile, decay, secrets), which drives each scenario through
+a real engine against a throwaway store and judges the end state.
 
 ## Open / next
 
-1. Write-side eval (above).
-2. A dedicated inspectable/undoable widget for mission promotes and
+1. A dedicated inspectable/undoable widget for mission promotes and
    merges.
-3. Enable the condense cron once supervised runs are trusted.
-4. ling-mem 1.2.0 release — the accumulated API additions await the
-   lockstep publish.
 
 ## Future
 

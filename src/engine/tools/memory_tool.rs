@@ -86,7 +86,7 @@ impl Tool for MemoryQueryTool {
                 "query":    {"type": "string", "description": "Required for verb=search. Natural-language description of what you're looking for."},
                 "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND semantics). For verb=search, narrows ranked results; for verb=list, primary filter. Omit to skip."},
                 "type":     {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "Filter by fact type. Omit to return all types."},
-                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Memory category. `core` = always-on identity/style universals; `semantic` = curated retrieval pool; `episodic` = staging table (encoder writes here pre-promotion). **Omit to span all three.**"},
+                "tier":     {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Memory category. `core` = always-on identity/style universals; `semantic` = curated retrieval pool; `episodic` = per-turn capture staging (the dream pass judges it nightly). **Omit to span all three.**"},
                 "from":     {"type": "string", "enum": ["user", "agent", "derived"], "description": "**DEFAULT: do not pass.** Filter by origin. Pass only when the user explicitly asked to see rows from a specific origin (rare)."},
                 "outcome":  {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "**DEFAULT: do not pass.** Filter by outcome. Almost no rows have `outcome=neutral`; passing it returns 0 rows even when the store has data. Pass only when the user explicitly asked to see only positive / negative outcomes."},
                 "since":    {"type": "string", "description": "RFC-3339 lower bound on effective timestamp. Omit to skip."},
@@ -125,7 +125,7 @@ impl Tool for MemoryWriteTool {
         "Memory_write"
     }
     fn description(&self) -> &'static str {
-        "Modify memory. Verb-dispatched: `add` (insert a new row), `update` (edit fields of an existing row by id), `delete` (hard-delete a single row by id), `remember_day` (stamp a day judged after a remember pass — pass `date` + `judged`/`promoted` counts), `sweep` (the forget stage: mechanically evict episodic rows that are past TTL, on a remembered day, and were judged; never touches un-judged rows — safe anytime). **Follow `[memory_protocol]` in your system prompt** — every `add` MUST be preceded by a `Memory_query`, dups are skipped, contradictions go through `AskUser`. Memory should grow with genuinely durable signal: cross-project user identity / goals (`fact`), commitment-language behavioral rules (`preference`), decisions whose reasoning is the retrieval value (`decision`), cross-project tech gotchas (`learned`). Don't store project-internal architecture, conventions, or implementation detail — drop those candidates entirely. Memory does NOT write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are user-curated, and the agent reads them directly when needed. Reserve `verb=update` for mechanical rephrasing of the same fact and `verb=delete` for explicit user requests to forget (or for the post-AskUser resolution of a contradiction). Bulk forget is not on this tool surface — handle it via the dashboard or by iterating verb=delete after explicit user confirmation."
+        "Modify memory. Verb-dispatched: `add` (insert a new row), `update` (edit fields of an existing row by id), `delete` (hard-delete a single row by id), `remember_day` (stamp a day judged after a remember pass — pass `date` + `judged`/`promoted` counts), `sweep` (the forget stage: mechanically evict episodic rows that are past TTL, on a remembered day, and were judged; never touches un-judged rows — safe anytime). **Follow `[memory_protocol]` in your system prompt** — every `add` MUST be preceded by a `Memory_query`, dups are skipped, contradictions go through `AskUser`. Memory should grow with genuinely durable signal: cross-project user identity / goals (`fact`), commitment-language behavioral rules (`preference`), decisions whose reasoning is the retrieval value (`decision`), cross-project tech gotchas (`learned`). Project-internal architecture, conventions, and implementation detail stay OUT of core/semantic — stage them in `tier=episodic` instead (episodic is staging, not user-biography; the dream pass decides if any earn a curated row). Memory does NOT write to project files (`<project>/AGENTS.md`, `CLAUDE.md`, source, docs); those are user-curated, and the agent reads them directly when needed. Reserve `verb=update` for mechanical rephrasing of the same fact and `verb=delete` for explicit user requests to forget (or for the post-AskUser resolution of a contradiction). Bulk forget is not on this tool surface — handle it via the dashboard or by iterating verb=delete after explicit user confirmation."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Chat
@@ -143,7 +143,7 @@ impl Tool for MemoryWriteTool {
                 "content":       {"type": "string", "description": "verb=add/update. The fact text the model will see when the row is recalled."},
                 "type":          {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "verb=add/update. Fact category. Default `fact`."},
                 "from":          {"type": "string", "enum": ["user", "agent", "derived"], "description": "verb=add/update. Origin of the fact. Default `derived`."},
-                "tier":          {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "verb=add/update. Destination memory category. `episodic` = per-turn working capture (fast, append-only, no query-first; the dream consolidator promotes/evicts) — the default lane for uncertain-durability signal; capture here each turn. `semantic` = curated durable pool (query-first). `core` = tiny always-injected universals about the person (query-first)."},
+                "tier":          {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "verb=add/update. Destination memory category. `episodic` = per-turn working capture (fast, append-only, no query-first; the nightly dream pass promotes what's durable and deletes nothing — the separate forget sweep evicts judged rows past TTL) — the default lane for uncertain-durability signal; capture here each turn. `semantic` = curated durable pool (query-first). `core` = tiny always-injected universals about the person (query-first)."},
                 "contexts":      {"type": "array", "items": {"type": "string"}, "description": "verb=add/update. Scope tags (e.g. `cross-project`, `project/foo`)."},
                 "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "verb=add/update. Optional outcome marker."},
                 "occurred_at":   {"type": "string", "description": "verb=add/update. RFC-3339 user-event timestamp; falls back to `created_at` if unset."},
@@ -181,6 +181,12 @@ const ASK_USER_UNLOCK_WINDOW: Duration = Duration::from_secs(600);
 /// within [`ASK_USER_UNLOCK_WINDOW`]. Everything else is the silent
 /// drifted overwrite the protocol forbids — blocked with a recovery
 /// path in the error. Derived rows (the agent's own notes) pass free.
+///
+/// The daemon enforces the same floor for every frontend and honors a
+/// wire-level `user_directed`. The engine is the authority on its own
+/// path: the model's raw assertion is stripped, and the flag is
+/// re-asserted on the wire only when this guard authorizes the write —
+/// including the AskUser-unlock case the daemon cannot see.
 async fn guard_user_voice_replace(
     tools: &Tools,
     ling_mem_url: &str,
@@ -189,7 +195,8 @@ async fn guard_user_voice_replace(
     let Some(obj) = args.as_object_mut() else {
         return Ok(());
     };
-    // Always strip the assertion field — it is engine-level, never wire.
+    // Strip the model's raw assertion — the engine decides what goes on
+    // the wire, not the model.
     let user_directed = obj
         .remove("user_directed")
         .and_then(|v| v.as_bool().into())
@@ -214,10 +221,13 @@ async fn guard_user_voice_replace(
         }
         _ => {}
     }
-    if target_ids.is_empty() || user_directed {
+    if target_ids.is_empty() {
         return Ok(());
     }
-    if tools.ask_user_recently(ASK_USER_UNLOCK_WINDOW) {
+    if user_directed || tools.ask_user_recently(ASK_USER_UNLOCK_WINDOW) {
+        // Authorized — assert the flag on the wire so the daemon's own
+        // floor lets the write through.
+        obj.insert("user_directed".to_string(), Value::Bool(true));
         return Ok(());
     }
 
