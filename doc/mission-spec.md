@@ -102,6 +102,7 @@ permission:
 | `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
 | `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
+| `kickoff-stop` | no | Completion sentinels. A final reply ending on one of these (final word) discards the remaining kickoff queue — an early-finished run skips its leftover nudge turns |
 | `allowed-tools` | yes | Explicit tool list. Authors omit `AskUser` / `EnterPlanMode` for unattended missions where there's no one to respond. The `Skill` tool is never available to missions — missions do not delegate to skills |
 | `permission.paths` | no | Per-path grants, each with its own `mode`. Same shape as `SkillPermission` — see `permission-spec.md`. Omitting `permission` or leaving `paths` empty means the mission has no filesystem grants and will fail the first write/edit it attempts |
 | `permission.warning` | no | Displayed in the UI before enabling |
@@ -153,6 +154,8 @@ Tools come from `allowed-tools`, permission from `permission`. Everything else t
 `kickoff:` is a list of user-turn messages that seed the session before any agent reply. Item 0 is persisted as the first chat message and becomes the agent's initial task. Items 1+ go into the engine's `kickoff_queue`; the agent loop drains one each time it emits a final assistant reply (a turn with no further tool calls). This staged delivery lets a mission produce a greeting *as its own* assistant message before the work-step kickoff arrives, instead of folding everything into one batched reply.
 
 If `kickoff:` is omitted or empty, the scheduler falls back to a single generic line (`Run the "<name>" mission per your system prompt.`).
+
+`kickoff-stop:` is an optional list of completion sentinels. When the assistant's final reply ends on one of them — the sentinel is the reply's final word (`DONE`, `SWEEP removed=4\nDONE`, one trailing `.`/`!` tolerated) — the engine discards the remaining queue: an early-finished run (e.g. the dream mission's `DONE` on an empty worklist) skips its leftover nudge turns. A sentinel mentioned mid-reply never matches.
 
 There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a built-in capability tool like `Memory_query`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at the dispatch boundary in `engine/tools/memory_tool.rs` — see the ling-mem `past_ttl=true` strip rule.
 

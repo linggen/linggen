@@ -298,6 +298,11 @@ pub struct AgentEngine {
     /// sessions; populated by the mission scheduler with `Mission.kickoff[1..]`
     /// after item 0 has been used as the initial task.
     pub kickoff_queue: VecDeque<String>,
+    /// Completion sentinels for the kickoff queue (`Mission.kickoff_stop`).
+    /// When the assistant's final reply is exactly one of these, the loop
+    /// discards the remaining `kickoff_queue` — an early-finished mission
+    /// run skips its leftover nudge turns. Empty = never early-drain.
+    pub kickoff_stop: Vec<String>,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
@@ -484,6 +489,7 @@ impl AgentEngine {
             plan: None,
             pending_images: Vec::new(),
             kickoff_queue: VecDeque::new(),
+            kickoff_stop: Vec::new(),
             session_permissions: permission::SessionPermissions::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,

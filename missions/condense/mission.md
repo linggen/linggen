@@ -20,6 +20,12 @@ cwd: ~/.linggen
 # front of the list is always fresh work. Phase 2 (marker candidates)
 # pages by fixed offsets; skipped candidates linger but re-paging past
 # them is one cheap turn. A longer backlog continues next run.
+# kickoff-stop: STALLED (a merge did not take — abort) ends the run
+# early; the engine discards the leftover kickoff items. CITED-CLEAN /
+# MARKER-CLEAN are phase transitions, NOT stops — the next item moves
+# the run into its next phase. The final DONE line carries counts, so
+# it never matches an exact-reply stop.
+kickoff-stop: [STALLED]
 kickoff:
   - >-
     You are in the condense mission — monthly maintenance of long-term

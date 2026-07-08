@@ -605,6 +605,7 @@ async fn dispatch_mission_prompt(
     engine.observations.clear();
     engine.task = Some(first_message.clone());
     engine.kickoff_queue = queued.into();
+    engine.kickoff_stop = mission.kickoff_stop.clone();
     engine.set_parent_agent(None);
     engine.set_run_id(Some(run_id.clone()));
 

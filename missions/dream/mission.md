@@ -21,8 +21,11 @@ cwd: ~/.linggen
 # day loop ENGINE-driven — models reliably process one day per turn
 # but skip "re-list until empty" on their own. Seven nudges + the
 # opener cover an 8-day backlog per run; a longer backlog continues
-# the next night (oldest-first, so progress is monotone). On an empty
-# worklist each leftover nudge costs one cheap DONE turn.
+# the next night (oldest-first, so progress is monotone).
+# kickoff-stop: a reply ending on DONE (empty worklist) or STALLED
+# (same day twice — abort) ends the run; the engine discards the
+# leftover nudges instead of burning a no-op turn on each.
+kickoff-stop: [DONE, STALLED]
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then

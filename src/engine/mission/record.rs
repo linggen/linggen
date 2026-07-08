@@ -60,6 +60,15 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kickoff_day: Vec<String>,
 
+    /// Completion sentinels (frontmatter `kickoff-stop`). When the
+    /// agent's final reply is exactly one of these (trimmed, optionally
+    /// trailing `.`/`!`), the engine discards the remaining kickoff
+    /// queue instead of feeding the leftover items — an early-finished
+    /// run (e.g. the dream mission's `DONE` on an empty worklist) skips
+    /// the no-op nudge turns. Empty = never early-drain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kickoff_stop: Vec<String>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

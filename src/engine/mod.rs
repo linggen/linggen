@@ -77,11 +77,27 @@ impl AgentEngine {
     /// continue past the first response instead of exiting the loop.
     /// Returns `true` when an item was drained — caller should `continue`
     /// the agent loop instead of returning.
+    ///
+    /// Early-drain: when `final_reply` is exactly one of the mission's
+    /// `kickoff-stop` sentinels (e.g. the dream mission's `DONE` on an
+    /// empty worklist), the remaining queue is discarded — the run is
+    /// complete and the leftover nudge items would each burn a no-op
+    /// model turn.
     async fn try_drain_kickoff(
         &mut self,
         state: &mut LoopState,
         session_id: Option<&str>,
+        final_reply: &str,
     ) -> bool {
+        if !self.kickoff_queue.is_empty() && kickoff_stop_hit(&self.kickoff_stop, final_reply) {
+            info!(
+                "kickoff: completion sentinel {:?} — discarding {} queued item(s)",
+                final_reply.trim(),
+                self.kickoff_queue.len()
+            );
+            self.kickoff_queue.clear();
+            return false;
+        }
         let Some(next) = self.kickoff_queue.pop_front() else {
             return false;
         };
@@ -548,8 +564,8 @@ impl AgentEngine {
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
-                    self.last_assistant_text = Some(raw);
-                    if self.try_drain_kickoff(&mut state, session_id).await {
+                    self.last_assistant_text = Some(raw.clone());
+                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
                     self.active_skill = None;
@@ -625,8 +641,8 @@ impl AgentEngine {
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
                     self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
-                    self.last_assistant_text = Some(raw);
-                    if self.try_drain_kickoff(&mut state, session_id).await {
+                    self.last_assistant_text = Some(raw.clone());
+                    if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
                     self.active_skill = None;
@@ -710,7 +726,7 @@ impl AgentEngine {
                         let _ = self
                             .persist_assistant_message(&raw, session_id)
                             .await;
-                        if self.try_drain_kickoff(&mut state, session_id).await {
+                        if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                             continue;
                         }
                         return Ok(AgentOutcome::None);
@@ -729,7 +745,7 @@ impl AgentEngine {
                         let _ = self
                             .persist_assistant_message(&message, session_id)
                             .await;
-                        if self.try_drain_kickoff(&mut state, session_id).await {
+                        if self.try_drain_kickoff(&mut state, session_id, &message).await {
                             continue;
                         }
                         self.active_skill = None;
@@ -951,6 +967,38 @@ fn truncate_for_log(task: &str, max_chars: usize) -> String {
     )
 }
 
+/// True when the assistant's final reply *ends on* one of the mission's
+/// `kickoff-stop` sentinels: the sentinel is the reply's final word
+/// (whitespace/line boundary before it; one trailing `.`/`!` tolerated).
+/// The memory agent's status-line doctrine closes a finished run with
+/// the sentinel as the last line (`SWEEP removed=4` ↵ `DONE`) — and
+/// models sometimes fold that into one line (`SWEEP removed=4 DONE`) —
+/// while every mid-run reply ends on a data-bearing line (`DAY <date>
+/// done judged=…`), so a backlog run never ends on a bare sentinel.
+/// A sentinel merely *mentioned* mid-reply never matches.
+fn kickoff_stop_hit(stops: &[String], reply: &str) -> bool {
+    if stops.is_empty() {
+        return false;
+    }
+    let trimmed = reply.trim_end();
+    let bare = trimmed
+        .strip_suffix(['.', '!'])
+        .map(str::trim_end)
+        .unwrap_or(trimmed);
+    stops.iter().any(|s| {
+        let s = s.trim();
+        if s.is_empty() || !bare.ends_with(s) {
+            return false;
+        }
+        // Word boundary: the sentinel is the whole reply or is preceded
+        // by whitespace ("…removed=4 DONE" yes, "ABANDONE" no).
+        bare[..bare.len() - s.len()]
+            .chars()
+            .next_back()
+            .is_none_or(char::is_whitespace)
+    })
+}
+
 fn summarize_task_for_log(task: &str) -> String {
     const MAX: usize = 160;
     let stripped = task.trim_start_matches("[HIDDEN] ").trim_start();
@@ -969,5 +1017,51 @@ fn summarize_task_for_log(task: &str) -> String {
         one_line
     } else {
         format!("{one_line} ({total_bytes}B/{total_lines}L — full at DEBUG)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kickoff_stop_hit;
+
+    fn stops(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn kickoff_stop_exact_match() {
+        assert!(kickoff_stop_hit(&stops(&["DONE", "STALLED"]), "DONE"));
+        assert!(kickoff_stop_hit(&stops(&["DONE", "STALLED"]), "STALLED"));
+    }
+
+    #[test]
+    fn kickoff_stop_tolerates_whitespace_and_trailing_punctuation() {
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "  DONE\n"));
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "DONE."));
+        assert!(kickoff_stop_hit(&stops(&["DONE"]), "DONE!"));
+    }
+
+    #[test]
+    fn kickoff_stop_matches_sentinel_as_final_word() {
+        let stops = stops(&["DONE"]);
+        // Status-line doctrine shape: sentinel as the closing line.
+        assert!(kickoff_stop_hit(&stops, "SWEEP removed=4\nDONE"));
+        // Model-folded one-liner observed live on gpt-5.5.
+        assert!(kickoff_stop_hit(&stops, "SWEEP removed=38 DONE"));
+    }
+
+    #[test]
+    fn kickoff_stop_requires_final_word_boundary() {
+        let stops = stops(&["DONE"]);
+        assert!(!kickoff_stop_hit(&stops, "DONE with day one, moving on"));
+        assert!(!kickoff_stop_hit(&stops, "DAY 2026-07-06 done judged=27"));
+        assert!(!kickoff_stop_hit(&stops, "ABANDONE"));
+        assert!(!kickoff_stop_hit(&stops, "done"));
+        assert!(!kickoff_stop_hit(&stops, ""));
+    }
+
+    #[test]
+    fn kickoff_stop_empty_list_never_hits() {
+        assert!(!kickoff_stop_hit(&[], "DONE"));
     }
 }
