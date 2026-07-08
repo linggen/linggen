@@ -236,6 +236,19 @@ Skip the AskUser step but still **query first** to find what's there:
 The same delete-the-losers discipline applies as in step 3 above: never
 leave drifted siblings behind after an explicit user instruction.
 
+Pass `user_directed: true` on these explicit-imperative writes: the
+engine mechanically blocks any write that replaces or rewrites a
+`from=user` row unless the user commanded it (`user_directed`) or an
+AskUser was just answered. If a write comes back BLOCKED, follow the
+error's recovery instructions — never work around it with a plain add.
+
+Boundary — imperative means the user states the new value as *settled*:
+a command (*"update X to Y"*, *"forget X"*), a declaration (*"my X is
+now Y"*, *"I moved to Toronto"*), or a commitment (*"from now on, X"*).
+A hedged reflection is NOT an imperative — *"X feels about right to
+me"*, *"I think I prefer X"*, *"maybe X is better"* — that's a
+contradiction: AskUser first (step 3), never `user_directed`.
+
 ## Tier selection — by confidence
 
 Pick the tier from the row's own durability, not from who is writing:

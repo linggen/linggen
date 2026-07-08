@@ -186,6 +186,12 @@ pub struct Tools {
     /// non-interactive parent (mission, proxy consumer) yields a non-interactive
     /// child — prompts in unattended runs deadlock.
     pub(crate) parent_interactive: bool,
+    /// When the last AskUser was answered in this session. The user-voice
+    /// merge guard (memory_tool) unlocks writes that replace `from=user`
+    /// rows for a short window after an answered AskUser — the ask→resolve
+    /// flow the merge law prescribes. Arc-shared across clones so subagent
+    /// asks count too.
+    pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 
 impl Tools {
@@ -206,7 +212,18 @@ impl Tools {
             session_policy: None,
             parent_path_modes: Vec::new(),
             parent_interactive: true,
+            last_ask_user: Arc::new(std::sync::Mutex::new(None)),
         })
+    }
+
+    /// True when an AskUser was answered within `window` — the unlock
+    /// signal for the user-voice merge guard.
+    pub(crate) fn ask_user_recently(&self, window: Duration) -> bool {
+        self.last_ask_user
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .is_some_and(|t| t.elapsed() <= window)
     }
 
     pub fn set_context(
@@ -408,7 +425,12 @@ impl Tools {
         bridge.pending.lock().await.remove(&question_id);
 
         match response {
-            Ok(Ok(answers)) => Ok(ToolResult::AskUserResponse { answers }),
+            Ok(Ok(answers)) => {
+                if let Ok(mut g) = self.last_ask_user.lock() {
+                    *g = Some(std::time::Instant::now());
+                }
+                Ok(ToolResult::AskUserResponse { answers })
+            }
             Ok(Err(_)) => Ok(ToolResult::Success(
                 self.prompt(crate::prompts::keys::ASKUSER_CANCELLED, &[]),
             )),

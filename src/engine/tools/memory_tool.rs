@@ -148,6 +148,7 @@ impl Tool for MemoryWriteTool {
                 "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "verb=add/update. Optional outcome marker."},
                 "occurred_at":   {"type": "string", "description": "verb=add/update. RFC-3339 user-event timestamp; falls back to `created_at` if unset."},
                 "source_session":{"type": "string", "description": "verb=add/update. Session id that authored this content. The engine fills the current session id when omitted — pass explicitly ONLY to carry forward an original row's session (the dream promote path)."},
+                "user_directed": {"type": "boolean", "description": "verb=add/update. Assert that the user's CURRENT message states this change as SETTLED: a command (\"update X to Y\", \"forget X\"), a declaration (\"my X is now Y\"), or a commitment (\"from now on, X\"). A hedged reflection (\"X feels about right to me\", \"I think I prefer X\") does NOT qualify — that's a contradiction: AskUser first. Required to replace/rewrite from=user rows without an AskUser — the engine blocks such writes otherwise. Never set from your own inference."},
                 "replace_ids":   {"type": "array", "items": {"type": "string"}, "description": "verb=add only. **Atomic contradiction resolution.** Pass the ids of every conflicting prior row the user picked against via AskUser. The daemon inserts the new row AND deletes every id in this list in the same call — both tables are searched, you don't need to know each loser's tier. Use this whenever you're resolving a same-subject conflict. Never call add then delete separately for resolution."}
             },
             "required": ["verb"]
@@ -165,6 +166,92 @@ impl Tool for MemoryWriteTool {
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         dispatch_memory(tools, "Memory_write", call.args).await
     }
+}
+
+/// How long an answered AskUser unlocks user-voice writes. Generous for
+/// the ask→resolve flow (always seconds apart), tight enough that a
+/// stale ask from earlier work doesn't legitimize an unrelated replace.
+const ASK_USER_UNLOCK_WINDOW: Duration = Duration::from_secs(600);
+
+/// Mechanical enforcement of the merge law's user-voice floor: a write
+/// that replaces or rewrites `from=user` rows goes through only when
+/// (a) the model asserts `user_directed: true` — the user's current
+/// message explicitly commanded the change ("update X to Y",
+/// "forget X", a stated new rule), or (b) an AskUser was answered
+/// within [`ASK_USER_UNLOCK_WINDOW`]. Everything else is the silent
+/// drifted overwrite the protocol forbids — blocked with a recovery
+/// path in the error. Derived rows (the agent's own notes) pass free.
+async fn guard_user_voice_replace(
+    tools: &Tools,
+    ling_mem_url: &str,
+    args: &mut Value,
+) -> Result<()> {
+    let Some(obj) = args.as_object_mut() else {
+        return Ok(());
+    };
+    // Always strip the assertion field — it is engine-level, never wire.
+    let user_directed = obj
+        .remove("user_directed")
+        .and_then(|v| v.as_bool().into())
+        .flatten()
+        .unwrap_or(false);
+
+    let verb = obj.get("verb").and_then(|v| v.as_str()).unwrap_or("");
+    let mut target_ids: Vec<String> = Vec::new();
+    match verb {
+        "add" => {
+            if let Some(ids) = obj.get("replace_ids").and_then(|v| v.as_array()) {
+                target_ids.extend(ids.iter().filter_map(|v| v.as_str().map(String::from)));
+            }
+        }
+        // A content rewrite of an existing row is the same violation
+        // class as a replace. Metadata-only updates (tier, contexts,
+        // tags) stay unguarded — they don't change what the row says.
+        "update" if obj.contains_key("content") => {
+            if let Some(id) = obj.get("id").and_then(|v| v.as_str()) {
+                target_ids.push(id.to_string());
+            }
+        }
+        _ => {}
+    }
+    if target_ids.is_empty() || user_directed {
+        return Ok(());
+    }
+    if tools.ask_user_recently(ASK_USER_UNLOCK_WINDOW) {
+        return Ok(());
+    }
+
+    // Resolve each target's voice. A fetch miss is not the guard's
+    // problem — the daemon will report the missing id on the real call.
+    let mut offending: Vec<String> = Vec::new();
+    for id in &target_ids {
+        let row = call_memory_http(
+            ling_mem_url,
+            "Memory_query",
+            json!({"verb": "get", "id": id}),
+        )
+        .await;
+        if let Ok(row) = row {
+            if row.get("from").and_then(|v| v.as_str()) == Some("user") {
+                let gist: String = row
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect();
+                offending.push(format!("{id} \"{gist}\""));
+            }
+        }
+    }
+    if offending.is_empty() {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "BLOCKED by the user-voice merge guard: this write replaces/rewrites rows in the USER'S VOICE (from=user): {}. The user's voice changes only with the user (merge law). Recovery — pick ONE: (1) if the user's CURRENT message states this change as SETTLED — a command (\"update X to Y\", \"forget X\"), a declaration (\"my X is now Y\"), or a commitment (\"from now on, X\") — retry the exact same call with \"user_directed\": true; a hedged reflection (\"X feels about right to me\") does NOT qualify; (2) otherwise call AskUser to let the user choose, then retry after their answer (an answered AskUser unlocks this guard). Do NOT work around it by writing a new row without replace_ids — that creates the drift this guard exists to prevent.",
+        offending.join(", ")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +312,13 @@ async fn dispatch_memory(
     }
 
     let ling_mem_url = manager.get_config_snapshot().await.agent.ling_mem_url;
+
+    // User-voice merge guard — the merge law, enforced mechanically.
+    // Prompt hardening alone does not stop models from silently replacing
+    // `from=user` rows (measured by the write-side eval); a filter does.
+    if tool_name == "Memory_write" {
+        guard_user_voice_replace(tools, &ling_mem_url, &mut args).await?;
+    }
     let value = call_memory_http(&ling_mem_url, tool_name, args).await?;
     Ok(ToolResult::Success(value.to_string()))
 }
