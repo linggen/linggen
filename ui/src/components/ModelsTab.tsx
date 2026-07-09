@@ -8,7 +8,10 @@ const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-20
 
 const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; placeholder: string; authMode?: string }> = {
   ollama: { url: 'http://127.0.0.1:11434', defaultModel: '', placeholder: 'e.g. qwen3:32b' },
-  chatgpt: { url: 'https://chatgpt.com/backend-api/codex', defaultModel: 'o3', placeholder: 'e.g. gpt-5.4, o3, gpt-4o', authMode: 'chatgpt_oauth' },
+  // No defaultModel: gpt-5.5 (the common case) is now a built-in card above,
+  // not something added here. This provider stays available in Add Model
+  // only for a genuinely different/custom ChatGPT-backed model id.
+  chatgpt: { url: 'https://chatgpt.com/backend-api/codex', defaultModel: '', placeholder: 'e.g. gpt-5.4, o3, gpt-4o', authMode: 'chatgpt_oauth' },
   anthropic: { url: 'https://api.anthropic.com', defaultModel: 'claude-opus-4-5', placeholder: 'e.g. claude-opus-4-5, claude-sonnet-4-5, claude-haiku-4-5', authMode: 'claude_oauth' },
   openai: { url: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', placeholder: 'e.g. gpt-4o' },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.5-flash', placeholder: 'e.g. gemini-2.5-flash, gemini-3-flash-preview' },
@@ -91,7 +94,7 @@ export const ModelsTab: React.FC<{
   // Runtime model list — includes built-ins the config file doesn't know
   // about (e.g. the Linggen Cloud model the engine injects). Shown read-only
   // below so they can be starred as default.
-  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null }[]>([]);
+  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null }[]>([]);
   useEffect(() => {
     fetch('/api/models')
       .then((r) => (r.ok ? r.json() : []))
@@ -345,6 +348,7 @@ export const ModelsTab: React.FC<{
           <div className="space-y-2">
             {builtinModels.map((m) => {
               const modelIsDefault = isDefault(m.id);
+              const isChatgptOauth = m.auth_mode === 'chatgpt_oauth';
               return (
                 <div
                   key={m.id}
@@ -365,7 +369,36 @@ export const ModelsTab: React.FC<{
                       </span>
                     )}
                   </span>
-                  <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
+                  {isChatgptOauth ? (
+                    codexAuthStatus?.authenticated ? (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600 dark:text-green-400 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-green-500" />
+                          Signed in
+                          {codexAuthStatus.account_id && (
+                            <span className="text-slate-400 font-normal ml-1">({codexAuthStatus.account_id.slice(0, 8)}…)</span>
+                          )}
+                        </span>
+                        <button
+                          onClick={handleCodexLogout}
+                          className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600 font-medium"
+                        >
+                          <LogOut size={10} /> Sign out
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleCodexLogin}
+                        disabled={codexAuthLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                      >
+                        <LogIn size={12} />
+                        {codexAuthLoading ? 'Waiting for browser login...' : 'Sign in with ChatGPT'}
+                      </button>
+                    )
+                  ) : (
+                    <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
+                  )}
                 </div>
               );
             })}
@@ -598,7 +631,7 @@ export const ModelsTab: React.FC<{
             );
           })}
           {config.models.length === 0 && (
-            <p className="text-xs text-slate-400 text-center py-4">No models configured. Add at least one.</p>
+            <p className="text-xs text-slate-400 text-center py-4">No custom models. The built-ins above work out of the box — add one here for your own API key or a local model.</p>
           )}
         </div>
         {credsDirty && (

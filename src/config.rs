@@ -359,9 +359,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.models.is_empty() {
-            anyhow::bail!("At least one model must be configured");
-        }
+        // No `models.is_empty()` check: ModelManager always injects the
+        // built-in models (Linggen Cloud, ChatGPT) at runtime regardless of
+        // what's configured here, so an empty list is a valid "use only the
+        // built-ins" config, not a broken one.
         let mut seen_ids = std::collections::HashSet::new();
         for model in &self.models {
             if model.id.trim().is_empty() {
@@ -437,7 +438,9 @@ impl Config {
         // Warn (log) if default_models references non-existent model IDs.
         // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
-            if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {
+            if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID
+                || dm == crate::provider::models::CHATGPT_BUILTIN_MODEL_ID
+            {
                 continue;
             }
             if !seen_ids.contains(&dm) {
@@ -454,20 +457,11 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            models: vec![ModelConfig {
-                id: "gpt-5.5".to_string(),
-                provider: "chatgpt".to_string(),
-                url: "https://chatgpt.com/backend-api/codex".to_string(),
-                model: "gpt-5.5".to_string(),
-                api_key: None,
-                keep_alive: None,
-                context_window: None,
-                tags: Vec::new(),
-                supports_tools: None,
-                auth_mode: Some("chatgpt_oauth".to_string()),
-                reasoning_effort: None,
-                provided_by: None,
-            }],
+            // No hardcoded models — the built-in Linggen Cloud (deepseek-v4-flash)
+            // and ChatGPT (gpt-5.5) models are always injected by ModelManager
+            // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
+            // provider/models.rs), so a fresh install needs nothing here.
+            models: Vec::new(),
             server: ServerConfig { port: 9898, host: default_server_host() },
             agent: AgentConfig {
                 max_iters: 200,
@@ -506,8 +500,26 @@ impl Default for Config {
 mod tests {
     use super::*;
 
+    // Config::default() no longer carries a hardcoded model (built-ins cover
+    // that at runtime — see inject_chatgpt_builtin/inject_linggen_cloud), so
+    // tests exercising per-model validate() rules push their own.
     fn valid_config() -> Config {
-        Config::default()
+        let mut cfg = Config::default();
+        cfg.models.push(ModelConfig {
+            id: "test-model".to_string(),
+            provider: "openai".to_string(),
+            url: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: None,
+            keep_alive: None,
+            context_window: None,
+            tags: Vec::new(),
+            supports_tools: None,
+            auth_mode: None,
+            reasoning_effort: None,
+            provided_by: None,
+        });
+        cfg
     }
 
     // ---- Config::validate tests ----
@@ -518,11 +530,12 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_empty_models() {
+    fn test_validate_empty_models_ok() {
+        // No explicit models is valid — built-in models (Linggen Cloud,
+        // ChatGPT) are always injected by ModelManager at runtime.
         let mut cfg = valid_config();
         cfg.models.clear();
-        let err = cfg.validate().unwrap_err();
-        assert!(err.to_string().contains("At least one model"));
+        cfg.validate().unwrap();
     }
 
     #[test]

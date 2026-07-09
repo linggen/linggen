@@ -227,6 +227,7 @@ impl ModelManager {
     pub fn new_with_credentials(configs: Vec<ModelConfig>, creds: &Credentials) -> Self {
         let mut configs = configs;
         inject_linggen_cloud(&mut configs);
+        inject_chatgpt_builtin(&mut configs);
         let mut models = HashMap::new();
 
         // Load ChatGPT OAuth tokens if any model uses chatgpt_oauth
@@ -876,6 +877,34 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
         auth_mode: Some("linggen_account".to_string()),
         reasoning_effort: None,
         provided_by: Some("Linggen Cloud".to_string()),
+    });
+}
+
+/// Built-in ChatGPT model — present in every install, using the user's own
+/// ChatGPT Plus/Pro subscription via OAuth (no API key). Same precedence as
+/// the Linggen Cloud built-in: a user-defined model with the same id wins.
+/// Bumping this to a newer OpenAI model generation is a one-line change +
+/// release, same tradeoff LINGGEN_CLOUD_MODEL_ID already carries.
+pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.5";
+
+fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
+    const MODEL_ID: &str = CHATGPT_BUILTIN_MODEL_ID;
+    if configs.iter().any(|c| c.id == MODEL_ID) {
+        return;
+    }
+    configs.push(ModelConfig {
+        id: MODEL_ID.to_string(),
+        provider: "chatgpt".to_string(),
+        url: codex_auth::CHATGPT_API_BASE.to_string(),
+        model: MODEL_ID.to_string(),
+        api_key: None,
+        keep_alive: None,
+        context_window: None,
+        tags: vec![],
+        supports_tools: Some(true),
+        auth_mode: Some("chatgpt_oauth".to_string()),
+        reasoning_effort: None,
+        provided_by: Some("ChatGPT".to_string()),
     });
 }
 
