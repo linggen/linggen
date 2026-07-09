@@ -185,6 +185,13 @@ impl BridgeHub {
         }
     }
 
+    /// Broker one op for an in-process caller (the engine's `Browser_*`
+    /// tools). Same envelope the HTTP `call` surface returns:
+    /// `{ok:true, data}` or `{ok:false, code, message}`.
+    pub async fn call_value(&self, module: &str, op: &str, params: Value, timeout_ms: u64) -> Value {
+        self.call(module, op, params, timeout_ms).await.into_value()
+    }
+
     async fn status(&self) -> Value {
         let inner = self.inner.lock().await;
         json!({

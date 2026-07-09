@@ -121,8 +121,10 @@ pub(super) async fn unwire_interrupt_channel(
     guard.remove(interrupt_key);
 }
 
-/// Wire the AskUser bridge so the tool can emit SSE events and block on user response.
-pub(super) fn wire_ask_user_bridge(
+/// Wire server-backed bridges into the engine: the AskUser bridge (emit
+/// events, block on user response) and the browser bridge (Browser_* tools
+/// broker control ops to the linggen-browser extension).
+pub(super) fn wire_engine_bridges(
     state: &Arc<ServerState>,
     engine: &mut crate::engine::AgentEngine,
     session_id: Option<String>,
@@ -133,6 +135,7 @@ pub(super) fn wire_ask_user_bridge(
         session_id,
     });
     engine.tools.set_ask_user_bridge(bridge);
+    engine.tools.set_browser_bridge(state.bridge.clone());
 }
 
 /// Persist and emit the assistant's streamed text content so the UI can

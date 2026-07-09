@@ -1,4 +1,5 @@
 use super::types::*;
+use crate::engine::browser_gate::BrowserGateDecision;
 use crate::engine::permission;
 use crate::engine::render::{
     normalize_tool_path_arg, render_tool_result, render_tool_result_public,
@@ -97,7 +98,8 @@ impl AgentEngine {
                 match selected {
                     "Allow once" | "Approve" => Some(permission::PermissionAction::AllowOnce),
                     "Deny" | "Cancel" => Some(permission::PermissionAction::Deny),
-                    "Allow for this session" | "Run in current mode" => {
+                    "Allow for this session" | "Run in current mode"
+                    | "Allow this site for the session" => {
                         Some(permission::PermissionAction::AllowSession)
                     }
                     other => {
@@ -445,6 +447,31 @@ impl AgentEngine {
             }
         }
 
+        // --- browser control gate (browser-control-spec.md) ---
+        // A site-trust class, separate from filesystem modes: mutating
+        // browser actions prompt per action until the origin is trusted for
+        // the session; the hard floor (payment / credentials / delete /
+        // post-as-user) always confirms, even on a trusted site.
+        if permission::is_browser_tool(&canonical_tool)
+            && permission::browser_action_mutating(&canonical_tool, &args)
+        {
+            match self.browser_safety_gate(&canonical_tool, &args).await {
+                BrowserGateDecision::Proceed => {}
+                BrowserGateDecision::Deny(msg) => {
+                    self.upsert_observation("error", &canonical_tool, msg.clone());
+                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+                    return PreExecOutcome::Blocked(LoopControl::Continue);
+                }
+                BrowserGateDecision::Timeout => {
+                    let msg = self
+                        .prompt_store
+                        .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
+                    let _ = self.persist_assistant_message(&msg, session_id).await;
+                    return PreExecOutcome::Blocked(LoopControl::Return(AgentOutcome::None));
+                }
+            }
+        }
+
         // --- redundancy / cache gates ---
         // Tools that read live mutable state (Memory_query: the store is
         // shared across sessions and hosts) opt out entirely: an identical
@@ -719,6 +746,20 @@ impl AgentEngine {
                 let obs_msg = self.tool_result_msg_for(obs_content, &tool_call_id, &canonical_tool);
 
                 self.push_tracked_message(messages, obs_msg);
+
+                // Browser screenshots: attach the actual image so the model
+                // sees what it captured — the text observation only records
+                // that a capture happened.
+                if canonical_tool == "Browser_screenshot" {
+                    if let tools::ToolResult::Screenshot { ref url, ref base64 } = result {
+                        if !base64.is_empty() {
+                            let img_msg =
+                                ChatMessage::new("user", format!("[screenshot of {url}]"))
+                                    .with_images(vec![base64.clone()]);
+                            self.push_tracked_message(messages, img_msg);
+                        }
+                    }
+                }
 
                 let is_empty_search =
                     (canonical_tool == "Grep"

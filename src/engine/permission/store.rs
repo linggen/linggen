@@ -22,6 +22,11 @@ pub struct SessionPermissions {
     /// mission and proxy-consumer sessions (pause/fail; never prompt).
     #[serde(default = "default_true")]
     pub interactive: bool,
+    /// Origins (`scheme://host`) the user trusted for browser control this
+    /// session — mutating `Browser_*` actions on these run without a prompt
+    /// (the hard floor still confirms). See `doc/browser-control-spec.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_origins: Vec<String>,
 }
 
 impl Default for SessionPermissions {
@@ -29,6 +34,7 @@ impl Default for SessionPermissions {
         Self {
             path_modes: Vec::new(),
             interactive: true,
+            browser_origins: Vec::new(),
         }
     }
 }
@@ -96,6 +102,18 @@ impl SessionPermissions {
                 path: path.to_string(),
                 mode,
             });
+        }
+    }
+
+    /// True when the origin is trusted for mutating browser actions.
+    pub fn browser_origin_trusted(&self, origin: &str) -> bool {
+        self.browser_origins.iter().any(|o| o == origin)
+    }
+
+    /// Trust an origin for browser control for the rest of the session.
+    pub fn grant_browser_origin(&mut self, origin: &str) {
+        if !self.browser_origin_trusted(origin) {
+            self.browser_origins.push(origin.to_string());
         }
     }
 }

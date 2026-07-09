@@ -167,6 +167,10 @@ impl ToolRegistry {
         self.builtins.set_ask_user_bridge(bridge);
     }
 
+    pub fn set_browser_bridge(&mut self, hub: Arc<crate::server::bridge::BridgeHub>) {
+        self.builtins.set_browser_bridge(hub);
+    }
+
     pub fn ask_user_bridge(&self) -> Option<&std::sync::Arc<tools::AskUserBridge>> {
         self.builtins.ask_user_bridge()
     }

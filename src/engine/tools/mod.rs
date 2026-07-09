@@ -2,6 +2,7 @@ mod builtin;
 pub use builtin::builtin_tier;
 pub(crate) use builtin::tool_cacheable;
 
+pub(crate) mod browser_tool;
 mod file_tools;
 pub(crate) mod json_schema;
 pub(crate) mod memory_tool;
@@ -192,6 +193,14 @@ pub struct Tools {
     /// flow the merge law prescribes. Arc-shared across clones so subagent
     /// asks count too.
     pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
+    /// `None` in CLI/eval contexts, where browser control is unavailable.
+    pub(crate) browser_bridge: Option<Arc<crate::server::bridge::BridgeHub>>,
+    /// ref → node metadata from the last `Browser_readPage` — the safety
+    /// gate's lookup for hard-floor targets. Arc-shared across clones so the
+    /// gate (engine) and the tool executor see the same cache.
+    pub(crate) browser_refs:
+        Arc<std::sync::Mutex<HashMap<String, browser_tool::BrowserNodeMeta>>>,
 }
 
 impl Tools {
@@ -213,6 +222,8 @@ impl Tools {
             parent_path_modes: Vec::new(),
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
+            browser_bridge: None,
+            browser_refs: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -259,6 +270,10 @@ impl Tools {
 
     pub fn set_ask_user_bridge(&mut self, bridge: Arc<AskUserBridge>) {
         self.ask_user_bridge = Some(bridge);
+    }
+
+    pub fn set_browser_bridge(&mut self, hub: Arc<crate::server::bridge::BridgeHub>) {
+        self.browser_bridge = Some(hub);
     }
 
     pub fn set_progress_tx(&mut self, tx: ToolProgressSender) {

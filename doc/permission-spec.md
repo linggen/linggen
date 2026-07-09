@@ -86,6 +86,10 @@ What "target path" each tool gates on:
 | `Memory_query`, `Memory_write` | cwd | Routes to a local HTTP daemon; gated by cwd's tier (Read for query, Edit for write per capability registry). |
 | `capture_screenshot` | cwd | Network op (URL → image), cwd-tier check applies. |
 
+### Browser actions
+
+`Browser_*` tools (see `browser-control-spec.md`) gate on **site trust**, not paths. Read-class ops (`readPage`, `screenshot`, `scroll`, `wait`, `readConsole`) run at read tier like any read tool. Mutating ops (`navigate`, `click`, `type`, `key`, `tabs open`) additionally prompt per action until the user grants the origin for the session ("Allow this site for the session" → `browser_origins` in the session's `permission.json`). A hard floor — payment, credentials, deletion, posting as the user — always confirms, even on a trusted origin. Non-interactive sessions (missions, consumers) cannot pass this gate.
+
 ## Path grants
 
 A grant is `(path, mode)`. The grant covers the path and all children. Each session stores grants in `permission.json`:

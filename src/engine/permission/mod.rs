@@ -13,11 +13,15 @@
 //! - [`store`]  — `SessionPermissions` (load/save permission.json, set_path_mode).
 //! - [`prompt`] — AskUser widget construction and answer parsing.
 
+mod browser;
 mod manifest;
 mod model;
 mod prompt;
 mod store;
 
+pub use browser::{
+    browser_action_mutating, browser_action_summary, browser_hard_floor, is_browser_tool,
+};
 pub use manifest::{apply_grants, parse_mode_str, Grants, PathGrant};
 pub use model::{
     check_permission, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
@@ -106,6 +110,25 @@ mod tests {
         sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
         assert_eq!(sp.path_modes.len(), 1);
         assert_eq!(sp.path_modes[0].path, "~/workspace/linggen");
+    }
+
+    #[test]
+    fn test_browser_origin_grants_roundtrip() {
+        let mut sp = SessionPermissions::default();
+        assert!(!sp.browser_origin_trusted("https://x.com"));
+        sp.grant_browser_origin("https://x.com");
+        sp.grant_browser_origin("https://x.com"); // idempotent
+        assert!(sp.browser_origin_trusted("https://x.com"));
+        assert!(!sp.browser_origin_trusted("https://evil.com"));
+        assert_eq!(sp.browser_origins.len(), 1);
+
+        let json = serde_json::to_string_pretty(&sp).unwrap();
+        let loaded: SessionPermissions = serde_json::from_str(&json).unwrap();
+        assert!(loaded.browser_origin_trusted("https://x.com"));
+
+        // A permission.json written before browser control still loads.
+        let legacy: SessionPermissions = serde_json::from_str(r#"{"path_modes": []}"#).unwrap();
+        assert!(legacy.browser_origins.is_empty());
     }
 
     #[test]

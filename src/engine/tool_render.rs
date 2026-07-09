@@ -266,6 +266,33 @@ pub(crate) fn tool_status_line(
                 .map(|target| format!("Delegation failed: {target}"))
                 .unwrap_or_else(|| "Delegation failed".to_string()),
         },
+        n if n.starts_with("browser_") => {
+            let detail =
+                first_string_arg(args, &["url", "keys", "text", "ref", "direction", "action", "for"])
+                    .map(|v| preview_value(&v, 100));
+            let (start, done, failed) = match n {
+                "browser_navigate" => ("Browsing to", "Browsed to", "Navigation failed"),
+                "browser_readpage" => ("Reading page", "Read page", "Page read failed"),
+                "browser_screenshot" => ("Capturing page", "Captured page", "Capture failed"),
+                "browser_click" => ("Clicking", "Clicked", "Click failed"),
+                "browser_type" => ("Typing", "Typed", "Typing failed"),
+                "browser_key" => ("Pressing", "Pressed", "Key press failed"),
+                "browser_scroll" => ("Scrolling", "Scrolled", "Scroll failed"),
+                "browser_wait" => ("Waiting for page", "Waited for page", "Wait failed"),
+                "browser_readconsole" => ("Reading console", "Read console", "Console read failed"),
+                "browser_tabs" => ("Browser tab", "Browser tab", "Browser tab action failed"),
+                _ => ("Browser action", "Browser action", "Browser action failed"),
+            };
+            let verb = match phase {
+                ToolStatusPhase::Start => start,
+                ToolStatusPhase::Done => done,
+                ToolStatusPhase::Failed => failed,
+            };
+            match detail {
+                Some(d) => format!("{verb}: {d}"),
+                None => verb.to_string(),
+            }
+        }
         "" => match phase {
             ToolStatusPhase::Start => "Calling tool...".to_string(),
             ToolStatusPhase::Done => "Used tool".to_string(),

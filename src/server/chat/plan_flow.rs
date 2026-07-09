@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 use super::runtime::{
     persist_and_emit_last_assistant_text, push_user_turn_with_recall, run_loop_with_tracking,
-    send_thinking_status, spawn_thinking_forwarder, unwire_interrupt_channel, wire_ask_user_bridge,
+    send_thinking_status, spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
     wire_interrupt_channel,
 };
 use super::types::{EditPlanRequest, PlanActionRequest};
@@ -53,7 +53,7 @@ pub(super) async fn run_plan_dispatch(
     engine.thinking_tx = Some(thinking_tx);
 
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
+    wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     spawn_thinking_forwarder(
         thinking_rx,
@@ -127,7 +127,7 @@ pub(super) async fn run_plan_execution(
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.thinking_tx = Some(thinking_tx);
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
-    wire_ask_user_bridge(&ctx.state, engine, ctx.session_id.clone());
+    wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     spawn_thinking_forwarder(
         thinking_rx,

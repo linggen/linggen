@@ -10,6 +10,11 @@
 //! to the registry constructor. No edits to dispatcher/tier-table/
 //! schema-table required.
 
+use super::browser_tool::{
+    BrowserClickTool, BrowserKeyTool, BrowserNavigateTool, BrowserReadConsoleTool,
+    BrowserReadPageTool, BrowserScreenshotTool, BrowserScrollTool, BrowserTabsTool,
+    BrowserTypeTool, BrowserWaitTool,
+};
 use super::delegation::{RunAppArgs, SkillArgs, TaskArgs, WebFetchArgs, WebSearchArgs};
 use super::file_tools::{CaptureScreenshotArgs, ListFilesArgs, ReadFileArgs};
 use super::memory_tool::{MemoryQueryTool, MemoryWriteTool};
@@ -96,6 +101,19 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             // `memory` capability abstraction.
             Arc::new(MemoryQueryTool),
             Arc::new(MemoryWriteTool),
+            // Browser_* — browser control over the bridge to the
+            // linggen-browser extension (browser-control-spec.md). Mutating
+            // actions pass the site-trust gate in engine/browser_gate.rs.
+            Arc::new(BrowserNavigateTool),
+            Arc::new(BrowserReadPageTool),
+            Arc::new(BrowserScreenshotTool),
+            Arc::new(BrowserClickTool),
+            Arc::new(BrowserTypeTool),
+            Arc::new(BrowserKeyTool),
+            Arc::new(BrowserScrollTool),
+            Arc::new(BrowserWaitTool),
+            Arc::new(BrowserReadConsoleTool),
+            Arc::new(BrowserTabsTool),
         ]
     });
     &REGISTRY

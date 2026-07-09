@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: design — not yet built
+status: v1 built — engine tools + extension control module; Web Store listing pending
 ---
 
 # Browser Control
@@ -52,8 +52,9 @@ Native tools, gated per the permission model (below). Each brokers one control o
 | `Browser_type` | Type text into the focused / referenced field | yes |
 | `Browser_key` | Press a key or chord | yes |
 | `Browser_scroll` | Scroll the page or an element | no |
+| `Browser_wait` | Wait for load / a selector / a delay before the next read | no |
 | `Browser_readConsole` | Read console messages (debugging) | no |
-| `Browser_tabs` | List / open / switch the controlled tab set | mixed |
+| `Browser_tabs` | List / open / switch the controlled tab set | `open` only |
 
 Read-class tools (`readPage`, `screenshot`, `scroll`, `readConsole`) never mutate site state; mutating tools go through the safety gate.
 
@@ -96,7 +97,8 @@ Browser actions are a new tool class in `permission-spec.md`, distinct from file
 
 - **Read is free.** `readPage` / `screenshot` / `scroll` / `readConsole` run without a prompt.
 - **Mutating actions are gated per-action until the site is trusted.** `navigate`, `click`, `type`, `key` each prompt for confirmation on an untrusted origin. The confirmation offers "allow this site for the session": once granted, mutating actions on that origin run without further prompts. A fresh origin re-prompts. (Decided: this over a task-scoped handover — safer default, and the site-grant keeps prompt fatigue bounded.)
-- **A hard floor never auto-executes**, even on a trusted site — submitting payment, changing passwords/security settings, deleting data, posting/sending on the user's behalf. These pause for an explicit per-action confirmation, mirroring the assistant safety rules and Claude in Chrome's action categories.
+- **A hard floor never auto-executes**, even on a trusted site — submitting payment, changing passwords/security settings, deleting data, posting/sending on the user's behalf. These pause for an explicit per-action confirmation, mirroring the assistant safety rules and Claude in Chrome's action categories. The floor is recognized from the target element's accessible name, so it applies to ref-targeted actions; a coordinate click has no name to inspect — another reason refs are the preferred targeting mode.
+- Trusted origins are stored per session (`browser_origins` in the session's `permission.json`), alongside the path grants.
 - **The controlled tab is visible**, and the agent's actions are legible in it, so the user can interrupt.
 
 ## Distribution

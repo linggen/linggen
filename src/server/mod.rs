@@ -1,5 +1,5 @@
 mod api;
-mod bridge;
+pub(crate) mod bridge;
 mod chat;
 mod events;
 pub(crate) mod rtc;

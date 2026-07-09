@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod agent;
+mod browser_gate;
 mod context;
 pub mod mission;
 pub mod permission;
