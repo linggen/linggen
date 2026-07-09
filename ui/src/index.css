@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/* Tailwind's preflight leaves <button> at the browser default (`cursor:
+   default` in Chrome/Firefox, not a hand) unless a component explicitly adds
+   cursor-pointer. Restoring it globally here means every clickable button/
+   role="button" in the app gets a hand cursor without hunting down each one
+   individually — disabled buttons keep the "not-allowed" cursor. */
+@layer base {
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  button:disabled, [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
 /* Thinking spinner bounce animation */
 @keyframes thinking-bounce {
   0%, 80%, 100% {
