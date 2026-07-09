@@ -628,6 +628,7 @@ impl ModelManager {
                 auth_mode: None,
                 reasoning_effort: None,
                 provided_by: owner_name.clone(),
+                is_builtin: false,
             };
 
             self.models.insert(proxy_id.clone(), ModelInstance {
@@ -877,21 +878,23 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
         auth_mode: Some("linggen_account".to_string()),
         reasoning_effort: None,
         provided_by: Some("Linggen Cloud".to_string()),
+        is_builtin: true,
     });
 }
 
-/// Built-in ChatGPT model — present in every install, using the user's own
-/// ChatGPT Plus/Pro subscription via OAuth (no API key). Same precedence as
-/// the Linggen Cloud built-in: a user-defined model with the same id wins.
+/// Built-in ChatGPT model — always present, using the user's own ChatGPT
+/// Plus/Pro subscription via OAuth (no API key). Unlike the Linggen Cloud
+/// built-in, this ALWAYS wins: any user-configured entry with this id is
+/// replaced, not deferred to, so it's never rendered as a raw editable
+/// duplicate — sign in and star it, nothing to configure. A user wanting a
+/// different/custom ChatGPT-backed model should give it a different id.
 /// Bumping this to a newer OpenAI model generation is a one-line change +
 /// release, same tradeoff LINGGEN_CLOUD_MODEL_ID already carries.
 pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.5";
 
 fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
     const MODEL_ID: &str = CHATGPT_BUILTIN_MODEL_ID;
-    if configs.iter().any(|c| c.id == MODEL_ID) {
-        return;
-    }
+    configs.retain(|c| c.id != MODEL_ID);
     configs.push(ModelConfig {
         id: MODEL_ID.to_string(),
         provider: "chatgpt".to_string(),
@@ -905,6 +908,7 @@ fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
         auth_mode: Some("chatgpt_oauth".to_string()),
         reasoning_effort: None,
         provided_by: Some("ChatGPT".to_string()),
+        is_builtin: true,
     });
 }
 

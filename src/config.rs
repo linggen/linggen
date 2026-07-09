@@ -114,6 +114,13 @@ pub struct ModelConfig {
     /// Only set for proxy models (provider = "proxy").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provided_by: Option<String>,
+    /// True for models injected by the engine (Linggen Cloud, ChatGPT)
+    /// rather than configured by the user. Never persisted by the user —
+    /// only set at runtime by inject_linggen_cloud/inject_chatgpt_builtin —
+    /// so Settings can render them as read-only built-in cards instead of
+    /// editable entries, regardless of what's in the user's config file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_builtin: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -518,6 +525,7 @@ mod tests {
             auth_mode: None,
             reasoning_effort: None,
             provided_by: None,
+            is_builtin: false,
         });
         cfg
     }

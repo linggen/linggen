@@ -121,6 +121,7 @@ mod tests {
             auth_mode: None,
             reasoning_effort: None,
             provided_by: None,
+            is_builtin: false,
         }
     }
 
@@ -138,6 +139,7 @@ mod tests {
             auth_mode: None,
             reasoning_effort: None,
             provided_by: None,
+            is_builtin: false,
         }
     }
 

@@ -91,18 +91,21 @@ export const ModelsTab: React.FC<{
 
   const defaultModels = config.routing?.default_models ?? [];
 
-  // Runtime model list — includes built-ins the config file doesn't know
-  // about (e.g. the Linggen Cloud model the engine injects). Shown read-only
+  // Runtime model list — includes built-ins the engine injects (Linggen
+  // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
   // below so they can be starred as default.
-  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null }[]>([]);
+  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null; is_builtin?: boolean }[]>([]);
   useEffect(() => {
     fetch('/api/models')
       .then((r) => (r.ok ? r.json() : []))
       .then((ms) => setRuntimeModels(Array.isArray(ms) ? ms : []))
       .catch(() => {});
   }, []);
-  const configModelIds = new Set((config.models ?? []).map((m: { id: string }) => m.id));
-  const builtinModels = runtimeModels.filter((m) => m.id && !configModelIds.has(m.id));
+  const builtinModels = runtimeModels.filter((m) => m.id && m.is_builtin);
+  // A model always renders as its built-in card, never as a raw editable
+  // entry below — even if the user's config file happens to still list the
+  // same id from before it became built-in.
+  const builtinIds = new Set(builtinModels.map((m) => m.id));
 
   const hasOllamaModels = config.models?.some((m: { provider: string }) => m.provider === 'ollama') ?? false;
 
@@ -416,6 +419,7 @@ export const ModelsTab: React.FC<{
         </div>
         <div className="space-y-4">
           {config.models.map((model, i) => {
+            if (builtinIds.has(model.id)) return null;
             const health = healthMap[model.id];
             const modelIsDefault = model.id ? isDefault(model.id) : false;
             return (
@@ -630,7 +634,7 @@ export const ModelsTab: React.FC<{
               </div>
             );
           })}
-          {config.models.length === 0 && (
+          {config.models.every((m: { id: string }) => builtinIds.has(m.id)) && (
             <p className="text-xs text-slate-400 text-center py-4">No custom models. The built-ins above work out of the box — add one here for your own API key or a local model.</p>
           )}
         </div>
