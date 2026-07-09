@@ -488,7 +488,14 @@ impl Default for Config {
                 retention_days: None,
             },
             agents: Vec::new(),
-            routing: RoutingConfig::default(),
+            routing: RoutingConfig {
+                // Fresh installs default to the built-in Linggen Cloud model —
+                // works with zero auth setup, unlike the gpt-5.5/chatgpt_oauth
+                // entry above. Once the user stars a different model in
+                // Settings, their explicit choice overwrites this.
+                default_models: vec![crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string()],
+                ..Default::default()
+            },
             home_path: None,
             pet: PetConfig::default(),
         }
