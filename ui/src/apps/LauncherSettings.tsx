@@ -24,7 +24,7 @@ const labelFor = (n: string) => LABELS[n] ?? n;
 /** Apps that ship a settings.html (others have no per-app settings to show). */
 const HAS_SETTINGS = new Set(['cfo', 'sys-doctor', 'pulse', 'dj']);
 
-type Section = { id: string; label: string; kind: 'account' | 'model' | 'yinyue' | 'app'; skill?: AppSkill };
+type Section = { id: string; label: string; kind: 'general' | 'account' | 'model' | 'yinyue' | 'app'; skill?: AppSkill };
 
 async function bash(command: string): Promise<string> {
   try {
@@ -92,6 +92,41 @@ const AccountPanel: React.FC = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// ── General panel (shared; how the app runs on this Mac) ──
+// The shell (linggen-app) watches ~/.linggen/start-at-login and keeps the OS
+// login item in sync — same flag-file pattern the pet uses. Writing the flag
+// here is all the web UI needs to do.
+const GeneralPanel: React.FC = () => {
+  const [atLogin, setAtLogin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    bash('[ -f "$HOME/.linggen/start-at-login" ] && echo on || echo off')
+      .then((out) => setAtLogin(out.trim() === 'on'));
+  }, []);
+
+  const toggle = async () => {
+    const next = !atLogin;
+    setAtLogin(next);
+    await bash(next ? 'touch "$HOME/.linggen/start-at-login"' : 'rm -f "$HOME/.linggen/start-at-login"');
+  };
+
+  return (
+    <div className="lg-set-panel">
+      <h2>General</h2>
+      <p className="lg-set-desc">How Linggen runs on your Mac.</p>
+      <div className="lg-set-card">
+        <label className="lg-set-row lg-set-toggle">
+          <span>Start at login</span>
+          <input type="checkbox" checked={!!atLogin} onChange={toggle} disabled={atLogin === null} />
+        </label>
+        <p className="lg-set-muted" style={{ marginTop: 8 }}>
+          Launch Linggen in the background when you sign in. It waits in the menu bar; closing the window keeps it running there. Quit it from the menu-bar icon.
+        </p>
+      </div>
     </div>
   );
 };
@@ -200,11 +235,14 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
 
   const sections: Section[] = [
     { id: 'account', label: 'Account', kind: 'account' },
+    { id: 'general', label: 'General', kind: 'general' },
     { id: 'model', label: 'Model', kind: 'model' },
     { id: 'yinyue', label: 'Yinyue', kind: 'yinyue' },
     ...apps.map((a) => ({ id: `app-${a.name}`, label: labelFor(a.name), kind: 'app' as const, skill: a })),
   ];
   const current = sections.find((s) => s.id === active) ?? sections[0];
+  // Divider sits between the shared sections and the per-app ones.
+  const firstAppIdx = sections.findIndex((s) => s.kind === 'app');
 
   return (
     <div className="lg-set-overlay">
@@ -248,7 +286,7 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
           <nav className="lg-set-nav">
             {sections.map((s, i) => (
               <React.Fragment key={s.id}>
-                {i === 3 && <div className="lg-set-nav-div" />}
+                {i === firstAppIdx && firstAppIdx > 0 && <div className="lg-set-nav-div" />}
                 <button
                   className={`lg-set-nav-item${s.id === active ? ' active' : ''}`}
                   onClick={() => setActive(s.id)}
@@ -260,6 +298,7 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
           </nav>
           <div className="lg-set-content">
             {current?.kind === 'account' && <AccountPanel />}
+            {current?.kind === 'general' && <GeneralPanel />}
             {current?.kind === 'yinyue' && <YinyuePanel />}
             {current?.kind === 'model' && (
               <iframe className="lg-set-frame" src="/settings/models" title="Model" />
