@@ -8,7 +8,7 @@ const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-20
 
 const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; placeholder: string; authMode?: string }> = {
   ollama: { url: 'http://127.0.0.1:11434', defaultModel: '', placeholder: 'e.g. qwen3:32b' },
-  // No defaultModel: gpt-5.5 (the common case) is now a built-in card above,
+  // No defaultModel: the ChatGPT built-in (the common case) is a card above,
   // not something added here. This provider stays available in Add Model
   // only for a genuinely different/custom ChatGPT-backed model id.
   chatgpt: { url: 'https://chatgpt.com/backend-api/codex', defaultModel: '', placeholder: 'e.g. gpt-5.4, o3, gpt-4o', authMode: 'chatgpt_oauth' },

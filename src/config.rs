@@ -340,12 +340,37 @@ impl Config {
         for path in candidates {
             if path.exists() {
                 let content = fs::read_to_string(&path)?;
-                let config: Config = toml::from_str(&content)?;
+                let mut config: Config = toml::from_str(&content)?;
+                config.migrate_retired_chatgpt_builtins();
                 return Ok((config, Some(path)));
             }
         }
 
         Ok((Config::default(), None))
+    }
+
+    /// Migrate persisted state left behind by a ChatGPT built-in generation
+    /// bump: drop stale copies of a retired built-in (same id + chatgpt_oauth
+    /// — a custom API-key entry that happens to reuse the id is kept), and
+    /// re-point routing defaults at the current built-in when the retired id
+    /// no longer resolves to any configured model.
+    fn migrate_retired_chatgpt_builtins(&mut self) {
+        use crate::provider::models::{CHATGPT_BUILTIN_MODEL_ID, CHATGPT_RETIRED_MODEL_IDS};
+        let retired = |id: &str| CHATGPT_RETIRED_MODEL_IDS.contains(&id);
+
+        self.models.retain(|m| {
+            !(retired(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
+        });
+
+        let surviving: std::collections::HashSet<&str> =
+            self.models.iter().map(|m| m.id.as_str()).collect();
+        for dm in &mut self.routing.default_models {
+            if retired(dm) && !surviving.contains(dm.as_str()) {
+                *dm = CHATGPT_BUILTIN_MODEL_ID.to_string();
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.routing.default_models.retain(|id| seen.insert(id.clone()));
     }
 
     pub fn runtime_config_path(config_dir: Option<&Path>) -> PathBuf {
@@ -465,7 +490,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             // No hardcoded models — the built-in Linggen Cloud (deepseek-v4-flash)
-            // and ChatGPT (gpt-5.5) models are always injected by ModelManager
+            // and ChatGPT (CHATGPT_BUILTIN_MODEL_ID) models are always injected by ModelManager
             // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
             // provider/models.rs), so a fresh install needs nothing here.
             models: Vec::new(),
@@ -491,7 +516,7 @@ impl Default for Config {
             agents: Vec::new(),
             routing: RoutingConfig {
                 // Fresh installs default to the built-in Linggen Cloud model —
-                // works with zero auth setup, unlike the gpt-5.5/chatgpt_oauth
+                // works with zero auth setup, unlike the ChatGPT/chatgpt_oauth
                 // entry above. Once the user stars a different model in
                 // Settings, their explicit choice overwrites this.
                 default_models: vec![crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string()],

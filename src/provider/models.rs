@@ -888,9 +888,16 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
 /// replaced, not deferred to, so it's never rendered as a raw editable
 /// duplicate — sign in and star it, nothing to configure. A user wanting a
 /// different/custom ChatGPT-backed model should give it a different id.
-/// Bumping this to a newer OpenAI model generation is a one-line change +
-/// release, same tradeoff LINGGEN_CLOUD_MODEL_ID already carries.
-pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.5";
+/// Bumping this to a newer OpenAI model generation: change the id here AND
+/// move the old id into CHATGPT_RETIRED_MODEL_IDS so persisted configs
+/// migrate on load, then release.
+pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.6-terra";
+
+/// Previous ChatGPT built-in ids. Config::load migrates these: stale
+/// persisted copies of the old built-in are dropped and starred routing
+/// defaults follow the bump to CHATGPT_BUILTIN_MODEL_ID, so users don't
+/// end up with a dangling default + orphaned editable card after a bump.
+pub const CHATGPT_RETIRED_MODEL_IDS: &[&str] = &["gpt-5.5"];
 
 fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
     const MODEL_ID: &str = CHATGPT_BUILTIN_MODEL_ID;
