@@ -25,6 +25,7 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 - `doc/insight.md` — vision, roadmap, competitive positioning
 - `doc/webrtc-spec.md` — WebRTC transport: P2P remote access, signaling, data channels
 - `doc/browser-bridge-spec.md` — browser bridge: linggen-browser extension ↔ daemon, logged-in session reads (X), on-demand WS
+- `doc/mcp-spec.md` — MCP front door: `/mcp` tool groups (browser/x/memory/agent), plugin + ClawHub distribution, retirement map
 - `doc/room-spec.md` — rooms: community model sharing, credits, auto-dispatch
 - `doc/permission-spec.md` — permission system: modes, layers, tool classification, remote trust
 - `doc/yinyue-spec.md` — Yinyue companion: avatar, voice, session + memory model
