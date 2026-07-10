@@ -1,5 +1,68 @@
 # Changelog
 
+## [1.4.0] - 2026-07-10
+
+### MCP front door — use Linggen from any agent
+
+- **`/mcp` endpoint** — the daemon now hosts a streamable-HTTP MCP server at
+  `http://127.0.0.1:9898/mcp` (serverInfo `linggen`): 22 tools in four
+  groups. `browser_*` (10) drive one visible tab in your own Chrome through
+  the linggen-browser extension; `x_*` (5) return structured reads from your
+  logged-in X session; `memory_*` (6) proxy the ling-mem store; `agent_run`
+  delegates a task to a local Linggen agent (read/memory/browser toolset)
+  and returns its answer.
+- **The `linggen` plugin/skill replaces `shared-memory`** — Claude Code and
+  Codex connect via `linggen@linggen-memory`; OpenClaw via
+  `clawhub install linggen`; any agent via skills.sh. The plugin installs
+  both required binaries on first session start (ling-mem immediately, the
+  engine as a disclosed background download).
+- **Browser gate lives in the extension** — per-origin permission prompt
+  with persistent trust, one gate for every caller (Linggen agents,
+  MCP clients); the engine-side gate is retired.
+
+### Dream
+
+- **Condense folded into dream** — the nightly pass ends with a cited-chains
+  merge stage (derived-only, capped); the standalone condense mission is
+  deleted. The engine snapshots the store before each run (7 kept).
+- **Attended dream runs** — clicking a calendar day starts an attended run
+  that asks about low-confidence merges in one batch; AskUser is now
+  chat-tier so missions can use it.
+
+### Models
+
+- **ChatGPT built-in is `gpt-5.6-terra`** — replaces gpt-5.5, with
+  retired-id config migration; the built-in entry always wins over a stale
+  user config row. Fresh installs seed the Linggen Cloud default model.
+
+### Fixed
+
+- **ling-mem installer URL** — the runtime bootstrap pointed at the old
+  `plugins/shared-memory` path, which 404s after the plugin rename.
+- **Yinyue heralds** — bubbles linger 15–45s, survive tab switches, and
+  count down only while the tab is visible.
+- **Missions** — runs recorded up front and healed on start; sticky RTC
+  view context; 60s outer timeout on the memory-tool dispatch path.
+- **UI** — pointer cursor restored on all buttons; launcher gains a
+  "Start at login" toggle.
+
+## [1.3.0] - 2026-07-08
+
+### Memory — the merge law reaches every host
+
+- **User-voice merge guard at the store** — silent replaces or rewrites of
+  rows the user authored are mechanically blocked unless the write carries
+  `user_directed: true`; the engine forwards the flag end-to-end.
+- **Condense** — monthly mission collapsing stale same-subject chains in
+  long-term memory (v1), plus a subject-digest phase (v2); cron enabled.
+- **Dream / missions** — day-scoped triggers (`kickoff-day`), kickoff
+  early-drain on completion sentinels, engine-composed run reports, no
+  orphan sessions.
+- **Core block over HTTP** — session-start core memory reads the daemon
+  directly instead of shelling out to the CLI; live writes fill
+  `source_session`; relative time anchored at capture.
+- **Write-side memory eval** — 20-scenario dataset with runner + checker.
+
 ## [1.2.3] - 2026-07-02
 
 - **Account avatar in both shells** — the launcher header and the dev console

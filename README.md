@@ -163,6 +163,28 @@ your machine; no VPN, no port forwarding.
 
 ---
 
+## Use Linggen from other agents (MCP)
+
+The daemon is an MCP server at `http://127.0.0.1:9898/mcp` — 22 tools in
+four groups: `memory_*` (durable cross-host memory on the ling-mem store),
+`browser_*` (drive one visible tab in your own Chrome, per-site permission
+prompts), `x_*` (structured reads of your logged-in X session), and
+`agent_run` (hand a task to a local Linggen agent and get its answer back).
+
+On Claude Code / Codex, install the `linggen` plugin — it bundles the
+per-turn memory recall hook and installs both binaries on first session
+start:
+
+```bash
+claude plugin marketplace add linggen/linggen-memory
+claude plugin install linggen@linggen-memory
+```
+
+Any other MCP client just points at the endpoint. Details in
+[`doc/mcp-spec.md`](doc/mcp-spec.md).
+
+---
+
 ## Documentation
 
 - [Design docs](doc/) — architecture, specs, internals
