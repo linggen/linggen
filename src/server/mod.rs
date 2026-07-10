@@ -2,6 +2,7 @@ mod api;
 pub(crate) mod bridge;
 mod chat;
 mod mcp;
+mod mcp_agent;
 mod events;
 pub(crate) mod rtc;
 mod state;

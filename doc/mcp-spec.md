@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: all four phases shipped — /mcp live (21 tools), linggen plugin + ClawHub skill published, site/docs routed; agent_* is the open item
+status: all shipped — /mcp live (22 tools incl agent_run), linggen plugin + ClawHub skill published, site/docs routed
 ---
 
 # Linggen MCP — the capability front door
@@ -21,7 +21,7 @@ valuable.
 | `browser_*` | linggen-browser extension (control module) | live |
 | `x_*` | linggen-browser extension (x session reads) | live |
 | `memory_*` | ling-mem daemon (`:9888`) | live |
-| `agent_*` | Linggen agents (delegate a task) | later |
+| `agent_*` | Linggen agents (delegate a task) | live |
 
 Decided (2026-07-10): **one MCP for all users — including memory-only users.**
 Two servers offering the same memory tools would confuse anyone migrating, and
@@ -89,11 +89,25 @@ deprecation window:
 - Site installers: `install-shared-memory.sh` is a guidance stub pointing at
   the plugin channels; `install.sh` is the base for every channel. Done.
 
+## agent_* group
+
+`agent_run(prompt, agent?)` — delegate a task to a **local Linggen agent** (this
+machine's skills, memory, and configured models) and return its final reply.
+The capability no generic tool server can copy: it runs the user's own agent.
+
+- One-shot, headless: a fresh visible session, the agent loop runs to
+  completion, the last assistant message is returned. Unknown `agent` returns
+  the available list.
+- **Safe by default.** The delegate is non-interactive (a headless MCP caller
+  can't answer a Linggen-side prompt, so a permission-needed action silently
+  denies and the agent continues) and runs a **read/memory/browser toolset
+  only** — no Bash, Write, Edit, or Task, so the read-only boundary can't be
+  worked around via a shell redirect. Browser mutations still pass the
+  extension's own gate. Widening to a write mode is a future opt-in.
+
 ## Later
 
-- `agent_*` — `agent_run(prompt, agent?)`: delegate a task to a local Linggen
-  agent (skills + memory + local models) and return its result over MCP. The
-  group no other vendor can copy cheaply.
+- A `write` mode on `agent_run` (opt-in Bash/Write/Edit for trusted callers).
 - Group toggles in daemon config for hosts that want a narrower surface.
 
 ## Phasing

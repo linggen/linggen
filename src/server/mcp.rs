@@ -35,6 +35,7 @@ const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 enum Backend {
     Bridge { module: &'static str, op: &'static str },
     Memory { verb: &'static str },
+    Agent,
 }
 
 /// One MCP tool: its wire name, the backend it brokers to, its schema.
@@ -377,6 +378,21 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: 0,
     },
+    // --- agent_run: delegate a task to a local Linggen agent -----------------
+    McpTool {
+        name: "agent_run",
+        backend: Backend::Agent,
+        description: "Delegate a task to a local Linggen agent — one with this machine's skills, memory, and configured models — and get its final answer back. Runs headless in a fresh session, safe-by-default (read-only on the workspace, non-interactive; it can read/search/analyze, use the user's memory, and drive the browser, but not silently write files). Use for research, analysis, memory questions, or browser tasks you want handled by the user's own agent.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The task or question for the agent"},
+                "agent": {"type": "string", "description": "Agent to run (default: ling). Unknown names return the available list."}
+            },
+            "required": ["prompt"]
+        }),
+        timeout_ms: 0,
+    },
 ];
 
 fn rpc_result(id: Value, result: Value) -> Value {
@@ -437,7 +453,7 @@ fn tool_content(text: String, is_error: bool) -> Value {
 fn render_data(tool: &McpTool, data: &Value) -> Value {
     let op = match tool.backend {
         Backend::Bridge { op, .. } => op,
-        Backend::Memory { .. } => "",
+        Backend::Memory { .. } | Backend::Agent => "",
     };
     match op {
         "screenshot" => {
@@ -457,18 +473,22 @@ fn render_data(tool: &McpTool, data: &Value) -> Value {
     }
 }
 
-async fn call_tool(
-    hub: &BridgeHub,
-    ling_mem_url: &str,
-    name: &str,
-    args: Value,
-) -> Result<Value, String> {
+/// What a tool dispatch can reach. `state` is present in production
+/// (post_handler) and None in unit tests that only exercise bridge/memory
+/// shape — agent_run needs it and errors cleanly without it.
+struct McpDeps<'a> {
+    bridge: &'a BridgeHub,
+    ling_mem_url: &'a str,
+    state: Option<&'a Arc<ServerState>>,
+}
+
+async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value, String> {
     let Some(tool) = TOOLS.iter().find(|t| t.name == name) else {
         return Err(format!("unknown tool: {name}"));
     };
     match tool.backend {
         Backend::Bridge { module, op } => {
-            let res = hub.call_value(module, op, args, tool.timeout_ms).await;
+            let res = deps.bridge.call_value(module, op, args, tool.timeout_ms).await;
             if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                 let data = res.get("data").cloned().unwrap_or(Value::Null);
                 return Ok(render_data(tool, &data));
@@ -501,18 +521,32 @@ async fn call_tool(
             // The engine's ling-mem client path: episodic wire translation,
             // soft-empty cleanup, and first-use autostart all come with it.
             // The daemon itself enforces the user-voice merge floor.
-            match crate::engine::tools::memory_tool::call_memory_http(ling_mem_url, tool.name, args)
+            match crate::engine::tools::memory_tool::call_memory_http(deps.ling_mem_url, tool.name, args)
                 .await
             {
                 Ok(value) => Ok(tool_content(value.to_string(), false)),
                 Err(e) => Ok(tool_content(format!("{e:#}"), true)),
             }
         }
+        Backend::Agent => {
+            let Some(state) = deps.state else {
+                return Ok(tool_content(
+                    "agent_run is unavailable in this context (no daemon state)".to_string(),
+                    true,
+                ));
+            };
+            let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
+            let agent = args.get("agent").and_then(Value::as_str);
+            match super::mcp_agent::run(state, agent, prompt).await {
+                Ok(text) => Ok(tool_content(text, false)),
+                Err(msg) => Ok(tool_content(msg, true)),
+            }
+        }
     }
 }
 
 /// Handle one JSON-RPC message. `None` means a notification (no response).
-async fn handle_rpc(hub: &BridgeHub, ling_mem_url: &str, msg: &Value) -> Option<Value> {
+async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
     let id = msg.get("id").cloned();
     if id.is_none() || method.starts_with("notifications/") {
@@ -527,7 +561,7 @@ async fn handle_rpc(hub: &BridgeHub, ling_mem_url: &str, msg: &Value) -> Option<
             let params = msg.get("params").cloned().unwrap_or_default();
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            match call_tool(hub, ling_mem_url, name, args).await {
+            match call_tool(deps, name, args).await {
                 Ok(result) => rpc_result(id, result),
                 Err(message) => rpc_error(id, -32602, &message),
             }
@@ -562,7 +596,12 @@ pub(crate) async fn post_handler(
         return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    match handle_rpc(&state.bridge, &ling_mem_url, &body).await {
+    let deps = McpDeps {
+        bridge: &state.bridge,
+        ling_mem_url: &ling_mem_url,
+        state: Some(&state),
+    };
+    match handle_rpc(&deps, &body).await {
         Some(response) => Json(response).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
     }
@@ -585,10 +624,16 @@ mod tests {
         BridgeHub::new()
     }
 
+    // No ServerState in unit tests — agent_run errors cleanly, everything
+    // else is state-independent.
+    fn deps(hub: &BridgeHub) -> McpDeps<'_> {
+        McpDeps { bridge: hub, ling_mem_url: TEST_MEM_URL, state: None }
+    }
+
     #[tokio::test]
     async fn initialize_reports_tools_capability() {
         let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
-        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
@@ -597,12 +642,13 @@ mod tests {
     #[tokio::test]
     async fn tools_list_mirrors_control_x_and_memory_ops() {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 22);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().any(|t| t["name"] == "memory_search"));
+        assert!(tools.iter().any(|t| t["name"] == "agent_run"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
         // Delete is by-id only — no bulk filters on the destructive surface.
         let del = tools.iter().find(|t| t["name"] == "memory_delete").unwrap();
@@ -614,13 +660,13 @@ mod tests {
     #[tokio::test]
     async fn notifications_get_no_response() {
         let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        assert!(handle_rpc(&hub(), TEST_MEM_URL, &msg).await.is_none());
+        assert!(handle_rpc(&deps(&hub()), &msg).await.is_none());
     }
 
     #[tokio::test]
     async fn unknown_method_is_rpc_error() {
         let msg = json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" });
-        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         assert_eq!(res["error"]["code"], -32601);
     }
 
@@ -630,7 +676,7 @@ mod tests {
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
             "params": { "name": "browser_fly", "arguments": {} }
         });
-        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         assert_eq!(res["error"]["code"], -32602);
     }
 
@@ -640,10 +686,20 @@ mod tests {
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": { "name": "browser_tabs", "arguments": { "action": "list" } }
         });
-        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         assert_eq!(res["result"]["isError"], true);
         let text = res["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("not connected"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_without_state_is_tool_error() {
+        let msg = json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": { "name": "agent_run", "arguments": { "prompt": "hi" } }
+        });
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
+        assert_eq!(res["result"]["isError"], true);
     }
 
     #[test]
