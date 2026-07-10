@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: browser_* + x_* live; memory_* group, linggen plugin, ClawHub skill planned
+status: browser_* + x_* + memory_* live; linggen plugin + ClawHub skill next
 ---
 
 # Linggen MCP — the capability front door
@@ -20,7 +20,7 @@ valuable.
 |:------|:-------|:-------|
 | `browser_*` | linggen-browser extension (control module) | live |
 | `x_*` | linggen-browser extension (x session reads) | live |
-| `memory_*` | ling-mem daemon (`:9888`) | planned (this spec) |
+| `memory_*` | ling-mem daemon (`:9888`) | live |
 | `agent_*` | Linggen agents (delegate a task) | later |
 
 Decided (2026-07-10): **one MCP for all users — including memory-only users.**
@@ -95,7 +95,7 @@ deprecation window:
 
 ## Phasing
 
-1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine).
+1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
 2. **`linggen` plugin** — new plugin, shared-memory retirement notes.
 3. **ClawHub `linggen` skill** + listing updates.
 4. **Site/docs** — install pages route to the one endpoint.

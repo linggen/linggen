@@ -30,22 +30,29 @@ const GATED_TIMEOUT_MS: u64 = 150_000;
 /// Session reads open a hidden tab and wait for the site's own responses.
 const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 
-/// One MCP tool: its wire name, the bridge module + op it brokers, its schema.
+/// Where a tool's call goes: over the browser bridge, or to the ling-mem
+/// daemon (the memory engine) via the engine's HTTP client path.
+enum Backend {
+    Bridge { module: &'static str, op: &'static str },
+    Memory { verb: &'static str },
+}
+
+/// One MCP tool: its wire name, the backend it brokers to, its schema.
+/// `timeout_ms` applies to bridge calls; memory calls carry their own.
 struct McpTool {
     name: &'static str,
-    module: &'static str,
-    op: &'static str,
+    backend: Backend,
     description: &'static str,
     schema: fn() -> Value,
     timeout_ms: u64,
 }
 
-/// The tool table — control ops one-to-one, plus the x session-read ops.
+/// The tool table — control ops one-to-one, the x session-read ops, and the
+/// memory_* group proxying ling-mem.
 const TOOLS: &[McpTool] = &[
     McpTool {
         name: "browser_navigate",
-        module: "control",
-        op: "navigate",
+        backend: Backend::Bridge { module: "control", op: "navigate" },
         description: "Load a URL (or go \"back\"/\"forward\") in the controlled browser tab. The tab is visible to the user. Follow with browser_read_page to see the result.",
         schema: || json!({
             "type": "object",
@@ -58,8 +65,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_read_page",
-        module: "control",
-        op: "read_page",
+        backend: Backend::Bridge { module: "control", op: "read_page" },
         description: "Read the controlled tab as an accessibility tree. Actionable nodes carry a ref like [n42] — pass that ref to browser_click / browser_type. Re-read after any action that changes the page; old refs go stale.",
         schema: || json!({
             "type": "object",
@@ -75,8 +81,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_click",
-        module: "control",
-        op: "click",
+        backend: Backend::Bridge { module: "control", op: "click" },
         description: "Click a node by ref (from browser_read_page) or a viewport coordinate. Prefer refs — coordinates are the screenshot fallback.",
         schema: || json!({
             "type": "object",
@@ -95,8 +100,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_type",
-        module: "control",
-        op: "type",
+        backend: Backend::Bridge { module: "control", op: "type" },
         description: "Type text into a field: pass ref to focus it first (clear:true to empty it), or omit ref to type into the currently focused element.",
         schema: || json!({
             "type": "object",
@@ -111,8 +115,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_key",
-        module: "control",
-        op: "key",
+        backend: Backend::Bridge { module: "control", op: "key" },
         description: "Press a key or chord in the controlled tab, e.g. \"Enter\", \"Escape\", \"Ctrl+a\", \"Meta+Enter\".",
         schema: || json!({
             "type": "object",
@@ -126,8 +129,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_scroll",
-        module: "control",
-        op: "scroll",
+        backend: Backend::Bridge { module: "control", op: "scroll" },
         description: "Scroll the page (or the element under ref) in the controlled tab.",
         schema: || json!({
             "type": "object",
@@ -142,8 +144,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_screenshot",
-        module: "control",
-        op: "screenshot",
+        backend: Backend::Bridge { module: "control", op: "screenshot" },
         description: "Capture the controlled tab as an image. Fallback for visual/canvas content the accessibility tree can't express — prefer browser_read_page for normal pages.",
         schema: || json!({
             "type": "object",
@@ -162,8 +163,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_wait",
-        module: "control",
-        op: "wait",
+        backend: Backend::Bridge { module: "control", op: "wait" },
         description: "Wait for the controlled tab to settle before the next read: for \"load\" (page load), \"selector\" (a CSS selector appears, value required), or \"ms\" (fixed delay, max 10000).",
         schema: || json!({
             "type": "object",
@@ -177,8 +177,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_tabs",
-        module: "control",
-        op: "tabs",
+        backend: Backend::Bridge { module: "control", op: "tabs" },
         description: "Manage the controlled tab: list (current state), open (a URL, creating the tab if needed), switch (bring it to front), close.",
         schema: || json!({
             "type": "object",
@@ -192,8 +191,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "browser_read_console",
-        module: "control",
-        op: "read_console",
+        backend: Backend::Bridge { module: "control", op: "read_console" },
         description: "Read recent console messages from the controlled tab (debugging).",
         schema: || json!({
             "type": "object",
@@ -207,8 +205,7 @@ const TOOLS: &[McpTool] = &[
     // Each opens a hidden tab and captures X's own responses; no paid API.
     McpTool {
         name: "x_search",
-        module: "x",
-        op: "search",
+        backend: Backend::Bridge { module: "x", op: "search" },
         description: "Search x.com (Twitter) through the user's logged-in session — returns structured posts (author, text, engagement) as JSON, no API keys. Requires being signed in to x.com in the browser.",
         schema: || json!({
             "type": "object",
@@ -222,8 +219,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "x_targets",
-        module: "x",
-        op: "targets",
+        backend: Backend::Bridge { module: "x", op: "targets" },
         description: "Latest original posts from a set of x.com handles (capped per author for diversity), via the user's logged-in session.",
         schema: || json!({
             "type": "object",
@@ -238,8 +234,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "x_following",
-        module: "x",
-        op: "following",
+        backend: Backend::Bridge { module: "x", op: "following" },
         description: "List the accounts an x.com handle follows (handle, name, followers, bio), via the user's logged-in session.",
         schema: || json!({
             "type": "object",
@@ -254,8 +249,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "x_whotofollow",
-        module: "x",
-        op: "whotofollow",
+        backend: Backend::Bridge { module: "x", op: "whotofollow" },
         description: "X's personalized \"Who to follow\" recommendations for the signed-in user.",
         schema: || json!({
             "type": "object",
@@ -269,8 +263,7 @@ const TOOLS: &[McpTool] = &[
     },
     McpTool {
         name: "x_own",
-        module: "x",
-        op: "own",
+        backend: Backend::Bridge { module: "x", op: "own" },
         description: "The signed-in user's own recent x.com posts with engagement (views, likes), plus the parent posts they already replied to.",
         schema: || json!({
             "type": "object",
@@ -281,6 +274,108 @@ const TOOLS: &[McpTool] = &[
             "required": ["handle"]
         }),
         timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
+    // --- memory_*: the user's durable cross-host memory (ling-mem) ---------
+    // Thin proxy to the ling-mem daemon; names and shapes mirror ling-mem's
+    // own MCP so migrating users keep muscle memory. Dream-pipeline verbs
+    // (harvest/remember/sweep/chains/days) stay engine-internal.
+    McpTool {
+        name: "memory_search",
+        backend: Backend::Memory { verb: "search" },
+        description: "Semantic search over the user's durable cross-session memory (identity, preferences, decisions, gotchas). Search before answering questions that could connect to past preferences or decisions; cite rows you use (\"From memory: …\").",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural-language description of what you're looking for"},
+                "limit": {"type": "integer", "description": "Max rows (default 10)"},
+                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Omit to span all tiers"},
+                "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags"}
+            },
+            "required": ["query"]
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_add",
+        backend: Backend::Memory { verb: "add" },
+        description: "Insert a new memory row. Durable, cross-session signal only — identity facts, behavioural preferences, decisions with their reasoning. Uncertain-durability signal goes to tier=episodic (per-turn staging; a nightly pass promotes what lasts). Search first for core/semantic writes.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The fact text the model will see when this row is recalled"},
+                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "episodic = per-turn capture staging (default lane); semantic = curated durable pool (search first); core = tiny always-injected universals about the person"},
+                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
+                "contexts": {"type": "array", "items": {"type": "string"}, "description": "Scope tags, e.g. a project name"},
+                "host": {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor) for cross-host attribution"},
+                "source_session": {"type": "string", "description": "Session id that authored this content"},
+                "occurred_at": {"type": "string", "description": "RFC-3339 user-event timestamp; defaults to now"},
+                "user_directed": {"type": "boolean", "description": "Assert the user's CURRENT message states this change as SETTLED (a command, declaration, or commitment). Required when replace_ids targets from=user rows — the daemon blocks such writes otherwise. Never assert from your own inference."},
+                "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — inserted and deleted atomically. Use for conflict resolution; never separate add + delete calls."}
+            },
+            "required": ["content"]
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_get",
+        backend: Backend::Memory { verb: "get" },
+        description: "Fetch one memory row by id.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The row UUID"}
+            },
+            "required": ["id"]
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_update",
+        backend: Backend::Memory { verb: "update" },
+        description: "Edit fields of an existing memory row by id. Reserve for mechanical rephrasing of the same fact; contradictions are resolved with memory_add + replace_ids after asking the user.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The row UUID"},
+                "content": {"type": "string"},
+                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
+                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"]},
+                "contexts": {"type": "array", "items": {"type": "string"}},
+                "user_directed": {"type": "boolean", "description": "Required when rewriting a from=user row: the user's current message directs the change"}
+            },
+            "required": ["id"]
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_delete",
+        backend: Backend::Memory { verb: "delete" },
+        description: "Hard-delete ONE memory row by id. Only for explicit user requests to forget (or post-ask conflict resolution). There is no bulk delete on this surface — deleting by type or context is not offered by design.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The row UUID"}
+            },
+            "required": ["id"]
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_list",
+        backend: Backend::Memory { verb: "list" },
+        description: "Filter-only browse of memory rows (no ranking) — for audits and reviews. All filters optional and AND-combined; over-filtering is the #1 cause of empty results.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Omit to span all tiers"},
+                "contexts": {"type": "array", "items": {"type": "string"}},
+                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "Omit to return all types"},
+                "limit": {"type": "integer", "description": "Max rows (default 50)"},
+                "offset": {"type": "integer"},
+                "sort": {"type": "string", "enum": ["newest", "oldest"]}
+            }
+        }),
+        timeout_ms: 0,
     },
 ];
 
@@ -307,7 +402,15 @@ fn initialize_result() -> Value {
             browser_click / browser_type by ref; mutating actions may pause for the \
             user's permission prompt in the browser. x_* tools return structured data \
             from the user's logged-in x.com session. A no_bridge error means the \
-            extension is not connected."
+            extension is not connected. memory_* tools read and write the user's \
+            durable cross-host memory (three tiers: core = always-on identity \
+            universals, semantic = curated long-term facts, episodic = per-turn \
+            staging judged nightly). Search memory before answering questions that \
+            could connect to past preferences or decisions, and cite rows you use. On \
+            writes, pass source_session and host; capture uncertain-durability signal \
+            to tier=episodic. Replacing or rewriting a row the user authored requires \
+            user_directed:true grounded in their current message (with replace_ids \
+            for an atomic swap) — the daemon blocks it otherwise. Delete only by id."
     })
 }
 
@@ -330,9 +433,13 @@ fn tool_content(text: String, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
 
-/// Render a successful control-op payload for the calling agent.
+/// Render a successful payload for the calling agent.
 fn render_data(tool: &McpTool, data: &Value) -> Value {
-    match tool.op {
+    let op = match tool.backend {
+        Backend::Bridge { op, .. } => op,
+        Backend::Memory { .. } => "",
+    };
+    match op {
         "screenshot" => {
             let base64 = data.get("base64").and_then(Value::as_str).unwrap_or_default();
             json!({
@@ -350,33 +457,62 @@ fn render_data(tool: &McpTool, data: &Value) -> Value {
     }
 }
 
-async fn call_tool(hub: &BridgeHub, name: &str, args: Value) -> Result<Value, String> {
+async fn call_tool(
+    hub: &BridgeHub,
+    ling_mem_url: &str,
+    name: &str,
+    args: Value,
+) -> Result<Value, String> {
     let Some(tool) = TOOLS.iter().find(|t| t.name == name) else {
         return Err(format!("unknown tool: {name}"));
     };
-    let res = hub.call_value(tool.module, tool.op, args, tool.timeout_ms).await;
-    if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
-        let data = res.get("data").cloned().unwrap_or(Value::Null);
-        return Ok(render_data(tool, &data));
+    match tool.backend {
+        Backend::Bridge { module, op } => {
+            let res = hub.call_value(module, op, args, tool.timeout_ms).await;
+            if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                let data = res.get("data").cloned().unwrap_or(Value::Null);
+                return Ok(render_data(tool, &data));
+            }
+            let code = res.get("code").and_then(Value::as_str).unwrap_or("upstream_error");
+            let message = res.get("message").and_then(Value::as_str).unwrap_or("");
+            let text = match code {
+                "no_bridge" | "module_unavailable" => "browser not connected — the \
+                    linggen-browser extension must be running and connected in Chrome. \
+                    Ask the user to install or enable it, then retry."
+                    .to_string(),
+                "not_permitted" => format!(
+                    "not_permitted: {message} — the user declined this action in the \
+                    browser's permission prompt."
+                ),
+                _ => format!("{code}: {message}"),
+            };
+            Ok(tool_content(text, true))
+        }
+        Backend::Memory { verb } => {
+            let mut args = args;
+            if let Some(obj) = args.as_object_mut() {
+                obj.insert("verb".to_string(), json!(verb));
+                // Attribute writes to some host even when the caller forgot —
+                // "mcp" beats a misleading default and never masks a real one.
+                if verb == "add" && !obj.contains_key("host") {
+                    obj.insert("host".to_string(), json!("mcp"));
+                }
+            }
+            // The engine's ling-mem client path: episodic wire translation,
+            // soft-empty cleanup, and first-use autostart all come with it.
+            // The daemon itself enforces the user-voice merge floor.
+            match crate::engine::tools::memory_tool::call_memory_http(ling_mem_url, tool.name, args)
+                .await
+            {
+                Ok(value) => Ok(tool_content(value.to_string(), false)),
+                Err(e) => Ok(tool_content(format!("{e:#}"), true)),
+            }
+        }
     }
-    let code = res.get("code").and_then(Value::as_str).unwrap_or("upstream_error");
-    let message = res.get("message").and_then(Value::as_str).unwrap_or("");
-    let text = match code {
-        "no_bridge" | "module_unavailable" => "browser not connected — the linggen-browser \
-            extension must be running and connected in Chrome. Ask the user to install or \
-            enable it, then retry."
-            .to_string(),
-        "not_permitted" => format!(
-            "not_permitted: {message} — the user declined this action in the browser's \
-            permission prompt."
-        ),
-        _ => format!("{code}: {message}"),
-    };
-    Ok(tool_content(text, true))
 }
 
 /// Handle one JSON-RPC message. `None` means a notification (no response).
-async fn handle_rpc(hub: &BridgeHub, msg: &Value) -> Option<Value> {
+async fn handle_rpc(hub: &BridgeHub, ling_mem_url: &str, msg: &Value) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
     let id = msg.get("id").cloned();
     if id.is_none() || method.starts_with("notifications/") {
@@ -391,7 +527,7 @@ async fn handle_rpc(hub: &BridgeHub, msg: &Value) -> Option<Value> {
             let params = msg.get("params").cloned().unwrap_or_default();
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            match call_tool(hub, name, args).await {
+            match call_tool(hub, ling_mem_url, name, args).await {
                 Ok(result) => rpc_result(id, result),
                 Err(message) => rpc_error(id, -32602, &message),
             }
@@ -425,7 +561,8 @@ pub(crate) async fn post_handler(
     if !origin_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
-    match handle_rpc(&state.bridge, &body).await {
+    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    match handle_rpc(&state.bridge, &ling_mem_url, &body).await {
         Some(response) => Json(response).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
     }
@@ -440,6 +577,10 @@ pub(crate) async fn get_handler() -> Response {
 mod tests {
     use super::*;
 
+    // Unroutable per RFC 5737 — memory tests must never reach a real daemon
+    // (the client path would autostart/install ling-mem on connection refusal).
+    const TEST_MEM_URL: &str = "http://192.0.2.1:9";
+
     fn hub() -> BridgeHub {
         BridgeHub::new()
     }
@@ -447,33 +588,39 @@ mod tests {
     #[tokio::test]
     async fn initialize_reports_tools_capability() {
         let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
-        let res = handle_rpc(&hub(), &msg).await.unwrap();
+        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
         assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
     }
 
     #[tokio::test]
-    async fn tools_list_mirrors_control_and_x_ops() {
+    async fn tools_list_mirrors_control_x_and_memory_ops() {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
-        let res = handle_rpc(&hub(), &msg).await.unwrap();
+        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 21);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
+        assert!(tools.iter().any(|t| t["name"] == "memory_search"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
+        // Delete is by-id only — no bulk filters on the destructive surface.
+        let del = tools.iter().find(|t| t["name"] == "memory_delete").unwrap();
+        assert_eq!(del["inputSchema"]["required"], json!(["id"]));
+        assert!(del["inputSchema"]["properties"]["type"].is_null());
+        assert!(del["inputSchema"]["properties"]["contexts"].is_null());
     }
 
     #[tokio::test]
     async fn notifications_get_no_response() {
         let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        assert!(handle_rpc(&hub(), &msg).await.is_none());
+        assert!(handle_rpc(&hub(), TEST_MEM_URL, &msg).await.is_none());
     }
 
     #[tokio::test]
     async fn unknown_method_is_rpc_error() {
         let msg = json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" });
-        let res = handle_rpc(&hub(), &msg).await.unwrap();
+        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
         assert_eq!(res["error"]["code"], -32601);
     }
 
@@ -483,7 +630,7 @@ mod tests {
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
             "params": { "name": "browser_fly", "arguments": {} }
         });
-        let res = handle_rpc(&hub(), &msg).await.unwrap();
+        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
         assert_eq!(res["error"]["code"], -32602);
     }
 
@@ -493,7 +640,7 @@ mod tests {
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": { "name": "browser_tabs", "arguments": { "action": "list" } }
         });
-        let res = handle_rpc(&hub(), &msg).await.unwrap();
+        let res = handle_rpc(&hub(), TEST_MEM_URL, &msg).await.unwrap();
         assert_eq!(res["result"]["isError"], true);
         let text = res["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("not connected"));
