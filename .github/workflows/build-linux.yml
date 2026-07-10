@@ -13,14 +13,15 @@ on:
         description: "git ref to build (branch / tag / sha)"
         required: true
         default: "main"
-      version:
-        description: "version baked into the binary (LINGGEN_BUILD_VERSION)"
-        required: true
-        default: "0.0.0-dev"
       release_tag:
         description: "release tag to upload assets to (blank = artifacts only)"
         required: false
         default: ""
+
+# The upload step publishes assets to a release; the default GITHUB_TOKEN is
+# read-only and 403s ("Resource not accessible by integration") without this.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -59,8 +60,6 @@ jobs:
           [ "$(ls -A dist)" ] || (echo "UI build produced no assets" && exit 1)
 
       - name: Build ling
-        env:
-          LINGGEN_BUILD_VERSION: ${{ inputs.version }}
         run: cargo build --release
 
       - name: Package flat tarball
