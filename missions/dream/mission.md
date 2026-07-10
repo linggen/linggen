@@ -10,9 +10,11 @@ catchup_hours: 24
 enabled: true
 # The `memory` agent is the one brain for the remember stage — the
 # same brain the memory app's calendar reaches by triggering this
-# mission day-scoped (`kickoff-day` below), so the mission and the UI
-# can never drift apart. Its spec is unattended-safe by construction:
-# tools are Memory-only, no AskUser, uncertainty resolves to promote.
+# mission day-scoped (`kickoff-day` / `kickoff-attended` below), so
+# the mission and the UI can never drift apart. Unattended runs are
+# safe by construction: this mission's allowed-tools is Memory-only
+# (the engine adds AskUser to scope only on attended triggers) and
+# uncertainty resolves to promote.
 agent: memory
 cwd: ~/.linggen
 # Multi-item kickoff: item 0 starts the run; each later item lands as
@@ -131,6 +133,29 @@ kickoff-day:
     report `SWEEP removed=<n>`, run the cited-chains condense per
     your system prompt (`MERGE` lines; empty scan → no lines), then
     reply exactly: DONE.
+# Attended day-scoped variant: the calendar day-click sends
+# `attended: true` — the user just clicked and is watching, so the
+# engine puts AskUser in scope and this kickoff ends with the
+# low-confidence marker review the unattended runs must never do.
+kickoff-attended:
+  - >-
+    You are in the dream mission, scoped to a single day: $DAY — an
+    ATTENDED run: the user is watching and AskUser is available for
+    the final review step only. Introduce it in one short line, then
+    run the remember procedure for $DAY per your system prompt
+    (context → day worklist → cluster → promote → stamp via
+    `Memory_write({"verb":"remember_day","date":"$DAY",...}` with the
+    judged/promoted counts). If the day has no episodic rows, reply
+    exactly: CLEAN. Then stop and wait.
+  - >-
+    Last turn for this run: call `Memory_write({"verb":"sweep"})`,
+    report `SWEEP removed=<n>`, run the cited-chains condense per
+    your system prompt (`MERGE` lines), then the attended review per
+    your system prompt: fetch
+    `Memory_query({"verb":"chains","kind":"marker","limit":4,"derived_only":true})`
+    and, if candidates return, confirm them with the user in ONE
+    AskUser call — merge only what they approve. Then reply exactly:
+    DONE.
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not in
 # the tool list — uncertainty resolves per the agent spec (promote on

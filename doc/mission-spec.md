@@ -102,6 +102,8 @@ permission:
 | `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
 | `kickoff` | no | Ordered list of user-turn messages persisted at run start. Item 0 fires immediately; later items drain one-per-assistant-final-reply via the engine's `kickoff_queue`. Empty list falls back to a single generic "Run the X mission" line. Use for staged onboarding (greet → start work) without batching everything into one model reply |
+| `kickoff-day` | no | Day-scoped kickoff variant, used when a trigger passes a target `day` (the memory app's calendar). `$DAY` in each item is replaced with the `YYYY-MM-DD` date |
+| `kickoff-attended` | no | Attended day-scoped variant, used when a trigger passes `day` + `attended: true` (a user clicked and is watching). The engine adds `AskUser` to the run's tool scope, so these items may include review steps that ask the user. Falls back to `kickoff-day` when absent |
 | `kickoff-stop` | no | Completion sentinels. A final reply ending on one of these (final word) discards the remaining kickoff queue — an early-finished run skips its leftover nudge turns |
 | `allowed-tools` | yes | Explicit tool list. Authors omit `AskUser` / `EnterPlanMode` for unattended missions where there's no one to respond. The `Skill` tool is never available to missions — missions do not delegate to skills |
 | `permission.paths` | no | Per-path grants, each with its own `mode`. Same shape as `SkillPermission` — see `permission-spec.md`. Omitting `permission` or leaving `paths` empty means the mission has no filesystem grants and will fail the first write/edit it attempts |

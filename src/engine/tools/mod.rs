@@ -397,6 +397,11 @@ impl Tools {
         let bridge = match &self.ask_user_bridge {
             Some(b) => Arc::clone(b),
             None => {
+                tracing::warn!(
+                    "AskUser called with no bridge wired (agent={:?}, session={:?}) — returning CLI-blocked",
+                    self.agent_id,
+                    self.session_id
+                );
                 return Ok(ToolResult::Success(
                     self.prompt(crate::prompts::keys::ASKUSER_CLI_BLOCKED, &[]),
                 ));

@@ -151,6 +151,7 @@ impl MissionLoader {
             model: draft.model.clone().flatten(),
             kickoff: draft.kickoff.clone().unwrap_or_default(),
             kickoff_day: Vec::new(),
+            kickoff_attended: Vec::new(),
             kickoff_stop: Vec::new(),
             allowed_tools: draft.allowed_tools.clone().unwrap_or_default(),
             permission: draft.permission.clone().flatten(),

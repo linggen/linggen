@@ -365,6 +365,11 @@ pub(crate) struct TriggerMissionRequest {
     /// app's calendar dream button passes this.
     #[serde(default)]
     day: Option<String>,
+    /// The user clicked and is watching (the calendar day-click sends
+    /// true): AskUser joins the run's tool scope and, with `day`, the
+    /// mission's `kickoff-attended` variant is used.
+    #[serde(default)]
+    attended: bool,
 }
 
 /// POST /api/missions/:id/trigger — run a mission immediately
@@ -449,6 +454,7 @@ pub(crate) async fn trigger_mission(
         let kickoff = crate::extensions::missions::scheduler::mission_kickoff_messages(
             &mission,
             day.as_deref(),
+            req.attended,
         );
         if let Some(first) = kickoff.first() {
             let _ = state.manager.global_sessions.add_chat_message(
@@ -481,6 +487,7 @@ pub(crate) async fn trigger_mission(
     let state_clone = state.clone();
     let session_id_clone = session_id.clone();
     let day_clone = day.clone();
+    let attended = req.attended;
 
     tokio::spawn(async move {
         crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
@@ -490,6 +497,7 @@ pub(crate) async fn trigger_mission(
             &mission,
             session_id_clone,
             day_clone,
+            attended,
         )
         .await;
     });

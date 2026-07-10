@@ -55,6 +55,13 @@ struct MissionFrontmatter {
     kickoff_day: Vec<String>,
 
     #[serde(
+        rename = "kickoff-attended",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    kickoff_attended: Vec<String>,
+
+    #[serde(
         rename = "kickoff-stop",
         default,
         skip_serializing_if = "Vec::is_empty"
@@ -141,6 +148,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         model: fm.model,
         kickoff: fm.kickoff,
         kickoff_day: fm.kickoff_day,
+        kickoff_attended: fm.kickoff_attended,
         kickoff_stop: fm.kickoff_stop,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
@@ -163,6 +171,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         model: None,
         kickoff: Vec::new(),
         kickoff_day: Vec::new(),
+        kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
         allowed_tools: Vec::new(),
         permission: None,
@@ -208,6 +217,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         model: fm.model,
         kickoff: Vec::new(),
         kickoff_day: Vec::new(),
+        kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
         allowed_tools: Vec::new(),
         permission,
@@ -239,6 +249,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         agent: agent_fm,
         kickoff: mission.kickoff.clone(),
         kickoff_day: mission.kickoff_day.clone(),
+        kickoff_attended: mission.kickoff_attended.clone(),
         kickoff_stop: mission.kickoff_stop.clone(),
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),

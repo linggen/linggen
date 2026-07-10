@@ -74,8 +74,9 @@ never writes to project files.
   row each. Only touches the agent's own notes. Unattended runs take
   only high-confidence cited chains, capped per night, with a store
   snapshot before every run; marker/subject clusters wait for an
-  attended pass (chat verb, calendar review) where the user can be
-  asked.
+  attended pass — the calendar day-click runs an attended dream that
+  ends by confirming low-confidence merges with the user in one
+  AskUser batch, and the chat verb covers deep passes.
 - **Secrets** — credentials never enter memory; deleted on sight.
 
 ## Rules
@@ -101,8 +102,9 @@ a real engine against a throwaway store and judges the end state.
 
 ## Open / next
 
-1. A dedicated inspectable/undoable widget for mission promotes and
-   merges.
+Nothing open — the promote/merge review widget shipped as the
+attended dream's AskUser batch; snapshots + the run report cover
+inspection and recovery.
 
 ## Future
 

@@ -60,6 +60,15 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kickoff_day: Vec<String>,
 
+    /// Attended day-scoped kickoff variant (frontmatter
+    /// `kickoff-attended`), used when a trigger passes a target day AND
+    /// `attended: true` — a user clicked and is watching, so `AskUser`
+    /// joins the run's tool scope and the kickoff may include review
+    /// steps an unattended run must never take. Same `$DAY`
+    /// substitution as `kickoff-day`; empty falls back to `kickoff_day`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kickoff_attended: Vec<String>,
+
     /// Completion sentinels (frontmatter `kickoff-stop`). When the
     /// agent's final reply is exactly one of these (trimmed, optionally
     /// trailing `.`/`!`), the engine discards the remaining kickoff

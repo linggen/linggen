@@ -1121,7 +1121,13 @@ impl Tool for AskUserTool {
     fn description(&self) -> &'static str {
         "Ask the user 1-4 structured questions with 2-6 options each. User can always type custom text. Blocks until response (5 min timeout)."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        // Pure conversation — asks act on nothing (no fs/exec/network), so
+        // they sit at Chat like the Memory tools. At Read tier, a session
+        // without path grants (e.g. an attended mission) hit the permission
+        // ceiling and the ask was silently denied before the tool ran.
+        PermissionMode::Chat
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",

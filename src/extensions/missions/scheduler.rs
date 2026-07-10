@@ -194,6 +194,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                     &mission_owned,
                     None,
                     None,
+                    false,
                 )
                 .await;
                 running_flag.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -243,8 +244,22 @@ fn mission_session_title(mission: &Mission) -> String {
 ///
 /// Missions without an explicit `kickoff:` list fall back to a single
 /// generic "run the X mission" line.
-pub fn mission_kickoff_messages(mission: &Mission, day: Option<&str>) -> Vec<String> {
+pub fn mission_kickoff_messages(
+    mission: &Mission,
+    day: Option<&str>,
+    attended: bool,
+) -> Vec<String> {
     if let Some(day) = day {
+        // Attended day runs (calendar click — a user is watching) get
+        // their own kickoff so review steps that need a reachable user
+        // never leak into unattended runs.
+        if attended && !mission.kickoff_attended.is_empty() {
+            return mission
+                .kickoff_attended
+                .iter()
+                .map(|item| item.replace("$DAY", day))
+                .collect();
+        }
         if !mission.kickoff_day.is_empty() {
             return mission
                 .kickoff_day
@@ -324,8 +339,10 @@ pub async fn dispatch_mission_prompt_public(
     mission: &Mission,
     session_id: Option<String>,
     day: Option<String>,
+    attended: bool,
 ) {
-    dispatch_mission_prompt(state, root, project_path, mission, session_id, day).await;
+    dispatch_mission_prompt(state, root, project_path, mission, session_id, day, attended)
+        .await;
 }
 
 /// Resolve a mission's working dir the same way the scheduler loop does:
@@ -434,7 +451,15 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                 catchup_hours
             );
             let (root, project_path) = mission_root(&mission);
-            dispatch_mission_prompt_public(state.clone(), root, &project_path, &mission, None, None)
+            dispatch_mission_prompt_public(
+                state.clone(),
+                root,
+                &project_path,
+                &mission,
+                None,
+                None,
+                false,
+            )
                 .await;
         }
     });
@@ -448,6 +473,7 @@ async fn dispatch_mission_prompt(
     mission: &Mission,
     pre_session_id: Option<String>,
     day: Option<String>,
+    attended: bool,
 ) {
     use crate::server::AgentStatusKind;
 
@@ -575,7 +601,7 @@ async fn dispatch_mission_prompt(
     // item 0 becomes the first user turn that drives the agent loop; the
     // remainder fire one-per-assistant-final-reply via the engine's
     // kickoff_queue (see AgentEngine.try_drain_kickoff).
-    let kickoff_items = mission_kickoff_messages(mission, day.as_deref());
+    let kickoff_items = mission_kickoff_messages(mission, day.as_deref(), attended);
     let (first_message, queued) = kickoff_items
         .split_first()
         .map(|(first, rest)| (first.clone(), rest.to_vec()))
@@ -720,6 +746,31 @@ async fn dispatch_mission_prompt(
 
     // Apply allowed-tools and allow-skills from frontmatter.
     apply_mission_tool_scope(&mut engine, mission);
+
+    // Attended runs have a present user — AskUser joins the mission's
+    // tool scope so review questions can be asked. The agent's own spec
+    // must also list AskUser (tool scopes intersect); unattended runs
+    // keep it out of scope regardless of the agent spec. The AskUser
+    // bridge must also be wired by hand: chat sessions get it from
+    // wire_engine_bridges, but mission engines never pass through the
+    // chat runtime — without it the tool returns "not available"
+    // immediately instead of blocking on the user's answer.
+    if attended {
+        if let Some(ref mut set) = engine.cfg.mission_allowed_tools {
+            set.insert("AskUser".to_string());
+        }
+        engine.tools.set_ask_user_bridge(std::sync::Arc::new(
+            crate::engine::tools::AskUserBridge {
+                events_tx: state.events_tx.clone(),
+                pending: state.pending_ask_user.clone(),
+                session_id: session_id.clone(),
+            },
+        ));
+        info!(
+            "Mission '{}': attended run — AskUser in scope, bridge wired (session {:?})",
+            mission.id, session_id
+        );
+    }
 
     // Wire up thinking channel so tokens are emitted as SSE events,
     // allowing the UI to stream mission output in real time.
