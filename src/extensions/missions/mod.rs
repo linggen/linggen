@@ -391,6 +391,76 @@ impl MissionLoader {
         Ok(())
     }
 
+    /// Rewrite the run entry matching `run_id` with a new status, keeping
+    /// file order and unknown lines intact. Missing file or run_id is a
+    /// no-op — finalizing a run whose record was healed or removed in the
+    /// meantime must not error the dispatch path.
+    pub fn update_mission_run_status(
+        &self,
+        mission_id: &str,
+        run_id: &str,
+        status: &str,
+    ) -> Result<()> {
+        let path = self.runs_path(mission_id);
+        if !path.exists() {
+            return Ok(());
+        }
+        let content = fs::read_to_string(&path)?;
+        let mut out = String::new();
+        let mut changed = false;
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<MissionRunEntry>(line) {
+                Ok(mut e) if e.run_id == run_id => {
+                    if e.status != status {
+                        e.status = status.to_string();
+                        changed = true;
+                    }
+                    out.push_str(&serde_json::to_string(&e)?);
+                    out.push('\n');
+                }
+                _ => {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        if changed {
+            fs::write(&path, out)?;
+        }
+        Ok(())
+    }
+
+    /// Startup reconciliation: a fresh daemon has no live runs, so any
+    /// entry still `running` belongs to a dead process (hang, crash,
+    /// restart). Flip them to `interrupted` so run history shows the
+    /// truth and the catch-up window (completed-only) treats the slot
+    /// as unfilled.
+    pub fn mark_running_runs_interrupted(&self) {
+        let Ok(dirs) = fs::read_dir(&self.dir) else { return };
+        for entry in dirs.flatten() {
+            let mission_id = entry.file_name().to_string_lossy().to_string();
+            let Ok(runs) = self.list_mission_runs(&mission_id) else { continue };
+            for run in runs.iter().filter(|r| r.status == "running") {
+                match self.update_mission_run_status(&mission_id, &run.run_id, "interrupted") {
+                    Ok(()) => tracing::info!(
+                        "mission '{}': run {} from a previous process marked interrupted",
+                        mission_id,
+                        run.run_id
+                    ),
+                    Err(e) => tracing::warn!(
+                        "mission '{}': failed to heal run {}: {}",
+                        mission_id,
+                        run.run_id,
+                        e
+                    ),
+                }
+            }
+        }
+    }
+
     /// Look up the most recent completed (non-skipped) run for a mission.
     /// Used by the scheduler to set `MISSION_LAST_RUN_AT` env for the entry script.
     pub fn last_successful_run_at(&self, mission_id: &str) -> Option<u64> {
@@ -433,6 +503,10 @@ impl MissionRunStore for MissionLoader {
 
     fn remove_by_session(&self, mission_id: &str, session_id: &str) -> Result<()> {
         self.remove_run_by_session(mission_id, session_id)
+    }
+
+    fn update_status(&self, mission_id: &str, run_id: &str, status: &str) -> Result<()> {
+        self.update_mission_run_status(mission_id, run_id, status)
     }
 
     fn last_successful_run_at(&self, mission_id: &str) -> Option<u64> {
@@ -619,6 +693,45 @@ mod tests {
         assert_eq!(runs[0].run_id, "run-2");
         assert_eq!(runs[1].run_id, "run-1");
         assert!(runs[0].skipped);
+    }
+
+    #[test]
+    fn test_run_status_update_and_startup_heal() {
+        let (store, _dir) = temp_store();
+        let m = store
+            .create_mission(draft_min("Test", "0 * * * *", "Test"))
+            .unwrap();
+
+        let run = |id: &str, status: &str| MissionRunEntry {
+            run_id: id.into(),
+            session_id: None,
+            triggered_at: 1000,
+            status: status.into(),
+            skipped: false,
+        };
+        store.append_mission_run(&m.id, &run("run-1", "running")).unwrap();
+        store.append_mission_run(&m.id, &run("run-2", "running")).unwrap();
+
+        // Normal finalize: running → completed, other rows untouched.
+        store
+            .update_mission_run_status(&m.id, "run-1", "completed")
+            .unwrap();
+        let by_id = |runs: &[MissionRunEntry], id: &str| {
+            runs.iter().find(|r| r.run_id == id).unwrap().status.clone()
+        };
+        let runs = store.list_mission_runs(&m.id).unwrap();
+        assert_eq!(by_id(&runs, "run-1"), "completed");
+        assert_eq!(by_id(&runs, "run-2"), "running");
+
+        // Unknown run id / missing file: no-op, not an error.
+        store.update_mission_run_status(&m.id, "run-x", "failed").unwrap();
+        store.update_mission_run_status("no-such-mission", "run-1", "failed").unwrap();
+
+        // Startup heal flips only rows still `running`.
+        store.mark_running_runs_interrupted();
+        let runs = store.list_mission_runs(&m.id).unwrap();
+        assert_eq!(by_id(&runs, "run-1"), "completed");
+        assert_eq!(by_id(&runs, "run-2"), "interrupted");
     }
 
     #[test]

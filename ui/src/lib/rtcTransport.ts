@@ -144,21 +144,22 @@ export class RtcTransport implements Transport {
     return this.controlRequest({ type: 'http_request', method, url, body });
   }
 
+  // Sticky — re-sent on every (re)connect, like the Yinyue subscription.
+  // A restarted daemon has empty in-memory run state and no idea what the
+  // client is looking at; re-registering the view makes it push fresh
+  // scoped page_state (agent_runs included), clearing stale `running`
+  // rows that would otherwise tick "Thinking" forever.
   private pendingViewContext: { sessionId: string | null; projectRoot: string | null; view: 'main' | 'embed' | 'consumer' } | null = null;
 
   sendViewContext(ctx: { sessionId: string | null; projectRoot: string | null; view: 'main' | 'embed' | 'consumer' }): void {
-    const msg = JSON.stringify({
-      type: 'set_view_context',
-      session_id: ctx.sessionId,
-      project_root: ctx.projectRoot,
-      view: ctx.view,
-    });
+    this.pendingViewContext = ctx;
     if (this.controlChannel?.readyState === 'open') {
-      this.controlChannel.send(msg);
-      this.pendingViewContext = null;
-    } else {
-      // Queue — will be sent when control channel opens
-      this.pendingViewContext = ctx;
+      this.controlChannel.send(JSON.stringify({
+        type: 'set_view_context',
+        session_id: ctx.sessionId,
+        project_root: ctx.projectRoot,
+        view: ctx.view,
+      }));
     }
   }
 

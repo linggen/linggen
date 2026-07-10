@@ -24,20 +24,24 @@ use crate::server::ServerState;
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const CALL_TIMEOUT_MS: u64 = 20_000;
 const NAVIGATE_TIMEOUT_MS: u64 = 45_000;
+/// Session reads open a hidden tab and wait for the site's own responses.
+const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 
-/// One MCP tool: its wire name, the control op it brokers, and its schema.
+/// One MCP tool: its wire name, the bridge module + op it brokers, its schema.
 struct McpTool {
     name: &'static str,
+    module: &'static str,
     op: &'static str,
     description: &'static str,
     schema: fn() -> Value,
-    slow: bool,
+    timeout_ms: u64,
 }
 
-/// The tool table — mirrors the control-module ops one-to-one.
+/// The tool table — control ops one-to-one, plus the x session-read ops.
 const TOOLS: &[McpTool] = &[
     McpTool {
         name: "browser_navigate",
+        module: "control",
         op: "navigate",
         description: "Load a URL (or go \"back\"/\"forward\") in the controlled browser tab. The tab is visible to the user. Follow with browser_read_page to see the result.",
         schema: || json!({
@@ -47,10 +51,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["url"]
         }),
-        slow: true,
+        timeout_ms: NAVIGATE_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_read_page",
+        module: "control",
         op: "read_page",
         description: "Read the controlled tab as an accessibility tree. Actionable nodes carry a ref like [n42] — pass that ref to browser_click / browser_type. Re-read after any action that changes the page; old refs go stale.",
         schema: || json!({
@@ -63,10 +68,11 @@ const TOOLS: &[McpTool] = &[
                 }
             }
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_click",
+        module: "control",
         op: "click",
         description: "Click a node by ref (from browser_read_page) or a viewport coordinate. Prefer refs — coordinates are the screenshot fallback.",
         schema: || json!({
@@ -82,10 +88,11 @@ const TOOLS: &[McpTool] = &[
                 "double": {"type": "boolean", "description": "Double-click"}
             }
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_type",
+        module: "control",
         op: "type",
         description: "Type text into a field: pass ref to focus it first (clear:true to empty it), or omit ref to type into the currently focused element.",
         schema: || json!({
@@ -97,10 +104,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["text"]
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_key",
+        module: "control",
         op: "key",
         description: "Press a key or chord in the controlled tab, e.g. \"Enter\", \"Escape\", \"Ctrl+a\", \"Meta+Enter\".",
         schema: || json!({
@@ -111,10 +119,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["keys"]
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_scroll",
+        module: "control",
         op: "scroll",
         description: "Scroll the page (or the element under ref) in the controlled tab.",
         schema: || json!({
@@ -126,10 +135,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["direction"]
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_screenshot",
+        module: "control",
         op: "screenshot",
         description: "Capture the controlled tab as an image. Fallback for visual/canvas content the accessibility tree can't express — prefer browser_read_page for normal pages.",
         schema: || json!({
@@ -145,10 +155,11 @@ const TOOLS: &[McpTool] = &[
                 }
             }
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_wait",
+        module: "control",
         op: "wait",
         description: "Wait for the controlled tab to settle before the next read: for \"load\" (page load), \"selector\" (a CSS selector appears, value required), or \"ms\" (fixed delay, max 10000).",
         schema: || json!({
@@ -159,10 +170,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["for"]
         }),
-        slow: true,
+        timeout_ms: NAVIGATE_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_tabs",
+        module: "control",
         op: "tabs",
         description: "Manage the controlled tab: list (current state), open (a URL, creating the tab if needed), switch (bring it to front), close.",
         schema: || json!({
@@ -173,10 +185,11 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["action"]
         }),
-        slow: true,
+        timeout_ms: NAVIGATE_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_read_console",
+        module: "control",
         op: "read_console",
         description: "Read recent console messages from the controlled tab (debugging).",
         schema: || json!({
@@ -185,7 +198,86 @@ const TOOLS: &[McpTool] = &[
                 "limit": {"type": "integer", "description": "Max messages (default 50)"}
             }
         }),
-        slow: false,
+        timeout_ms: CALL_TIMEOUT_MS,
+    },
+    // --- x session reads: structured data from the user's logged-in x.com ---
+    // Each opens a hidden tab and captures X's own responses; no paid API.
+    McpTool {
+        name: "x_search",
+        module: "x",
+        op: "search",
+        description: "Search x.com (Twitter) through the user's logged-in session — returns structured posts (author, text, engagement) as JSON, no API keys. Requires being signed in to x.com in the browser.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "X search query (operators like from:, -filter:replies work)"},
+                "max": {"type": "integer", "description": "Max posts (default 15, max 100)"}
+            },
+            "required": ["query"]
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
+    McpTool {
+        name: "x_targets",
+        module: "x",
+        op: "targets",
+        description: "Latest original posts from a set of x.com handles (capped per author for diversity), via the user's logged-in session.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "handles": {"type": "array", "items": {"type": "string"}, "description": "Handles to read (max 25), with or without @"},
+                "per_author": {"type": "integer", "description": "Max posts per author (default 3)"},
+                "max": {"type": "integer", "description": "Max posts overall (default 25, max 100)"}
+            },
+            "required": ["handles"]
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
+    McpTool {
+        name: "x_following",
+        module: "x",
+        op: "following",
+        description: "List the accounts an x.com handle follows (handle, name, followers, bio), via the user's logged-in session.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "handle": {"type": "string", "description": "Whose following list to read"},
+                "self": {"type": "string", "description": "The user's own handle, excluded from results"},
+                "max": {"type": "integer", "description": "Max accounts (default 400, max 1000)"}
+            },
+            "required": ["handle"]
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
+    McpTool {
+        name: "x_whotofollow",
+        module: "x",
+        op: "whotofollow",
+        description: "X's personalized \"Who to follow\" recommendations for the signed-in user.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "exclude": {"type": "array", "items": {"type": "string"}, "description": "Handles to drop from results"},
+                "self": {"type": "string", "description": "The user's own handle, excluded from results"},
+                "max": {"type": "integer", "description": "Max accounts (default 60, max 100)"}
+            }
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
+    McpTool {
+        name: "x_own",
+        module: "x",
+        op: "own",
+        description: "The signed-in user's own recent x.com posts with engagement (views, likes), plus the parent posts they already replied to.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "handle": {"type": "string", "description": "The user's x.com handle"},
+                "max": {"type": "integer", "description": "Max posts (default 10, max 100)"}
+            },
+            "required": ["handle"]
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
     },
 ];
 
@@ -202,14 +294,17 @@ fn initialize_result() -> Value {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
         "serverInfo": {
-            "name": "linggen-browser",
-            "title": "Linggen Browser",
+            "name": "linggen",
+            "title": "Linggen",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Operates the user's own Chrome through the linggen-browser \
-            extension: one visible controlled tab. Work a loop of browser_read_page \
-            (returns [nN] refs) then browser_click / browser_type by ref. Requires \
-            the extension to be connected; a no_bridge error means it is not."
+        "instructions": "Linggen's capability front door. browser_* tools operate the \
+            user's own Chrome through the linggen-browser extension: one visible \
+            controlled tab — work a loop of browser_read_page (returns [nN] refs) then \
+            browser_click / browser_type by ref; mutating actions may pause for the \
+            user's permission prompt in the browser. x_* tools return structured data \
+            from the user's logged-in x.com session. A no_bridge error means the \
+            extension is not connected."
     })
 }
 
@@ -256,8 +351,7 @@ async fn call_tool(hub: &BridgeHub, name: &str, args: Value) -> Result<Value, St
     let Some(tool) = TOOLS.iter().find(|t| t.name == name) else {
         return Err(format!("unknown tool: {name}"));
     };
-    let timeout = if tool.slow { NAVIGATE_TIMEOUT_MS } else { CALL_TIMEOUT_MS };
-    let res = hub.call_value("control", tool.op, args, timeout).await;
+    let res = hub.call_value(tool.module, tool.op, args, tool.timeout_ms).await;
     if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         let data = res.get("data").cloned().unwrap_or(Value::Null);
         return Ok(render_data(tool, &data));
@@ -266,9 +360,13 @@ async fn call_tool(hub: &BridgeHub, name: &str, args: Value) -> Result<Value, St
     let message = res.get("message").and_then(Value::as_str).unwrap_or("");
     let text = match code {
         "no_bridge" | "module_unavailable" => "browser not connected — the linggen-browser \
-            extension (with the control module) must be running in Chrome. Ask the user to \
-            install or enable it, then retry."
+            extension must be running and connected in Chrome. Ask the user to install or \
+            enable it, then retry."
             .to_string(),
+        "not_permitted" => format!(
+            "not_permitted: {message} — the user declined this action in the browser's \
+            permission prompt."
+        ),
         _ => format!("{code}: {message}"),
     };
     Ok(tool_content(text, true))
@@ -348,17 +446,18 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
         let res = handle_rpc(&hub(), &msg).await.unwrap();
         assert_eq!(res["result"]["protocolVersion"], PROTOCOL_VERSION);
-        assert_eq!(res["result"]["serverInfo"]["name"], "linggen-browser");
+        assert_eq!(res["result"]["serverInfo"]["name"], "linggen");
         assert!(res["result"]["capabilities"]["tools"].is_object());
     }
 
     #[tokio::test]
-    async fn tools_list_mirrors_control_ops() {
+    async fn tools_list_mirrors_control_and_x_ops() {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&hub(), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 15);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
+        assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
     }
 

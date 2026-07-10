@@ -92,6 +92,11 @@ impl MissionState {
 
 /// Background loop that evaluates cron missions and triggers agent runs.
 pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
+    // A fresh process has no live runs — heal rows left `running` by a
+    // dead daemon (hang, crash, restart) so history shows the truth and
+    // catch-up sees the slot as unfilled.
+    state.manager.missions.mark_running_runs_interrupted();
+
     let mut interval = time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     let mut mission_states: HashMap<String, MissionState> = HashMap::new();
 
@@ -489,6 +494,19 @@ async fn dispatch_mission_prompt(
     let has_pre_session = pre_session_id.is_some();
     let session_id = pre_session_id.or_else(|| create_mission_session(mission));
 
+    // Record the run as `running` up front, finalized at the end of this
+    // function — a hang, crash, or daemon restart must leave a visible
+    // row (healed to `interrupted` on the next start), never an
+    // invisible zombie (2026-07-10 dream hang left no record at all).
+    record_mission_run(
+        &state,
+        mission,
+        &mission_run_id,
+        session_id.as_deref(),
+        "running",
+        false,
+    );
+
     let sid = session_id.as_deref().unwrap_or("default");
     let agent = match state.manager.get_or_create_session_agent(sid, &root, agent_id).await {
         Ok(a) => a,
@@ -497,14 +515,7 @@ async fn dispatch_mission_prompt(
                 "Mission scheduler: failed to get mission agent: {}",
                 e
             );
-            record_mission_run(
-                &state,
-                mission,
-                &mission_run_id,
-                None,
-                "failed",
-                false,
-            );
+            finalize_mission_run(&state, mission, &mission_run_id, "failed");
             return;
         }
     };
@@ -820,14 +831,7 @@ async fn dispatch_mission_prompt(
         .update_agent_activity(project_path, agent_id)
         .await;
 
-    record_mission_run(
-        &state,
-        mission,
-        &mission_run_id,
-        session_id.as_deref(),
-        status,
-        false,
-    );
+    finalize_mission_run(&state, mission, &mission_run_id, status);
 
     // Notify UI that the mission finished.
     let _ = state.events_tx.send(ServerEvent::Notification(
@@ -896,6 +900,26 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
         },
     );
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
+}
+
+/// Flip the up-front `running` entry to its terminal status. The entry
+/// keeps its original `triggered_at` (the actual start time).
+fn finalize_mission_run(
+    state: &Arc<ServerState>,
+    mission: &Mission,
+    run_id: &str,
+    status: &str,
+) {
+    if let Err(e) = state
+        .manager
+        .missions
+        .update_mission_run_status(&mission.id, run_id, status)
+    {
+        warn!(
+            "Mission '{}': failed to finalize run {} as {}: {}",
+            mission.id, run_id, status, e
+        );
+    }
 }
 
 fn record_mission_run(

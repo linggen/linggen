@@ -42,6 +42,12 @@ pub trait MissionRunStore: Send + Sync {
     /// from the UI and the run history should follow.
     fn remove_by_session(&self, mission_id: &str, session_id: &str) -> Result<()>;
 
+    /// Rewrite the entry matching `run_id` to a new status. The dispatch
+    /// path records a run as `running` up front and finalizes it with
+    /// this — so a hang, crash, or restart leaves a visible row instead
+    /// of no record. Missing file or run_id is a no-op.
+    fn update_status(&self, mission_id: &str, run_id: &str, status: &str) -> Result<()>;
+
     /// `triggered_at` of the most recent run with `status="completed"`
     /// and `skipped=false`. Used by the scheduler to compute the
     /// catch-up window and to set `MISSION_LAST_RUN_AT` for the
