@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: v1 built — engine tools + extension control module; Web Store listing pending
+status: v1 built + verified e2e — engine tools + extension control module; Web Store listing pending; MCP front door spec'd as v2
 ---
 
 # Browser Control
@@ -26,7 +26,7 @@ This is a deliberate scope expansion. The bridge was locked read-only by design 
 The daemon ↔ extension link is **not** an agent-to-tools boundary — it is Linggen's own two components talking. MCP exists to standardize the agent-to-tools interface *across vendors*; wrapping the existing WebSocket in it buys nothing. So:
 
 - **v1 — built-in engine tools over the existing WS bridge. No MCP.** Browser control is a set of native `Browser_*` tools that sit beside Read/Bash/Task and broker over the bridge. They inherit the permission system and session scoping for free.
-- **Later, optional — a daemon-hosted MCP server** as a *front door* so other vendors' agents (Claude Code, Cursor…) can drive Linggen's Chrome. The MV3 extension cannot host a server; the MCP surface, if built, lives in the daemon and fronts the same bridge. This is a product play, not a dependency of v1.
+- **v2 — a daemon-hosted MCP front door** so other vendors' agents (Claude Code, Cursor…) can drive the same Chrome. See *MCP front door* below. The MV3 extension cannot host a server (no listening sockets; the worker suspends), so the MCP surface lives in the daemon and fronts the same bridge.
 
 ## Model
 
@@ -101,6 +101,16 @@ Browser actions are a new tool class in `permission-spec.md`, distinct from file
 - Trusted origins are stored per session (`browser_origins` in the session's `permission.json`), alongside the path grants.
 - **The controlled tab is visible**, and the agent's actions are legible in it, so the user can interrupt.
 
+## MCP front door (v2)
+
+Browser control as a product for *any* agent, not just Linggen's. The daemon hosts an MCP server; the extension stays the hands. Two mouths, one brain: native `Browser_*` tools (Linggen sessions) and the MCP endpoint (third-party agents) front the same bridge broker.
+
+- **Endpoint** — streamable-HTTP MCP server on the daemon (`http://127.0.0.1:9898/mcp`), localhost-only. Tools mirror the control ops one-to-one: `browser_navigate`, `browser_read_page`, `browser_click`, `browser_type`, `browser_key`, `browser_scroll`, `browser_screenshot`, `browser_wait`, `browser_tabs`, `browser_read_console`.
+- **Linggen agents stay on the native tools.** The tool name is already the switchable seam; the native path carries what MCP cannot — gate prompts in the calling chat, per-session `browser_origins`, screenshots attached to the conversation. (Claude Code makes the same call: Claude in Chrome is built into its CLI, not an MCP entry.)
+- **Install story for other agents** — daemon (`install.sh`) + extension (Web Store) + one line in the agent's MCP config. Two installs is the floor for any real-browser tool: MV3 forbids the extension being the server, so some OS-side process must exist.
+- **The gate moves into the extension.** An MCP caller has no Linggen chat to surface the confirmation, so the Allow / "trust this site" prompt renders in the browser on the controlled tab, and the trust list lives in extension storage. The extension gate is the floor every caller passes — no agent gets a bypass; the hard floor (payment, credentials, deletes, posting as the user) is enforced there too. The engine-side gate remains for Linggen sessions as the richer surface.
+- **Open** — trust-list persistence (browser-session vs until-revoked); whether MCP callers and Linggen sessions share one controlled tab or get one each.
+
 ## Distribution
 
 Public Chrome Web Store, same channel as the read extension — Pulse-style capability-probe + deep-link to install; it cannot ship via `install.sh`. A control extension is a harder review than the x.com-only reader:
@@ -111,8 +121,9 @@ Public Chrome Web Store, same channel as the read extension — Pulse-style capa
 
 ## Phasing
 
-- **v1** — controlled-tab loop with the tool set above, reference-first targeting, the site-trust gate, CDP execution, Web Store listing.
-- **Deferred** — multi-tab orchestration beyond one controlled tab; a daemon-hosted MCP front door for third-party agents; non-Chromium browsers.
+- **v1** — controlled-tab loop with the tool set above, reference-first targeting, the site-trust gate, CDP execution, Web Store listing. Built; verified end-to-end (Chrome and Arc).
+- **v2** — the MCP front door + extension-side gate and trust list.
+- **Deferred** — multi-tab orchestration beyond one controlled tab; non-Chromium browsers.
 
 ## Out of scope
 
