@@ -28,9 +28,9 @@ never writes to project files.
 - **Linggen engine** — memory tools for every agent, the always-on
   identity block in each session, per-turn recall, and the capture
   protocol in the system prompt.
-- **Memory agent + missions** — the offline judgment brain; runs the
-  nightly **dream** and monthly **condense** missions. The memory
-  app's buttons trigger the same missions.
+- **Memory agent + mission** — the offline judgment brain; runs the
+  nightly **dream** mission (remember → forget → condense). The memory
+  app's buttons trigger the same mission.
 - **shared-memory skill** — the same store in Claude Code, Codex, and
   OpenClaw: recall each turn, capture protocol, runbooks, and the
   memory app UI (calendar, dashboard, row browser).
@@ -65,14 +65,17 @@ never writes to project files.
 - **Dream** (nightly) — reviews each day's short-term staging,
   promotes what's durable, and lets the rest fade. Never deletes
   unjudged rows. Day-by-day, with a visible per-day state on the
-  calendar.
+  calendar. Ends with the condense stage once the worklist is clear.
 - **Scan** (user-triggered) — backfills a past day from host session
   logs, for days live capture missed. Safe to re-run: sessions that
   already contributed are skipped.
-- **Condense** (monthly) — cures stale long-term memory: chains of
-  superseded notes and clusters of same-subject notes collapse into
-  one focused current-truth row each. Only touches the agent's own
-  notes; ships off until supervised runs earn trust; back up first.
+- **Condense** (dream's last stage) — cures stale long-term memory:
+  chains of superseded notes collapse into one focused current-truth
+  row each. Only touches the agent's own notes. Unattended runs take
+  only high-confidence cited chains, capped per night, with a store
+  snapshot before every run; marker/subject clusters wait for an
+  attended pass (chat verb, calendar review) where the user can be
+  asked.
 - **Secrets** — credentials never enter memory; deleted on sight.
 
 ## Rules

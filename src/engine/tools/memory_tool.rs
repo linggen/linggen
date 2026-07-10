@@ -81,7 +81,7 @@ impl Tool for MemoryQueryTool {
     fn cacheable(&self) -> bool {
         // The store is live mutable state shared across sessions and
         // hosts — an identical query can legitimately return new data
-        // (the condense mission re-scans at offset 0 after every merge).
+        // (the condense pass re-scans at offset 0 after every merge).
         false
     }
     fn args_schema(&self) -> Value {
@@ -670,6 +670,77 @@ async fn install_ling_mem() -> Result<()> {
         return Err(anyhow!("install-bin.sh failed: {}", err.trim()));
     }
     Ok(())
+}
+
+/// Snapshot the store before a memory-agent mission run. Condense
+/// merges retire rows atomically (`replace_ids` has no undo), so every
+/// run day gets one ndjson export under `~/.linggen/memory/backups/`,
+/// pruned to the last 7. Best-effort by design: a failed backup logs
+/// and the run proceeds — the unattended condense stage is already
+/// capped to pre-confirmed cited chains.
+pub(crate) async fn backup_store_best_effort() {
+    if let Err(e) = try_backup_store().await {
+        tracing::warn!("memory store backup failed (run proceeds): {e:#}");
+    }
+}
+
+async fn try_backup_store() -> Result<()> {
+    let bin =
+        resolve_ling_mem().ok_or_else(|| anyhow!("ling-mem binary not found for backup"))?;
+    let dir = crate::paths::linggen_home().join("memory/backups");
+    tokio::fs::create_dir_all(&dir).await?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let path = dir.join(format!("store-{today}.ndjson"));
+    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(()); // one snapshot per day covers every run that day
+    }
+
+    let out = tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::process::Command::new(&bin)
+            .arg("export")
+            .arg(&path)
+            .env("LINGGEN_DATA_DIR", crate::paths::linggen_home())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| anyhow!("`ling-mem export` did not complete within 60s"))?
+    .context("spawning `ling-mem export`")?;
+
+    if !out.status.success() {
+        let _ = tokio::fs::remove_file(&path).await;
+        anyhow::bail!(
+            "`ling-mem export` failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    tracing::info!("memory store snapshot written: {}", path.display());
+    prune_backups(&dir).await;
+    Ok(())
+}
+
+/// Keep the newest 7 `store-*.ndjson` snapshots — date-named, so
+/// lexicographic order is chronological.
+async fn prune_backups(dir: &std::path::Path) {
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let p = entry.path();
+        let is_snapshot = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("store-") && n.ends_with(".ndjson"));
+        if is_snapshot {
+            files.push(p);
+        }
+    }
+    files.sort();
+    while files.len() > 7 {
+        let _ = tokio::fs::remove_file(files.remove(0)).await;
+    }
 }
 
 /// Ensure the binary exists (installing it if missing) and run `<bin> start`.

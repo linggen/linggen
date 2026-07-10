@@ -507,6 +507,13 @@ async fn dispatch_mission_prompt(
         false,
     );
 
+    // Memory-agent runs end in the condense stage, whose replace_ids
+    // merges retire long-term rows with no undo — snapshot the store
+    // first (one export per day, 7 kept, best-effort).
+    if mission.agent_id == "memory" {
+        crate::engine::tools::memory_tool::backup_store_best_effort().await;
+    }
+
     let sid = session_id.as_deref().unwrap_or("default");
     let agent = match state.manager.get_or_create_session_agent(sid, &root, agent_id).await {
         Ok(a) => a,

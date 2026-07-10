@@ -21,6 +21,8 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
     let mut worklist: Option<String> = None;
     let mut remembered: Vec<String> = Vec::new();
     let mut swept: Vec<String> = Vec::new();
+    let mut merges = 0u64;
+    let mut retired = 0u64;
 
     for m in messages.iter().filter(|m| m.from_id == "system") {
         if let Some(json) = m.content.strip_prefix(WRITE_OK) {
@@ -31,6 +33,9 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
                 remembered.push(line);
             } else if let Some(line) = sweep_line(&v) {
                 swept.push(line);
+            } else if let Some(n) = replaced_count(&v) {
+                merges += 1;
+                retired += n;
             }
         } else if worklist.is_none() {
             if let Some(json) = m.content.strip_prefix(QUERY_OK) {
@@ -39,15 +44,30 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
         }
     }
 
-    if remembered.is_empty() && swept.is_empty() {
+    if remembered.is_empty() && swept.is_empty() && merges == 0 {
         return None;
     }
+    let condensed = (merges > 0).then(|| {
+        format!("condensed: {merges} chain(s) merged, {retired} superseded rows retired")
+    });
     let lines: Vec<String> = worklist
         .into_iter()
         .chain(remembered)
         .chain(swept)
+        .chain(condensed)
         .collect();
     Some(format!("Mission report:\n- {}", lines.join("\n- ")))
+}
+
+/// An add that carried `replace_ids` — the daemon reports the retired
+/// losers in `replaced`. Counts both condense chain-collapses and
+/// see-it-solve-it merges during a remember pass.
+fn replaced_count(v: &serde_json::Value) -> Option<u64> {
+    let replaced = v.get("replaced")?.as_array()?;
+    if replaced.is_empty() {
+        return None;
+    }
+    Some(replaced.len() as u64)
 }
 
 /// The run's first `days` rollup — how many days were pending at
@@ -165,6 +185,23 @@ mod tests {
              - worklist: 1 pending day — 2026-07-03 (14 rows)\n\
              - remembered 2026-07-03: 14 judged, 7 promoted to long-term\n\
              - forget sweep: removed 4 expired rows (2026-06-29: 4)"
+        );
+    }
+
+    #[test]
+    fn condense_merges_are_counted() {
+        let messages = vec![
+            sys(r#"Tool Memory_write: success: {"days":{},"dry_run":false,"removed":0}"#),
+            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"s1"},"replaced":["a","b"]}"#),
+            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"s2"},"replaced":["c"]}"#),
+            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"plain"}}"#),
+        ];
+        let report = compose_memory_report(&messages).unwrap();
+        assert_eq!(
+            report,
+            "Mission report:\n\
+             - forget sweep: nothing expired\n\
+             - condensed: 2 chain(s) merged, 3 superseded rows retired"
         );
     }
 
