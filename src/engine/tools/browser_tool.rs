@@ -4,10 +4,8 @@
 //! (`server::bridge::BridgeHub`) to the `linggen-browser` extension, which
 //! drives ONE visible controlled tab through CDP. Targeting is
 //! reference-first: `Browser_readPage` returns a node tree with per-node
-//! `ref`s; click/type resolve by ref. The engine caches ref → (role, name)
-//! from the last read so the safety gate (`engine/browser_gate.rs`) can
-//! recognize hard-floor targets (pay / password / delete / post buttons)
-//! without another round trip.
+//! `ref`s; click/type resolve by ref. Mutating actions are gated by the
+//! extension's own permission prompt (per-origin trust + hard floor).
 //!
 //! None of these tools is cacheable — the page is live mutable state.
 
@@ -25,15 +23,6 @@ use serde_json::{json, Value};
 const CALL_TIMEOUT_MS: u64 = 20_000;
 const NAVIGATE_TIMEOUT_MS: u64 = 45_000;
 const GATED_TIMEOUT_MS: u64 = 150_000;
-
-/// What the engine remembers about one actionable node from the last
-/// `read_page` — enough for the safety gate's hard-floor check and for
-/// readable permission prompts.
-#[derive(Debug, Clone, Default)]
-pub struct BrowserNodeMeta {
-    pub role: String,
-    pub name: String,
-}
 
 impl Tools {
     /// Broker one control op over the bridge. `Ok(data)` on success; a
@@ -64,51 +53,6 @@ impl Tools {
         }
     }
 
-    /// Origin (`scheme://host`) of the controlled tab right now. The safety
-    /// gate calls this live before each mutating action — a cached URL could
-    /// be stale after a redirect or an in-page navigation. `None` when no
-    /// controlled tab exists yet or the bridge is down.
-    pub(crate) async fn browser_current_origin(&self) -> Option<String> {
-        let data = self
-            .browser_call("tabs", json!({ "action": "list" }), 5_000)
-            .await
-            .ok()?;
-        let url = data.get("tabs")?.as_array()?.first()?.get("url")?.as_str()?;
-        origin_of(url)
-    }
-
-    /// Ref metadata from the last `Browser_readPage`, if any.
-    pub(crate) fn browser_ref_meta(&self, ref_id: &str) -> Option<BrowserNodeMeta> {
-        self.browser_refs.lock().ok()?.get(ref_id).cloned()
-    }
-
-    /// Replace the ref cache with the nodes of a fresh `read_page`.
-    fn browser_store_refs(&self, data: &Value) {
-        let Ok(mut map) = self.browser_refs.lock() else { return };
-        map.clear();
-        let Some(nodes) = data.get("nodes").and_then(Value::as_array) else { return };
-        for node in nodes {
-            let Some(ref_id) = node.get("ref").and_then(Value::as_str) else { continue };
-            map.insert(
-                ref_id.to_string(),
-                BrowserNodeMeta {
-                    role: node.get("role").and_then(Value::as_str).unwrap_or_default().to_string(),
-                    name: node.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
-                },
-            );
-        }
-    }
-}
-
-/// `scheme://host` of a URL, lowercased. `None` for anything that isn't a
-/// well-formed absolute URL with a host.
-pub fn origin_of(url: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    let host = rest.split(['/', '?', '#']).next()?;
-    if host.is_empty() || scheme.is_empty() {
-        return None;
-    }
-    Some(format!("{}://{}", scheme.to_lowercase(), host.to_lowercase()))
 }
 
 fn opt_str(args: &Value, key: &str) -> Option<String> {
@@ -200,7 +144,6 @@ impl Tool for BrowserReadPageTool {
             params["filter"] = json!(filter);
         }
         let data = tools.browser_call("read_page", params, CALL_TIMEOUT_MS).await?;
-        tools.browser_store_refs(&data);
         let truncated = data.get("truncated").and_then(Value::as_bool).unwrap_or(false);
         Ok(ToolResult::Success(format!(
             "{} — \"{}\"{}\n\n{}",
@@ -528,23 +471,5 @@ impl Tool for BrowserTabsTool {
         };
         let data = tools.browser_call("tabs", call.args, timeout).await?;
         Ok(ToolResult::Success(data.to_string()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn origin_of_parses_scheme_and_host() {
-        assert_eq!(origin_of("https://x.com/home?a=1"), Some("https://x.com".into()));
-        assert_eq!(origin_of("HTTPS://X.com"), Some("https://x.com".into()));
-        assert_eq!(
-            origin_of("http://localhost:3000/app#x"),
-            Some("http://localhost:3000".into())
-        );
-        assert_eq!(origin_of("about:blank"), None);
-        assert_eq!(origin_of("back"), None);
-        assert_eq!(origin_of("https://"), None);
     }
 }

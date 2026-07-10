@@ -1,5 +1,4 @@
 use super::types::*;
-use crate::engine::browser_gate::BrowserGateDecision;
 use crate::engine::permission;
 use crate::engine::render::{
     normalize_tool_path_arg, render_tool_result, render_tool_result_public,
@@ -447,30 +446,11 @@ impl AgentEngine {
             }
         }
 
-        // --- browser control gate (browser-control-spec.md) ---
-        // A site-trust class, separate from filesystem modes: mutating
-        // browser actions prompt per action until the origin is trusted for
-        // the session; the hard floor (payment / credentials / delete /
-        // post-as-user) always confirms, even on a trusted site.
-        if permission::is_browser_tool(&canonical_tool)
-            && permission::browser_action_mutating(&canonical_tool, &args)
-        {
-            match self.browser_safety_gate(&canonical_tool, &args).await {
-                BrowserGateDecision::Proceed => {}
-                BrowserGateDecision::Deny(msg) => {
-                    self.upsert_observation("error", &canonical_tool, msg.clone());
-                    messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
-                    return PreExecOutcome::Blocked(LoopControl::Continue);
-                }
-                BrowserGateDecision::Timeout => {
-                    let msg = self
-                        .prompt_store
-                        .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
-                    let _ = self.persist_assistant_message(&msg, session_id).await;
-                    return PreExecOutcome::Blocked(LoopControl::Return(AgentOutcome::None));
-                }
-            }
-        }
+        // Browser_* mutating actions are gated by the extension itself
+        // (browser-control-spec.md): the Allow prompt renders in the browser
+        // and the trust list lives in extension storage — one gate for every
+        // caller (engine sessions and /mcp alike). A user deny surfaces here
+        // as a normal `not_permitted` tool error.
 
         // --- redundancy / cache gates ---
         // Tools that read live mutable state (Memory_query: the store is

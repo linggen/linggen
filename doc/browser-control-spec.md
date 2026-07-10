@@ -100,7 +100,7 @@ The gate lives in the **extension** (v2, aligned with Claude in Chrome) so every
 - **A hard floor never auto-executes**, even on a trusted site — payment, passwords/security, deleting data, posting/sending on the user's behalf. Floor prompts never offer "Always" and persist nothing. Recognized from the target's accessible name, so it covers ref-targeted actions; a coordinate click has no name to inspect — another reason refs are the preferred targeting mode.
 - **The controlled tab is visible**, and the agent's actions are legible in it, so the user can interrupt.
 - The prompt is an extension window, not page DOM — the page can't render, click, or dismiss it.
-- Interim: the engine's per-session gate (`browser_origins`, in-chat prompt) is still active for Linggen sessions and retires once the extension gate is verified live — the system is never gateless in between.
+- The engine has no gate of its own (the v1 per-session `browser_origins` gate was retired once the extension gate was verified live): one gate, one trust store, every caller equal.
 
 ## MCP front door (v2)
 

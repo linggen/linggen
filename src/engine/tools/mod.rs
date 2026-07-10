@@ -196,11 +196,6 @@ pub struct Tools {
     /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
     /// `None` in CLI/eval contexts, where browser control is unavailable.
     pub(crate) browser_bridge: Option<Arc<crate::server::bridge::BridgeHub>>,
-    /// ref → node metadata from the last `Browser_readPage` — the safety
-    /// gate's lookup for hard-floor targets. Arc-shared across clones so the
-    /// gate (engine) and the tool executor see the same cache.
-    pub(crate) browser_refs:
-        Arc<std::sync::Mutex<HashMap<String, browser_tool::BrowserNodeMeta>>>,
 }
 
 impl Tools {
@@ -223,7 +218,6 @@ impl Tools {
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,
-            browser_refs: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 

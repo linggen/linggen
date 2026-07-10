@@ -103,7 +103,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(MemoryWriteTool),
             // Browser_* — browser control over the bridge to the
             // linggen-browser extension (browser-control-spec.md). Mutating
-            // actions pass the site-trust gate in engine/browser_gate.rs.
+            // actions are gated by the extension's own permission prompt.
             Arc::new(BrowserNavigateTool),
             Arc::new(BrowserReadPageTool),
             Arc::new(BrowserScreenshotTool),
