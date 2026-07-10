@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: browser_* + x_* + memory_* live; linggen plugin + ClawHub skill next
+status: browser_* + x_* + memory_* live; linggen plugin shipped (shared-memory retired); ClawHub skill next
 ---
 
 # Linggen MCP — the capability front door
@@ -55,8 +55,10 @@ Three channels, one product name: **linggen**.
   - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9898/mcp`).
   - Hooks: the same per-turn recall hook (`recall.sh`, CLI-based — no MCP
     round-trip in a shell hook) + session-start core load.
-  - Autostart: ensure the engine is installed (`install.sh`) and the daemon is
-    up on `:9898`; the engine auto-installs ling-mem on first memory use.
+  - Autostart: start the daemon on `:9898` when the `ling` binary exists; when
+    it doesn't, inject a one-line install hint into session context — never a
+    surprise engine download inside a session hook. ling-mem still bootstraps
+    itself (the recall hook needs its CLI).
   - SKILL.md: the memory protocol (ops via `memory_*` MCP tools — this
     supersedes the old plugin's CLI-only rule; CLI remains the fallback) plus
     a short browser-control section (visible tab, permission prompt in the
@@ -96,7 +98,7 @@ deprecation window:
 ## Phasing
 
 1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
-2. **`linggen` plugin** — new plugin, shared-memory retirement notes.
+2. **`linggen` plugin** — new plugin, shared-memory retirement notes. Done.
 3. **ClawHub `linggen` skill** + listing updates.
 4. **Site/docs** — install pages route to the one endpoint.
 5. Later: `agent_*`.
