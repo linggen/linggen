@@ -103,6 +103,14 @@ impl OpenAiClient {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .connect_timeout(std::time::Duration::from_secs(10))
+            // The total timeout above does NOT govern bodies consumed via
+            // bytes_stream() (reqwest gap) — a backend that accepts the
+            // request and then goes silent wedges the run forever (observed
+            // live 2026-07-10: 35 min on one Responses API call). read_timeout
+            // bounds every socket read, streaming included; reasoning models'
+            // silent thinking gaps stay well under it, and the resulting
+            // error is transient-classified so the model fallback chain runs.
+            .read_timeout(std::time::Duration::from_secs(180))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -125,6 +133,14 @@ impl OpenAiClient {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .connect_timeout(std::time::Duration::from_secs(10))
+            // The total timeout above does NOT govern bodies consumed via
+            // bytes_stream() (reqwest gap) — a backend that accepts the
+            // request and then goes silent wedges the run forever (observed
+            // live 2026-07-10: 35 min on one Responses API call). read_timeout
+            // bounds every socket read, streaming included; reasoning models'
+            // silent thinking gaps stay well under it, and the resulting
+            // error is transient-classified so the model fallback chain runs.
+            .read_timeout(std::time::Duration::from_secs(180))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -442,7 +458,7 @@ impl OpenAiClient {
         let token_stream = lines.filter_map(move |line_result| async move {
             let line = match line_result {
                 Ok(l) => l,
-                Err(e) => return Some(Err(anyhow::anyhow!("stream error: {}", e))),
+                Err(e) => return Some(Err(crate::provider::stream_read_error(e))),
             };
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -723,7 +739,7 @@ impl OpenAiClient {
             .map(move |line_result| {
                 let line = match line_result {
                     Ok(l) => l,
-                    Err(e) => return vec![Err(anyhow::anyhow!("stream error: {}", e))],
+                    Err(e) => return vec![Err(crate::provider::stream_read_error(e))],
                 };
                 let trimmed = line.trim();
                 if trimmed.is_empty() || trimmed.starts_with("event:") {

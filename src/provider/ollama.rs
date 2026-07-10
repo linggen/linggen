@@ -46,6 +46,10 @@ impl OllamaClient {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .connect_timeout(std::time::Duration::from_secs(10))
+            // Bounds streamed reads too — the total timeout doesn't (see
+            // provider/openai.rs for the full rationale). Generous because
+            // local models can pause long between tokens under load.
+            .read_timeout(std::time::Duration::from_secs(300))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -180,7 +184,7 @@ impl OllamaClient {
         let token_stream = lines.filter_map(|line_result| async move {
             let line = match line_result {
                 Ok(l) => l,
-                Err(e) => return Some(Err(anyhow::anyhow!("stream error: {}", e))),
+                Err(e) => return Some(Err(crate::provider::stream_read_error(e))),
             };
             if line.trim().is_empty() {
                 return None;
@@ -296,7 +300,7 @@ impl OllamaClient {
             .map(|line_result| {
                 let line = match line_result {
                     Ok(l) => l,
-                    Err(e) => return vec![Err(anyhow::anyhow!("stream error: {}", e))],
+                    Err(e) => return vec![Err(crate::provider::stream_read_error(e))],
                 };
                 if line.trim().is_empty() {
                     return vec![];

@@ -388,7 +388,7 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
     server_handle.abort();
 
     // Exchange code for tokens
-    let http = reqwest::Client::new();
+    let http = auth_http();
     let tokens = exchange_code_for_tokens(&http, &code, &redirect_uri, &code_verifier).await?;
 
     // Save tokens
@@ -403,10 +403,21 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
 // Device code flow (for headless environments)
 // ---------------------------------------------------------------------------
 
+
+/// Small bounded client for auth/token calls — these are quick JSON POSTs
+/// and must never hang a caller (a bare `Client::new()` has NO timeouts).
+fn auth_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Start device code flow. Returns a user code for the user to enter at
 /// auth.openai.com/codex/device, then polls until authorized.
 pub async fn device_code_login() -> Result<CodexAuthTokens> {
-    let http = reqwest::Client::new();
+    let http = auth_http();
 
     // Step 1: Request user code
     let resp = http
@@ -493,7 +504,7 @@ impl CodexAuthManager {
         let tokens = CodexAuthTokens::load(&codex_auth_file());
         Self {
             tokens: RwLock::new(tokens),
-            http: reqwest::Client::new(),
+            http: auth_http(),
         }
     }
 

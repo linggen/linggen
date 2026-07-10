@@ -243,7 +243,7 @@ impl AnthropicClient {
                         }
                         Some(Err(e)) => {
                             return Some((
-                                Err(anyhow::anyhow!("anthropic stream error: {}", e)),
+                                Err(crate::provider::stream_read_error(e)),
                                 (byte_stream, buf, state),
                             ));
                         }
@@ -619,6 +619,9 @@ fn build_http() -> Client {
     Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .connect_timeout(std::time::Duration::from_secs(10))
+        // Bounds streamed reads too — the total timeout doesn't (see
+        // provider/openai.rs for the full rationale).
+        .read_timeout(std::time::Duration::from_secs(180))
         .build()
         .unwrap_or_else(|_| Client::new())
 }
