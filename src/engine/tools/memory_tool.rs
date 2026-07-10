@@ -40,6 +40,13 @@ const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// that's about to succeed.
 const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Outer bound on one full Memory_* dispatch — meta lookup, voice guard,
+/// HTTP with one autostart retry (worst legitimate case ≈ 30s). The
+/// 2026-07-10 dream run wedged on an await BEFORE the HTTP layer's own
+/// 5s budget and froze the mission for 29 minutes; every path through
+/// dispatch must surface as a tool error, never a silent hang.
+const MEMORY_TOOL_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Binary version the engine bootstraps when `ling-mem` is missing. A semver
 /// range floor — `install-bin.sh` resolves it to the highest matching release.
 /// Major-version range now that ling-mem has cut 1.0 — resolves to the highest
@@ -113,7 +120,7 @@ impl Tool for MemoryQueryTool {
     }
 
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        dispatch_memory(tools, "Memory_query", call.args).await
+        dispatch_memory_bounded(tools, "Memory_query", call.args).await
     }
 }
 
@@ -164,7 +171,7 @@ impl Tool for MemoryWriteTool {
     }
 
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        dispatch_memory(tools, "Memory_write", call.args).await
+        dispatch_memory_bounded(tools, "Memory_write", call.args).await
     }
 }
 
@@ -267,6 +274,26 @@ async fn guard_user_voice_replace(
 // ---------------------------------------------------------------------------
 // HTTP dispatch — POST to <ling_mem_url>/api/memory/<verb>
 // ---------------------------------------------------------------------------
+
+/// Timeout shell around [`dispatch_memory`] — the model-facing entry for
+/// both Memory_* tools. A timed-out write's store outcome is unknown
+/// (the daemon may have applied it after we stopped waiting), so the
+/// error tells the model to re-query before retrying.
+async fn dispatch_memory_bounded(
+    tools: &Tools,
+    tool_name: &'static str,
+    args: Value,
+) -> Result<ToolResult> {
+    match tokio::time::timeout(MEMORY_TOOL_TIMEOUT, dispatch_memory(tools, tool_name, args)).await
+    {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!(
+            "{tool_name} timed out after {}s and was abandoned. The store may or may not \
+             have applied it — Memory_query first to check, then retry once if needed.",
+            MEMORY_TOOL_TIMEOUT.as_secs()
+        ),
+    }
+}
 
 /// Tool-trait wrapper: read `ling_mem_url` from the engine config and
 /// return the result as a `ToolResult::Success(json_string)`. The model
