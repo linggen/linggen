@@ -31,9 +31,11 @@ never writes to project files.
 - **Memory agent + mission** — the offline judgment brain; runs the
   nightly **dream** mission (remember → forget → condense). The memory
   app's buttons trigger the same mission.
-- **shared-memory skill** — the same store in Claude Code, Codex, and
-  OpenClaw: recall each turn, capture protocol, runbooks, and the
-  memory app UI (calendar, dashboard, row browser).
+- **linggen plugin/skill** (formerly shared-memory) — the same store in
+  Claude Code, Codex, and OpenClaw: recall each turn, capture protocol,
+  runbooks, and the memory app UI (calendar, dashboard, row browser).
+  Third-party hosts reach the store through the daemon's `/mcp`
+  `memory_*` group (`mcp-spec.md`).
 
 ## Tiers
 
@@ -116,6 +118,6 @@ inspection and recovery.
 
 Capture protocol: the engine system prompt + the skill's MCP
 instructions · offline judgment: `agents/memory.md` · dream/condense
-procedures: the shared-memory skill's runbooks · store schema and
+procedures: the linggen skill's runbooks · store schema and
 CLI: `linggen-memory` docs · layout: `storage-spec.md` · tool
 dispatch: `tool-spec.md`.
