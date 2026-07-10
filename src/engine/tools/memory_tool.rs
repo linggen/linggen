@@ -59,7 +59,7 @@ const LING_MEM_PIN: &str = "^1";
 /// Canonical binary-only installer (SHA-256 verified inside). Fetched over
 /// HTTPS and run via `bash -s` when the binary is absent.
 const INSTALL_BIN_URL: &str =
-    "https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/shared-memory/scripts/install-bin.sh";
+    "https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh";
 
 pub struct MemoryQueryTool;
 

@@ -56,9 +56,14 @@ Three channels, one product name: **linggen**.
   - Hooks: the same per-turn recall hook (`recall.sh`, CLI-based — no MCP
     round-trip in a shell hook) + session-start core load.
   - Autostart: start the daemon on `:9898` when the `ling` binary exists; when
-    it doesn't, inject a one-line install hint into session context — never a
-    surprise engine download inside a session hook. ling-mem still bootstraps
-    itself (the recall hook needs its CLI).
+    it doesn't, install the engine in the **background** (detached — session
+    start never blocks; lock dir prevents races; `LINGGEN_NO_ENGINE_INSTALL=1`
+    opts out) and disclose the install in the session context line. Both
+    binaries are required components of the plugin — decided 2026-07-10,
+    reversing the earlier hint-only rule. Awareness = context line + README +
+    plugin description; hook-less channels (ClawHub, skills.sh) get the same
+    via the SKILL.md first-use gate (agent announces, then installs).
+    ling-mem still bootstraps itself (the recall hook needs its CLI).
   - SKILL.md: the memory protocol (ops via `memory_*` MCP tools — this
     supersedes the old plugin's CLI-only rule; CLI remains the fallback) plus
     a short browser-control section (visible tab, permission prompt in the
