@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: v1 built + verified e2e — engine tools + extension control module; Web Store listing pending; MCP front door spec'd as v2
+status: v1 built + verified e2e; v2 MCP endpoint built + verified (Claude Code connects) — extension-side gate and Web Store listing pending
 ---
 
 # Browser Control
@@ -122,7 +122,7 @@ Public Chrome Web Store, same channel as the read extension — Pulse-style capa
 ## Phasing
 
 - **v1** — controlled-tab loop with the tool set above, reference-first targeting, the site-trust gate, CDP execution, Web Store listing. Built; verified end-to-end (Chrome and Arc).
-- **v2** — the MCP front door + extension-side gate and trust list.
+- **v2** — the MCP front door (endpoint built — `/mcp`, stateless streamable HTTP, ten `browser_*` tools) + extension-side gate and trust list (open).
 - **Deferred** — multi-tab orchestration beyond one controlled tab; non-Chromium browsers.
 
 ## Out of scope

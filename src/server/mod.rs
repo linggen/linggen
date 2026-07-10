@@ -1,6 +1,7 @@
 mod api;
 pub(crate) mod bridge;
 mod chat;
+mod mcp;
 mod events;
 pub(crate) mod rtc;
 mod state;
@@ -1067,6 +1068,7 @@ async fn prepare_server(
         .route("/api/bridge/socket", get(bridge::socket_handler))
         .route("/api/bridge/call", post(bridge::call_handler))
         .route("/api/bridge/status", get(bridge::status_handler))
+        .route("/mcp", post(mcp::post_handler).get(mcp::get_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
         .route("/api/presence", post(api::yinyue::presence_handler))
         .route("/api/rtc/whip", post(rtc::whip_handler))
