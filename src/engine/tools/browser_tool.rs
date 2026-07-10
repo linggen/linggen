@@ -19,9 +19,12 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 /// Default broker timeout. Navigation gets longer — a cold page load plus
-/// the extension's settle delay can exceed the 20s default.
+/// the extension's settle delay can exceed the 20s default. Mutating ops get
+/// longer still: the extension's permission prompt waits on a human (up to
+/// 120s) before the action even starts.
 const CALL_TIMEOUT_MS: u64 = 20_000;
 const NAVIGATE_TIMEOUT_MS: u64 = 45_000;
+const GATED_TIMEOUT_MS: u64 = 150_000;
 
 /// What the engine remembers about one actionable node from the last
 /// `read_page` — enough for the safety gate's hard-floor check and for
@@ -151,7 +154,7 @@ impl Tool for BrowserNavigateTool {
         let url = opt_str(&call.args, "url")
             .ok_or_else(|| anyhow::anyhow!("Browser_navigate requires url"))?;
         let data = tools
-            .browser_call("navigate", json!({ "url": url }), NAVIGATE_TIMEOUT_MS)
+            .browser_call("navigate", json!({ "url": url }), GATED_TIMEOUT_MS)
             .await?;
         Ok(ToolResult::Success(format!(
             "navigated to {} — \"{}\"",
@@ -289,7 +292,7 @@ impl Tool for BrowserClickTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("click", call.args, CALL_TIMEOUT_MS).await?;
+        let data = tools.browser_call("click", call.args, GATED_TIMEOUT_MS).await?;
         Ok(ToolResult::Success(format!(
             "clicked {} — page is now {}",
             data_str(&data, "target"),
@@ -328,7 +331,7 @@ impl Tool for BrowserTypeTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("type", call.args, CALL_TIMEOUT_MS).await?;
+        let data = tools.browser_call("type", call.args, GATED_TIMEOUT_MS).await?;
         Ok(ToolResult::Success(format!(
             "typed {} characters",
             data.get("typed").and_then(Value::as_u64).unwrap_or(0),
@@ -365,7 +368,7 @@ impl Tool for BrowserKeyTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("key", call.args, CALL_TIMEOUT_MS).await?;
+        let data = tools.browser_call("key", call.args, GATED_TIMEOUT_MS).await?;
         Ok(ToolResult::Success(format!("pressed {}", data_str(&data, "pressed"))))
     }
 }
@@ -519,7 +522,7 @@ impl Tool for BrowserTabsTool {
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let timeout = if call.args.get("action").and_then(Value::as_str) == Some("open") {
-            NAVIGATE_TIMEOUT_MS
+            GATED_TIMEOUT_MS
         } else {
             CALL_TIMEOUT_MS
         };

@@ -24,6 +24,9 @@ use crate::server::ServerState;
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const CALL_TIMEOUT_MS: u64 = 20_000;
 const NAVIGATE_TIMEOUT_MS: u64 = 45_000;
+/// Mutating ops wait on the extension's permission prompt (a human, up to
+/// 120s) before acting.
+const GATED_TIMEOUT_MS: u64 = 150_000;
 /// Session reads open a hidden tab and wait for the site's own responses.
 const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 
@@ -51,7 +54,7 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["url"]
         }),
-        timeout_ms: NAVIGATE_TIMEOUT_MS,
+        timeout_ms: GATED_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_read_page",
@@ -88,7 +91,7 @@ const TOOLS: &[McpTool] = &[
                 "double": {"type": "boolean", "description": "Double-click"}
             }
         }),
-        timeout_ms: CALL_TIMEOUT_MS,
+        timeout_ms: GATED_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_type",
@@ -104,7 +107,7 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["text"]
         }),
-        timeout_ms: CALL_TIMEOUT_MS,
+        timeout_ms: GATED_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_key",
@@ -119,7 +122,7 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["keys"]
         }),
-        timeout_ms: CALL_TIMEOUT_MS,
+        timeout_ms: GATED_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_scroll",
@@ -185,7 +188,7 @@ const TOOLS: &[McpTool] = &[
             },
             "required": ["action"]
         }),
-        timeout_ms: NAVIGATE_TIMEOUT_MS,
+        timeout_ms: GATED_TIMEOUT_MS,
     },
     McpTool {
         name: "browser_read_console",

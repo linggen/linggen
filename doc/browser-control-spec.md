@@ -93,13 +93,14 @@ The extension drives the controlled tab through the **Chrome DevTools Protocol**
 
 ## Permission and safety
 
-Browser actions are a new tool class in `permission-spec.md`, distinct from filesystem modes. The default posture:
+The gate lives in the **extension** (v2, aligned with Claude in Chrome) so every caller — Linggen sessions and `/mcp` agents alike — passes the same floor:
 
 - **Read is free.** `readPage` / `screenshot` / `scroll` / `readConsole` run without a prompt.
-- **Mutating actions are gated per-action until the site is trusted.** `navigate`, `click`, `type`, `key` each prompt for confirmation on an untrusted origin. The confirmation offers "allow this site for the session": once granted, mutating actions on that origin run without further prompts. A fresh origin re-prompts. (Decided: this over a task-scoped handover — safer default, and the site-grant keeps prompt fatigue bounded.)
-- **A hard floor never auto-executes**, even on a trusted site — submitting payment, changing passwords/security settings, deleting data, posting/sending on the user's behalf. These pause for an explicit per-action confirmation, mirroring the assistant safety rules and Claude in Chrome's action categories. The floor is recognized from the target element's accessible name, so it applies to ref-targeted actions; a coordinate click has no name to inspect — another reason refs are the preferred targeting mode.
-- Trusted origins are stored per session (`browser_origins` in the session's `permission.json`), alongside the path grants.
+- **Mutating actions gate per origin.** `navigate`, `click`, `type`, `key`, `tabs open` on an untrusted origin pop a small extension window on the controlled tab: *Always allow this site* (persists in extension storage until revoked from the popup), *Allow once* (this browsing session), *Deny*. Trusted origins run without prompts; a closed or unanswered prompt (120s) is a deny (`not_permitted`).
+- **A hard floor never auto-executes**, even on a trusted site — payment, passwords/security, deleting data, posting/sending on the user's behalf. Floor prompts never offer "Always" and persist nothing. Recognized from the target's accessible name, so it covers ref-targeted actions; a coordinate click has no name to inspect — another reason refs are the preferred targeting mode.
 - **The controlled tab is visible**, and the agent's actions are legible in it, so the user can interrupt.
+- The prompt is an extension window, not page DOM — the page can't render, click, or dismiss it.
+- Interim: the engine's per-session gate (`browser_origins`, in-chat prompt) is still active for Linggen sessions and retires once the extension gate is verified live — the system is never gateless in between.
 
 ## MCP front door (v2)
 
@@ -108,8 +109,9 @@ Browser control as a product for *any* agent, not just Linggen's. The daemon hos
 - **Endpoint** — streamable-HTTP MCP server on the daemon (`http://127.0.0.1:9898/mcp`), localhost-only. Tools mirror the control ops one-to-one: `browser_navigate`, `browser_read_page`, `browser_click`, `browser_type`, `browser_key`, `browser_scroll`, `browser_screenshot`, `browser_wait`, `browser_tabs`, `browser_read_console`.
 - **Linggen agents stay on the native tools.** The tool name is already the switchable seam; the native path carries what MCP cannot — gate prompts in the calling chat, per-session `browser_origins`, screenshots attached to the conversation. (Claude Code makes the same call: Claude in Chrome is built into its CLI, not an MCP entry.)
 - **Install story for other agents** — daemon (`install.sh`) + extension (Web Store) + one line in the agent's MCP config. Two installs is the floor for any real-browser tool: MV3 forbids the extension being the server, so some OS-side process must exist.
-- **The gate moves into the extension.** An MCP caller has no Linggen chat to surface the confirmation, so the Allow / "trust this site" prompt renders in the browser on the controlled tab, and the trust list lives in extension storage. The extension gate is the floor every caller passes — no agent gets a bypass; the hard floor (payment, credentials, deletes, posting as the user) is enforced there too. The engine-side gate remains for Linggen sessions as the richer surface.
-- **Open** — trust-list persistence (browser-session vs until-revoked); whether MCP callers and Linggen sessions share one controlled tab or get one each.
+- **The gate lives in the extension** (see *Permission and safety*): the Allow prompt renders in the browser, trust persists in extension storage until revoked. The extension gate is the floor every caller passes — no agent gets a bypass.
+- **Session reads ride the same endpoint**: `x_search` / `x_targets` / `x_following` / `x_whotofollow` / `x_own` expose the x module's structured logged-in reads to any MCP agent — the capability no generic browser MCP has.
+- **Open** — whether MCP callers and Linggen sessions share one controlled tab or get one each.
 
 ## Distribution
 
