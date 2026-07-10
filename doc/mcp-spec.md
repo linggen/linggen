@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: browser_* + x_* + memory_* live; linggen plugin shipped (shared-memory retired); ClawHub skill next
+status: browser_* + x_* + memory_* live; linggen plugin shipped (shared-memory retired); ClawHub renamed+published; site/docs next
 ---
 
 # Linggen MCP — the capability front door
@@ -65,8 +65,9 @@ Three channels, one product name: **linggen**.
     browser).
   - Lives in the `linggen-memory` repo beside the old plugin, same
     marketplace; the repo can be renamed later without breaking installs.
-- **ClawHub skill `linggen`** (OpenClaw): same shape — SKILL.md + MCP config
-  pointing at `:9898/mcp`; supersedes the `ling-mem` ClawHub listing.
+- **ClawHub skill `linggen`** (OpenClaw): the `ling-mem` listing was renamed
+  in place (old slug redirects, history kept) and republished as `linggen`
+  2.0.0 — same SKILL.md as the plugin.
 - **Manual** (any MCP client):
   `claude mcp add --transport http linggen http://127.0.0.1:9898/mcp` or the
   equivalent in Cursor/Codex config.
@@ -80,7 +81,7 @@ deprecation window:
   plugin directory is replaced by `linggen`. The one live install (the dev
   machine) migrates as part of Phase 2 verification — never run both, two
   plugins means a doubled recall hook.
-- **ClawHub `ling-mem` skill** — listing updated to point at `linggen`.
+- **ClawHub `ling-mem` skill** — renamed to `linggen` (slug redirect). Done.
 - **ling-mem's own MCP server** — code stays (harmless) but is no longer
   promoted anywhere; docs and install pages route everyone to the linggen
   endpoint. The ling-mem binary/daemon itself is unchanged — it is the memory
@@ -99,6 +100,6 @@ deprecation window:
 
 1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
 2. **`linggen` plugin** — new plugin, shared-memory retirement notes. Done.
-3. **ClawHub `linggen` skill** + listing updates.
+3. **ClawHub `linggen` skill** + listing updates. Done.
 4. **Site/docs** — install pages route to the one endpoint.
 5. Later: `agent_*`.
