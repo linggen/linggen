@@ -158,13 +158,42 @@ export const useUiStore = create<UiState>((set) => ({
   showYinyueSpeech: (text, emotion) => {
     const id = `ys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     set({ yinyueSpeech: { id, text, emotion } });
-    // Linger well past the spoken line — her heralds often fire while the
-    // user is on another tab, and the bubble must still be there after
-    // they switch over. Click dismisses anytime; superseded speech wins.
+    // Dismiss countdown runs ONLY while this tab is visible — heralds
+    // often fire while the user is on another tab, and the bubble must
+    // still be waiting when they switch over. The clock starts (or
+    // resumes) on visibility; click dismisses anytime; newer speech
+    // supersedes (the id check makes stale timers no-ops).
     const ms = Math.min(45000, Math.max(15000, 2500 + text.length * 55));
-    setTimeout(() => {
-      set((s) => (s.yinyueSpeech?.id === id ? { yinyueSpeech: null } : {}));
-    }, ms);
+    let remaining = ms;
+    let timer: number | undefined;
+    let startedAt = 0;
+    const alive = () => useUiStore.getState().yinyueSpeech?.id === id;
+    const cleanup = () => {
+      document.removeEventListener('visibilitychange', onVis);
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    };
+    const pause = () => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+      remaining -= Date.now() - startedAt;
+    };
+    const resume = () => {
+      if (timer !== undefined || document.visibilityState !== 'visible') return;
+      startedAt = Date.now();
+      timer = window.setTimeout(() => {
+        cleanup();
+        set((s) => (s.yinyueSpeech?.id === id ? { yinyueSpeech: null } : {}));
+      }, Math.max(1000, remaining));
+    };
+    const onVis = () => {
+      if (!alive()) return cleanup();
+      if (document.visibilityState === 'visible') resume();
+      else pause();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    resume();
   },
   clearYinyueSpeech: () => set({ yinyueSpeech: null }),
 
