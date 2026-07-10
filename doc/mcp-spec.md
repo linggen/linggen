@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: browser_* + x_* + memory_* live; linggen plugin shipped (shared-memory retired); ClawHub renamed+published; site/docs next
+status: all four phases shipped — /mcp live (21 tools), linggen plugin + ClawHub skill published, site/docs routed; agent_* is the open item
 ---
 
 # Linggen MCP — the capability front door
@@ -86,8 +86,8 @@ deprecation window:
   promoted anywhere; docs and install pages route everyone to the linggen
   endpoint. The ling-mem binary/daemon itself is unchanged — it is the memory
   engine behind the proxy.
-- Site installers: `install-shared-memory.sh` retires; `install.sh` is the
-  base for every channel.
+- Site installers: `install-shared-memory.sh` is a guidance stub pointing at
+  the plugin channels; `install.sh` is the base for every channel. Done.
 
 ## Later
 
@@ -101,5 +101,5 @@ deprecation window:
 1. **memory_* on `/mcp`** — proxy + instructions + autostart path (engine). Done.
 2. **`linggen` plugin** — new plugin, shared-memory retirement notes. Done.
 3. **ClawHub `linggen` skill** + listing updates. Done.
-4. **Site/docs** — install pages route to the one endpoint.
+4. **Site/docs** — install pages route to the one endpoint. Done.
 5. Later: `agent_*`.
