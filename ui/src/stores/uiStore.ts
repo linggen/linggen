@@ -158,8 +158,10 @@ export const useUiStore = create<UiState>((set) => ({
   showYinyueSpeech: (text, emotion) => {
     const id = `ys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     set({ yinyueSpeech: { id, text, emotion } });
-    // Linger roughly as long as the spoken line; clear only if not superseded.
-    const ms = Math.min(12000, Math.max(3500, 2500 + text.length * 55));
+    // Linger well past the spoken line — her heralds often fire while the
+    // user is on another tab, and the bubble must still be there after
+    // they switch over. Click dismisses anytime; superseded speech wins.
+    const ms = Math.min(45000, Math.max(15000, 2500 + text.length * 55));
     setTimeout(() => {
       set((s) => (s.yinyueSpeech?.id === id ? { yinyueSpeech: null } : {}));
     }, ms);
