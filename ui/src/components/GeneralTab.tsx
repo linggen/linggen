@@ -22,13 +22,25 @@ export const GeneralTab: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.agent.compact_threshold]);
 
-  // Pet model picker: only the user's actually-configured models, so we never
-  // offer an id that isn't wired up (an unconfigured pick fails to resolve).
-  // "auto" is added directly in the <select>.
-  const petModelOptions = React.useMemo(
-    () => (config.models ?? []).map((m) => m.id),
-    [config.models],
-  );
+  // Pet model picker: the built-in models (runtime-injected — ChatGPT
+  // gpt-5.6 family, Linggen Cloud) plus the user's actually-configured
+  // models, so we never offer an id that isn't wired up (an unconfigured
+  // pick fails to resolve). "auto" is added directly in the <select>.
+  const [builtinIds, setBuiltinIds] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    fetch('/api/models')
+      .then((r) => r.json())
+      .then((ms) => {
+        if (Array.isArray(ms)) {
+          setBuiltinIds(ms.filter((m) => m?.is_builtin && m.id).map((m) => m.id));
+        }
+      })
+      .catch(() => {});
+  }, []);
+  const petModelOptions = React.useMemo(() => {
+    const configured = (config.models ?? []).map((m) => m.id);
+    return [...builtinIds, ...configured.filter((id) => !builtinIds.includes(id))];
+  }, [config.models, builtinIds]);
 
   return (
     <div className="space-y-6">
