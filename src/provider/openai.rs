@@ -172,6 +172,14 @@ impl OpenAiClient {
             if let Some(ref account_id) = tokens.account_id {
                 rb = rb.header("ChatGPT-Account-Id", account_id);
             }
+            // The Codex backend routes model slugs by originator+version;
+            // with no originator, gpt-5.6-luna resolves to a missing
+            // internal engine and 404s ("Model not found") while sol/terra
+            // happen to resolve. Identify as the Codex CLI — the
+            // combination the backend routes every published model for
+            // (openai/codex#31967).
+            rb = rb.header("originator", "codex_cli_rs");
+            rb = rb.header("version", "0.144.1");
         } else if self.linggen_account_live {
             if let Some((token, _)) = crate::account::resolve_token() {
                 rb = rb.header("Authorization", format!("Bearer {}", token));

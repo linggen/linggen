@@ -890,16 +890,23 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     });
 }
 
-/// Built-in ChatGPT model — always present, using the user's own ChatGPT
-/// Plus/Pro subscription via OAuth (no API key). Unlike the Linggen Cloud
-/// built-in, this ALWAYS wins: any user-configured entry with this id is
-/// replaced, not deferred to, so it's never rendered as a raw editable
-/// duplicate — sign in and star it, nothing to configure. A user wanting a
-/// different/custom ChatGPT-backed model should give it a different id.
-/// Bumping this to a newer OpenAI model generation: change the id here AND
-/// move the old id into CHATGPT_RETIRED_MODEL_IDS so persisted configs
-/// migrate on load, then release.
+/// Primary built-in ChatGPT model — the migration target for retired ids
+/// and the one routing defaults re-point to after a generation bump.
+/// Bumping to a newer OpenAI generation: change the ids here AND move the
+/// old ids into CHATGPT_RETIRED_MODEL_IDS so persisted configs migrate on
+/// load, then release.
 pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.6-terra";
+
+/// All built-in ChatGPT models — always present, using the user's own
+/// ChatGPT Plus/Pro subscription via OAuth (no API key). The GPT-5.6
+/// family: Sol (flagship), Terra (balanced), Luna (fast/cheap). Unlike the
+/// Linggen Cloud built-in, these ALWAYS win: any user-configured entry
+/// with one of these ids is replaced, not deferred to, so it's never
+/// rendered as a raw editable duplicate — sign in and star one, nothing to
+/// configure. A user wanting a different/custom ChatGPT-backed model
+/// should give it a different id.
+pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] =
+    &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
 /// Previous ChatGPT built-in ids. Config::load migrates these: stale
 /// persisted copies of the old built-in are dropped and starred routing
@@ -908,23 +915,24 @@ pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.6-terra";
 pub const CHATGPT_RETIRED_MODEL_IDS: &[&str] = &["gpt-5.5"];
 
 fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
-    const MODEL_ID: &str = CHATGPT_BUILTIN_MODEL_ID;
-    configs.retain(|c| c.id != MODEL_ID);
-    configs.push(ModelConfig {
-        id: MODEL_ID.to_string(),
-        provider: "chatgpt".to_string(),
-        url: codex_auth::CHATGPT_API_BASE.to_string(),
-        model: MODEL_ID.to_string(),
-        api_key: None,
-        keep_alive: None,
-        context_window: None,
-        tags: vec![],
-        supports_tools: Some(true),
-        auth_mode: Some("chatgpt_oauth".to_string()),
-        reasoning_effort: None,
-        provided_by: Some("ChatGPT".to_string()),
-        is_builtin: true,
-    });
+    for id in CHATGPT_BUILTIN_MODEL_IDS {
+        configs.retain(|c| c.id != *id);
+        configs.push(ModelConfig {
+            id: id.to_string(),
+            provider: "chatgpt".to_string(),
+            url: codex_auth::CHATGPT_API_BASE.to_string(),
+            model: id.to_string(),
+            api_key: None,
+            keep_alive: None,
+            context_window: None,
+            tags: vec![],
+            supports_tools: Some(true),
+            auth_mode: Some("chatgpt_oauth".to_string()),
+            reasoning_effort: None,
+            provided_by: Some("ChatGPT".to_string()),
+            is_builtin: true,
+        });
+    }
 }
 
 pub fn is_rate_limit_error(err: &anyhow::Error) -> bool {

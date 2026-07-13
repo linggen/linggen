@@ -472,7 +472,7 @@ impl Config {
         // Built-in models (injected at ModelManager build) are valid defaults.
         for dm in &self.routing.default_models {
             if dm == crate::provider::models::LINGGEN_CLOUD_MODEL_ID
-                || dm == crate::provider::models::CHATGPT_BUILTIN_MODEL_ID
+                || crate::provider::models::CHATGPT_BUILTIN_MODEL_IDS.contains(&dm.as_str())
             {
                 continue;
             }
