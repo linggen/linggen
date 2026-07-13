@@ -135,7 +135,7 @@ export const GeneralTab: React.FC<{
               }}
               placeholder="0.7 (default)"
             />
-            <p className="text-[11px] text-slate-400 mt-0.5">Per-row cosine score floor for per-turn auto-recall. Any row below this is dropped — never injected, never shown. Raise for stricter, fewer hits; lower to let weaker matches through. Range 0–1. Default 0.7.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Per-row relevance floor for per-turn auto-recall — cosine similarity plus a keyword-match boost. Any row below this is dropped — never injected, never shown. Raise for stricter, fewer hits; lower to let weaker matches through. Range 0–1. Default 0.7.</p>
           </div>
           <div>
             <label className={labelCls}>Recall Count</label>

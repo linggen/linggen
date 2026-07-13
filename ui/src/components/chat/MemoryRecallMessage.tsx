@@ -110,7 +110,7 @@ export const MemoryRecallMessage: React.FC<{ text: string }> = ({ text }) => {
                       <span>·</span>
                       <span
                         className={`font-mono ${scoreTone(row.score)}`}
-                        title={`Cosine similarity (higher = stronger match). Anything below the Memory Inject Score (Settings → General) is dropped before injection.`}
+                        title={`Relevance score: cosine similarity plus keyword-match boost (higher = stronger match). Anything below the Memory Inject Score (Settings → General) is dropped before injection.`}
                       >
                         {row.score.toFixed(2)}
                       </span>

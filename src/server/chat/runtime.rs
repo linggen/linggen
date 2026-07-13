@@ -236,8 +236,9 @@ async fn auto_recall_memory(
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
         .and_then(|m| m.project_name);
 
-    // `min_score` is the per-row cosine floor (Settings → General → Memory
-    // Inject Score). `None` means defer to the daemon's store-wide
+    // `min_score` is the per-row relevance floor (Settings → General → Memory
+    // Inject Score), applied by the daemon to the HYBRID score — cosine plus
+    // keyword boost. `None` means defer to the daemon's store-wide
     // `recall_min_score` — we omit the field and ling-mem applies its own
     // floor, so all hosts share one selectivity. `Some(s)` overrides. Either
     // way the daemon drops weak rows before they cross the wire; there's no
@@ -256,6 +257,10 @@ async fn auto_recall_memory(
         args["contexts"] = serde_json::json!(ctx);
     }
 
+    tracing::debug!(
+        "auto-recall: min_score={:?} top_k={} contexts={:?}",
+        min_score, top_k, contexts
+    );
     let dispatch = crate::engine::tools::memory_tool::call_memory_http(
         ling_mem_url,
         "Memory_query",
@@ -336,8 +341,14 @@ async fn auto_recall_memory(
         if content.is_empty() {
             continue;
         }
+        // Surface the HYBRID score (cosine + keyword boost) — it's the number
+        // `min_score` actually gates and the daemon ranks by. Showing the raw
+        // cosine (`score`) made a 0.7 floor look broken whenever a keyword
+        // boost admitted a low-cosine row. Fallback for older daemons that
+        // don't return `hybrid_score`.
         let score = row
-            .get("score")
+            .get("hybrid_score")
+            .or_else(|| row.get("score"))
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
             .unwrap_or(0.0);

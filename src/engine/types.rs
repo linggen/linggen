@@ -133,8 +133,9 @@ pub struct EngineConfig {
     /// 0.10–0.99. None = hardcoded fallback (0.95). Per-session `compact_threshold`
     /// on the `AgentEngine` still takes precedence over this.
     pub compact_threshold_default: Option<f32>,
-    /// Per-row cosine similarity floor for per-turn auto-recall. Rows
-    /// below this score are dropped by ling-mem before reaching the
+    /// Per-row relevance floor for per-turn auto-recall — ling-mem gates
+    /// its hybrid score (cosine + keyword boost) against this. Rows
+    /// below the floor are dropped by ling-mem before reaching the
     /// engine; nothing weaker is injected or shown. `None` = defer to the
     /// daemon's store-wide `recall_min_score`. See `config::AgentConfig`.
     pub memory_inject_min_score: Option<f32>,

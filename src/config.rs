@@ -168,10 +168,11 @@ pub struct AgentConfig {
     #[serde(default = "default_episodic_ttl_days")]
     pub episodic_ttl_days: u64,
 
-    /// Per-row cosine floor for per-turn auto-recall, as an OVERRIDE of the
-    /// ling-mem daemon's store-wide `recall_min_score`. Default 0.7. `None`
-    /// (explicit, not the default) = defer to the daemon's configured floor
-    /// (the engine omits `min_score`). Range 0.0–1.0.
+    /// Per-row relevance floor for per-turn auto-recall, as an OVERRIDE of
+    /// the ling-mem daemon's store-wide `recall_min_score`. The daemon gates
+    /// its HYBRID score (cosine + IDF keyword boost), not the raw cosine.
+    /// Default 0.7. `None` (explicit, not the default) = defer to the
+    /// daemon's configured floor (the engine omits `min_score`). Range 0.0–1.0.
     #[serde(default = "default_memory_inject_min_score")]
     pub memory_inject_min_score: Option<f32>,
 
