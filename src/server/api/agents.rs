@@ -191,24 +191,56 @@ pub(crate) async fn cancel_agent_run(
 ) -> impl IntoResponse {
     match state.manager.cancel_run_tree(&req.run_id).await {
         Ok(runs) => {
-            // Cancel any pending AskUser questions for the cancelled agents so
+            // Cancel any pending AskUser questions for the cancelled runs so
             // the tool unblocks immediately. Dropping the sender causes the
             // oneshot receiver to return Err, which is handled gracefully.
+            // Scope by (agent, session) — an agent-only match would nuke the
+            // same agent's prompt in an unrelated session; entries without a
+            // session fall back to the agent match. Each removal is announced
+            // with WidgetResolved: removal alone left the prompt on screen,
+            // since only that broadcast dismisses the widget.
             {
+                let cancelled_sessions: std::collections::HashSet<(String, String)> = runs
+                    .iter()
+                    .map(|r| (r.agent_id.clone(), r.session_id.clone()))
+                    .collect();
                 let cancelled_agents: std::collections::HashSet<String> =
                     runs.iter().map(|r| r.agent_id.clone()).collect();
+                let mut resolved: Vec<(String, Option<String>)> = Vec::new();
                 let mut pending = state.pending_ask_user.lock().await;
-                pending.retain(|_, entry| !cancelled_agents.contains(&entry.agent_id));
+                pending.retain(|qid, entry| {
+                    let hit = match entry.session_id.as_ref() {
+                        Some(sid) => cancelled_sessions
+                            .contains(&(entry.agent_id.clone(), sid.clone())),
+                        None => cancelled_agents.contains(&entry.agent_id),
+                    };
+                    if hit {
+                        resolved.push((qid.clone(), entry.session_id.clone()));
+                    }
+                    !hit
+                });
+                drop(pending);
+                for (widget_id, session_id) in resolved {
+                    let _ = state
+                        .events_tx
+                        .send(ServerEvent::WidgetResolved { widget_id, session_id });
+                }
             }
 
             for run in &runs {
+                // Statuses are keyed `session_id|agent_id`; an Idle without the
+                // session misses the keyed Busy entry and the chat's thinking
+                // ticker stays on screen after the cancel.
+                let session_id = Some(run.session_id.clone()).filter(|s| !s.is_empty());
                 state
-                    .send_agent_status(
+                    .send_agent_status_with_ids(
                         run.agent_id.clone(),
                         AgentStatusKind::Idle,
                         Some("Cancelled".to_string()),
                         None,
-                        None,
+                        session_id,
+                        Some(run.run_id.clone()),
+                        run.parent_run_id.clone(),
                     )
                     .await;
 
