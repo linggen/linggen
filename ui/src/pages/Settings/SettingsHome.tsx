@@ -15,11 +15,11 @@ import { useServerStore } from '../../stores/serverStore';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 
 const tabs: { key: ManagementTab; label: string }[] = [
+  { key: 'general', label: 'General' },
   { key: 'models', label: 'Models' },
   { key: 'agents', label: 'Agents' },
   { key: 'skills', label: 'Skills' },
   { key: 'tools', label: 'Tools' },
-  { key: 'general', label: 'General' },
   { key: 'mission', label: 'Mission' },
   { key: 'storage', label: 'Storage' },
   { key: 'room', label: 'Room' },
@@ -35,7 +35,7 @@ export const SettingsHome: React.FC = () => {
   // Reads on every render so a navigate() to the same URL with a new tab
   // still updates the active tab.
   const requestedTab = (location.state as SettingsLocationState | null)?.tab;
-  const [activeTab, setActiveTab] = useState<ManagementTab>(requestedTab || 'models');
+  const [activeTab, setActiveTab] = useState<ManagementTab>(requestedTab || 'general');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
