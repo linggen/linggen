@@ -271,6 +271,21 @@ export function useChatActions(
       useChatStore.getState().upsertGenerating(agentToUse, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);
+      // The send never reached the server (transport rejected: channel
+      // not open, request timeout, or reconnect flushed it). No run was
+      // started, so the TurnComplete that normally clears the optimistic
+      // pendingSend flag will never arrive — clear it here or the
+      // spinner ticks forever.
+      if (sid) useServerStore.getState().setPendingSend(sid, false);
+      // Hidden boot prompts fail silently; user-typed messages get told.
+      if (!trimmed.startsWith('[HIDDEN]')) {
+        const ts = new Date();
+        useChatStore.getState().addMessage({
+          role: 'agent', from: 'system', to: 'user',
+          text: 'Message failed to send — the connection to the server was interrupted. Try again.', isError: true,
+          timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
+        });
+      }
     }
   }, [scrollToBottom, clearChat]);
 
