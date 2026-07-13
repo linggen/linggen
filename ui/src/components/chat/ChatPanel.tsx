@@ -422,7 +422,12 @@ export const ChatPanel: React.FC<{
     } else {
       if (thinkingStartRef.current) {
         const elapsed = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
-        if (elapsed > 0) setLastRunSummary({ verb: spinnerVerb || 'Worked', elapsed });
+        // A send that failed after the spinner started never ran a turn —
+        // nothing happened, so there's nothing to summarize.
+        const failedAt = useServerStore.getState().sendFailedAt[sessionId || ''] || 0;
+        if (elapsed > 0 && failedAt < thinkingStartRef.current) {
+          setLastRunSummary({ verb: spinnerVerb || 'Worked', elapsed });
+        }
       }
       thinkingStartRef.current = null;
       setThinkingElapsed(0);

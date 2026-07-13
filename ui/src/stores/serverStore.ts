@@ -42,6 +42,12 @@ interface ServerState {
   pendingSends: Record<string, boolean>;
   setPendingSend: (sessionId: string, pending: boolean) => void;
 
+  /** Timestamp of the last send that never reached the server, keyed by
+   *  session ID. Lets the spinner distinguish "turn finished" from "send
+   *  failed" when it stops — a failed send has no run to summarize. */
+  sendFailedAt: Record<string, number>;
+  markSendFailed: (sessionId: string) => void;
+
   // Derived
   isRunning: () => boolean;
 
@@ -97,6 +103,16 @@ export const useServerStore = create<ServerState>((set, get) => ({
       if (pending) next[sessionId] = true;
       else delete next[sessionId];
       return { pendingSends: next };
+    }),
+  sendFailedAt: {},
+  markSendFailed: (sessionId) =>
+    set((s) => {
+      const pending = { ...s.pendingSends };
+      delete pending[sessionId];
+      return {
+        pendingSends: pending,
+        sendFailedAt: { ...s.sendFailedAt, [sessionId]: Date.now() },
+      };
     }),
 
   isRunning: () => Object.values(get().agentStatus).some((s) => s !== 'idle'),

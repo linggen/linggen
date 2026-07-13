@@ -275,8 +275,9 @@ export function useChatActions(
       // not open, request timeout, or reconnect flushed it). No run was
       // started, so the TurnComplete that normally clears the optimistic
       // pendingSend flag will never arrive — clear it here or the
-      // spinner ticks forever.
-      if (sid) useServerStore.getState().setPendingSend(sid, false);
+      // spinner ticks forever. markSendFailed also stamps sendFailedAt
+      // so the spinner skips its "Worked for Xs" summary.
+      if (sid) useServerStore.getState().markSendFailed(sid);
       // Hidden boot prompts fail silently; user-typed messages get told.
       if (!trimmed.startsWith('[HIDDEN]')) {
         const ts = new Date();
