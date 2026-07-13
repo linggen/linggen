@@ -667,7 +667,14 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
   const uniqueExtras = live.filter(
     (m, idx) => {
       if (mergedLiveIndices.has(idx)) return false; // Already merged into a persisted msg.
-      if (m.isGenerating) return true;
+      // A still-generating live message whose full text already matches a
+      // persisted row IS that row: the server finished and persisted the
+      // turn, but this client hasn't processed turn_complete yet — the
+      // run_completed → fetchSessionState refetch races it. Keeping both
+      // renders the reply twice, permanently (no later pass re-merges).
+      // likelySameMessage requires identical text within 2 minutes, so a
+      // half-streamed prefix can't false-match an older identical reply.
+      if (m.isGenerating) return !result.some((p) => likelySameMessage(p, m));
       if (result.some((p) => likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
       // Keep client-side-only messages (e.g. `! bash` results) — they are never
