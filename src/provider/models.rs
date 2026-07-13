@@ -684,6 +684,14 @@ impl ModelManager {
                     .get_or_try_init(|| {
                         let model_name = model_name.clone();
                         async move {
+                            // The ChatGPT-OAuth (Responses API) backend has no
+                            // /models endpoint — the probe just hangs until the
+                            // request timeout and stalls the first agent turn on
+                            // this model. Guess from the name instead.
+                            if client.uses_responses_api() {
+                                let guess = Self::guess_context_window(&model_name);
+                                return Ok::<_, anyhow::Error>(Some(guess));
+                            }
                             // Try dynamic API query first, fall back to guess.
                             if let Some(cw) = client.get_context_window(&model_name).await {
                                 tracing::debug!("Got context window from API for {model_name}: {cw}");

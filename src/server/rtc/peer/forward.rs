@@ -50,6 +50,13 @@ pub(super) fn forward_event_to_channels(
         return;
     }
 
+    // The session's cwd moved (agent cd) — effective_mode is computed from it,
+    // so schedule a scoped page_state push alongside the forwarded event or the
+    // permission chip keeps showing the previous folder's mode.
+    if matches!(event, crate::server::ServerEvent::WorkingFolderChanged { .. }) {
+        *dirty_flags |= crate::server::rtc::page_state::DIRTY_SCOPED;
+    }
+
     // Yinyue presenter changed → tell THIS peer whether it now holds the lock.
     // The flag is per-peer (it compares the registry head to our own peer id),
     // so it can't go through the shared event→ui mapping — write the present

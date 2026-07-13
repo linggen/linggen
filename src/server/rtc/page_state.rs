@@ -313,12 +313,14 @@ pub async fn build_page_state(
                 .or_else(|| ctx.project_root.clone().filter(|s| !s.is_empty()));
 
             if let Some(ref root) = effective_root {
-                // Effective mode at the session's working folder. If no grant
-                // covers it, the lookup returns None → UI shows "chat" (no tools).
-                let mode = crate::engine::permission::effective_mode_for_path(&perms.path_modes, std::path::Path::new(root));
-                if let Some(mode) = mode {
-                    perm_val.as_object_mut().map(|m| m.insert("effective_mode".to_string(), serde_json::Value::String(mode.to_string())));
-                }
+                // Effective mode at the session's working folder. No covering
+                // grant means no tools there — emit an explicit "chat" rather
+                // than omitting the field: the UI keeps the last value it saw,
+                // so an absent field would leave the previous folder's mode on
+                // the chip after the agent cd's into an ungranted folder.
+                let mode = crate::engine::permission::effective_mode_for_path(&perms.path_modes, std::path::Path::new(root))
+                    .unwrap_or(crate::engine::permission::PermissionMode::Chat);
+                perm_val.as_object_mut().map(|m| m.insert("effective_mode".to_string(), serde_json::Value::String(mode.to_string())));
             }
             ps.session_permission = Some(perm_val);
         }

@@ -279,7 +279,7 @@ impl OpenAiClient {
     }
 
     /// Whether this client uses the ChatGPT Responses API (OAuth mode).
-    fn uses_responses_api(&self) -> bool {
+    pub(crate) fn uses_responses_api(&self) -> bool {
         self.chatgpt_account_id.is_some()
     }
 
@@ -287,9 +287,16 @@ impl OpenAiClient {
     /// Works for: Gemini (`inputTokenLimit`), OpenAI (`context_window` if present).
     /// Returns None if not available.
     pub async fn get_context_window(&self, model: &str) -> Option<usize> {
-        // Try OpenAI-compatible /models/{id} endpoint
+        // Try OpenAI-compatible /models/{id} endpoint. Best-effort metadata:
+        // a backend that never answers must not hold up an agent turn for the
+        // client's 180s read timeout, so cap the whole probe at 5s.
         let url = format!("{}/models/{}", self.base_url, model);
-        let resp = self.apply_auth(self.http.get(&url)).send().await.ok()?;
+        let resp = self
+            .apply_auth(self.http.get(&url))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .ok()?;
         if !resp.status().is_success() {
             return None;
         }

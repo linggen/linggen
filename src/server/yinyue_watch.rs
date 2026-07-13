@@ -104,7 +104,27 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                      words, never your own decision. If it truly doesn't warrant interrupting now, \
                      reply with exactly SILENT."
                 );
-                wake_herald(state, kickoff, "neutral").await;
+                // Her turn can queue behind other Yinyue runs; if the user
+                // answers the prompt meanwhile, announcing it is stale noise.
+                // Check before spending a turn and again right before speaking.
+                if !ask_still_pending(&state, &question_id).await {
+                    return;
+                }
+                let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
+                    return;
+                };
+                if line.eq_ignore_ascii_case("silent") {
+                    tracing::info!("[yinyue-watch] Yinyue chose silence");
+                    return;
+                }
+                if !ask_still_pending(&state, &question_id).await {
+                    tracing::info!(
+                        "[yinyue-watch] ask {question_id} answered while heralding — dropped"
+                    );
+                    return;
+                }
+                tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, neutral)", line.len());
+                crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
             });
         }
         // A peer agent sent a message. TO YINYUE → she receives it in her own
@@ -273,6 +293,12 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
         "neutral"
     };
     wake_herald(state, task, emotion).await;
+}
+
+/// Whether an AskUser question (or permission prompt) is still awaiting the
+/// user. Answering — via the UI or `answer_prompt` — removes it from the map.
+async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool {
+    state.pending_ask_user.lock().await.contains_key(question_id)
 }
 
 /// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
