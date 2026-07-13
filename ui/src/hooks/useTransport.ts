@@ -140,6 +140,13 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         // Fetch workspace state immediately (chat history — not included in page_state)
         // Skip for consumer mode — HTTP fetch blocked by WebRTC tunnel permissions.
         useChatStore.getState().fetchSessionState();
+        // Optimistic client flags don't survive a reconnect: a pending send
+        // either reached the server (the pushed page_state's run record
+        // re-drives the spinner) or died with it (daemon restart mid-turn —
+        // no TurnComplete is coming, the spinner would tick forever).
+        // Same for ghost generating bubbles.
+        useServerStore.setState({ pendingSends: {} });
+        useChatStore.getState().finalizeAllGenerating();
         if (onReconnectRef.current) {
           onReconnectRef.current();
         }

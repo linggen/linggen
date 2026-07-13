@@ -68,6 +68,7 @@ interface ChatState {
   contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[]) => void;
   toolProgress: (agentId: string, line: string) => void;
   turnComplete: (agentId: string, durationMs?: number, contextTokens?: number) => void;
+  finalizeAllGenerating: () => void;
 
   // Workspace state
   fetchSessionState: (opts?: { projectRoot?: string; sessionId?: string }) => Promise<void>;
@@ -514,6 +515,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return next;
     }
     return state;
+  })),
+
+  // Reconnect heal: a transport reconnect is a hard discontinuity — an
+  // in-flight turn either died with the daemon (restart mid-turn) or its
+  // TurnComplete was lost, so ghost "Thinking…" bubbles would spin forever.
+  // Finalize every generating message: keep ones with real content, drop
+  // bare placeholders (nothing streamed — nothing happened). If the run
+  // actually survived (network blip), the next token recreates the bubble
+  // and the final text is restored from persisted state at turn end.
+  finalizeAllGenerating: () => set(mutate((state) => {
+    if (!state.some((m) => m.isGenerating)) return state;
+    return state.flatMap((m) => {
+      if (!m.isGenerating) return [m];
+      const text = m.liveText || (isStatusLineText(m.text || '') ? '' : m.text) || '';
+      const hasContent = !!text || (m.content || []).length > 0 || !!m.segments;
+      if (!hasContent) return [];
+      return [{ ...m, text, isGenerating: false, isThinking: false, liveText: undefined }];
+    });
   })),
 
   turnComplete: (agentId, durationMs, contextTokens) => set(mutate((state) => {
