@@ -274,9 +274,10 @@ pub(crate) async fn compact_chat_api(
     }
 }
 
-/// Set the per-session auto-compaction threshold and/or focus hint. Stateless
-/// on the engine side — skills persist their own runtime config and replay
-/// this call on iframe load (same pattern as runtime permission grants).
+/// Set the per-session auto-compaction threshold and/or focus hint. Applied
+/// to the live engine when one exists and persisted to session.yaml either
+/// way, so ordering against the chat path's engine creation doesn't matter —
+/// skills replay this call on iframe load (same pattern as runtime grants).
 ///
 /// Both fields are independently optional:
 /// - `threshold: Some(f)` overrides the default 0.95 trigger fraction.
@@ -295,49 +296,66 @@ pub(crate) async fn compact_config_api(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_string());
-    let agent_id = req.agent_id.clone().unwrap_or_else(|| "ling".to_string());
-    let root = match PathBuf::from(&req.project_root).canonicalize() {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+
+    // Never create an engine here: engine creation belongs to the chat path,
+    // which knows the session's real project root. Creating one from this
+    // out-of-band call could pin the session to the wrong workspace. Update
+    // the live engine when one exists; otherwise merge against the persisted
+    // session.yaml values — engine creation re-applies them (agent/mod.rs).
+    let engine_arc = {
+        let engines = state.manager.session_engines.lock().await;
+        engines.get(&session_id).cloned()
     };
 
-    match state
-        .manager
-        .get_or_create_session_agent(&session_id, &root, &agent_id)
-        .await
-    {
-        Ok(agent_mutex) => {
-            let mut engine = agent_mutex.lock().await;
-            if let Some(t) = req.threshold {
-                engine.compact_threshold = Some(t.clamp(0.1, 0.99));
-            }
-            if let Some(f) = req.focus {
-                engine.compact_focus = if f.is_empty() { None } else { Some(f) };
-            }
-            let persisted_threshold = engine.compact_threshold;
-            let persisted_focus = engine.compact_focus.clone();
-            drop(engine);
-
-            // Persist to session.yaml so the config survives engine restart.
-            // Best-effort: log on failure but still return the in-memory state
-            // since the live engine already has it.
-            if let Err(e) = state.manager.global_sessions.set_compact_config(
-                &session_id,
-                persisted_threshold,
-                persisted_focus.clone(),
-            ) {
-                tracing::warn!("compact_config: persist to session.yaml failed: {e}");
-            }
-
-            Json(serde_json::json!({
-                "ok": true,
-                "threshold": persisted_threshold,
-                "focus": persisted_focus,
-            }))
-            .into_response()
+    let (mut threshold, mut focus) = match &engine_arc {
+        Some(arc) => {
+            let engine = arc.lock().await;
+            (engine.compact_threshold, engine.compact_focus.clone())
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        None => {
+            let meta = state
+                .manager
+                .global_sessions
+                .get_session_meta(&session_id)
+                .ok()
+                .flatten();
+            (
+                meta.as_ref().and_then(|m| m.compact_threshold),
+                meta.and_then(|m| m.compact_focus),
+            )
+        }
+    };
+    if let Some(t) = req.threshold {
+        threshold = Some(t.clamp(0.1, 0.99));
     }
+    if let Some(f) = req.focus {
+        focus = if f.is_empty() { None } else { Some(f) };
+    }
+
+    if let Some(arc) = engine_arc {
+        let mut engine = arc.lock().await;
+        engine.compact_threshold = threshold;
+        engine.compact_focus = focus.clone();
+    }
+
+    // Persist to session.yaml so the config survives engine restart and is
+    // picked up when the chat path creates the engine. Best-effort: log on
+    // failure but still return the merged state.
+    if let Err(e) =
+        state
+            .manager
+            .global_sessions
+            .set_compact_config(&session_id, threshold, focus.clone())
+    {
+        tracing::warn!("compact_config: persist to session.yaml failed: {e}");
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "threshold": threshold,
+        "focus": focus,
+    }))
+    .into_response()
 }
 
 /// Extract file paths referenced in message content (e.g. from Read/Edit/Write tool calls).

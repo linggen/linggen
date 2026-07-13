@@ -60,14 +60,13 @@ pub(crate) struct CompactChatRequest {
     pub(super) focus: Option<String>,
 }
 
-/// Set the auto-compaction threshold + focus for a session. Both fields are
-/// runtime-only (not persisted on the engine side) — skills own persistence
-/// and replay on iframe load, matching the runtime-grants pattern.
+/// Set the auto-compaction threshold + focus for a session. Persisted to
+/// session.yaml and applied to the live engine when one exists — the endpoint
+/// never creates an engine (extra request fields like the legacy
+/// `project_root` are ignored by serde).
 #[derive(Deserialize)]
 pub(crate) struct CompactConfigRequest {
-    pub(super) project_root: String,
     pub(super) session_id: Option<String>,
-    pub(super) agent_id: Option<String>,
     /// Override the auto-compaction trigger fraction of `context_window_tokens`.
     /// Default is 0.95. Range 0.1–0.99. Null or absent clears the override
     /// (falls back to default). Out-of-range values are clamped.
