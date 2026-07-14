@@ -13,7 +13,8 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{header::ORIGIN, HeaderMap, StatusCode};
+use axum::http::header::{CONNECTION, ORIGIN};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -586,6 +587,15 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     }
 }
 
+/// Every `/mcp` exchange is one-shot: `Connection: close` keeps client pools
+/// from ever reusing a stale socket (observed intermittently with Claude
+/// Code's MCP client; loopback reconnect cost is negligible).
+fn one_shot(mut resp: Response) -> Response {
+    resp.headers_mut()
+        .insert(CONNECTION, HeaderValue::from_static("close"));
+    resp
+}
+
 /// `POST /mcp` — the streamable-HTTP MCP endpoint (stateless, JSON responses).
 pub(crate) async fn post_handler(
     State(state): State<Arc<ServerState>>,
@@ -593,7 +603,7 @@ pub(crate) async fn post_handler(
     Json(body): Json<Value>,
 ) -> Response {
     if !origin_allowed(&headers) {
-        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+        return one_shot((StatusCode::FORBIDDEN, "origin not allowed").into_response());
     }
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
     let deps = McpDeps {
@@ -602,14 +612,14 @@ pub(crate) async fn post_handler(
         state: Some(&state),
     };
     match handle_rpc(&deps, &body).await {
-        Some(response) => Json(response).into_response(),
-        None => StatusCode::ACCEPTED.into_response(),
+        Some(response) => one_shot(Json(response).into_response()),
+        None => one_shot(StatusCode::ACCEPTED.into_response()),
     }
 }
 
 /// `GET /mcp` — this server never pushes; clients poll nothing.
 pub(crate) async fn get_handler() -> Response {
-    StatusCode::METHOD_NOT_ALLOWED.into_response()
+    one_shot(StatusCode::METHOD_NOT_ALLOWED.into_response())
 }
 
 #[cfg(test)]
@@ -661,6 +671,12 @@ mod tests {
     async fn notifications_get_no_response() {
         let msg = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         assert!(handle_rpc(&deps(&hub()), &msg).await.is_none());
+    }
+
+    #[test]
+    fn mcp_responses_disable_keep_alive() {
+        let resp = one_shot((StatusCode::OK, "ok").into_response());
+        assert_eq!(resp.headers().get(CONNECTION).unwrap(), "close");
     }
 
     #[tokio::test]
