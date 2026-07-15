@@ -68,7 +68,7 @@ interface ChatState {
   contentBlockUpdate: (agentId: string, blockId: string, status?: ContentBlock['status'], summary?: string, isError?: boolean, diffData?: ContentBlock['diffData'], bashOutput?: string[]) => void;
   toolProgress: (agentId: string, line: string) => void;
   turnComplete: (agentId: string, durationMs?: number, contextTokens?: number) => void;
-  finalizeAllGenerating: () => void;
+  finalizeAllGenerating: (olderThanMs?: number) => void;
 
   // Workspace state
   fetchSessionState: (opts?: { projectRoot?: string; sessionId?: string }) => Promise<void>;
@@ -524,14 +524,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // bare placeholders (nothing streamed — nothing happened). If the run
   // actually survived (network blip), the next token recreates the bubble
   // and the final text is restored from persisted state at turn end.
-  finalizeAllGenerating: () => set(mutate((state) => {
+  finalizeAllGenerating: (olderThanMs = 0) => set(mutate((state) => {
     if (!state.some((m) => m.isGenerating)) return state;
+    const cutoff = olderThanMs > 0 ? Date.now() - olderThanMs : Infinity;
     return state.flatMap((m) => {
       if (!m.isGenerating) return [m];
+      // Age gate (page_state reconcile path): a bubble updated recently may
+      // belong to a run the stale page_state snapshot doesn't know yet —
+      // leave it; only frozen bubbles get finalized.
+      if ((m.timestampMs ?? 0) > cutoff) return [m];
       const text = m.liveText || (isStatusLineText(m.text || '') ? '' : m.text) || '';
       const hasContent = !!text || (m.content || []).length > 0 || !!m.segments;
       if (!hasContent) return [];
-      return [{ ...m, text, isGenerating: false, isThinking: false, liveText: undefined }];
+      // wasFrozenStream keeps the bubble claimable by its persisted row in
+      // mergeChatMessages even though it's no longer isGenerating.
+      return [{ ...m, text, isGenerating: false, isThinking: false, liveText: undefined, wasFrozenStream: true }];
     });
   })),
 

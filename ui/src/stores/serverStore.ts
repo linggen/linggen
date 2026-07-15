@@ -38,8 +38,11 @@ interface ServerState {
    *  even if `agentRuns` hasn't caught up yet — the user feels instant
    *  feedback, then the real run record takes over. Without this the
    *  spinner is sometimes invisible for fast turns that complete before
-   *  the next page_state push. */
-  pendingSends: Record<string, boolean>;
+   *  the next page_state push. Value = Date.now() when the send fired, so
+   *  page_state reconciliation can expire a flag whose TurnComplete was
+   *  lost (e.g. session channel closed mid-turn) instead of spinning
+   *  forever. Truthiness checks keep working. */
+  pendingSends: Record<string, number>;
   setPendingSend: (sessionId: string, pending: boolean) => void;
 
   /** Timestamp of the last send that never reached the server, keyed by
@@ -100,7 +103,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   setPendingSend: (sessionId, pending) =>
     set((s) => {
       const next = { ...s.pendingSends };
-      if (pending) next[sessionId] = true;
+      if (pending) next[sessionId] = Date.now();
       else delete next[sessionId];
       return { pendingSends: next };
     }),

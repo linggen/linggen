@@ -663,6 +663,43 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
     return msg;
   });
 
+  // Pass 3: claim frozen stream bubbles. When a session's data channel
+  // closes mid-turn and its 60s server-side event buffer expires before the
+  // viewer returns, the terminal events (final text, message, turn_complete)
+  // are lost: the live bubble freezes holding a FRAGMENT of the final text —
+  // not necessarily a leading one, since liveText resets on every text
+  // content-block — which pass 1/2 can't match (they require !isGenerating /
+  // identical text), so it double-renders next to its persisted row. The
+  // persisted row IS that bubble's final form when the frozen fragment is a
+  // substring of the persisted text AND the row was finalized at/after the
+  // bubble's last update. An actively streaming bubble refreshes its
+  // timestamp on every token batch, so an older persisted reply that merely
+  // contains the same words can never claim it. Bubbles already finalized by
+  // the page_state reconcile carry wasFrozenStream and stay claimable.
+  const claimed = result.map((msg) => {
+    if (msg.role === 'user' || msg.from === 'user' || isPlanMessage(msg)) return msg;
+    const msgText = normalizeMessageTextForDedup(msg.text);
+    if (!msgText) return msg;
+    const frozenIdx = live.findIndex((candidate, idx) => {
+      if (mergedLiveIndices.has(idx)) return false;
+      if (!candidate.isGenerating && !candidate.wasFrozenStream) return false;
+      if (normalizeFrom(candidate.from || candidate.role) !== normalizeFrom(msg.from || msg.role)) return false;
+      if ((msg.timestampMs ?? 0) < (candidate.timestampMs ?? 0) - 5_000) return false;
+      return [candidate.liveText, candidate.text].some((streamed) => {
+        if (!streamed || isStatusLineText(streamed)) return false;
+        const streamedNorm = normalizeMessageTextForDedup(streamed);
+        // Length floor keeps a trivial fragment ("好的。") from matching an
+        // unrelated reply that happens to contain it.
+        return streamedNorm.length >= 10 && msgText.includes(streamedNorm);
+      });
+    });
+    if (frozenIdx < 0) return msg;
+    mergedLiveIndices.add(frozenIdx);
+    // transferRichContent keeps whichever side has tool blocks / activity and
+    // preserves the earlier (creation) timestamp for chronological order.
+    return transferRichContent(msg, live[frozenIdx]);
+  });
+
   const now = Date.now();
   const uniqueExtras = live.filter(
     (m, idx) => {
@@ -674,8 +711,8 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       // renders the reply twice, permanently (no later pass re-merges).
       // likelySameMessage requires identical text within 2 minutes, so a
       // half-streamed prefix can't false-match an older identical reply.
-      if (m.isGenerating) return !result.some((p) => likelySameMessage(p, m));
-      if (result.some((p) => likelySameMessage(p, m))) return false;
+      if (m.isGenerating) return !claimed.some((p) => likelySameMessage(p, m));
+      if (claimed.some((p) => likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
       // Keep client-side-only messages (e.g. `! bash` results) — they are never
       // persisted on the server, so dropping them loses them permanently.
@@ -687,7 +724,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       return now - ts <= LIVE_MESSAGE_GRACE_MS;
     }
   );
-  const merged = [...result, ...uniqueExtras];
+  const merged = [...claimed, ...uniqueExtras];
 
   // Final content-based dedup: remove consecutive messages with identical
   // content from the same sender.  This catches duplicates that slip through

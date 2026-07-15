@@ -8,6 +8,7 @@ import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
+import { useChatStore } from '../../stores/chatStore';
 
 export function handlePageState(item: UiEvent): void {
   const ps = item.data;
@@ -119,6 +120,7 @@ function applyScopedState(ps: any): void {
     ) {
       useServerStore.setState({ agentRuns: data });
     }
+    reconcileStreamingState(data);
   }
   if (ps.sessions) useSessionStore.setState({ sessions: ps.sessions });
 
@@ -127,4 +129,44 @@ function applyScopedState(ps: any): void {
   if (perm.effective_mode) {
     useUiStore.getState().setSessionMode(perm.effective_mode);
   }
+}
+
+/** Grace before server-authoritative "idle" may retire optimistic client
+ *  state — long enough to cover send→run/begin→page_state propagation. */
+const STREAM_STATE_STALE_MS = 15_000;
+
+/**
+ * Terminal turn events (message / turn_complete / run outcome) are only
+ * delivered while the session's data channel is open, and the server buffers
+ * them for at most 60s after it closes. A mid-turn session switch that lasts
+ * longer loses them permanently — leaving a pendingSends flag that spins the
+ * "Thinking…" bar forever and a frozen isGenerating bubble that later
+ * double-renders next to its persisted row. page_state's agent_runs is
+ * server-authoritative, so use each push to retire streaming state that the
+ * runs say cannot still be live.
+ */
+function reconcileStreamingState(runs: any[]): void {
+  const running = new Set(
+    runs
+      .filter((r: any) => !r.parent_run_id && r.status === 'running')
+      .map((r: any) => r.session_id),
+  );
+  const serverStore = useServerStore.getState();
+  const now = Date.now();
+  for (const [sid, sentAt] of Object.entries(serverStore.pendingSends)) {
+    if (!running.has(sid) && now - sentAt > STREAM_STATE_STALE_MS) {
+      serverStore.setPendingSend(sid, false);
+    }
+  }
+
+  // Frozen generating bubbles in the visible session: finalize them so the
+  // next syncPersisted merge collapses each into its persisted row instead
+  // of rendering both. Age-gated — a bubble still receiving tokens has a
+  // fresh timestampMs and is left alone.
+  const chatStore = useChatStore.getState();
+  const activeSessionId = useSessionStore.getState().activeSessionId;
+  if (!activeSessionId || running.has(activeSessionId)) return;
+  const pendingTs = serverStore.pendingSends[activeSessionId];
+  if (pendingTs && now - pendingTs <= STREAM_STATE_STALE_MS) return;
+  chatStore.finalizeAllGenerating(STREAM_STATE_STALE_MS);
 }

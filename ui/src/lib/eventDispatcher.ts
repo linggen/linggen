@@ -45,7 +45,13 @@ export function dispatchEvent(item: UiEvent, sessionIdOverride?: string): void {
 function passesSessionFilter(item: UiEvent, sessionIdOverride?: string): boolean {
   if (item.kind === 'notification') return true;
   if (!item.session_id || item.session_id === 'global') return true;
-  const effectiveSessionId = sessionIdOverride ?? useSessionStore.getState().activeSessionId;
+  // Prefer the live store over the transport's ref override: the ref lags a
+  // render cycle behind a session switch, and the old session's channel keeps
+  // delivering until its close handshake lands — that window streamed tokens
+  // into the wrong session's visible list. The store updates synchronously
+  // with the switch. The override still covers scoped surfaces (embed/skill
+  // iframes) where no session is selected in the store.
+  const effectiveSessionId = useSessionStore.getState().activeSessionId || sessionIdOverride;
   if (effectiveSessionId) return item.session_id === effectiveSessionId;
   // Session-scoped event, no active session — belongs to a skill app / scoped session.
   return false;

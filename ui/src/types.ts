@@ -65,6 +65,10 @@ export interface ChatMessage {
   timestampMs?: number;
   isGenerating?: boolean;
   isThinking?: boolean;
+  /** Finalized from a frozen mid-stream bubble (terminal events lost while
+   *  the session channel was closed). Marks it claimable by the persisted
+   *  row that holds the same turn's full text — see mergeChatMessages. */
+  wasFrozenStream?: boolean;
   activitySummary?: string;
   activityEntries?: string[];
   contextTokens?: number;
