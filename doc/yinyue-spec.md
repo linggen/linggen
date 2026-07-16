@@ -183,7 +183,7 @@ factor (Retina). Single-display first; multi-monitor is a follow-up.
    behavior. One Yinyue regardless of app count.
 2. **Roam** — full-screen click-through overlay + walk clip + wander on the floor.
 3. **Climb** — surface registry + window-rect reporting + climb clip; she perches on
-   Sys Doctor / CFO title bars.
+   Mac Shifu / CFO title bars.
 
 ## Menubar presence
 

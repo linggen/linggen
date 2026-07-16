@@ -26,7 +26,7 @@ Architecturally Linggen is **the root system for AI agents** — agents are proc
 
 ## Apps Built on Linggen
 
-**Sys Doctor** — `sys-doctor` skill. AI-driven system health analyst with its own web dashboard. Scans disk, apps, caches; suggests cleanup commands. An AI app, not a chatbot.
+**Mac Shifu** — `mac-shifu` skill. AI-driven system health analyst with its own web dashboard. Scans disk, apps, caches; suggests cleanup commands. An AI app, not a chatbot.
 
 **Memory** — `ling-mem` skill. LanceDB-backed semantic memory: typed facts, embeddings, filter-and-search, first-class forgetting. Same store reachable from Linggen, Claude Code, or any tool that can shell out.
 

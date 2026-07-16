@@ -24,10 +24,10 @@
 </p>
 
 <p align="center">
-  <img src="doc/media/demo.gif" width="800" alt="Linggen — CFO catches a double charge in locally-parsed statements, Sys Doctor scores your Mac's health, DJ runs karaoke with synced lyrics" />
+  <img src="doc/media/demo.gif" width="800" alt="Linggen — CFO catches a double charge in locally-parsed statements, Mac Shifu scores your Mac's health, DJ runs karaoke with synced lyrics" />
 </p>
 <p align="center">
-  <sub><strong>CFO</strong> catches a $389 double charge (statements never leave your Mac) · <strong>Sys Doctor</strong> scores your Mac's health · <strong>DJ</strong> runs karaoke night. <a href="https://linggen.dev">Full demo →</a></sub>
+  <sub><strong>CFO</strong> catches a $389 double charge (statements never leave your Mac) · <strong>Mac Shifu</strong> scores your Mac's health · <strong>DJ</strong> runs karaoke night. <a href="https://linggen.dev">Full demo →</a></sub>
 </p>
 
 ---
@@ -54,7 +54,7 @@ Opens the web UI at `http://localhost:9898`.
 ## The apps
 
 - **CFO** — a personal CFO that never uploads your money data. Drop in bank/card CSV or PDF exports: deterministic local code parses them into a spend report — monthly trends, subscriptions, commitments, transfer detection, duplicate-charge checks. The AI layer only explains and reviews, and account numbers are stripped before it sees even the redacted totals. [60-second demo](https://linggen.dev/cfo-demo.mp4).
-- **Sys Doctor** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
+- **Mac Shifu** — AI health analyst for your Mac: disk, security, performance, dormant apps, buyer's guide. Recommends; never acts on its own.
 - **DJ** — tell it a vibe and it curates a set, builds your local music library with clean tags, syncs tracks to your phone, and does karaoke with synced, translated lyrics.
 - **Pulse** — GTM brain for solo founders. Reads your configured trends and feeds, then drafts on-voice posts and replies for X and Reddit.
 - **Games** — Chinese Chess and Gomoku where the model actually plays you, plus Snake, Pong, and Tetris.

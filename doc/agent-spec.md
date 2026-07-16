@@ -61,7 +61,7 @@ reprocessing — see [`memory-spec.md`](memory-spec.md) §2.
 Ling is the universal agent. Specialized behavior comes from skills:
 - **Game-table skill** — bound to game sessions, zero tools, pure conversation
 - **Linggen-guide skill** — documentation lookup and Q&A
-- **Sys-doctor skill** — system health analyst with web dashboard
+- **Mac Shifu skill** — system health analyst with web dashboard
 - **Ling-mem skill** — semantic memory store with typed `Memory_*` tools
 
 Missions are a sibling subsystem to skills (cron-scheduled), not a skill type. See `mission-spec.md`.

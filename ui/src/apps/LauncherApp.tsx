@@ -1,6 +1,6 @@
 /**
  * Native Linggen app shell — the app-host. A thin top bar with a tabview of
- * apps + the selected app's page below (CFO / Sys Doctor style, app_mode).
+ * apps + the selected app's page below (CFO / Mac Shifu style, app_mode).
  *
  * This is NOT the dev console (MainApp) — that stays the web-UI-only page.
  * The desktop shell opens this view (`/?launcher=1`); apps run as kept-mounted
@@ -21,7 +21,8 @@ interface AppSkill {
 /** Friendly labels for the known apps; falls back to the raw skill name. */
 const LABELS: Record<string, string> = {
   cfo: 'CFO',
-  'sys-doctor': 'Sys Doctor',
+  'mac-shifu': 'Mac Shifu',
+  'sys-doctor': 'Mac Shifu',
   pulse: 'Pulse',
   dj: 'DJ',
   'shared-memory': 'Memory',
@@ -33,13 +34,13 @@ const labelFor = (name: string) => LABELS[name] ?? name;
 
 /** Curated menu order — products first; anything else falls to the end
  *  alphabetically (by label) so new apps still appear deterministically. */
-const PREFERRED_ORDER = ['cfo', 'sys-doctor', 'pulse', 'dj', 'shared-memory'];
+const PREFERRED_ORDER = ['cfo', 'mac-shifu', 'sys-doctor', 'pulse', 'dj', 'shared-memory'];
 const orderIndex = (name: string) => {
   const i = PREFERRED_ORDER.indexOf(name);
   return i === -1 ? Number.MAX_SAFE_INTEGER : i;
 };
 /** Preferred default app, first one that's installed. */
-const PREFERRED_DEFAULT = ['cfo', 'sys-doctor', 'pulse'];
+const PREFERRED_DEFAULT = ['cfo', 'mac-shifu', 'sys-doctor', 'pulse'];
 
 /** Persisted launcher UI state — restores the last active app across
  *  restarts. One versioned blob; skills keep their own `<skill>:ui` blobs. */

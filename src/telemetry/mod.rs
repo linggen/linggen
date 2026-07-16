@@ -10,7 +10,7 @@
 //! - `install` event whenever the version changes from the last recorded one
 //!   (payload.via = "upgrade", payload.from_version, payload.to_version).
 //! - `command` event with payload.verb = "engine.start" and payload.system_state
-//!   reflecting which sibling products (Sys Doctor, ling-mem) are detected
+//!   reflecting which sibling products (Mac Shifu, ling-mem) are detected
 //!   on this machine. Counts as the daily activity row for DAU.
 //!
 //! On every meaningful action (wired separately):

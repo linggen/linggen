@@ -204,7 +204,7 @@ Linggen ships three UI entries, each a separate HTML + JS bundle:
 | Entry | HTML | Surface | What it renders |
 |:------|:-----|:--------|:----------------|
 | `main` | `/` (index.html) | Owner's full UI | Sidebar, chat, info panel, settings, missions |
-| `embed` | `/embed` | Skill-iframe chat widget (memory, game-table, sys-doctor) and VS Code extension | Just `<ChatWidget>`, pinned to one session |
+| `embed` | `/embed` | Skill-iframe chat widget (memory, game-table, mac-shifu) and VS Code extension | Just `<ChatWidget>`, pinned to one session |
 | `consumer` | `/consumer` | Remote consumer joining a proxy room | Consumer chat with shared-skills panel |
 
 On connect, the client sends a `set_view_context` control message including a `view` field (`"main" | "embed" | "consumer"`). The server uses this to scope pushes so an embed peer never observes cross-session state.

@@ -9,7 +9,7 @@ import { useOpenSettings } from '../../hooks/useOpenSettings';
  *    skill   — when set, filter to this skill's sessions only, lock filter
  *              tabs + missions section away, and post `session_select` /
  *              `session_create` events up to the parent window so the host
- *              page can route. Used by pulse + sys-doctor.
+ *              page can route. Used by pulse + mac-shifu.
  *    active  — overrides the highlighted row (host's currently-viewed
  *              session, which may differ from the chat session because the
  *              host navigates via URL on click).

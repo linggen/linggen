@@ -175,7 +175,7 @@ pub(crate) async fn get_codex_auth_status() -> impl IntoResponse {
 /// this, two `browser_login()` flows can race after a failed first attempt:
 /// each holds an independent state + callback server, and the browser's
 /// cached redirect from one attempt lands at the other's server, producing
-/// a "State mismatch. Please try again." error. The Sys Doctor settings
+/// a "State mismatch. Please try again." error. The Mac Shifu settings
 /// page is the typical reproducer (signin → fail → signout → signin).
 pub(crate) async fn start_codex_auth_login(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,

@@ -11,13 +11,13 @@ guide: |
 
 A **skill** is the unit of extension in Linggen. Drop a folder under `~/.linggen/skills/` and your assistant gains a new capability — a memory store, a system diagnostic, a chess opponent, an X bot. No code changes, no SDK, no hosted plugin server.
 
-This is what makes Linggen a platform, not a single product. The same agent loop that chats with you also powers Sys Doctor, ling-mem, and game-table — every "AI app" Linggen hosts is a skill on top of one shared runtime.
+This is what makes Linggen a platform, not a single product. The same agent loop that chats with you also powers Mac Shifu, ling-mem, and game-table — every "AI app" Linggen hosts is a skill on top of one shared runtime.
 
 ## What you can do with skills
 
 - **Install one** from the marketplace: `/skiller add weather` and your agent can answer weather questions.
-- **Invoke one** in chat: type `/sys-doctor` to launch the system health dashboard, or just ask "scan my disk" and the agent finds and runs the skill on its own.
-- **Stack them** in a single conversation — the agent reads memory through `ling-mem`, scans disk through `sys-doctor`, and posts to X through `xbot`, all in the same chat. The skills don't know about each other; the agent loop composes them.
+- **Invoke one** in chat: type `/mac-shifu` to launch the system health dashboard, or just ask "scan my disk" and the agent finds and runs the skill on its own.
+- **Stack them** in a single conversation — the agent reads memory through `ling-mem`, scans disk through `mac-shifu`, and posts to X through `xbot`, all in the same chat. The skills don't know about each other; the agent loop composes them.
 - **Make your own** by writing a `SKILL.md`. If you can write a markdown note, you can write a skill.
 
 ## Three flavors of skill
@@ -25,7 +25,7 @@ This is what makes Linggen a platform, not a single product. The same agent loop
 | Flavor | What it does | Example |
 | :----- | :----------- | :------ |
 | **Instructions** | Gives the agent rules and context for a topic. The body shapes how the agent responds; tools stay the same. | `linggen-guide` (documentation Q&A) |
-| **App** | Has its own UI in an embedded panel. The agent drives the UI through `PageUpdate` data tools. | `sys-doctor`, `game-table`, `arcade-game` |
+| **App** | Has its own UI in an embedded panel. The agent drives the UI through `PageUpdate` data tools. | `mac-shifu`, `game-table`, `arcade-game` |
 | **Service** | Backs an engine-defined capability (currently memory; later search, vcs, notifications). The model uses generic tool names; the skill is a swappable backend. | `ling-mem` |
 
 Most skills are the first kind. App skills are how you ship full AI apps with custom UI. Service skills are how Linggen lets you swap a built-in capability without the model noticing.
@@ -42,7 +42,7 @@ The skill is the **unit of distribution and the unit of composition** in Linggen
 
 - **Distribution** — a skill is a folder. Write one, drop it in `~/.linggen/skills/`, share it, install someone else's. No registry account, no plugin signing, no per-project config files.
 - **Composition** — a session can pull in any subset of installed skills. The agent loop chooses based on the conversation; users can also force a skill with `/skill-name`.
-- **Identity** — a skill defines what an "AI app" *is* in Linggen. Sys Doctor isn't hard-coded; it's a `SKILL.md` plus a few scripts. The runtime treats first-party and third-party skills identically.
+- **Identity** — a skill defines what an "AI app" *is* in Linggen. Mac Shifu isn't hard-coded; it's a `SKILL.md` plus a few scripts. The runtime treats first-party and third-party skills identically.
 
 This is what lets the same runtime power "your personal assistant" out of the box and "an AI app you built last weekend" with no architectural change. The dual framing in the product vision (app engine + assistant) is *enabled* by the skill system.
 
@@ -180,7 +180,7 @@ A skill with an `app:` section is a runnable app — invoking it opens a UI.
 | Kind | Model involvement | Example |
 | :--- | :---------------- | :------ |
 | **Standalone** | None — pure frontend | `arcade-game` (Snake, Pong, Tetris) |
-| **Interactive** | App UI talks to the agent via the session API | `game-table`, `sys-doctor` |
+| **Interactive** | App UI talks to the agent via the session API | `game-table`, `mac-shifu` |
 
 Three launcher types: `web` (static files in an embedded panel), `bash` (run a script, stream output), `url` (external URL).
 
@@ -190,7 +190,7 @@ Every app skill receives a built-in `PageUpdate` data tool — the agent calls i
 
 ### App-mode (`?app_mode=1`)
 
-When a skill page is hosted by a Linggen app shell (e.g. SysDoctor.app, LingMem.app), the shell appends `?app_mode=1` to the URL and drives shell-level UI affordances via `window.postMessage`. The skill is otherwise unchanged — the same files run in the public web UI without app_mode and behave identically.
+When a skill page is hosted by a Linggen app shell (e.g. MacShifu.app, LingMem.app), the shell appends `?app_mode=1` to the URL and drives shell-level UI affordances via `window.postMessage`. The skill is otherwise unchanged — the same files run in the public web UI without app_mode and behave identically.
 
 Skills that want to be hostable by an app shell ship a tiny `app-mode.js` that:
 
@@ -199,7 +199,7 @@ Skills that want to be hostable by an app shell ship a tiny `app-mode.js` that:
    - `{ type: "linggen:show-settings" }` → overlay `settings.html` over the page.
    - `{ type: "linggen:hide-settings" }` → hide the overlay.
 
-The shell never reaches into skill DOM; it only posts these messages. Reference: `sys-doctor/scripts/app-mode.js`.
+The shell never reaches into skill DOM; it only posts these messages. Reference: `mac-shifu/scripts/app-mode.js`.
 
 ### Persisted UI prefs (`<skill>:ui`)
 
