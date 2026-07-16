@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v4"] }
 headless_chrome = "1.0"
 base64 = "0.22"
 axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 rust-embed = "8.0"
 tokio-stream = "0.1"

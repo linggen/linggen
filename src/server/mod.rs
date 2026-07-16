@@ -1268,6 +1268,7 @@ async fn capability_dispatch(
 async fn serve_app_file(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path((skill_name, file_path)): axum::extract::Path<(String, String)>,
+    req: axum::extract::Request,
 ) -> Response {
     let build_err = |status: u16, msg: &str| -> Response {
         Response::builder()
@@ -1317,22 +1318,25 @@ async fn serve_app_file(
         return build_err(403, "Path traversal not allowed");
     }
 
-    match tokio::fs::read(&canonical_full).await {
-        Ok(content) => {
-            let mime = mime_guess::from_path(&full_path).first_or_octet_stream();
+    // Delegate to tower-http's ServeFile: it speaks Range/206 (video seeking
+    // in skill pages needs partial content), conditional requests, and HEAD.
+    use tower::ServiceExt as _;
+    let range_hdr = req.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
+    match tower_http::services::ServeFile::new(&canonical_full).oneshot(req).await {
+        Ok(res) => {
+            tracing::debug!("serve_app_file {} range={:?} -> {}", file_path_clean, range_hdr, res.status());
+            let mut res = res.map(axum::body::Body::new);
+            let headers = res.headers_mut();
+            headers.insert("X-Frame-Options", "ALLOWALL".parse().expect("static header"));
             // No-store on skill assets: skills are user-iterated, often
             // edited mid-session, and ES-module URL caching makes a stale
             // scan.js indistinguishable from a missing feature. Forcing
             // revalidation costs nothing on localhost and removes a sharp
             // edge from the development loop.
-            Response::builder()
-                .header("Content-Type", mime.as_ref())
-                .header("X-Frame-Options", "ALLOWALL")
-                .header("Cache-Control", "no-store")
-                .body(axum::body::Body::from(content))
-                .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
+            headers.insert("Cache-Control", "no-store".parse().expect("static header"));
+            res
         }
-        Err(_) => build_err(404, &format!("File not found: {}", file_path_clean)),
+        Err(_) => build_err(500, &format!("File not readable: {}", file_path_clean)),
     }
 }
 
