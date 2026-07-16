@@ -297,7 +297,7 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
         "uname", "hostname", "date", "id", "whoami", "realpath", "dirname", "basename",
         "ping", "dig", "nslookup", "host", "test", "true", "false", "seq", "sort",
         "uniq", "tr", "cut", "paste", "diff", "comm",
-        // Read-only system diagnostics (used by sys-doctor and similar inspection
+        // Read-only system diagnostics (used by mac-shifu and similar inspection
         // skills). These programs only display info — they don't mutate state.
         "uptime", "sw_vers", "vm_stat", "netstat", "ifconfig", "ipconfig", "scutil",
         "ps", "lsof", "vmmap", "iostat",
@@ -344,7 +344,7 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
     const GO_WRITE: &[&str] = &["build", "test", "run", "install", "get", "mod"];
 
     // brew and docker have read subcommands worth carving out so inspection
-    // skills (sys-doctor) don't have to admin-prompt for `brew list` /
+    // skills (mac-shifu) don't have to admin-prompt for `brew list` /
     // `docker images`.
     const BREW_READ: &[&str] = &["list", "info", "search", "outdated", "deps", "leaves",
                                   "doctor", "config", "--version", "-v", "--prefix", "tap-info"];

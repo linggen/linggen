@@ -267,7 +267,9 @@ fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTre
 /// install-source marker that installers already write — file existence is
 /// the install signal, `installer_version` is the version field.
 pub fn read_system_state(data_dir: &Path) -> serde_json::Value {
-    let sys_doctor = read_install_source_full(data_dir, "sys-doctor");
+    // mac-shifu is the renamed sys-doctor; older installs still have the old marker
+    let sys_doctor = read_install_source_full(data_dir, "mac-shifu")
+        .or_else(|| read_install_source_full(data_dir, "sys-doctor"));
     let ling_mem = read_install_source_full(data_dir, "ling-mem");
     serde_json::json!({
         "sys_doctor_installed": sys_doctor.is_some(),

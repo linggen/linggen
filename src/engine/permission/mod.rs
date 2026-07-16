@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_classify_bash_sysdoctor_read() {
-        // sys-doctor's command vocabulary should classify as read so the skill
+        // mac-shifu's command vocabulary should classify as read so the skill
         // can run with mode: read instead of mode: admin on /.
         assert_eq!(classify_bash_command("sw_vers"), BashClass::Read);
         assert_eq!(classify_bash_command("vm_stat"), BashClass::Read);

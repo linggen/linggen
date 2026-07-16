@@ -865,7 +865,8 @@ pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
 /// as usage attribution; every other session bills the shared 'linggen'
 /// bucket.
 pub fn is_app_product(skill_name: &str) -> bool {
-    matches!(skill_name, "sys-doctor" | "cfo" | "pulse")
+    // "sys-doctor" kept for installs that predate the Mac Shifu rename
+    matches!(skill_name, "mac-shifu" | "sys-doctor" | "cfo" | "pulse")
 }
 
 fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
