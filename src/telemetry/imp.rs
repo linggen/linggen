@@ -239,7 +239,7 @@ fn save_state(path: &Path, state: &State) -> std::io::Result<()> {
 // ── install-source marker ──────────────────────────────────────────────────
 
 /// Read the install-source marker file written by the installer (linggen.dev
-/// wrapper, Sys Doctor's "Set up Linggen" flow, brew, etc.) into a payload
+/// wrapper, Mac Shifu's "Set up Linggen" flow, brew, etc.) into a payload
 /// map. Missing file → empty map; caller fills in `via=unknown`.
 fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTreeMap<String, String> {
     let path = data_dir.join(format!(".{product}-install-source"));
@@ -262,7 +262,7 @@ fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTre
 
 /// Snapshot of which sibling Linggen products are present on this machine.
 /// Used as a payload field in `engine.start` so the server can attribute
-/// adoption of Sys Doctor (and any other product without its own telemetry)
+/// adoption of Mac Shifu (and any other product without its own telemetry)
 /// without each needing a phone-home path of its own. Probe re-uses the
 /// install-source marker that installers already write — file existence is
 /// the install signal, `installer_version` is the version field.
