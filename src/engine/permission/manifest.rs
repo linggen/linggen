@@ -28,7 +28,7 @@ pub struct PathGrant {
 ///   paths:
 ///     - { path: ~/.linggen, mode: write }
 ///     - { path: /tmp,        mode: read  }
-///   warning: "Runs a local HTTP daemon on 127.0.0.1:9888"
+///   warning: "Runs a local HTTP daemon on 127.0.0.1:9528"
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Grants {

@@ -101,9 +101,9 @@ async fn check_ling_mem() {
         None => fail("Binary    ", "ling-mem not on PATH (auto-installs on first memory op; or see linggen.dev/memory)"),
     }
 
-    // Daemon on :9888 (default). Check the standard port; users running
+    // Daemon on the default port. Check the standard port; users running
     // a non-default port will see a Skip and can rely on `ling-mem status`.
-    let port: u16 = 9888;
+    let port: u16 = crate::config::DEFAULT_LING_MEM_PORT;
     if is_port_listening(port).await {
         match fetch_ling_mem_health(port).await {
             Some(v) => ok("Daemon    ", &format!(":{port} healthy (v{v})")),

@@ -215,8 +215,12 @@ fn default_memory_recall_count() -> usize {
     3
 }
 
+/// ling-mem daemon's default port. Must match `linggen-memory`'s
+/// `daemon::DEFAULT_PORT`; overridable per install via `[agent].ling_mem_url`.
+pub const DEFAULT_LING_MEM_PORT: u16 = 9528;
+
 fn default_ling_mem_url() -> String {
-    "http://127.0.0.1:9888".to_string()
+    format!("http://127.0.0.1:{DEFAULT_LING_MEM_PORT}")
 }
 
 impl AgentConfig {
