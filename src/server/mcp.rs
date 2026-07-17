@@ -393,7 +393,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "memory_dream_status",
         backend: Backend::DreamStatus,
-        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
+        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, past-day summary counts (total_days / scanned_days / dreamed_days), the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
         schema: || json!({
             "type": "object",
             "properties": {}
@@ -735,6 +735,9 @@ async fn compose_dream_status(
         "undreamed_days": undreamed,
         "first_undreamed": first_undreamed,
         "first_unscanned": first_unscanned,
+        "total_days": rollup.get("total_days").cloned().unwrap_or(json!(0)),
+        "scanned_days": rollup.get("scanned_days").cloned().unwrap_or(json!(0)),
+        "dreamed_days": rollup.get("dreamed_days").cloned().unwrap_or(json!(0)),
         "open_issues": open_issues,
         "today": rollup.get("today").cloned().unwrap_or(Value::Null),
         "last_run": last_run.as_ref().map(|r| json!({
