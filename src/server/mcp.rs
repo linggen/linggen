@@ -393,7 +393,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "memory_dream_status",
         backend: Backend::DreamStatus,
-        description: "Dream-pipeline status — is memory upkeep due? Returns pending days (oldest first, each awaiting a nightly judgment pass), the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days are pending, offer to run the dream: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
+        description: "Dream-pipeline status — is memory upkeep due? Returns undreamed days (oldest first, each awaiting a dream pass) with first_undreamed / first_unscanned, the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days await a dream, offer to run it: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
         schema: || json!({
             "type": "object",
             "properties": {}
@@ -403,7 +403,7 @@ const TOOLS: &[McpTool] = &[
     McpTool {
         name: "memory_dream_run",
         backend: Backend::DreamRun,
-        description: "Run the nightly memory dream on the local Linggen engine (its mission executor and configured model — prefer /linggen:dream to run the pass with YOUR model instead). Optional day (YYYY-MM-DD) scopes the run to one day; omitted runs the full nightly protocol: pending days oldest-first, then sweep, then audit. Returns immediately — dream runs take minutes; poll memory_dream_status, and if it reports a failed run surface last_run_error to the user. An in-flight run returns {in_flight: true} — that's state, not an error.",
+        description: "Run the nightly memory dream on the local Linggen engine (its mission executor and configured model — prefer /linggen:dream to run the pass with YOUR model instead). Optional day (YYYY-MM-DD) scopes the run to one day; omitted runs the full nightly protocol: undreamed days oldest-first, then sweep, then audit. Returns immediately — dream runs take minutes; poll memory_dream_status, and if it reports a failed run surface last_run_error to the user. An in-flight run returns {in_flight: true} — that's state, not an error.",
         schema: || json!({
             "type": "object",
             "properties": {
@@ -494,8 +494,9 @@ fn initialize_result() -> Value {
             and supersede it in the same memory_add via replace_ids — never leave an \
             'in progress' row beside its own outcome. Memory upkeep: \
             memory_dream_status says whether nightly judgment passes are due \
-            (pending_days) and whether review items await the user (open_issues). \
-            When days are pending, offer to run the dream — /linggen:dream uses YOUR \
+            (first_undreamed / undreamed_days; first_unscanned flags a day whose \
+            session logs were never scanned) and whether review items await the \
+            user (open_issues). When days await a dream, offer to run it — /linggen:dream uses YOUR \
             model, memory_dream_run offloads to the Linggen engine; if a run failed, \
             show last_run_error to the user. When open_issues > 0, offer \
             /linggen:solve: read memory_issues, verify each item against the world \
@@ -681,7 +682,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
 }
 
 /// One status object answering "is memory upkeep due, and did the last
-/// run succeed?" — daemon days rollup (pending worklist + open issues)
+/// run succeed?" — daemon days rollup (undreamed worklist + open issues)
 /// merged with the engine's own run state. Engine-side failures are
 /// carried as `last_run_error` so MCP callers can show the user WHY a
 /// dream failed (model not configured, sign-in expired, quota) instead
@@ -693,20 +694,17 @@ async fn compose_dream_status(
     let rollup = crate::engine::tools::memory_tool::call_memory_http(
         ling_mem_url,
         "memory_dream_status",
-        json!({ "verb": "days", "pending_only": true }),
+        json!({ "verb": "days", "undreamed_only": true }),
     )
     .await?;
 
-    let pending: Vec<Value> = rollup
+    let undreamed: Vec<Value> = rollup
         .get("days")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let first_pending_day = pending
-        .first()
-        .and_then(|d| d.get("date"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let first_undreamed = rollup.get("first_undreamed").cloned().unwrap_or(Value::Null);
+    let first_unscanned = rollup.get("first_unscanned").cloned().unwrap_or(Value::Null);
     let open_issues = rollup.get("open_issues").cloned().unwrap_or(json!(0));
 
     let in_flight = crate::extensions::missions::scheduler::mission_in_flight("dream");
@@ -734,8 +732,9 @@ async fn compose_dream_status(
 
     Ok(json!({
         "in_flight": in_flight,
-        "pending_days": pending,
-        "first_pending_day": first_pending_day,
+        "undreamed_days": undreamed,
+        "first_undreamed": first_undreamed,
+        "first_unscanned": first_unscanned,
         "open_issues": open_issues,
         "today": rollup.get("today").cloned().unwrap_or(Value::Null),
         "last_run": last_run.as_ref().map(|r| json!({

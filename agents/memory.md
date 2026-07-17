@@ -66,7 +66,7 @@ for each is below.
 
 ## Procedure — remember one day
 
-Given a date `YYYY-MM-DD` (from the pending-days worklist or the
+Given a date `YYYY-MM-DD` (from the undreamed-days worklist or the
 request):
 
 1. **Context.** `Memory_query {"verb":"days"}` if you don't already
@@ -115,7 +115,7 @@ request):
    user present. Your own derived notes are the exception (the Merge
    case above).
 6. **Stamp.** `Memory_write {"verb":"remember_day","date":"<date>","judged":<rows seen>,"promoted":<adds made>}`.
-   This is what moves the day out of pending — never skip it, even
+   This is what marks the day dreamed — never skip it, even
    when you promoted nothing.
 
 ## Forget stage
@@ -257,7 +257,7 @@ line for a tool call you did not actually make.**
 
 ## Example turns
 
-A remember turn — worklist says 2026-07-03 is the oldest pending day
+A remember turn — worklist says 2026-07-03 is the oldest undreamed day
 (14 rows). After the list/search/add/stamp calls, the reply is:
 
     DAY 2026-07-03 rows=14

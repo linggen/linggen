@@ -70,27 +70,32 @@ fn replaced_count(v: &serde_json::Value) -> Option<u64> {
     Some(replaced.len() as u64)
 }
 
-/// The run's first `days` rollup — how many days were pending at
+/// The run's first `days` rollup — how many days awaited a dream at
 /// start. Search/list results are JSON arrays and `get` returns a bare
 /// fact, so only the days-rollup object (a `days` array) matches here.
 /// The rollup may be the FULL calendar (a day-scoped run's context
-/// fetch), so count only `state == "pending"` entries — never the raw
-/// array length.
+/// fetch), so count only undreamed entries (past day, unjudged rows) —
+/// never the raw array length.
 fn worklist_line(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let days = v.get("days")?.as_array()?;
-    let pending: Vec<&serde_json::Value> = days
+    let today = v.get("today").and_then(|t| t.as_str()).unwrap_or("");
+    let undreamed: Vec<&serde_json::Value> = days
         .iter()
-        .filter(|d| d.get("state").and_then(|s| s.as_str()) == Some("pending"))
+        .filter(|d| {
+            let date = d.get("date").and_then(|s| s.as_str()).unwrap_or("");
+            let unjudged = d.get("unjudged").and_then(|n| n.as_u64()).unwrap_or(0);
+            unjudged > 0 && (today.is_empty() || date < today)
+        })
         .collect();
-    let Some(oldest) = pending.first() else {
-        return Some("worklist: no pending days".to_string());
+    let Some(oldest) = undreamed.first() else {
+        return Some("worklist: no undreamed days".to_string());
     };
     let date = oldest.get("date")?.as_str()?;
     let rows = oldest.get("rows").and_then(|r| r.as_u64()).unwrap_or(0);
-    Some(match pending.len() {
-        1 => format!("worklist: 1 pending day — {date} ({rows} rows)"),
-        n => format!("worklist: {n} pending days, oldest {date} ({rows} rows)"),
+    Some(match undreamed.len() {
+        1 => format!("worklist: 1 undreamed day — {date} ({rows} rows)"),
+        n => format!("worklist: {n} undreamed days, oldest {date} ({rows} rows)"),
     })
 }
 
@@ -182,7 +187,7 @@ mod tests {
     fn full_run_report() {
         // Shapes copied verbatim from the 2026-07-06 live run transcript.
         let messages = vec![
-            sys(r#"Tool Memory_query: success: {"days":[{"date":"2026-07-03","forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"state":"pending","unjudged":14}],"today":"2026-07-06","ttl_days":7}"#),
+            sys(r#"Tool Memory_query: success: {"days":[{"date":"2026-07-03","dreamed":false,"forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"scanned":false,"unjudged":14}],"today":"2026-07-06","ttl_days":7}"#),
             sys(r#"Tool Memory_query: success: [{"content":"unrelated search result"}]"#),
             sys(r#"Tool Memory_write: success: {"action":"added","fact":{"content":"a promoted row","id":"abc"}}"#),
             sys(r#"Tool Memory_write: success: {"date":"2026-07-03","record":{"forgotten":0,"judged":14,"promoted":7,"remembered_at":"2026-07-06T17:06:50Z"}}"#),
@@ -192,7 +197,7 @@ mod tests {
         assert_eq!(
             report,
             "Mission report:\n\
-             - worklist: 1 pending day — 2026-07-03 (14 rows)\n\
+             - worklist: 1 undreamed day — 2026-07-03 (14 rows)\n\
              - remembered 2026-07-03: 14 judged, 7 promoted to long-term\n\
              - forget sweep: removed 4 expired rows (2026-06-29: 4)"
         );
@@ -224,7 +229,7 @@ mod tests {
         let report = compose_memory_report(&messages).unwrap();
         assert_eq!(
             report,
-            "Mission report:\n- worklist: no pending days\n- forget sweep: nothing expired"
+            "Mission report:\n- worklist: no undreamed days\n- forget sweep: nothing expired"
         );
     }
 

@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Nightly memory dream. Remembers each pending day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — condensing high-confidence stale chains and queueing what needs the user as review items. Built-in.
+description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — condensing high-confidence stale chains and queueing what needs the user as review items. Built-in.
 schedule: "0 3 * * *"
 # If the 3am cron is missed (machine off/asleep), the post-turn
 # catch-up re-triggers this mission the next time Linggen is used,
@@ -31,8 +31,8 @@ kickoff-stop: [DONE, STALLED]
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then
-    call `Memory_query({"verb":"days","pending_only":true})`. If no
-    days are pending, run the finish-up per your system prompt: call
+    call `Memory_query({"verb":"days","undreamed_only":true})`. If no
+    days are undreamed, run the finish-up per your system prompt: call
     `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`, then
     condense — call
     `Memory_query({"verb":"chains","kind":"cited","limit":10,"derived_only":true})`,
@@ -41,11 +41,11 @@ kickoff:
     (`Memory_query({"verb":"chains","kind":"marker","limit":5})` →
     `Memory_write({"verb":"issue_add",...})` per stale candidate, a
     `QUEUE` line each), and reply exactly: DONE. Otherwise remember
-    the OLDEST pending day per your system prompt (worklist → cluster
+    the OLDEST undreamed day per your system prompt (worklist → cluster
     → promote → stamp), then stop and wait.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -57,7 +57,7 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -69,7 +69,7 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -81,7 +81,7 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -93,7 +93,7 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -105,7 +105,7 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","pending_only":true})` to fetch a
+    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
@@ -117,9 +117,9 @@ kickoff:
     system prompt.
   - >-
     Last scheduled turn for tonight. First call
-    `Memory_query({"verb":"days","pending_only":true})` for a fresh
+    `Memory_query({"verb":"days","undreamed_only":true})` for a fresh
     count, then call `Memory_write({"verb":"sweep"})`. From the fresh
-    result only: no pending days → report `SWEEP removed=<n>`, run
+    result only: no undreamed days → report `SWEEP removed=<n>`, run
     the cited-chains condense per your system prompt (`MERGE` lines)
     and the audit queue pass (`QUEUE` lines), and reply exactly:
     DONE. Days remain → reply exactly:
@@ -194,11 +194,11 @@ Your judgment doctrine — what to promote, how to cluster, the
 status-line format — is in your system prompt (you are the `memory`
 agent). This mission adds only the nightly run protocol:
 
-- **One day per turn.** Each turn: fetch the pending-days worklist
-  (`Memory_query {"verb":"days","pending_only":true}`), take the
+- **One day per turn.** Each turn: fetch the undreamed-days worklist
+  (`Memory_query {"verb":"days","undreamed_only":true}`), take the
   **oldest** day, run the remember procedure on it, stamp it, stop.
   The next kickoff nudge continues the loop.
-- **Stop conditions.** Empty pending list → run the finish-up
+- **Stop conditions.** Empty worklist → run the finish-up
   (below), reply `DONE`. Same oldest day twice with an undropped
   `unjudged` count → reply `STALLED` (something is wrong — a human
   will look; do not loop). Out of nudges with days remaining → sweep,
