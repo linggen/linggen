@@ -20,7 +20,7 @@ valuable.
 |:------|:-------|:-------|
 | `browser_*` | linggen-browser extension (control module) | live |
 | `x_*` | linggen-browser extension (x session reads) | live |
-| `memory_*` | ling-mem daemon (`:9888`) | live |
+| `memory_*` | ling-mem daemon (`:9528`) | live |
 | `agent_*` | Linggen agents (delegate a task) | live |
 
 Decided (2026-07-10): **one MCP for all users — including memory-only users.**
@@ -54,7 +54,7 @@ Thin proxy to the ling-mem daemon — no code moves between repos.
   rule, and when to offer dream/solve) — same text the ling-mem MCP ships
   today.
 - Proxy through the engine's existing ling-mem HTTP client path so the
-  first-use autostart (install missing ling-mem, start `:9888`) fires for MCP
+  first-use autostart (install missing ling-mem, start `:9528`) fires for MCP
   callers too. ling-mem unreachable after autostart → friendly install-guidance
   tool error, mirroring `no_bridge`.
 

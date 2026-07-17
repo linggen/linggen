@@ -85,7 +85,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
 }
 
 /// Memory backend (`ling-mem`) health. Reports the binary location +
-/// version, the daemon's `/api/health` response on :9888, the on-disk
+/// version, the daemon's `/api/health` response on :9528, the on-disk
 /// store, and the canonical skill bundle. Each independent — a missing
 /// daemon doesn't mask a present binary, etc.
 async fn check_ling_mem() {

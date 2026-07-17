@@ -533,7 +533,7 @@ mod tests {
             "scan.sh under admin ~/.linggen should be allowed",
         );
 
-        let ttl = "set -e; TTL_DAYS=$(curl -s http://127.0.0.1:9888/api/config 2>/dev/null \
+        let ttl = "set -e; TTL_DAYS=$(curl -s http://127.0.0.1:9528/api/config 2>/dev/null \
                    | jq -r '.data.episodic_ttl_days // env.LING_MEM_EPISODIC_TTL_DAYS // 7'); \
                    ling-mem list --episodic --older-than \"${TTL_DAYS}d\" --format json \
                    | jq -c 'del(.vector)'";
