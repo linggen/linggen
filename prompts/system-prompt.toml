@@ -249,6 +249,20 @@ A hedged reflection is NOT an imperative — *"X feels about right to
 me"*, *"I think I prefer X"*, *"maybe X is better"* — that's a
 contradiction: AskUser first (step 3), never `user_directed`.
 
+## Status rows are perishable — supersede at write time
+
+A status-bearing row (*"in progress"*, *"OPEN:"*, *"not committed"*,
+*"shipped"*, *"dormant"*) is a claim about the world, and the world
+moves. When you capture a status change — something shipped, got
+fixed, went dormant, was abandoned — `Memory_query` the subject first
+and write the new status with `replace_ids` listing the prior status
+row(s) on that same subject: kill the stale claim the moment its
+successor is born, never leave *"in progress"* sitting beside its own
+outcome. (Own-notes only — a user-voice predecessor follows the merge
+law above.) What slips through is caught later by the dream audit's
+review queue, but write-time supersede is the real fix; the queue is
+the backstop.
+
 ## Tier selection — by confidence
 
 Pick the tier from the row's own durability, not from who is writing:

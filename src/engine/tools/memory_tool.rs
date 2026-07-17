@@ -88,7 +88,7 @@ impl Tool for MemoryQueryTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":     {"type": "string", "enum": ["get", "search", "list", "days", "chains"], "description": "Read operation."},
+                "verb":     {"type": "string", "enum": ["get", "search", "list", "days", "chains", "issues"], "description": "Read operation. `issues` lists the review queue — items a dream audit queued for the user (facts only; solving happens in an attended host session)."},
                 "id":       {"type": "string", "description": "Required for verb=get. Fact UUID."},
                 "query":    {"type": "string", "description": "Required for verb=search. Natural-language description of what you're looking for."},
                 "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags (AND semantics). For verb=search, narrows ranked results; for verb=list, primary filter. Omit to skip."},
@@ -141,18 +141,21 @@ impl Tool for MemoryWriteTool {
         json!({
             "type": "object",
             "properties": {
-                "verb":          {"type": "string", "enum": ["add", "update", "delete", "remember_day", "harvest_day", "sweep"], "description": "Write operation. `harvest_day` stamps a day scanned (a session backfill covered it) WITHOUT marking it remembered — its staged rows go pending for the next dream pass."},
-                "id":            {"type": "string", "description": "Required for verb=update / verb=delete. The row UUID."},
+                "verb":          {"type": "string", "enum": ["add", "update", "delete", "remember_day", "harvest_day", "sweep", "issue_add", "issue_resolve"], "description": "Write operation. `harvest_day` stamps a day scanned (a session backfill covered it) WITHOUT marking it remembered — its staged rows go pending for the next dream pass. `issue_add` queues a review item the audit could not solve with confidence (idempotent per kind+row_ids); `issue_resolve` closes one after an attended solve."},
+                "id":            {"type": "string", "description": "Required for verb=update / verb=delete (the row UUID) and verb=issue_resolve (the issue id from verb=issues)."},
                 "date":          {"type": "string", "description": "Required for verb=remember_day / verb=harvest_day. The local calendar day, YYYY-MM-DD. Only past days are accepted."},
                 "judged":        {"type": "integer", "description": "verb=remember_day. Rows judged in this pass (accumulates onto the day's total)."},
                 "promoted":      {"type": "integer", "description": "verb=remember_day. Rows promoted to semantic in this pass (accumulates)."},
                 "dry_run":       {"type": "boolean", "description": "verb=sweep. Report what would be evicted without deleting."},
+                "kind":          {"type": "string", "enum": ["chain", "stale-status", "contradiction"], "description": "verb=issue_add. What the audit saw: `chain` = uncertain merge candidate; `stale-status` = a status claim likely overtaken by the world (verify against git/files at solve time); `contradiction` = conflicting rows needing the user's pick."},
+                "row_ids":       {"type": "array", "items": {"type": "string"}, "description": "verb=issue_add. The memory row ids the item is about."},
+                "note":          {"type": "string", "description": "verb=issue_add / verb=issue_resolve. issue_add: what you saw and what a solver should check — the item's whole context. issue_resolve: one-line record of what was done."},
                 "content":       {"type": "string", "description": "verb=add/update. The fact text the model will see when the row is recalled."},
                 "type":          {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "verb=add/update. Fact category. Default `fact`."},
                 "from":          {"type": "string", "enum": ["user", "agent", "derived"], "description": "verb=add/update. Origin of the fact. Default `derived`."},
                 "tier":          {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "verb=add/update. Destination memory category. `episodic` = per-turn working capture (fast, append-only, no query-first; the nightly dream pass promotes what's durable and deletes nothing — the separate forget sweep evicts judged rows past TTL) — the default lane for uncertain-durability signal; capture here each turn. `semantic` = curated durable pool (query-first). `core` = tiny always-injected universals about the person (query-first)."},
                 "contexts":      {"type": "array", "items": {"type": "string"}, "description": "verb=add/update. Scope tags (e.g. `cross-project`, `project/foo`)."},
-                "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral"], "description": "verb=add/update. Optional outcome marker."},
+                "outcome":       {"type": "string", "enum": ["positive", "negative", "neutral", "resolved", "dismissed"], "description": "verb=add/update: optional outcome marker (positive/negative/neutral). verb=issue_resolve: `resolved` | `dismissed`."},
                 "occurred_at":   {"type": "string", "description": "verb=add/update. RFC-3339 user-event timestamp; falls back to `created_at` if unset."},
                 "source_session":{"type": "string", "description": "verb=add/update. Session id that authored this content. The engine fills the current session id when omitted — pass explicitly ONLY to carry forward an original row's session (the dream promote path)."},
                 "user_directed": {"type": "boolean", "description": "verb=add/update. Assert that the user's CURRENT message states this change as SETTLED: a command (\"update X to Y\", \"forget X\"), a declaration (\"my X is now Y\"), or a commitment (\"from now on, X\"). A hedged reflection (\"X feels about right to me\", \"I think I prefer X\") does NOT qualify — that's a contradiction: AskUser first. Required to replace/rewrite from=user rows without an AskUser — the engine blocks such writes otherwise. Never set from your own inference."},

@@ -31,12 +31,18 @@ const GATED_TIMEOUT_MS: u64 = 150_000;
 /// Session reads open a hidden tab and wait for the site's own responses.
 const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 
-/// Where a tool's call goes: over the browser bridge, or to the ling-mem
-/// daemon (the memory engine) via the engine's HTTP client path.
+/// Where a tool's call goes: over the browser bridge, to the ling-mem
+/// daemon (the memory engine) via the engine's HTTP client path, or to
+/// the engine's own mission machinery (the dream tools).
 enum Backend {
     Bridge { module: &'static str, op: &'static str },
     Memory { verb: &'static str },
     Agent,
+    /// Composed read: daemon days rollup + engine in-flight/run state.
+    DreamStatus,
+    /// Trigger the dream mission through `trigger_mission_core` — the
+    /// same guarded path the HTTP trigger and the calendar use.
+    DreamRun,
 }
 
 /// One MCP tool: its wire name, the backend it brokers to, its schema.
@@ -379,6 +385,61 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: 0,
     },
+    // --- dream: the nightly memory pipeline + its review queue --------------
+    // Status/run wrap the engine's single mission executor (one set of
+    // guards: in-flight, snapshot, run record). Issues proxy the daemon's
+    // review-queue sidecar — the audit stage queues what it can't solve
+    // with confidence; a host agent solves items with ITS model.
+    McpTool {
+        name: "memory_dream_status",
+        backend: Backend::DreamStatus,
+        description: "Dream-pipeline status — is memory upkeep due? Returns pending days (oldest first, each awaiting a nightly judgment pass), the open review-item count, whether a dream run is in flight, and the last run's outcome. If last_run_error is set, surface it to the user verbatim — the engine side may need attention (model not configured, sign-in required, quota). When days are pending, offer to run the dream: /linggen:dream runs the pass with YOUR model (no Linggen model needed); memory_dream_run offloads it to the local Linggen engine. When open_issues > 0, offer /linggen:solve.",
+        schema: || json!({
+            "type": "object",
+            "properties": {}
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_dream_run",
+        backend: Backend::DreamRun,
+        description: "Run the nightly memory dream on the local Linggen engine (its mission executor and configured model — prefer /linggen:dream to run the pass with YOUR model instead). Optional day (YYYY-MM-DD) scopes the run to one day; omitted runs the full nightly protocol: pending days oldest-first, then sweep, then audit. Returns immediately — dream runs take minutes; poll memory_dream_status, and if it reports a failed run surface last_run_error to the user. An in-flight run returns {in_flight: true} — that's state, not an error.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "day": {"type": "string", "description": "Optional target day, YYYY-MM-DD — one-day scoped run (the calendar shape)"}
+            }
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_issues",
+        backend: Backend::Memory { verb: "issues" },
+        description: "The memory review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions). Returns facts only; YOU are the solver: gather evidence (e.g. git history for a stale status claim), ask the user one item at a time when their call is needed, write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["open", "resolved", "dismissed", "all"], "description": "Which items to list (default open)"},
+                "limit": {"type": "integer", "description": "Max items (default 50)"}
+            }
+        }),
+        timeout_ms: 0,
+    },
+    McpTool {
+        name: "memory_issue_resolve",
+        backend: Backend::Memory { verb: "issue_resolve" },
+        description: "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The issue id from memory_issues"},
+                "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
+                "note": {"type": "string", "description": "One-line record of what was done"}
+            },
+            "required": ["id", "outcome"]
+        }),
+        timeout_ms: 0,
+    },
     // --- agent_run: delegate a task to a local Linggen agent -----------------
     McpTool {
         name: "agent_run",
@@ -427,7 +488,20 @@ fn initialize_result() -> Value {
             writes, pass source_session and host; capture uncertain-durability signal \
             to tier=episodic. Replacing or rewriting a row the user authored requires \
             user_directed:true grounded in their current message (with replace_ids \
-            for an atomic swap) — the daemon blocks it otherwise. Delete only by id."
+            for an atomic swap) — the daemon blocks it otherwise. Delete only by id. \
+            Status rows are perishable: when writing that something SHIPPED, was \
+            fixed, or went dormant, search for the prior status row on that subject \
+            and supersede it in the same memory_add via replace_ids — never leave an \
+            'in progress' row beside its own outcome. Memory upkeep: \
+            memory_dream_status says whether nightly judgment passes are due \
+            (pending_days) and whether review items await the user (open_issues). \
+            When days are pending, offer to run the dream — /linggen:dream uses YOUR \
+            model, memory_dream_run offloads to the Linggen engine; if a run failed, \
+            show last_run_error to the user. When open_issues > 0, offer \
+            /linggen:solve: read memory_issues, verify each item against the world \
+            (git, files), fix via memory_add + replace_ids, close via \
+            memory_issue_resolve — ask the user one item at a time when their call \
+            is needed."
     })
 }
 
@@ -454,7 +528,7 @@ fn tool_content(text: String, is_error: bool) -> Value {
 fn render_data(tool: &McpTool, data: &Value) -> Value {
     let op = match tool.backend {
         Backend::Bridge { op, .. } => op,
-        Backend::Memory { .. } | Backend::Agent => "",
+        Backend::Memory { .. } | Backend::Agent | Backend::DreamStatus | Backend::DreamRun => "",
     };
     match op {
         "screenshot" => {
@@ -543,7 +617,134 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                 Err(msg) => Ok(tool_content(msg, true)),
             }
         }
+        Backend::DreamStatus => {
+            let Some(state) = deps.state else {
+                return Ok(tool_content(
+                    "memory_dream_status is unavailable in this context (no daemon state)"
+                        .to_string(),
+                    true,
+                ));
+            };
+            match compose_dream_status(state, deps.ling_mem_url).await {
+                Ok(status) => Ok(tool_content(status.to_string(), false)),
+                Err(e) => Ok(tool_content(
+                    format!("dream status unavailable — ling-mem daemon unreachable: {e:#}"),
+                    true,
+                )),
+            }
+        }
+        Backend::DreamRun => {
+            let Some(state) = deps.state else {
+                return Ok(tool_content(
+                    "memory_dream_run is unavailable in this context (no daemon state)".to_string(),
+                    true,
+                ));
+            };
+            let day = args.get("day").and_then(Value::as_str).map(str::to_string);
+            use crate::server::api::missions::{trigger_mission_core, TriggerOutcome};
+            match trigger_mission_core(state, "dream", None, day.clone(), false).await {
+                TriggerOutcome::Started { session_id } => Ok(tool_content(
+                    json!({
+                        "started": true,
+                        "session_id": session_id,
+                        "day": day,
+                        "note": "dream runs take minutes — poll memory_dream_status; if it later reports a failed run, show last_run_error to the user",
+                    })
+                    .to_string(),
+                    false,
+                )),
+                TriggerOutcome::InFlight => Ok(tool_content(
+                    json!({
+                        "started": false,
+                        "in_flight": true,
+                        "note": "a dream run is already in flight — poll memory_dream_status",
+                    })
+                    .to_string(),
+                    false,
+                )),
+                TriggerOutcome::NotFound => Ok(tool_content(
+                    "dream mission not found — the engine's built-in dream mission is missing \
+                     (check ~/.linggen/missions/dream or reinstall Linggen)"
+                        .to_string(),
+                    true,
+                )),
+                TriggerOutcome::BadDay(d) => Ok(tool_content(
+                    format!("invalid day '{d}' — expected YYYY-MM-DD"),
+                    true,
+                )),
+                TriggerOutcome::Internal(e) => {
+                    Ok(tool_content(format!("dream trigger failed: {e}"), true))
+                }
+            }
+        }
     }
+}
+
+/// One status object answering "is memory upkeep due, and did the last
+/// run succeed?" — daemon days rollup (pending worklist + open issues)
+/// merged with the engine's own run state. Engine-side failures are
+/// carried as `last_run_error` so MCP callers can show the user WHY a
+/// dream failed (model not configured, sign-in expired, quota) instead
+/// of a silent dead pipeline.
+async fn compose_dream_status(
+    state: &Arc<ServerState>,
+    ling_mem_url: &str,
+) -> anyhow::Result<Value> {
+    let rollup = crate::engine::tools::memory_tool::call_memory_http(
+        ling_mem_url,
+        "memory_dream_status",
+        json!({ "verb": "days", "pending_only": true }),
+    )
+    .await?;
+
+    let pending: Vec<Value> = rollup
+        .get("days")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let first_pending_day = pending
+        .first()
+        .and_then(|d| d.get("date"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let open_issues = rollup.get("open_issues").cloned().unwrap_or(json!(0));
+
+    let in_flight = crate::extensions::missions::scheduler::mission_in_flight("dream");
+    let last_run = state
+        .manager
+        .missions
+        .list_mission_runs_paginated("dream", Some(1), None)
+        .ok()
+        .and_then(|runs| runs.into_iter().next());
+
+    // For a failed run, pull the session's last line — that's where the
+    // engine said what broke ("Consolidation failed: …", provider errors).
+    let last_run_error = match &last_run {
+        Some(run) if run.status == "failed" => run.session_id.as_deref().and_then(|sid| {
+            let messages = state.manager.global_sessions.get_chat_history(sid).ok()?;
+            let tail = messages
+                .iter()
+                .rev()
+                .find(|m| !m.is_observation && !m.content.trim().is_empty())?;
+            let text: String = tail.content.chars().take(400).collect();
+            Some(Value::String(text))
+        }),
+        _ => None,
+    };
+
+    Ok(json!({
+        "in_flight": in_flight,
+        "pending_days": pending,
+        "first_pending_day": first_pending_day,
+        "open_issues": open_issues,
+        "today": rollup.get("today").cloned().unwrap_or(Value::Null),
+        "last_run": last_run.as_ref().map(|r| json!({
+            "status": r.status,
+            "triggered_at": r.triggered_at,
+            "session_id": r.session_id,
+        })).unwrap_or(Value::Null),
+        "last_run_error": last_run_error.unwrap_or(Value::Null),
+    }))
 }
 
 /// Handle one JSON-RPC message. `None` means a notification (no response).
@@ -654,11 +855,15 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 22);
+        assert_eq!(tools.len(), 26);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
         assert!(tools.iter().any(|t| t["name"] == "memory_search"));
         assert!(tools.iter().any(|t| t["name"] == "agent_run"));
+        assert!(tools.iter().any(|t| t["name"] == "memory_dream_status"));
+        assert!(tools.iter().any(|t| t["name"] == "memory_dream_run"));
+        assert!(tools.iter().any(|t| t["name"] == "memory_issues"));
+        assert!(tools.iter().any(|t| t["name"] == "memory_issue_resolve"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
         // Delete is by-id only — no bulk filters on the destructive surface.
         let del = tools.iter().find(|t| t["name"] == "memory_delete").unwrap();
@@ -716,6 +921,30 @@ mod tests {
         });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         assert_eq!(res["result"]["isError"], true);
+    }
+
+    #[tokio::test]
+    async fn dream_tools_without_state_are_tool_errors() {
+        for (name, args) in [
+            ("memory_dream_status", json!({})),
+            ("memory_dream_run", json!({ "day": "2026-07-01" })),
+        ] {
+            let msg = json!({
+                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": { "name": name, "arguments": args }
+            });
+            let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
+            assert_eq!(res["result"]["isError"], true, "{name}");
+            let text = res["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("unavailable"), "{name}: {text}");
+        }
+    }
+
+    #[test]
+    fn issue_resolve_requires_id_and_outcome() {
+        let tool = TOOLS.iter().find(|t| t.name == "memory_issue_resolve").unwrap();
+        let schema = (tool.schema)();
+        assert_eq!(schema["required"], json!(["id", "outcome"]));
     }
 
     #[test]

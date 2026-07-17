@@ -372,21 +372,37 @@ pub(crate) struct TriggerMissionRequest {
     attended: bool,
 }
 
-/// POST /api/missions/:id/trigger — run a mission immediately
-pub(crate) async fn trigger_mission(
-    State(state): State<Arc<ServerState>>,
-    Path(id): Path<String>,
-    Json(req): Json<TriggerMissionRequest>,
-) -> impl IntoResponse {
+/// How a programmatic trigger ended. Shared by the HTTP handler and the
+/// MCP dream tools — one code path, one set of guards.
+pub(crate) enum TriggerOutcome {
+    Started { session_id: Option<String> },
+    NotFound,
+    InFlight,
+    BadDay(String),
+    Internal(String),
+}
+
+/// The body of a mission trigger, callable from inside the process (the
+/// `/mcp` dream tools) as well as from the HTTP handler below. Everything
+/// the handler guaranteed still holds: reload-from-disk, the early
+/// in-flight check, day validation, session pre-create, kickoff seeding,
+/// events, and the async dispatch.
+pub(crate) async fn trigger_mission_core(
+    state: &Arc<ServerState>,
+    id: &str,
+    project_root: Option<String>,
+    day: Option<String>,
+    attended: bool,
+) -> TriggerOutcome {
     // Refresh from disk so a manual trigger picks up in-flight edits to
     // mission.md (kickoff, body, allowed-tools, etc.) without a daemon
     // restart. Falls back to the cached copy if the file is gone.
-    let mission = match state.manager.missions.reload_one(&id) {
+    let mission = match state.manager.missions.reload_one(id) {
         Some(m) => m,
-        None => match state.manager.missions.get_mission(&id) {
+        None => match state.manager.missions.get_mission(id) {
             Ok(Some(m)) => m,
-            Ok(None) => return (StatusCode::NOT_FOUND, "Mission not found".to_string()).into_response(),
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            Ok(None) => return TriggerOutcome::NotFound,
+            Err(e) => return TriggerOutcome::Internal(e.to_string()),
         },
     };
 
@@ -396,38 +412,23 @@ pub(crate) async fn trigger_mission(
     // The guard inside dispatch stays authoritative; this early check
     // avoids the pre-created session in the common case.
     if crate::extensions::missions::scheduler::mission_in_flight(&mission.id) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "ok": false,
-                "in_flight": true,
-                "message": "A run of this mission is already in flight",
-            })),
-        )
-            .into_response();
+        return TriggerOutcome::InFlight;
     }
 
     // Validate the optional target day early — a malformed date must not
     // reach the kickoff template.
-    let day = match req.day.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let day = match day.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(d) if chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok() => {
             Some(d.to_string())
         }
-        Some(d) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("invalid day '{d}' — expected YYYY-MM-DD"),
-            )
-                .into_response();
-        }
+        Some(d) => return TriggerOutcome::BadDay(d.to_string()),
         None => None,
     };
 
     // Determine project root: from request, mission cwd (or legacy project), or env cwd.
     // Expand `~` and `$VAR` so `cwd: ~/.linggen` resolves to an absolute path
     // the agent's Bash tool can spawn in.
-    let raw_cwd = req
-        .project_root
+    let raw_cwd = project_root
         .or_else(|| mission.cwd.clone())
         .or_else(|| mission.project.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
@@ -454,7 +455,7 @@ pub(crate) async fn trigger_mission(
         let kickoff = crate::extensions::missions::scheduler::mission_kickoff_messages(
             &mission,
             day.as_deref(),
-            req.attended,
+            attended,
         );
         if let Some(first) = kickoff.first() {
             let _ = state.manager.global_sessions.add_chat_message(
@@ -487,7 +488,6 @@ pub(crate) async fn trigger_mission(
     let state_clone = state.clone();
     let session_id_clone = session_id.clone();
     let day_clone = day.clone();
-    let attended = req.attended;
 
     tokio::spawn(async move {
         crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
@@ -502,7 +502,39 @@ pub(crate) async fn trigger_mission(
         .await;
     });
 
-    Json(serde_json::json!({ "ok": true, "message": "Mission triggered", "session_id": session_id })).into_response()
+    TriggerOutcome::Started { session_id }
+}
+
+/// POST /api/missions/:id/trigger — run a mission immediately
+pub(crate) async fn trigger_mission(
+    State(state): State<Arc<ServerState>>,
+    Path(id): Path<String>,
+    Json(req): Json<TriggerMissionRequest>,
+) -> impl IntoResponse {
+    match trigger_mission_core(&state, &id, req.project_root, req.day, req.attended).await {
+        TriggerOutcome::Started { session_id } => Json(
+            serde_json::json!({ "ok": true, "message": "Mission triggered", "session_id": session_id }),
+        )
+        .into_response(),
+        TriggerOutcome::NotFound => {
+            (StatusCode::NOT_FOUND, "Mission not found".to_string()).into_response()
+        }
+        TriggerOutcome::InFlight => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "in_flight": true,
+                "message": "A run of this mission is already in flight",
+            })),
+        )
+            .into_response(),
+        TriggerOutcome::BadDay(d) => (
+            StatusCode::BAD_REQUEST,
+            format!("invalid day '{d}' — expected YYYY-MM-DD"),
+        )
+            .into_response(),
+        TriggerOutcome::Internal(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 /// GET /api/missions/sessions/state?mission_id=xxx&session_id=xxx — read mission session messages

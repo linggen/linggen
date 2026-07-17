@@ -129,6 +129,16 @@ pub(crate) fn store_state_line(stats: &serde_json::Value) -> Option<String> {
     ))
 }
 
+/// Review-queue line from the daemon's `stats` response — only when
+/// items await the user, so quiet stores stay quiet:
+/// `needs review: 3 item(s) — solve with /linggen:solve or the memory app`.
+pub(crate) fn review_line(stats: &serde_json::Value) -> Option<String> {
+    let open = stats.get("open_issues")?.as_u64()?;
+    (open > 0).then(|| {
+        format!("needs review: {open} item(s) — solve with /linggen:solve or the memory app")
+    })
+}
+
 /// A `sweep` result: `{"days": {"<date>": n, ...}, "dry_run": bool, "removed": n}`.
 fn sweep_line(v: &serde_json::Value) -> Option<String> {
     let removed = v.get("removed")?.as_u64()?;

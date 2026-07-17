@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Nightly memory dream. Remembers each pending day's episodic staging into long-term memory, runs the forget sweep, then condenses high-confidence stale chains in long-term memory. Built-in.
+description: Nightly memory dream. Remembers each pending day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — condensing high-confidence stale chains and queueing what needs the user as review items. Built-in.
 schedule: "0 3 * * *"
 # If the 3am cron is missed (machine off/asleep), the post-turn
 # catch-up re-triggers this mission the next time Linggen is used,
@@ -37,9 +37,12 @@ kickoff:
     condense — call
     `Memory_query({"verb":"chains","kind":"cited","limit":10,"derived_only":true})`,
     collapse each returned chain (a `MERGE` line per chain; empty scan
-    → no lines), and reply exactly: DONE. Otherwise remember the
-    OLDEST pending day per your system prompt (worklist → cluster →
-    promote → stamp), then stop and wait.
+    → no lines) — then the audit queue pass per your system prompt
+    (`Memory_query({"verb":"chains","kind":"marker","limit":5})` →
+    `Memory_write({"verb":"issue_add",...})` per stale candidate, a
+    `QUEUE` line each), and reply exactly: DONE. Otherwise remember
+    the OLDEST pending day per your system prompt (worklist → cluster
+    → promote → stamp), then stop and wait.
   - >-
     First action this turn: call
     `Memory_query({"verb":"days","pending_only":true})` to fetch a
@@ -47,7 +50,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -58,7 +62,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -69,7 +74,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -80,7 +86,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -91,7 +98,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -102,7 +110,8 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines), reply exactly: DONE. Oldest listed day is one you ALREADY
+    lines, then the audit queue pass with its `QUEUE` lines), reply
+    exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
     system prompt.
@@ -111,11 +120,12 @@ kickoff:
     `Memory_query({"verb":"days","pending_only":true})` for a fresh
     count, then call `Memory_write({"verb":"sweep"})`. From the fresh
     result only: no pending days → report `SWEEP removed=<n>`, run
-    the cited-chains condense per your system prompt (`MERGE` lines),
-    and reply exactly: DONE. Days remain → reply exactly:
+    the cited-chains condense per your system prompt (`MERGE` lines)
+    and the audit queue pass (`QUEUE` lines), and reply exactly:
+    DONE. Days remain → reply exactly:
     `PARTIAL <n> days remain` with n from the fresh response (they
-    continue tomorrow — oldest-first keeps progress monotone; condense
-    also waits for a night with a clear worklist).
+    continue tomorrow — oldest-first keeps progress monotone; the
+    audit also waits for a night with a clear worklist).
 # Day-scoped variant: used when a trigger passes a target day (the
 # memory app's calendar dream button). $DAY is replaced by the engine
 # with the YYYY-MM-DD date. Same procedure, one day, then the sweep.
@@ -131,8 +141,8 @@ kickoff-day:
   - >-
     Last turn for this run: call `Memory_write({"verb":"sweep"})`,
     report `SWEEP removed=<n>`, run the cited-chains condense per
-    your system prompt (`MERGE` lines; empty scan → no lines), then
-    reply exactly: DONE.
+    your system prompt (`MERGE` lines; empty scan → no lines) and the
+    audit queue pass (`QUEUE` lines), then reply exactly: DONE.
 # Attended day-scoped variant: the calendar day-click sends
 # `attended: true` — the user just clicked and is watching, so the
 # engine puts AskUser in scope and this kickoff ends with the
@@ -154,8 +164,9 @@ kickoff-attended:
     your system prompt: fetch
     `Memory_query({"verb":"chains","kind":"marker","limit":4,"derived_only":true})`
     and, if candidates return, confirm them with the user in ONE
-    AskUser call — merge only what they approve. Then reply exactly:
-    DONE.
+    AskUser call — merge only what they approve; on timeout or error
+    queue the candidates instead (`issue_add`, `QUEUE` lines). Then
+    reply exactly: DONE.
 # The dream is unattended (cron at 3am, or a turn-seam catch-up the
 # user didn't request). It has no chat partner, so AskUser is not in
 # the tool list — uncertainty resolves per the agent spec (promote on
@@ -172,7 +183,9 @@ permission:
     past-TTL episodic rows and atomic replace_ids merges of the
     agent's own derived long-term rows (high-confidence cited chains,
     ≤10 per night; the engine snapshots the store before each run).
-    Touches no files directly.
+    What it cannot solve with confidence it queues as review items
+    (a JSON sidecar entry, no row changes) for the user to solve
+    later. Touches no files directly.
 ---
 
 # Memory dream — nightly run protocol
@@ -190,15 +203,19 @@ agent). This mission adds only the nightly run protocol:
   `unjudged` count → reply `STALLED` (something is wrong — a human
   will look; do not loop). Out of nudges with days remaining → sweep,
   reply `PARTIAL <n> days remain` (no condense on PARTIAL nights).
-- **Finish-up = sweep, then condense.** On the empty-worklist turn,
-  after the sweep, fetch
+- **Finish-up = sweep → condense → queue.** On the empty-worklist
+  turn, after the sweep, fetch
   `Memory_query {"verb":"chains","kind":"cited","limit":10,"derived_only":true}`
   ONCE and collapse each returned chain per your condense doctrine —
-  one current-truth row via `replace_ids`, a `MERGE` line each. The
-  single capped fetch is the nightly budget; leftovers wait for
-  tomorrow's scan. **Only `cited` chains run unattended** — never
-  fetch `marker` or `subject` clusters in a mission; those need a
-  present user (chat verb, calendar review).
+  one current-truth row via `replace_ids`, a `MERGE` line each. Then
+  the audit queue pass per your system prompt: ONE
+  `Memory_query {"verb":"chains","kind":"marker","limit":5}` fetch,
+  and `issue_add` (a `QUEUE` line each) for stale candidates you
+  cannot solve with confidence. The capped fetches are the nightly
+  budget; leftovers wait for tomorrow. **Only `cited` chains MERGE
+  unattended** — `marker` candidates are queued, never merged, in a
+  mission; `subject` clusters aren't touched at all (deep attended
+  passes only).
 - **Failure = tool_error only.** A failed HTTP call / unreachable
   daemon → say `Consolidation failed: <short reason>` and stop.
   Everything else — merged adds, vanished episodic twins, empty

@@ -39,9 +39,20 @@ Thin proxy to the ling-mem daemon — no code moves between repos.
   migrating users keep muscle memory. Dream-pipeline verbs (`harvest_day`,
   `remember_day`, `sweep`, `chains`, `days`) stay engine-internal — missions
   run them; third-party agents don't.
+- **Dream + review-queue tools** (2026-07-17): `memory_dream_status` (daemon
+  days rollup + open review items + in-flight flag + last run outcome, with
+  `last_run_error` pulled from a failed run's session tail so the host can
+  show the user why), `memory_dream_run` (triggers the dream mission through
+  `trigger_mission_core` — the same guarded path as the HTTP trigger; quiet
+  variant only, since MCP callers can't receive AskUser), `memory_issues` and
+  `memory_issue_resolve` (proxy the daemon's review-queue sidecar — facts and
+  bookkeeping; the calling agent is the solver). Hosts are steered to run the
+  dream with their own model (`/linggen:dream`) and use `memory_dream_run`
+  only to offload to the engine's executor.
 - The server `instructions` carry the memory protocol (three tiers, voice law,
-  `source_session`, `replace_ids`/`user_directed` guard) — same text the
-  ling-mem MCP ships today.
+  `source_session`, `replace_ids`/`user_directed` guard, the status-supersede
+  rule, and when to offer dream/solve) — same text the ling-mem MCP ships
+  today.
 - Proxy through the engine's existing ling-mem HTTP client path so the
   first-use autostart (install missing ling-mem, start `:9888`) fires for MCP
   callers too. ling-mem unreachable after autostart → friendly install-guidance

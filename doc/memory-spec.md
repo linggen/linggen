@@ -71,14 +71,21 @@ never writes to project files.
 - **Scan** (user-triggered) — backfills a past day from host session
   logs, for days live capture missed. Safe to re-run: sessions that
   already contributed are skipped.
-- **Condense** (dream's last stage) — cures stale long-term memory:
-  chains of superseded notes collapse into one focused current-truth
-  row each. Only touches the agent's own notes. Unattended runs take
-  only high-confidence cited chains, capped per night, with a store
-  snapshot before every run; marker/subject clusters wait for an
-  attended pass — the calendar day-click runs an attended dream that
-  ends by confirming low-confidence merges with the user in one
-  AskUser batch, and the chat verb covers deep passes.
+- **Audit** (dream's last stage) — cures stale long-term memory by
+  confidence: what the agent can solve it solves, the rest is queued
+  for the user. The confident lane is condense — high-confidence
+  cited chains of its own notes collapse into one current-truth row
+  each, capped per night, store snapshot before every run. Everything
+  else (uncertain merges, status claims likely overtaken by the
+  world, user-voice conflicts) becomes a **review item** in the
+  daemon's issues queue — bookkeeping only, no row changes.
+- **Solve** (attended) — a host agent drains the review queue with
+  the user present: gathers evidence at solve time (git history,
+  files), fixes what the evidence proves, asks the user one item at a
+  time for the rest, closes each item. Surfaces: `/linggen solve` on
+  plugin hosts, the memory app chat on Linggen; the ling-mem console
+  shows the queue read-only. Dream reports and the recall footer
+  carry the open count.
 - **Secrets** — credentials never enter memory; deleted on sight.
 
 ## Rules
@@ -93,6 +100,9 @@ never writes to project files.
 5. Merging the agent's notes is free; generalizing about the user is
    always done in front of them.
 6. Never store secrets, at any layer.
+7. Status rows are perishable — a capture that changes a subject's
+   status supersedes the prior status row in the same write; the
+   review queue is the backstop, never the plan.
 
 ## Evaluation
 

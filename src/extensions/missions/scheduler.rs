@@ -945,6 +945,10 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
             report.push_str("\n- ");
             report.push_str(&line);
         }
+        if let Some(line) = super::report::review_line(&stats) {
+            report.push_str("\n- ");
+            report.push_str(&line);
+        }
     }
     let _ = state.manager.global_sessions.add_chat_message(
         sid,
