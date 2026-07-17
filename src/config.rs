@@ -130,11 +130,22 @@ pub struct AgentSpecRef {
     pub model: Option<String>,
 }
 
+/// The daemon's default listen port. Single source of truth — every engine
+/// consumer of the default (CLI, config default, install/autostart scripts,
+/// clients) resolves to this rather than a scattered literal. Override per
+/// install via `[server].port` in linggen.toml or `--port`.
+pub const DEFAULT_PORT: u16 = 9898;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerConfig {
+    #[serde(default = "default_server_port")]
     pub port: u16,
     #[serde(default = "default_server_host")]
     pub host: String,
+}
+
+fn default_server_port() -> u16 {
+    DEFAULT_PORT
 }
 
 fn default_server_host() -> String {
@@ -495,7 +506,7 @@ impl Default for Config {
             // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
             // provider/models.rs), so a fresh install needs nothing here.
             models: Vec::new(),
-            server: ServerConfig { port: 9898, host: default_server_host() },
+            server: ServerConfig { port: DEFAULT_PORT, host: default_server_host() },
             agent: AgentConfig {
                 max_iters: 200,
                 write_safety_mode: WriteSafetyMode::default(),

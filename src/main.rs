@@ -32,8 +32,9 @@ struct Cli {
     #[arg(long, global = true)]
     host: Option<String>,
 
-    /// Port for the server
-    #[arg(long, global = true)]
+    /// Port for the server (env: LINGGEN_PORT). Precedence: this flag >
+    /// LINGGEN_PORT > `[server].port` in linggen.toml > built-in default.
+    #[arg(long, global = true, env = "LINGGEN_PORT")]
     port: Option<u16>,
 
     /// Override skill discovery dir (default: ~/.linggen/skills/). Used by bundled apps.

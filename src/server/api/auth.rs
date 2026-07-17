@@ -70,7 +70,7 @@ pub(crate) async fn auth_login(
         let port = params
             .get("port")
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(9898);
+            .unwrap_or(crate::config::DEFAULT_PORT);
         format!("localhost:{}", port)
     });
     let callback = format!("http://{}/api/auth/callback", host);
