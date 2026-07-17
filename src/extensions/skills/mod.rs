@@ -362,6 +362,7 @@ impl SkillLoader {
         // 1. Load Global Skills (~/.linggen/skills/)
         {
             let global_dir = crate::paths::global_skills_dir();
+            migrate_renamed_skill_data(&global_dir, "sys-doctor", "mac-shifu");
             let _ = self
                 .load_from_dir_nested(&global_dir, SkillSource::Global, &mut *skills)
                 .await;
@@ -644,6 +645,39 @@ fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
     skill.skill_dir = Some(dir);
 }
 
+/// One-time migration for a renamed skill: move `<skills>/<old>/data` (user
+/// state — media manifests, archive ledger, removal history) to
+/// `<skills>/<new>/data`, then drop the stale old dir so both names can't
+/// load side by side. Never deletes anything it didn't migrate: if both
+/// sides have a `data/` dir the old one is left untouched.
+fn migrate_renamed_skill_data(skills_dir: &Path, old: &str, new: &str) {
+    let old_dir = skills_dir.join(old);
+    if !old_dir.join("SKILL.md").exists() {
+        return; // not an installed copy of the old skill — nothing to do
+    }
+    let old_data = old_dir.join("data");
+    let new_data = skills_dir.join(new).join("data");
+    if old_data.exists() {
+        if new_data.exists() {
+            tracing::warn!(
+                "both {old}/data and {new}/data exist — leaving {} untouched",
+                old_dir.display()
+            );
+            return;
+        }
+        let _ = std::fs::create_dir_all(skills_dir.join(new));
+        if let Err(e) = std::fs::rename(&old_data, &new_data) {
+            tracing::warn!("could not migrate {old}/data -> {new}/data: {e}");
+            return; // keep the old dir intact so nothing is lost
+        }
+        tracing::info!("migrated skill data {old}/data -> {new}/data");
+    }
+    match std::fs::remove_dir_all(&old_dir) {
+        Ok(()) => tracing::info!("removed stale renamed skill dir {}", old_dir.display()),
+        Err(e) => tracing::warn!("could not remove {}: {e}", old_dir.display()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,5 +874,54 @@ No app."#;
     #[test]
     fn test_parse_frontmatter_meta_missing_closing() {
         assert!(parse_frontmatter_meta("---\nname: x\ndescription: y\n").is_none());
+    }
+
+    fn seed(dir: &Path, files: &[(&str, &str)]) {
+        for (rel, content) in files {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, content).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_migrate_renamed_skill_moves_data_and_removes_old() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[
+            ("sys-doctor/SKILL.md", "---\nname: sys-doctor\n---\n"),
+            ("sys-doctor/data/media/removals.jsonl", "{}\n"),
+        ]);
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        assert!(!tmp.path().join("sys-doctor").exists());
+        assert!(tmp.path().join("mac-shifu/data/media/removals.jsonl").exists());
+    }
+
+    #[test]
+    fn test_migrate_renamed_skill_no_data_still_removes_old() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[("sys-doctor/SKILL.md", "x")]);
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        assert!(!tmp.path().join("sys-doctor").exists());
+    }
+
+    #[test]
+    fn test_migrate_renamed_skill_keeps_old_when_both_have_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[
+            ("sys-doctor/SKILL.md", "x"),
+            ("sys-doctor/data/a.txt", "old"),
+            ("mac-shifu/data/b.txt", "new"),
+        ]);
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        assert!(tmp.path().join("sys-doctor/data/a.txt").exists());
+        assert!(tmp.path().join("mac-shifu/data/b.txt").exists());
+    }
+
+    #[test]
+    fn test_migrate_renamed_skill_ignores_foreign_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[("sys-doctor/data/a.txt", "no SKILL.md here")]);
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        assert!(tmp.path().join("sys-doctor/data/a.txt").exists());
     }
 }
