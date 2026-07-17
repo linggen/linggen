@@ -953,7 +953,7 @@ mod tests {
     fn web_origins_must_be_loopback() {
         let mut headers = HeaderMap::new();
         assert!(origin_allowed(&headers));
-        headers.insert(ORIGIN, "http://127.0.0.1:9898".parse().unwrap());
+        headers.insert(ORIGIN, "http://127.0.0.1:9527".parse().unwrap());
         assert!(origin_allowed(&headers));
         headers.insert(ORIGIN, "https://evil.example".parse().unwrap());
         assert!(!origin_allowed(&headers));

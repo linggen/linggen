@@ -47,7 +47,7 @@ curl -fsSL https://linggen.dev/install.sh | bash
 ling
 ```
 
-Opens the web UI at `http://localhost:9898`.
+Opens the web UI at `http://localhost:9527`.
 
 ---
 
@@ -165,7 +165,7 @@ your machine; no VPN, no port forwarding.
 
 ## Use Linggen from other agents (MCP)
 
-The daemon is an MCP server at `http://127.0.0.1:9898/mcp` — 22 tools in
+The daemon is an MCP server at `http://127.0.0.1:9527/mcp` — 22 tools in
 four groups: `memory_*` (durable cross-host memory on the ling-mem store),
 `browser_*` (drive one visible tab in your own Chrome, per-site permission
 prompts), `x_*` (structured reads of your logged-in X session), and

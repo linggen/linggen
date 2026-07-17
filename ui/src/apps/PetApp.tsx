@@ -7,7 +7,7 @@
  * in-page overlay — no separate connection, no duplicated renderer.
  *
  * Selected by `?pet=1`. The native shell points its always-on-top pet window at
- * `http://127.0.0.1:9898/?pet=1` (linggen-app shell/src/pet.rs), so the app and
+ * `http://127.0.0.1:9527/?pet=1` (linggen-app shell/src/pet.rs), so the app and
  * the browser render the SAME core renderer — one Yinyue, no fork.
  */
 import React, { useEffect } from 'react';

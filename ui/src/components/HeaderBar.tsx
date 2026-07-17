@@ -54,7 +54,7 @@ const UserAvatar: React.FC = () => {
   // Not logged in — show login button
   if (!user) {
     const handleLogin = () => {
-      const host = window.location.host; // includes port, e.g. "192.168.20.242:9898"
+      const host = window.location.host; // includes port, e.g. "192.168.20.242:9527"
       const url = `${window.location.protocol}//${host}/api/auth/login?host=${encodeURIComponent(host)}&prompt=login`;
       const popup = window.open(url, '_blank', 'width=500,height=600');
       // If popup was blocked, navigate directly

@@ -10,7 +10,7 @@ status: all shipped — /mcp live (22 tools incl agent_run), linggen plugin + Cl
 # Linggen MCP — the capability front door
 
 One MCP server, on the daemon, for **every** outside agent (Claude Code, Codex,
-Cursor, OpenClaw…): `http://127.0.0.1:9898/mcp`, streamable HTTP, stateless
+Cursor, OpenClaw…): `http://127.0.0.1:9527/mcp`, streamable HTTP, stateless
 JSON-RPC (`src/server/mcp.rs`). Tools are grouped by prefix; each group fronts
 a Linggen component the daemon already talks to. One config line installs the
 whole platform's capabilities; every new group makes the same install more
@@ -63,10 +63,10 @@ Thin proxy to the ling-mem daemon — no code moves between repos.
 Three channels, one product name: **linggen**.
 
 - **Claude Code plugin `linggen`** (replaces `shared-memory`):
-  - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9898/mcp`).
+  - `.mcp.json` → the daemon endpoint (`http://127.0.0.1:9527/mcp`).
   - Hooks: the same per-turn recall hook (`recall.sh`, CLI-based — no MCP
     round-trip in a shell hook) + session-start core load.
-  - Autostart: start the daemon on `:9898` when the `ling` binary exists; when
+  - Autostart: start the daemon on `:9527` when the `ling` binary exists; when
     it doesn't, install the engine in the **background** (detached — session
     start never blocks; lock dir prevents races; `LINGGEN_NO_ENGINE_INSTALL=1`
     opts out) and disclose the install in the session context line. Both
@@ -85,7 +85,7 @@ Three channels, one product name: **linggen**.
   in place (old slug redirects, history kept) and republished as `linggen`
   2.0.0 — same SKILL.md as the plugin.
 - **Manual** (any MCP client):
-  `claude mcp add --transport http linggen http://127.0.0.1:9898/mcp` or the
+  `claude mcp add --transport http linggen http://127.0.0.1:9527/mcp` or the
   equivalent in Cursor/Codex config.
 
 ## Retirement map

@@ -56,14 +56,14 @@ Engine → ServerEvent → events_tx (broadcast) → WebRTC handler
 
 | Mode | Web UI served from | Signaling via | Data flows |
 |:-----|:-------------------|:--------------|:-----------|
-| Local | `localhost:9898` | WHIP endpoint on linggen (`/api/rtc/whip`) | WebRTC data channels (local ICE) |
+| Local | `localhost:9527` | WHIP endpoint on linggen (`/api/rtc/whip`) | WebRTC data channels (local ICE) |
 | Remote | Bootstrap from `linggen.dev`, full UI via data channel | WHIP relay (authenticated, CF Worker or Aliyun) | WebRTC data channels (P2P via STUN) |
 
 In local mode, ICE resolves instantly using local candidates — no STUN needed, negligible overhead. The same WebRTC code path handles both cases.
 
 ### Remote access via linggen.dev
 
-For remote access, the browser cannot reach `localhost:9898`. `linggen.dev` serves a lightweight bootstrap page that establishes the WebRTC connection, then loads the full UI from the linggen server through the data channel.
+For remote access, the browser cannot reach `localhost:9527`. `linggen.dev` serves a lightweight bootstrap page that establishes the WebRTC connection, then loads the full UI from the linggen server through the data channel.
 
 | Path | What it serves | Backing |
 |:-----|:---------------|:--------|
@@ -108,7 +108,7 @@ Remote access requires a free user account on `linggen.dev`. Accounts provide id
 
 ### No account needed for local
 
-Local access (`localhost:9898`) requires no account, no token, no registration. Accounts are only for the remote signaling relay.
+Local access (`localhost:9527`) requires no account, no token, no registration. Accounts are only for the remote signaling relay.
 
 ## Signaling via WHIP
 
@@ -125,7 +125,7 @@ One HTTP round trip. No separate ICE exchange endpoint. No stateful signaling ch
 
 ### Local signaling (WHIP on linggen server)
 
-When the UI is loaded from `localhost:9898`, linggen acts as its own WHIP server.
+When the UI is loaded from `localhost:9527`, linggen acts as its own WHIP server.
 
 Endpoint: `POST /api/rtc/whip`
 
@@ -272,7 +272,7 @@ TURN credentials are time-limited and issued by linggen.dev's API based on the u
 
 ### Setup (local)
 
-1. UI loads from `localhost:9898`.
+1. UI loads from `localhost:9527`.
 2. Client creates `RTCPeerConnection` with configured ICE servers.
 3. Client creates the `control` data channel.
 4. Client generates SDP offer, gathers all ICE candidates (full ICE).
@@ -342,7 +342,7 @@ Linggen instances authenticate with the relay using their API token (set during 
 
 ### Local mode (no config needed)
 
-WebRTC works out of the box on `localhost:9898`. No tokens, no accounts.
+WebRTC works out of the box on `localhost:9527`. No tokens, no accounts.
 
 ### Remote mode
 

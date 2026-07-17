@@ -134,7 +134,7 @@ pub struct AgentSpecRef {
 /// consumer of the default (CLI, config default, install/autostart scripts,
 /// clients) resolves to this rather than a scattered literal. Override per
 /// install via `[server].port` in linggen.toml or `--port`.
-pub const DEFAULT_PORT: u16 = 9898;
+pub const DEFAULT_PORT: u16 = 9527;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerConfig {

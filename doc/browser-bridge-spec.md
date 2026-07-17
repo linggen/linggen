@@ -33,11 +33,11 @@ skill script ──HTTP──> daemon ──WS req──> extension ──hidden
 
 ## Surfaces
 
-The bridge exposes three endpoints on the daemon (`127.0.0.1:9898`):
+The bridge exposes three endpoints on the daemon (`127.0.0.1:9527`):
 
 | Surface | Endpoint | Who calls it | Purpose |
 |:--------|:---------|:-------------|:--------|
-| Extension socket | `ws://127.0.0.1:9898/api/bridge/socket` | the extension | the request/response channel |
+| Extension socket | `ws://127.0.0.1:9527/api/bridge/socket` | the extension | the request/response channel |
 | Skill call | `POST /api/bridge/call` | skill scripts | broker one read, block until the extension answers |
 | Status probe | `GET /api/bridge/status` | skill scripts | is the bridge connected and is module X ready? |
 
