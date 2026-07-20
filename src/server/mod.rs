@@ -1093,6 +1093,8 @@ async fn prepare_server(
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))
         .route("/api/account/mobile-token", get(api::account::get_mobile_token))
+        .route("/api/pair/request", post(api::pair::post_pair_request))
+        .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
@@ -1111,7 +1113,9 @@ async fn prepare_server(
         .route("/apps/{skill_name}/capability/{tool_name}", post(capability_dispatch))
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
         .fallback(static_handler)
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // LAN gate: outermost layer — see `lan_gate`.
+        .layer(axum::middleware::from_fn(lan_gate));
 
     // Spawn the cron mission scheduler.
     {
@@ -1201,7 +1205,11 @@ async fn prepare_server(
     }
 
     let task = tokio::spawn(async move {
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await?;
         Ok(())
     });
 
@@ -1209,6 +1217,43 @@ async fn prepare_server(
         task,
         port: actual_port,
     })
+}
+
+/// The LAN trust gate (see `api::pair`). Loopback callers — the local web UI,
+/// app shells, skills, the simulator — pass untouched. Anything arriving over
+/// the network must present a paired-device token; only the health check and
+/// the pairing handshake itself stay open (they are the bootstrap).
+async fn lan_gate(
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if addr.ip().is_loopback() {
+        return next.run(req).await;
+    }
+    let path = req.uri().path();
+    if matches!(path, "/api/health" | "/api/pair/request" | "/api/pair/confirm") {
+        return next.run(req).await;
+    }
+    let headers = req.headers();
+    let token = headers
+        .get("x-linggen-device")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+        });
+    if token.map(api::pair::is_valid_device_token).unwrap_or(false) {
+        return next.run(req).await;
+    }
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({ "error": "pairing_required" })),
+    )
+        .into_response()
 }
 
 pub async fn start_server(
