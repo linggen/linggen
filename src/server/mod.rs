@@ -1095,6 +1095,8 @@ async fn prepare_server(
         .route("/api/account/mobile-token", get(api::account::get_mobile_token))
         .route("/api/pair/request", post(api::pair::post_pair_request))
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
+        .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
+        .route("/pair", get(api::pair::get_pair_page))
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
@@ -1233,7 +1235,10 @@ async fn lan_gate(
         return next.run(req).await;
     }
     let path = req.uri().path();
-    if matches!(path, "/api/health" | "/api/pair/request" | "/api/pair/confirm") {
+    if matches!(
+        path,
+        "/api/health" | "/api/pair/request" | "/api/pair/confirm" | "/api/pair/qr-confirm"
+    ) {
         return next.run(req).await;
     }
     let headers = req.headers();

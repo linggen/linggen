@@ -9,7 +9,11 @@
 //! deleting their row in `~/.linggen/paired-devices.json`, and IP-agnostic
 //! (DHCP churn doesn't unpair).
 
-use axum::{extract::Json, http::StatusCode, response::IntoResponse};
+use axum::{
+    extract::Json,
+    http::StatusCode,
+    response::{Html, IntoResponse},
+};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -81,6 +85,24 @@ fn show_code(code: &str, device_name: &str) {
     }
 }
 
+/// This Mac's identity, shown on the phone BEFORE the user commits — in an
+/// office full of Linggen Macs, seeing a stranger's name here is the cue to
+/// cancel. Display-only info, the same thing the pairing dialog shows.
+fn mac_identity() -> (String, Option<String>) {
+    let mac_name = local_host_name().unwrap_or_else(|| "Mac".to_string());
+    let account = crate::account::load_account().and_then(|a| a.user_name);
+    (mac_name, account)
+}
+
+fn local_host_name() -> Option<String> {
+    let out = std::process::Command::new("scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct PairRequest {
     device_name: String,
@@ -100,7 +122,13 @@ pub(crate) async fn post_pair_request(Json(req): Json<PairRequest>) -> impl Into
         created: Instant::now(),
         attempts: 0,
     });
-    Json(serde_json::json!({ "pair_id": pair_id, "expires_in": CODE_TTL.as_secs() }))
+    let (mac_name, account_name) = mac_identity();
+    Json(serde_json::json!({
+        "pair_id": pair_id,
+        "expires_in": CODE_TTL.as_secs(),
+        "mac_name": mac_name,
+        "account_name": account_name,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -147,4 +175,94 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
 
 fn err(code: StatusCode, msg: impl Into<String>) -> axum::response::Response {
     (code, Json(serde_json::json!({ "error": msg.into() }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// QR pairing — scan the Mac's screen instead of typing anything.
+// ---------------------------------------------------------------------------
+//
+// GET /pair (loopback-only via the LAN gate: only someone AT this Mac can see
+// it) renders a QR encoding `linggen://pair?host=<name>:<port>&secret=…`. The
+// phone scans it and trades the secret for a device token at
+// POST /api/pair/qr-confirm. Scanning a screen you're standing in front of is
+// an even stronger version of the code confirm — wrong-Mac pairing becomes
+// physically impossible.
+
+const QR_TTL: Duration = Duration::from_secs(600);
+
+struct QrPending {
+    secret: String,
+    created: Instant,
+}
+
+static QR_PENDING: Mutex<Option<QrPending>> = Mutex::new(None);
+
+/// GET /pair — the QR page. Each load mints a fresh single-use secret.
+pub(crate) async fn get_pair_page(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let secret = random_hex(16);
+    *QR_PENDING.lock().unwrap() = Some(QrPending { secret: secret.clone(), created: Instant::now() });
+    let (mac_name, account) = mac_identity();
+    let host = format!("{}.local:{}", mac_name.to_lowercase(), state.port);
+    let url = format!("linggen://pair?host={host}&secret={secret}");
+    let svg = qrcode::QrCode::new(url.as_bytes())
+        .map(|qr| {
+            qr.render::<qrcode::render::svg::Color>()
+                .min_dimensions(260, 260)
+                .quiet_zone(true)
+                .build()
+        })
+        .unwrap_or_default();
+    let who = account.map(|a| format!(" · {a}")).unwrap_or_default();
+    Html(format!(
+        "<!doctype html><meta charset=utf-8><title>Pair with {mac_name}</title>\
+         <body style=\"font-family:-apple-system,sans-serif;display:flex;flex-direction:column;\
+         align-items:center;justify-content:center;min-height:90vh;background:#12151D;color:#E8E6DF\">\
+         <h2 style=\"font-weight:600\">Pair your phone</h2>\
+         <p style=\"color:#8F94A3;margin:0 0 18px\">Scan with Linggen on your phone — pairing with <b>{mac_name}</b>{who}</p>\
+         <div style=\"background:#fff;padding:14px;border-radius:12px\">{svg}</div>\
+         <p style=\"color:#8F94A3;margin-top:18px;font-size:13px\">Can't scan? Type <code>{host}</code> in the app and confirm the on-screen code.</p>\
+         <p style=\"color:#5c6170;font-size:11px;word-break:break-all\">{url}</p>\
+         <p style=\"color:#5c6170;font-size:12px\">This QR is single-use and expires in 10 minutes. Reload for a fresh one.</p>"
+    ))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QrConfirm {
+    secret: String,
+    device_name: String,
+}
+
+/// POST /api/pair/qr-confirm — trade a scanned QR secret for a device token.
+pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl IntoResponse {
+    let mut pending = QR_PENDING.lock().unwrap();
+    let valid = pending
+        .as_ref()
+        .is_some_and(|p| p.secret == req.secret && p.created.elapsed() <= QR_TTL);
+    if !valid {
+        return err(StatusCode::UNAUTHORIZED, "QR expired or already used — reload the page on your Mac");
+    }
+    *pending = None;
+    drop(pending);
+    let device = PairedDevice {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: req.device_name.chars().take(64).collect(),
+        secret: random_hex(24),
+        created_at: chrono::Utc::now().timestamp(),
+    };
+    let mut devices = load_devices();
+    devices.push(device.clone());
+    if let Err(e) = save_devices(&devices) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
+    }
+    tracing::info!("[pair] device '{}' paired via QR ({})", device.name, device.id);
+    let (mac_name, account_name) = mac_identity();
+    Json(serde_json::json!({
+        "device_token": device.secret,
+        "device_id": device.id,
+        "mac_name": mac_name,
+        "account_name": account_name,
+    }))
+    .into_response()
 }
