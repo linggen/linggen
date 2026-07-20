@@ -30,9 +30,10 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "cookies"] }
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 headless_chrome = "1.0"
 base64 = "0.22"
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 rust-embed = "8.0"

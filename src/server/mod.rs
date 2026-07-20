@@ -1064,6 +1064,15 @@ async fn prepare_server(
         .route("/api/file", get(read_file_api))
         .route("/api/workspace/state", get(get_workspace_state))
         .route("/api/bash", post(run_bash_api))
+        .route("/api/media/manifest", post(api::media::manifest_handler))
+        .route(
+            "/api/media/ingest",
+            post(api::media::ingest_handler)
+                // Originals include multi-GB videos; the axum default (2 MB) is
+                // far too small for this one route.
+                .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024 * 1024)),
+        )
+        .route("/api/media/verify", post(api::media::verify_handler))
         .route("/api/tts", post(api::tts::tts_handler))
         .route("/api/yinyue/say", post(api::yinyue::say_handler))
         .route("/api/bridge/socket", get(bridge::socket_handler))

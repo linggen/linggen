@@ -6,6 +6,7 @@ pub(super) mod agents;
 pub(super) mod auth;
 pub(super) mod config;
 pub(super) mod marketplace;
+pub(super) mod media;
 pub(super) mod missions;
 pub(super) mod permissions;
 pub(super) mod rooms;
