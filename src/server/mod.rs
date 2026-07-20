@@ -1193,6 +1193,7 @@ async fn prepare_server(
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await?;
     let actual_port = listener.local_addr()?.port();
     info!("Server running on http://{}:{}", host, actual_port);
+    api::pair::advertise(actual_port, host != "127.0.0.1" && host != "localhost");
 
     // Anonymous usage telemetry. See src/telemetry/mod.rs for the field list
     // and opt-out paths. Fired here (after listener binds, before serve loop)
