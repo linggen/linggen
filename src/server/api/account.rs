@@ -145,6 +145,30 @@ pub(crate) async fn post_account_logout() -> impl IntoResponse {
     Json(serde_json::json!({ "ok": true, "removed": removed }))
 }
 
+/// GET /api/account/mobile-token — device provisioning for Linggen Mobile:
+/// a paired phone adopts this Mac's account and signs in with no browser
+/// flow (same one-token-many-devices model as remote enrollment).
+///
+/// Deliberate exception to "callers never see the token" — this hands the
+/// billing token to whoever can reach the daemon API. Fine on the loopback
+/// default; before `[server] host` opens to the LAN for real devices, this
+/// route must gate behind a Mac-side approval prompt.
+pub(crate) async fn get_mobile_token() -> impl IntoResponse {
+    match account::load_account() {
+        Some(acc) => Json(serde_json::json!({
+            "token": acc.api_token,
+            "name": acc.user_name,
+            "avatar": acc.avatar_url,
+        }))
+        .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not signed in" })),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub(crate) struct CheckoutReq {
     app: String,

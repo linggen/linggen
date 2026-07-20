@@ -1092,6 +1092,7 @@ async fn prepare_server(
         .route("/api/account/login", post(post_account_login))
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))
+        .route("/api/account/mobile-token", get(api::account::get_mobile_token))
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
