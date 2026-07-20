@@ -1097,6 +1097,8 @@ async fn prepare_server(
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
         .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
         .route("/pair", get(api::pair::get_pair_page))
+        .route("/api/dj/library", get(api::dj::get_library))
+        .route("/api/dj/file", get(api::dj::get_file))
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
@@ -1250,10 +1252,23 @@ async fn lan_gate(
                 .get(axum::http::header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.strip_prefix("Bearer "))
+        })
+        // Webviews (phone app_mode surfaces) can't add headers to their
+        // subresource requests — they carry the device token as a cookie.
+        .or_else(|| {
+            headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|c| {
+                    c.split(';')
+                        .map(str::trim)
+                        .find_map(|kv| kv.strip_prefix("linggen_device="))
+                })
         });
     if token.map(api::pair::is_valid_device_token).unwrap_or(false) {
         return next.run(req).await;
     }
+    tracing::info!("[gate] rejected {} {} from {}", req.method(), path, addr);
     (
         axum::http::StatusCode::UNAUTHORIZED,
         axum::Json(serde_json::json!({ "error": "pairing_required" })),
