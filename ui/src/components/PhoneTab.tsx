@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Pencil, RefreshCw, SlidersHorizontal, Smartphone, Trash2, X } from 'lucide-react';
+import { Check, Pencil, RefreshCw, Smartphone, Trash2, X } from 'lucide-react';
 import type { AppConfig } from '../types';
 
 const sectionCls ='bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
@@ -41,7 +41,6 @@ export const PhoneTab: React.FC<{
   const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState('');
-  const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [modelIds, setModelIds] = React.useState<string[]>([]);
 
   const lanEnabled = config.server.host === LAN_HOST;
@@ -273,31 +272,21 @@ export const PhoneTab: React.FC<{
                   </p>
                 </div>
                 {editingId !== d.id && (
-                  <>
-                    <button
-                      onClick={() => setExpandedId((e) => (e === d.id ? null : d.id))}
-                      className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
-                      title="Models available on this phone"
-                    >
-                      <SlidersHorizontal size={12} />
-                      Models{d.settings?.models?.length ? ` (${d.settings.models.length})` : ''}
-                    </button>
-                    <button
-                      onClick={() => revoke(d.id)}
-                      onBlur={() => setConfirmingId((c) => (c === d.id ? null : c))}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                        confirmingId === d.id
-                          ? 'bg-red-600 text-white hover:bg-red-700'
-                          : 'text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10'
-                      }`}
-                    >
-                      <Trash2 size={12} />
-                      {confirmingId === d.id ? 'Confirm revoke' : 'Revoke'}
-                    </button>
-                  </>
+                  <button
+                    onClick={() => revoke(d.id)}
+                    onBlur={() => setConfirmingId((c) => (c === d.id ? null : c))}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      confirmingId === d.id
+                        ? 'bg-red-600 text-white hover:bg-red-700'
+                        : 'text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10'
+                    }`}
+                  >
+                    <Trash2 size={12} />
+                    {confirmingId === d.id ? 'Confirm revoke' : 'Revoke'}
+                  </button>
                 )}
                 </div>
-                {expandedId === d.id && (
+                {editingId !== d.id && (
                   <div className="mt-2.5 ml-7 pl-3 border-l-2 border-slate-100 dark:border-white/5">
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-1.5">
                       Which models this phone may use. The phone picks one from this set.
