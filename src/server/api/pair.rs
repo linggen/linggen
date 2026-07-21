@@ -244,7 +244,12 @@ pub(crate) async fn get_pair_info(
     let (mac_name, account_name) = mac_identity();
     let devices: Vec<serde_json::Value> = load_devices()
         .iter()
-        .map(|d| serde_json::json!({ "id": d.id, "name": d.name, "created_at": d.created_at }))
+        .map(|d| serde_json::json!({
+            "id": d.id,
+            "name": d.name,
+            "created_at": d.created_at,
+            "settings": d.settings,
+        }))
         .collect();
     Json(serde_json::json!({
         "lan_live": lan_live,
@@ -300,30 +305,43 @@ pub(crate) async fn get_pair_qr(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct RenameDevice {
-    name: String,
+pub(crate) struct DeviceUpdate {
+    #[serde(default)]
+    name: Option<String>,
+    /// Replaces the device's Mac-owned settings blob (e.g. `{"models": [ids]}`).
+    #[serde(default)]
+    settings: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// PATCH /api/pair/devices/{id} — rename a paired device. iOS won't hand apps
-/// the user-set name ("Liang's iPhone") without a restricted entitlement, so
-/// this is the way to label a device beyond its model.
+/// PATCH /api/pair/devices/{id} — edit a paired device: rename it and/or set its
+/// per-device settings (the models allow-list, etc.). iOS won't hand apps the
+/// user-set name without a restricted entitlement, so renaming here is the way
+/// to label a device; settings are the Mac→phone pull source.
 pub(crate) async fn rename_pair_device(
     Path(id): Path<String>,
-    Json(req): Json<RenameDevice>,
+    Json(req): Json<DeviceUpdate>,
 ) -> impl IntoResponse {
-    let name: String = req.name.trim().chars().take(64).collect();
-    if name.is_empty() {
-        return err(StatusCode::BAD_REQUEST, "name cannot be empty");
+    if req.name.is_none() && req.settings.is_none() {
+        return err(StatusCode::BAD_REQUEST, "nothing to update");
     }
     let mut devices = load_devices();
     let Some(device) = devices.iter_mut().find(|d| d.id == id) else {
         return err(StatusCode::NOT_FOUND, "no such device");
     };
-    device.name = name.clone();
+    if let Some(name) = req.name {
+        let name: String = name.trim().chars().take(64).collect();
+        if name.is_empty() {
+            return err(StatusCode::BAD_REQUEST, "name cannot be empty");
+        }
+        device.name = name;
+    }
+    if let Some(settings) = req.settings {
+        device.settings = settings;
+    }
     if let Err(e) = save_devices(&devices) {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
     }
-    tracing::info!("[pair] device {id} renamed to '{name}'");
+    tracing::info!("[pair] device {id} updated");
     Json(serde_json::json!({ "status": "ok" })).into_response()
 }
 
