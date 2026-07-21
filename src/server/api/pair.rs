@@ -247,6 +247,34 @@ pub(crate) async fn get_pair_qr(
     Json(serde_json::json!({ "svg": svg, "url": url, "host": host }))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct RenameDevice {
+    name: String,
+}
+
+/// PATCH /api/pair/devices/{id} — rename a paired device. iOS won't hand apps
+/// the user-set name ("Liang's iPhone") without a restricted entitlement, so
+/// this is the way to label a device beyond its model.
+pub(crate) async fn rename_pair_device(
+    Path(id): Path<String>,
+    Json(req): Json<RenameDevice>,
+) -> impl IntoResponse {
+    let name: String = req.name.trim().chars().take(64).collect();
+    if name.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "name cannot be empty");
+    }
+    let mut devices = load_devices();
+    let Some(device) = devices.iter_mut().find(|d| d.id == id) else {
+        return err(StatusCode::NOT_FOUND, "no such device");
+    };
+    device.name = name.clone();
+    if let Err(e) = save_devices(&devices) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
+    }
+    tracing::info!("[pair] device {id} renamed to '{name}'");
+    Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
 /// DELETE /api/pair/devices/{id} — revoke one device. Its token stops working
 /// on the next request; the phone re-pairs with eyes on this Mac.
 pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {

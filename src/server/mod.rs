@@ -1099,7 +1099,10 @@ async fn prepare_server(
         .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
         .route("/api/pair/info", get(api::pair::get_pair_info))
         .route("/api/pair/qr", get(api::pair::get_pair_qr))
-        .route("/api/pair/devices/{id}", delete(api::pair::delete_pair_device))
+        .route(
+            "/api/pair/devices/{id}",
+            patch(api::pair::rename_pair_device).delete(api::pair::delete_pair_device),
+        )
         .route("/pair", get(api::pair::get_pair_page))
         .route("/api/dj/library", get(api::dj::get_library))
         .route("/api/dj/file", get(api::dj::get_file))
