@@ -151,7 +151,7 @@ export const PhoneTab: React.FC<{
                 Scan with the phone's Camera app
               </p>
               <p>It opens Linggen on the phone and pairs with <b>{info.mac_name}</b>{info.account_name ? ` · ${info.account_name}` : ''} — nothing to type.</p>
-              <p>The code is single-use and expires in 10 minutes.</p>
+              <p>Scan it from any number of phones — it stays valid until you tap New code or restart Linggen.</p>
               <p>No camera handy? In the app, pick this Mac under <b>Nearby Macs</b> and type the code that appears on this screen.</p>
               <button
                 onClick={fetchQr}

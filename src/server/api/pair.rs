@@ -319,11 +319,8 @@ pub fn advertise(port: u16, lan_bound: bool) {
 // an even stronger version of the code confirm — wrong-Mac pairing becomes
 // physically impossible.
 
-const QR_TTL: Duration = Duration::from_secs(600);
-
 struct QrPending {
     secret: String,
-    created: Instant,
 }
 
 static QR_PENDING: Mutex<Option<QrPending>> = Mutex::new(None);
@@ -332,7 +329,7 @@ static QR_PENDING: Mutex<Option<QrPending>> = Mutex::new(None);
 /// /pair page and the Settings → Phone tab.
 fn mint_qr(port: u16) -> (String, String, String) {
     let secret = random_hex(16);
-    *QR_PENDING.lock().unwrap() = Some(QrPending { secret: secret.clone(), created: Instant::now() });
+    *QR_PENDING.lock().unwrap() = Some(QrPending { secret: secret.clone() });
     let (mac_name, _) = mac_identity();
     let host = format!("{}.local:{}", mac_name.to_lowercase(), port);
     let url = format!("linggen://pair?host={host}&secret={secret}");
@@ -363,7 +360,7 @@ pub(crate) async fn get_pair_page(
          <div style=\"background:#fff;padding:14px;border-radius:12px\">{svg}</div>\
          <p style=\"color:#8F94A3;margin-top:18px;font-size:13px\">Can't scan? Type <code>{host}</code> in the app and confirm the on-screen code.</p>\
          <p style=\"color:#5c6170;font-size:11px;word-break:break-all\">{url}</p>\
-         <p style=\"color:#5c6170;font-size:12px\">This QR is single-use and expires in 10 minutes. Reload for a fresh one.</p>"
+         <p style=\"color:#5c6170;font-size:12px\">Scan it from any phone — it stays valid until you reload this page or restart Linggen.</p>"
     ))
 }
 
@@ -376,16 +373,25 @@ pub(crate) struct QrConfirm {
 }
 
 /// POST /api/pair/qr-confirm — trade a scanned QR secret for a device token.
+///
+/// The secret is reusable: it stays valid until a new QR is minted (reopening
+/// the pair surface or "New code") or the daemon restarts — no expiry, not
+/// consumed on use. So one code pairs any number of phones, and re-scanning is
+/// idempotent (the same phone's `device_id` replaces its own row via
+/// `commit_device`). The trust boundary is unchanged: the QR is loopback-only
+/// to display, LAN-token-gated to use, and every pairing is a revocable row.
 pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl IntoResponse {
-    let mut pending = QR_PENDING.lock().unwrap();
-    let valid = pending
+    let matches = QR_PENDING
+        .lock()
+        .unwrap()
         .as_ref()
-        .is_some_and(|p| p.secret == req.secret && p.created.elapsed() <= QR_TTL);
-    if !valid {
-        return err(StatusCode::UNAUTHORIZED, "QR expired or already used — reload the page on your Mac");
+        .is_some_and(|p| p.secret == req.secret);
+    if !matches {
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "QR no longer valid — open Settings → Phone on your Mac for the current code",
+        );
     }
-    *pending = None;
-    drop(pending);
     let name: String = req.device_name.chars().take(64).collect();
     let device = match commit_device(name, req.device_id) {
         Ok(d) => d,

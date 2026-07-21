@@ -5,12 +5,14 @@
 
 use axum::{
     extract::Query,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "flac", "wav", "ogg", "aac"];
 const COVER_EXTS: &[&str] = &["webp", "jpg", "jpeg", "png"];
