@@ -51,6 +51,44 @@ fn ledger_path() -> PathBuf {
     data_dir().join("archive.jsonl")
 }
 
+fn flags_path() -> PathBuf {
+    data_dir().join("flags.json")
+}
+
+/// Mac Shifu's scan verdicts (blurry/dark/…), keyed by content hash. The
+/// phone borrows these instead of re-implementing image analysis in Dart —
+/// standalone gets the cheap detectors, paired gets the Mac's brains.
+fn load_verdicts() -> HashMap<String, Vec<String>> {
+    let Ok(text) = std::fs::read_to_string(flags_path()) else {
+        return HashMap::new();
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&text) else {
+        return HashMap::new();
+    };
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for item in doc.get("items").and_then(|i| i.as_array()).into_iter().flatten() {
+        let Some(sha) = item.get("sha256").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        let flags: Vec<String> = item
+            .get("flags")
+            .and_then(|f| f.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str().map(str::to_string))
+            .collect();
+        if !flags.is_empty() {
+            // Byte-identical copies share a sha — union their flags.
+            out.entry(sha.to_string()).or_default().extend(flags);
+        }
+    }
+    for flags in out.values_mut() {
+        flags.sort();
+        flags.dedup();
+    }
+    out
+}
+
 fn backup_root() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join("Pictures").join("iPhone Backup")
 }
@@ -117,22 +155,31 @@ pub(crate) struct ManifestAsset {
 /// absent from both (a later verify catches it once the archive copy lands).
 pub(crate) async fn manifest_handler(Json(body): Json<ManifestBody>) -> Response {
     let loaded = tokio::task::spawn_blocking(|| {
-        (sha_set(&load_jsonl(&manifest_path())), sha_set(&load_jsonl(&ledger_path())))
+        (
+            sha_set(&load_jsonl(&manifest_path())),
+            sha_set(&load_jsonl(&ledger_path())),
+            load_verdicts(),
+        )
     })
     .await;
-    let Ok((staged, archived)) = loaded else {
+    let Ok((staged, archived, all_verdicts)) = loaded else {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "manifest load failed");
     };
     let mut needed = Vec::new();
     let mut verified = Vec::new();
+    let mut verdicts = serde_json::Map::new();
     for a in &body.assets {
         if archived.contains(&a.sha256) {
             verified.push(a.local_id.clone());
         } else if !staged.contains(&a.sha256) {
             needed.push(a.local_id.clone());
         }
+        if let Some(flags) = all_verdicts.get(&a.sha256) {
+            verdicts.insert(a.local_id.clone(), json!(flags));
+        }
     }
-    Json(json!({"needed": needed, "verified": verified})).into_response()
+    Json(json!({"needed": needed, "verified": verified, "verdicts": verdicts}))
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
