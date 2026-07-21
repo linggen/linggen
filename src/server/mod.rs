@@ -1098,6 +1098,7 @@ async fn prepare_server(
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
         .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
         .route("/api/pair/info", get(api::pair::get_pair_info))
+        .route("/api/pair/me", get(api::pair::get_pair_me))
         .route("/api/pair/qr", get(api::pair::get_pair_qr))
         .route(
             "/api/pair/devices/{id}",

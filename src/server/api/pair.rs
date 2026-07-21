@@ -46,6 +46,10 @@ pub struct PairedDevice {
     /// written before this field, and older apps that don't send one, still load.
     #[serde(default)]
     pub device_id: Option<String>,
+    /// Per-device settings the Mac owns and the phone pulls (Settings → Phone,
+    /// one-way Mac→phone). E.g. `{"models": [ids]}`. Preserved across re-pair.
+    #[serde(default)]
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }
 
 fn devices_path() -> PathBuf {
@@ -68,20 +72,36 @@ fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
 /// the token/name in place instead of stacking duplicates); without one — older
 /// apps — it appends, as before.
 fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<PairedDevice> {
+    let mut devices = load_devices();
+    // Carry the Mac-owned settings across a re-pair so pulling from the Mac
+    // doesn't reset to defaults when a phone re-scans.
+    let carried = device_id.as_deref().and_then(|did| {
+        devices
+            .iter()
+            .find(|d| d.device_id.as_deref() == Some(did))
+            .map(|d| d.settings.clone())
+    });
     let device = PairedDevice {
         id: uuid::Uuid::new_v4().to_string(),
         name,
         secret: random_hex(24),
         created_at: chrono::Utc::now().timestamp(),
         device_id: device_id.clone(),
+        settings: carried.unwrap_or_default(),
     };
-    let mut devices = load_devices();
     if let Some(did) = device_id {
         devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
     }
     devices.push(device.clone());
     save_devices(&devices)?;
     Ok(device)
+}
+
+/// The device that owns a token, if any — lets `/api/pair/me` identify the caller.
+fn device_by_token(token: &str) -> Option<PairedDevice> {
+    (!token.is_empty())
+        .then(|| load_devices().into_iter().find(|d| d.secret == token))
+        .flatten()
 }
 
 /// The LAN gate's check: does any paired device own this token?
@@ -236,6 +256,38 @@ pub(crate) async fn get_pair_info(
         "account_name": account_name,
         "devices": devices,
     }))
+}
+
+/// The device token a phone presents on every LAN call — `x-linggen-device`
+/// or `Authorization: Bearer`.
+fn device_token_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+    if let Some(t) = headers.get("x-linggen-device").and_then(|v| v.to_str().ok()) {
+        return Some(t.to_string());
+    }
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t.to_string())
+}
+
+/// GET /api/pair/me — the calling phone's own paired-device row (name +
+/// Mac-owned settings). This is the "Sync from Mac" pull: identified by the
+/// device token, so each phone gets its own record.
+pub(crate) async fn get_pair_me(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    let Some(token) = device_token_from_headers(&headers) else {
+        return err(StatusCode::UNAUTHORIZED, "no device token");
+    };
+    let Some(d) = device_by_token(&token) else {
+        return err(StatusCode::UNAUTHORIZED, "unknown device");
+    };
+    Json(serde_json::json!({
+        "id": d.id,
+        "name": d.name,
+        "device_id": d.device_id,
+        "settings": d.settings,
+    }))
+    .into_response()
 }
 
 /// GET /api/pair/qr — the QR as JSON for embedding in Settings → Phone.
