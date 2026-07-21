@@ -1103,6 +1103,8 @@ async fn prepare_server(
         .route("/pair", get(api::pair::get_pair_page))
         .route("/api/dj/library", get(api::dj::get_library))
         .route("/api/dj/file", get(api::dj::get_file))
+        .route("/api/dj/devices", get(api::dj::get_devices))
+        .route("/api/dj/have", post(api::dj::post_have))
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))
