@@ -1494,7 +1494,7 @@ async fn health_handler(
     state
         .last_activity
         .store(unix_secs_now(), std::sync::atomic::Ordering::Relaxed);
-    axum::Json(json!({ "ok": true }))
+    axum::Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
 }
 
 async fn pick_folder() -> impl IntoResponse {
