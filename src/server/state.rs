@@ -17,6 +17,10 @@ pub struct ServerState {
     pub manager: Arc<AgentManager>,
     pub dev_mode: bool,
     pub port: u16,
+    /// The host the listener actually bound at startup ("127.0.0.1" or
+    /// "0.0.0.0"). Config changes don't move it until restart — Settings →
+    /// Phone compares this against the config to show "restart to apply".
+    pub bound_host: String,
     /// Connected WebRTC peer count. Drives the idle-shutdown watcher when
     /// `idle_shutdown_secs` is set. Bumped in `rtc::peer::create_peer_inner`.
     pub active_peer_count: Arc<std::sync::atomic::AtomicUsize>,

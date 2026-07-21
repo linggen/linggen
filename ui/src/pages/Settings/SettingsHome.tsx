@@ -7,6 +7,7 @@ import { AgentsTab } from '../../components/AgentsTab';
 import { SkillsTab } from '../../components/SkillsTab';
 import { ToolsTab } from '../../components/ToolsTab';
 import { GeneralTab } from '../../components/GeneralTab';
+import { PhoneTab } from '../../components/PhoneTab';
 import { MissionPage } from '../../components/MissionPage';
 import { StoragePage } from '../../components/StoragePage';
 import { RoomTab } from '../../components/RoomTab';
@@ -16,6 +17,7 @@ import type { SettingsLocationState } from '../../hooks/useOpenSettings';
 
 const tabs: { key: ManagementTab; label: string }[] = [
   { key: 'general', label: 'General' },
+  { key: 'phone', label: 'Phone' },
   { key: 'models', label: 'Models' },
   { key: 'agents', label: 'Agents' },
   { key: 'skills', label: 'Skills' },
@@ -108,7 +110,7 @@ export const SettingsHome: React.FC = () => {
     navigate('/');
   };
 
-  const showSaveButton = activeTab === 'models' || activeTab === 'general';
+  const showSaveButton = activeTab === 'models' || activeTab === 'general' || activeTab === 'phone';
 
   if (!config) {
     return (
@@ -188,6 +190,12 @@ export const SettingsHome: React.FC = () => {
         {activeTab === 'general' && (
           <div className="h-full overflow-y-auto p-3 md:p-6">
             <div className="max-w-4xl mx-auto"><GeneralTab config={config} onChange={setConfig} /></div>
+          </div>
+        )}
+
+        {activeTab === 'phone' && (
+          <div className="h-full overflow-y-auto p-3 md:p-6">
+            <div className="max-w-4xl mx-auto"><PhoneTab config={config} onChange={setConfig} /></div>
           </div>
         )}
 

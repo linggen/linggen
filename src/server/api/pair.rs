@@ -10,7 +10,7 @@
 //! (DHCP churn doesn't unpair).
 
 use axum::{
-    extract::Json,
+    extract::{Json, Path, State},
     http::StatusCode,
     response::{Html, IntoResponse},
 };
@@ -178,6 +178,67 @@ fn err(code: StatusCode, msg: impl Into<String>) -> axum::response::Response {
 }
 
 // ---------------------------------------------------------------------------
+// Settings → Phone — the Mac-side management surface for pairing.
+// ---------------------------------------------------------------------------
+
+/// This Mac's primary LAN address. The UDP-connect trick: no packet is sent,
+/// the OS just picks the interface it would route through.
+fn lan_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("1.1.1.1:80").ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
+}
+
+/// GET /api/pair/info — everything the Phone settings tab shows: live bind
+/// state, addresses, and the paired-device list (names only, never secrets).
+pub(crate) async fn get_pair_info(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let config = state.manager.get_config_snapshot().await;
+    let lan_live = state.bound_host != "127.0.0.1" && state.bound_host != "localhost";
+    let (mac_name, account_name) = mac_identity();
+    let devices: Vec<serde_json::Value> = load_devices()
+        .iter()
+        .map(|d| serde_json::json!({ "id": d.id, "name": d.name, "created_at": d.created_at }))
+        .collect();
+    Json(serde_json::json!({
+        "lan_live": lan_live,
+        "config_host": config.server.host,
+        "port": state.port,
+        "lan_ip": lan_ip(),
+        "mdns_host": format!("{}.local", mac_name.to_lowercase()),
+        "mac_name": mac_name,
+        "account_name": account_name,
+        "devices": devices,
+    }))
+}
+
+/// GET /api/pair/qr — the QR as JSON for embedding in Settings → Phone.
+/// Mints a fresh single-use secret exactly like the standalone /pair page.
+pub(crate) async fn get_pair_qr(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let (svg, url, host) = mint_qr(state.port);
+    Json(serde_json::json!({ "svg": svg, "url": url, "host": host }))
+}
+
+/// DELETE /api/pair/devices/{id} — revoke one device. Its token stops working
+/// on the next request; the phone re-pairs with eyes on this Mac.
+pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {
+    let mut devices = load_devices();
+    let before = devices.len();
+    devices.retain(|d| d.id != id);
+    if devices.len() == before {
+        return err(StatusCode::NOT_FOUND, "no such device");
+    }
+    if let Err(e) = save_devices(&devices) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
+    }
+    tracing::info!("[pair] device {id} revoked");
+    Json(serde_json::json!({ "status": "ok" })).into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Bonjour — the daemon announces itself so phones list nearby Macs by name.
 // ---------------------------------------------------------------------------
 
@@ -192,7 +253,15 @@ pub fn advertise(port: u16, lan_bound: bool) {
     }
     let (mac_name, account) = mac_identity();
     let result = mdns_sd::ServiceDaemon::new().and_then(|daemon| {
-        let host = format!("{}.local.", mac_name.to_lowercase());
+        // The SRV target must be a host label WE own, never the Mac's own
+        // `.local` name. enable_addr_auto() publishes A records for whatever
+        // host we name here; naming it the OS hostname makes macOS see a
+        // second responder claiming its own name and defensively rename the
+        // computer (This-Mac → This-Mac-2 → …) on every daemon start. A
+        // linggen-scoped label carries our addresses without touching the name
+        // the OS owns. Resolvers read the IPs straight from the service info,
+        // so the label never needs to be human-meaningful.
+        let host = format!("linggen-{}.local.", mac_name.to_lowercase());
         let mut info = mdns_sd::ServiceInfo::new(
             "_linggen._tcp.local.",
             &mac_name,
@@ -234,14 +303,13 @@ struct QrPending {
 
 static QR_PENDING: Mutex<Option<QrPending>> = Mutex::new(None);
 
-/// GET /pair — the QR page. Each load mints a fresh single-use secret.
-pub(crate) async fn get_pair_page(
-    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::ServerState>>,
-) -> impl IntoResponse {
+/// Mint a fresh single-use QR secret and render it. Shared by the standalone
+/// /pair page and the Settings → Phone tab.
+fn mint_qr(port: u16) -> (String, String, String) {
     let secret = random_hex(16);
     *QR_PENDING.lock().unwrap() = Some(QrPending { secret: secret.clone(), created: Instant::now() });
-    let (mac_name, account) = mac_identity();
-    let host = format!("{}.local:{}", mac_name.to_lowercase(), state.port);
+    let (mac_name, _) = mac_identity();
+    let host = format!("{}.local:{}", mac_name.to_lowercase(), port);
     let url = format!("linggen://pair?host={host}&secret={secret}");
     let svg = qrcode::QrCode::new(url.as_bytes())
         .map(|qr| {
@@ -251,6 +319,15 @@ pub(crate) async fn get_pair_page(
                 .build()
         })
         .unwrap_or_default();
+    (svg, url, host)
+}
+
+/// GET /pair — the QR page. Each load mints a fresh single-use secret.
+pub(crate) async fn get_pair_page(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let (svg, url, host) = mint_qr(state.port);
+    let (mac_name, account) = mac_identity();
     let who = account.map(|a| format!(" · {a}")).unwrap_or_default();
     Html(format!(
         "<!doctype html><meta charset=utf-8><title>Pair with {mac_name}</title>\
