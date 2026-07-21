@@ -276,21 +276,66 @@ fn device_token_from_headers(headers: &axum::http::HeaderMap) -> Option<String> 
         .map(|t| t.to_string())
 }
 
-/// GET /api/pair/me — the calling phone's own paired-device row (name +
-/// Mac-owned settings). This is the "Sync from Mac" pull: identified by the
-/// device token, so each phone gets its own record.
-pub(crate) async fn get_pair_me(headers: axum::http::HeaderMap) -> impl IntoResponse {
+/// Resolve each allow-listed model into "how the phone reaches it" so the phone
+/// stays dumb-simple: it picks a model and follows the recipe. The Mac is the
+/// single place keys and endpoints live (BYOK syncs from here).
+///
+/// - `cloud`  → the Linggen Cloud proxy (phone uses its account token)
+/// - `oauth`  → ChatGPT/Codex (phone signs in on-device)
+/// - `byok`   → a configured provider; the Mac's key + base_url ride along
+/// - `local`  → Ollama/local; not reachable off the Mac
+fn resolve_model_catalog(allow: &[String], config: &crate::config::Config) -> Vec<serde_json::Value> {
+    let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
+    allow
+        .iter()
+        .map(|id| {
+            if crate::provider::models::CHATGPT_BUILTIN_MODEL_IDS.contains(&id.as_str()) {
+                return serde_json::json!({ "id": id, "kind": "oauth" });
+            }
+            if id == crate::provider::models::LINGGEN_CLOUD_MODEL_ID {
+                return serde_json::json!({ "id": id, "kind": "cloud" });
+            }
+            match config.models.iter().find(|m| &m.id == id) {
+                Some(m) if m.provider == "ollama" => serde_json::json!({ "id": id, "kind": "local" }),
+                Some(m) => serde_json::json!({
+                    "id": id,
+                    "kind": "byok",
+                    "provider": m.provider,
+                    "base_url": m.url,
+                    "key": creds.get_api_key(id),
+                }),
+                None => serde_json::json!({ "id": id, "kind": "unknown" }),
+            }
+        })
+        .collect()
+}
+
+/// GET /api/pair/me — the calling phone's own paired-device row: name, settings,
+/// and a resolved model catalog (endpoint + key per allow-listed model). This is
+/// the "Sync from Mac" pull, identified by the device token.
+pub(crate) async fn get_pair_me(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     let Some(token) = device_token_from_headers(&headers) else {
         return err(StatusCode::UNAUTHORIZED, "no device token");
     };
     let Some(d) = device_by_token(&token) else {
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
+    let allow: Vec<String> = d
+        .settings
+        .get("models")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let config = state.manager.get_config_snapshot().await;
     Json(serde_json::json!({
         "id": d.id,
         "name": d.name,
         "device_id": d.device_id,
         "settings": d.settings,
+        "models": resolve_model_catalog(&allow, &config),
     }))
     .into_response()
 }
