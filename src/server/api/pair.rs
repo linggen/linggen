@@ -27,6 +27,7 @@ struct PendingPair {
     pair_id: String,
     code: String,
     device_name: String,
+    device_id: Option<String>,
     created: Instant,
     attempts: u32,
 }
@@ -40,6 +41,11 @@ pub struct PairedDevice {
     pub name: String,
     pub secret: String,
     pub created_at: i64,
+    /// Stable per-phone install id. Re-pairing the same phone replaces its row
+    /// (matched on this) rather than stacking duplicates. Optional so rows
+    /// written before this field, and older apps that don't send one, still load.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 fn devices_path() -> PathBuf {
@@ -55,6 +61,27 @@ pub fn load_devices() -> Vec<PairedDevice> {
 
 fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
     std::fs::write(devices_path(), serde_json::to_string_pretty(devices)?)
+}
+
+/// Mint a token for a freshly-confirmed device and persist it. A phone that
+/// sends a stable `device_id` replaces its own prior row (re-pairing refreshes
+/// the token/name in place instead of stacking duplicates); without one — older
+/// apps — it appends, as before.
+fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<PairedDevice> {
+    let device = PairedDevice {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        secret: random_hex(24),
+        created_at: chrono::Utc::now().timestamp(),
+        device_id: device_id.clone(),
+    };
+    let mut devices = load_devices();
+    if let Some(did) = device_id {
+        devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
+    }
+    devices.push(device.clone());
+    save_devices(&devices)?;
+    Ok(device)
 }
 
 /// The LAN gate's check: does any paired device own this token?
@@ -106,6 +133,8 @@ fn local_host_name() -> Option<String> {
 #[derive(Deserialize)]
 pub(crate) struct PairRequest {
     device_name: String,
+    #[serde(default)]
+    device_id: Option<String>,
 }
 
 /// POST /api/pair/request — start a pairing attempt; the code appears on the
@@ -119,6 +148,7 @@ pub(crate) async fn post_pair_request(Json(req): Json<PairRequest>) -> impl Into
         pair_id: pair_id.clone(),
         code,
         device_name: name,
+        device_id: req.device_id,
         created: Instant::now(),
         attempts: 0,
     });
@@ -155,19 +185,14 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
     if p.code != req.code.trim() {
         return err(StatusCode::UNAUTHORIZED, "wrong code");
     }
-    let device = PairedDevice {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: p.device_name.clone(),
-        secret: random_hex(24),
-        created_at: chrono::Utc::now().timestamp(),
-    };
+    let name = p.device_name.clone();
+    let device_id = p.device_id.clone();
     *pending = None;
     drop(pending);
-    let mut devices = load_devices();
-    devices.push(device.clone());
-    if let Err(e) = save_devices(&devices) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
-    }
+    let device = match commit_device(name, device_id) {
+        Ok(d) => d,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
+    };
     tracing::info!("[pair] device '{}' paired ({})", device.name, device.id);
     Json(serde_json::json!({ "device_token": device.secret, "device_id": device.id }))
         .into_response()
@@ -346,6 +371,8 @@ pub(crate) async fn get_pair_page(
 pub(crate) struct QrConfirm {
     secret: String,
     device_name: String,
+    #[serde(default)]
+    device_id: Option<String>,
 }
 
 /// POST /api/pair/qr-confirm — trade a scanned QR secret for a device token.
@@ -359,17 +386,11 @@ pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl Int
     }
     *pending = None;
     drop(pending);
-    let device = PairedDevice {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: req.device_name.chars().take(64).collect(),
-        secret: random_hex(24),
-        created_at: chrono::Utc::now().timestamp(),
+    let name: String = req.device_name.chars().take(64).collect();
+    let device = match commit_device(name, req.device_id) {
+        Ok(d) => d,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
-    let mut devices = load_devices();
-    devices.push(device.clone());
-    if let Err(e) = save_devices(&devices) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
-    }
     tracing::info!("[pair] device '{}' paired via QR ({})", device.name, device.id);
     let (mac_name, account_name) = mac_identity();
     Json(serde_json::json!({
