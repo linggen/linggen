@@ -323,6 +323,15 @@ pub enum ServerEvent {
     },
     /// Owner disabled the room — all consumer peers should disconnect.
     RoomDisabled,
+    /// A device-to-device control message on a named topic (`dj`, `media`, …).
+    /// The daemon is the hub: any peer publishes, every other surface of the
+    /// same user receives. `from_device` lets a publisher ignore its own echo.
+    DeviceTopic {
+        topic: String,
+        op: String,
+        payload: serde_json::Value,
+        from_device: Option<String>,
+    },
 }
 
 impl ServerEvent {

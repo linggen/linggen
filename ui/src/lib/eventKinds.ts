@@ -47,6 +47,9 @@ export const EVENT_KINDS = [
   'page_state',
   'user_info',
   'room_chat',
+  // Device-to-device control topics (dj, media, …) relayed by the daemon.
+  // The console doesn't act on them today — the phone and Mac apps do.
+  'device_topic',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];

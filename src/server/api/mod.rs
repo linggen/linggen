@@ -16,6 +16,7 @@ pub(super) mod sessions;
 pub(super) mod skills;
 pub(super) mod status;
 pub(super) mod storage;
+pub(super) mod topic;
 pub(super) mod tts;
 pub(super) mod workspace;
 pub(super) mod yinyue;

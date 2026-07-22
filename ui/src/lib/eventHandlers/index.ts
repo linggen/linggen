@@ -34,6 +34,7 @@ import {
   handleWorkingFolder,
   handleUserInfo,
   handleRoomChat,
+  handleDeviceTopic,
 } from './misc';
 import { handlePetSpeak, handlePetExpress, handleYinyuePresent } from './yinyue';
 
@@ -67,6 +68,7 @@ export const eventHandlers: Record<EventKind, EventHandler> = {
   page_state: handlePageState,
   user_info: handleUserInfo,
   room_chat: handleRoomChat,
+  device_topic: handleDeviceTopic,
 
   // Pet (Yinyue today)
   pet_speak: handlePetSpeak,

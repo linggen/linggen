@@ -107,6 +107,7 @@ const UI_KIND_TOKEN: &str = "token";
 const UI_KIND_TEXT_SEGMENT: &str = "text_segment";
 const UI_KIND_CONTENT_BLOCK: &str = "content_block";
 const UI_KIND_TURN_COMPLETE: &str = "turn_complete";
+const UI_KIND_DEVICE_TOPIC: &str = "device_topic";
 
 const UI_PHASE_SYNC: &str = "sync";
 const UI_PHASE_OUTCOME: &str = "outcome";
@@ -788,6 +789,30 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         }),
         // RoomDisabled is handled directly in peer.rs — no UI event needed.
         ServerEvent::RoomDisabled => None,
+        ServerEvent::DeviceTopic {
+            topic,
+            op,
+            payload,
+            from_device,
+        } => Some(UiEvent {
+            id: format!("device-topic-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: UI_KIND_DEVICE_TOPIC.to_string(),
+            phase: None,
+            text: None,
+            agent_id: None,
+            // User-level: reaches every surface over the control channel.
+            session_id: Some("global".to_string()),
+            project_root: None,
+            data: Some(json!({
+                "topic": topic,
+                "op": op,
+                "payload": payload,
+                "from_device": from_device,
+            })),
+        }),
     }
 }
 
@@ -858,6 +883,9 @@ async fn prepare_server(
             }
         });
     }
+
+    // Push DJ library changes to paired devices instead of making them poll.
+    api::dj::spawn_library_watcher(state.clone());
 
     // Pre-warm ling-mem when any installed skill uses scoped memory
     // (`memory-context`). Those apps auto-recall every turn, so get the
@@ -1109,6 +1137,7 @@ async fn prepare_server(
             patch(api::pair::rename_pair_device).delete(api::pair::delete_pair_device),
         )
         .route("/pair", get(api::pair::get_pair_page))
+        .route("/api/topic/publish", post(api::topic::publish))
         .route("/api/dj/library", get(api::dj::get_library))
         .route("/api/dj/file", get(api::dj::get_file))
         .route("/api/dj/devices", get(api::dj::get_devices))

@@ -112,6 +112,28 @@ pub(super) fn handle_control_message(
             None
         }
 
+        // Device topics: one surface publishes, every other surface of this
+        // user receives (the daemon is the hub). Payload is opaque — topics
+        // are a contract between the surfaces, not the engine.
+        "topic_publish" => {
+            let topic = msg.get("topic").and_then(|v| v.as_str()).unwrap_or("");
+            let op = msg.get("op").and_then(|v| v.as_str()).unwrap_or("");
+            if topic.is_empty() || op.is_empty() {
+                return None;
+            }
+            tracing::info!("[topic] {topic}/{op} published by a device");
+            let _ = state.events_tx.send(crate::server::ServerEvent::DeviceTopic {
+                topic: topic.to_string(),
+                op: op.to_string(),
+                payload: msg.get("payload").cloned().unwrap_or(serde_json::Value::Null),
+                from_device: msg
+                    .get("from_device")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            });
+            None
+        }
+
         "room_chat" => {
             let text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("");
             if text.is_empty() || text.len() > 2000 {

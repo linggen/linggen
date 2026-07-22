@@ -121,3 +121,11 @@ export function handleRoomChat(item: UiEvent): void {
     isMine: senderId !== '' && senderId === localUserId,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Device topics — control messages relayed between the user's own devices
+// (phone ↔ Mac: DJ library changes, media review actions). The console is a
+// bystander: it keeps the wire honest by handling the kind, but the apps act.
+// ---------------------------------------------------------------------------
+
+export function handleDeviceTopic(_item: UiEvent): void {}
