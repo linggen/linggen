@@ -30,6 +30,16 @@ use tokio::io::AsyncWriteExt;
 /// Serializes ledger/manifest mutations across concurrent ingests.
 static MEDIA_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Bumped on every ingest; a scheduled scan only fires if it is still the
+/// newest generation after the quiesce window (i.e. uploads went quiet).
+static SCAN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// At most one pipeline scan at a time.
+static SCAN_RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// How long uploads must go quiet before the post-sync scan fires.
+const SCAN_QUIESCE: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Manifest rows written by this module use this path prefix instead of an
 /// AFC phone path; it both marks them for verify lookups and exempts them
 /// from the USB pull's ghost-reconcile (which only prunes `/…` paths).
@@ -282,9 +292,58 @@ pub(crate) async fn ingest_handler(mut multipart: Multipart) -> Response {
     })
     .await;
     match finalized {
-        Ok(Ok(())) => Json(json!({"ok": true})).into_response(),
+        Ok(Ok(())) => {
+            schedule_wireless_scan();
+            Json(json!({"ok": true})).into_response()
+        }
         Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("ingest task: {e}")),
+    }
+}
+
+/// Wireless syncs analyze themselves: once ingests go quiet for
+/// [`SCAN_QUIESCE`], run the Media pipeline's `scan` (analyzers over staging —
+/// no phone involved) so synced photos get dupe/blurry/dark verdicts without
+/// a Media-tab visit, and the phone sees them on its next manifest call.
+fn schedule_wireless_scan() {
+    use std::sync::atomic::Ordering;
+    let gen = SCAN_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    tokio::spawn(async move {
+        tokio::time::sleep(SCAN_QUIESCE).await;
+        if SCAN_GEN.load(Ordering::SeqCst) != gen {
+            return; // a newer ingest re-armed the timer
+        }
+        let _running = SCAN_RUNNING.lock().await;
+        if SCAN_GEN.load(Ordering::SeqCst) != gen {
+            return; // more uploads landed while a previous scan ran
+        }
+        run_media_scan().await;
+    });
+}
+
+/// Invoke the mac-shifu Media pipeline's `scan` with its own venv python.
+/// Silently a no-op until the user has run the Media tab's one-time setup —
+/// without the venv there are no analyzers to run.
+async fn run_media_scan() {
+    let py = data_dir().join("venv").join("bin").join("python");
+    let pipeline = crate::paths::global_skills_dir()
+        .join("mac-shifu")
+        .join("scripts")
+        .join("media")
+        .join("media_pipeline.py");
+    if !py.exists() || !pipeline.exists() {
+        return;
+    }
+    tracing::info!("[media] wireless sync quiesced — running pipeline scan");
+    match tokio::process::Command::new(&py).arg(&pipeline).arg("scan").output().await {
+        Ok(out) if out.status.success() => {
+            tracing::info!("[media] post-sync scan done");
+        }
+        Ok(out) => tracing::warn!(
+            "[media] post-sync scan failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+        Err(e) => tracing::warn!("[media] post-sync scan spawn failed: {e}"),
     }
 }
 
