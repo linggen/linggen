@@ -235,17 +235,25 @@ pub(crate) async fn manifest_handler(Json(body): Json<ManifestBody>) -> Response
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequestDeleteBody {
     local_ids: Vec<String>,
+    /// true = remove these ids from the queue (the Unqueue undo).
+    #[serde(default)]
+    cancel: bool,
 }
 
 /// The Mac review queues photos for on-phone deletion. The queue is intent,
 /// not action: nothing is touched until the phone's user confirms the
 /// PhotoKit dialog; cache rows stay until reconcile sees the photo gone.
+/// `cancel: true` withdraws ids — queued intent stays reversible.
 pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) -> Response {
     let _guard = MEDIA_LOCK.lock().await;
     let mut queue = load_delete_queue();
-    for id in body.local_ids {
-        if !queue.contains(&id) {
-            queue.push(id);
+    if body.cancel {
+        queue.retain(|id| !body.local_ids.contains(id));
+    } else {
+        for id in body.local_ids {
+            if !queue.contains(&id) {
+                queue.push(id);
+            }
         }
     }
     let n = queue.len();
