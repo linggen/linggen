@@ -246,6 +246,7 @@ async fn run_peer(
                                 tracing::info!(
                                     "WebRTC peer disconnected and no longer alive, exiting"
                                 );
+                                media_channel::abandon(&mut media_transfer).await;
                                 return Ok(());
                             }
                             // Start a disconnect timer — if still disconnected after 30s, exit.
@@ -572,6 +573,7 @@ async fn run_peer(
         if let Some(since) = disconnected_since {
             if Instant::now().duration_since(since) > Duration::from_secs(30) {
                 tracing::info!("WebRTC peer disconnected for 30s — exiting");
+                media_channel::abandon(&mut media_transfer).await;
                 return Ok(());
             }
         }
@@ -675,6 +677,7 @@ async fn run_peer(
                 match result {
                     Ok(crate::server::ServerEvent::RoomDisabled) if user_ctx.is_consumer => {
                         tracing::info!("Room disabled by owner — disconnecting consumer peer");
+                        media_channel::abandon(&mut media_transfer).await;
                         return Ok(());
                     }
                     Ok(event) => {
