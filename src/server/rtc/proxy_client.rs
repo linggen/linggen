@@ -170,8 +170,8 @@ async fn run_proxy_client_loop(
     let mut inference_channel: Option<str0m::channel::ChannelId> = None;
     let mut ready_tx = ready_tx;
     // Local user_id for filtering — only forward our own room_chat events
-    let local_user_id = crate::cli::login::load_remote_config()
-        .and_then(|c| c.user_id)
+    let local_user_id = crate::account::load_account()
+        .and_then(|a| a.user_id)
         .unwrap_or_else(|| "__local__".to_string());
     // Track sender_ids received from the owner to avoid echoing them back
     let mut remote_sender_ids: std::collections::HashSet<String> = std::collections::HashSet::new();

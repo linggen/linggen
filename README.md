@@ -154,9 +154,8 @@ and Codex too.
 
 ## Remote access
 
-```bash
-ling login   # link to linggen.dev
-```
+Sign in from the app (or `ling account login`). Signing in links this machine
+automatically — there is no separate step.
 
 Then open `linggen.dev/app` from any browser. P2P-encrypted tunnel back to
 your machine; no VPN, no port forwarding.

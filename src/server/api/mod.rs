@@ -3,7 +3,6 @@
 
 pub(super) mod account;
 pub(super) mod agents;
-pub(super) mod auth;
 pub(super) mod config;
 pub(super) mod dj;
 pub(super) mod marketplace;

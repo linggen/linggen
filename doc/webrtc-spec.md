@@ -96,7 +96,7 @@ Remote access requires a free user account on `linggen.dev`. Accounts provide id
 
 1. **Sign up** on `linggen.dev` — email + password, or OAuth (GitHub, Google). Free, no payment required.
 2. **Get API token** from dashboard — a long-lived token for linking linggen instances.
-3. **Link linggen instance** — run `ling remote login` on the machine. Opens browser for auth, saves token to `~/.linggen/remote.toml`. Or manually set the token in `linggen.toml`.
+3. **Link linggen instance** — sign in to linggen.dev from the app (or `ling account login`). The token lands in `~/.linggen/account.toml` and the machine registers itself against `~/.linggen/instance_id`; there is no separate link step and no second credential.
 4. **Instance registers** with relay — on startup, linggen registers itself (instance name, public key) using the API token. Relay associates instance with user account.
 5. **Remote connect** — user logs into `linggen.dev`, dashboard shows linked instances with online/offline status. Click to connect via WebRTC.
 
@@ -325,7 +325,7 @@ WebRTC data channels are encrypted by default (DTLS). No additional encryption l
 | Remote (own account) | User logs into linggen.dev | Session token in WHIP relay requests |
 | Remote (shared link) | Visitor | Instance password in WHIP Authorization header |
 
-Linggen instances authenticate with the relay using their API token (set during `ling remote login`). The relay verifies the token on every long-poll request.
+Linggen instances authenticate with the relay using the account token from `account.toml` (written by any sign-in). The relay verifies the token on every long-poll request.
 
 ### Account tiers
 
@@ -349,9 +349,9 @@ WebRTC works out of the box on `localhost:9527`. No tokens, no accounts.
 Link a linggen instance to a `linggen.dev` account:
 
 ```bash
-ling remote login
+ling account login
 # Opens browser to linggen.dev for authentication
-# On success, saves API token to ~/.linggen/remote.toml
+# On success, saves the account token to ~/.linggen/account.toml
 # Instance registers with relay automatically on next startup
 ```
 
@@ -383,7 +383,7 @@ Added WHIP endpoint (`POST /api/rtc/whip`). Integrated str0m (Rust WebRTC librar
 
 ### Phase 3: linggen.dev + user accounts
 
-Build `linggen.dev`: bootstrap connect page, user accounts, signaling relay (all CF Worker + KV). Implement `ling remote login` CLI command. Instance registration and dashboard. UI loaded from linggen server via data channel — not hosted on linggen.dev.
+Build `linggen.dev`: bootstrap connect page, user accounts, signaling relay (all CF Worker + KV). Implement account sign-in + instance registration. Instance registration and dashboard. UI loaded from linggen server via data channel — not hosted on linggen.dev.
 
 ### Phase 4: Regional relays
 

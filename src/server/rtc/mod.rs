@@ -86,12 +86,15 @@ pub struct UserContext {
 impl UserContext {
     /// Build for owner (local or remote).
     pub fn owner(user_id: Option<String>) -> Self {
-        let remote = crate::cli::login::load_remote_config();
+        let account = crate::account::load_account();
         Self {
-            user_id: user_id.or_else(|| remote.as_ref().and_then(|r| r.user_id.clone()))
+            user_id: user_id.or_else(|| account.as_ref().and_then(|a| a.user_id.clone()))
                 .unwrap_or_else(|| "__local__".to_string()),
-            user_name: remote.as_ref().and_then(|r| r.user_name.clone().or_else(|| Some(r.instance_name.clone()))),
-            avatar_url: remote.as_ref().and_then(|r| r.avatar_url.clone()),
+            user_name: account
+                .as_ref()
+                .and_then(|a| a.user_name.clone())
+                .or_else(|| Some(crate::account::instance_name())),
+            avatar_url: account.as_ref().and_then(|a| a.avatar_url.clone()),
             is_consumer: false,
             permission: UserPermission::Admin,
             token_budget_daily: None,

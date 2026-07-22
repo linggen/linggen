@@ -9,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
-use crate::cli::login::load_remote_config;
 use crate::server::ServerState;
 
 // ---------------------------------------------------------------------------
@@ -171,16 +170,16 @@ pub async fn connect_proxy_room(
         return Ok(());
     }
 
-    let config = load_remote_config()
-        .ok_or_else(|| anyhow::anyhow!("Not logged in to linggen.dev. Run `ling login` first."))?;
+    let (token, _) = crate::account::resolve_token()
+        .ok_or_else(|| anyhow::anyhow!("Not signed in to linggen.dev. Sign in from the app."))?;
 
     info!("Connecting to proxy room (instance: {instance_id})");
 
     // Establish WebRTC connection to the room owner
     let conn = super::proxy_client::connect_to_room(
-        &config.relay_url,
+        &crate::account::site_url(),
         instance_id,
-        &config.api_token,
+        &token,
         Some(state.events_tx.clone()),
     ).await?;
 
@@ -307,9 +306,8 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
 /// Fetch joined rooms from linggen.dev and auto-connect to online rooms
 /// where consumer_type is "linggen".
 pub async fn auto_connect_joined_rooms(state: Arc<ServerState>) {
-    let config = match load_remote_config() {
-        Some(c) => c,
-        None => return, // Not logged in, skip
+    let Some((token, _)) = crate::account::resolve_token() else {
+        return; // Not signed in — nothing to join.
     };
 
     let client = reqwest::Client::builder()
@@ -318,8 +316,8 @@ pub async fn auto_connect_joined_rooms(state: Arc<ServerState>) {
         .unwrap_or_default();
 
     let resp = match client
-        .get(format!("{}/api/rooms/joined", config.relay_url))
-        .bearer_auth(&config.api_token)
+        .get(format!("{}/api/rooms/joined", crate::account::site_url()))
+        .bearer_auth(&token)
         .send()
         .await
     {

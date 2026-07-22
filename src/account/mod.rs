@@ -1,12 +1,16 @@
-//! linggen.dev account layer — billing sign-in, entitlement, checkout.
+//! linggen.dev account layer — sign-in, entitlement, checkout, machine link.
 //!
-//! Billing identity is `~/.linggen/account.toml` (0600) and nothing else: a
-//! remote-access link (`cli/login.rs` + `remote.toml`) is transport enrollment,
-//! not a billing fallback. Because linking for remote access requires signing
-//! in first, that flow also writes `account.toml` (same token), so a
-//! remote-linked daemon is billing-signed-in too. Signing out deletes
-//! `account.toml` — cloud models + app gating switch off (BYOK keeps working)
-//! while the remote link stays intact. See linggensite/doc/entitlement-spec.md.
+//! `~/.linggen/account.toml` (0600) holds the ONE account credential and is the
+//! only place a token lives. Everything account-facing reads it: billing,
+//! entitlement, the cloud LLM proxy, relay signaling, and rooms. Signing out
+//! deletes the file, so cloud models and app gating switch off and the relay
+//! goes quiet (BYOK keeps working).
+//!
+//! Machine identity is separate and is NOT a credential: `~/.linggen/instance_id`
+//! is a stable address for this install, like a serial number. Registration with
+//! linggen.dev is an idempotent upsert on that id, so the daemon simply asserts
+//! it at boot and after sign-in — there is nothing to persist and nothing that
+//! can go stale. See linggensite/doc/entitlement-spec.md.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -26,6 +30,69 @@ fn account_path() -> PathBuf {
 
 fn entitlement_snapshot_path() -> PathBuf {
     crate::paths::linggen_home().join("account-entitlement.json")
+}
+
+fn instance_id_path() -> PathBuf {
+    crate::paths::linggen_home().join("instance_id")
+}
+
+/// This install's stable address on linggen.dev. Not a secret — it identifies
+/// which machine to signal, and survives sign-out, sign-in, and account
+/// switches. Created once, on first use.
+pub fn instance_id() -> Result<String> {
+    let path = instance_id_path();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let id = existing.trim().to_string();
+        if !id.is_empty() {
+            return Ok(id);
+        }
+    }
+    let id = format!(
+        "inst-{}",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("")
+    );
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("create ~/.linggen")?;
+    }
+    std::fs::write(&path, &id).context("write instance_id")?;
+    Ok(id)
+}
+
+/// How this machine appears on the dashboard — read fresh, never cached, so a
+/// renamed machine corrects itself on the next registration.
+pub fn instance_name() -> String {
+    gethostname::gethostname().to_string_lossy().to_string()
+}
+
+/// Assert this machine's registration with linggen.dev. Idempotent upsert on
+/// the instance id, so it is safe to call at boot and after every sign-in —
+/// which is exactly what keeps "signed in" and "machine online" the same fact.
+/// Returns the user id the server recognised, when it says.
+pub async fn register_instance() -> Result<Option<String>> {
+    let (token, _) = resolve_token().ok_or_else(|| anyhow!("not signed in"))?;
+    let body = serde_json::json!({
+        "instance_id": instance_id()?,
+        "name": instance_name(),
+    });
+    let resp = http()
+        .post(format!("{}/api/instances", site_url()))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .context("connect to linggen.dev")?;
+    if !resp.status().is_success() {
+        bail!("instance registration failed: {}", resp.status());
+    }
+    let v: serde_json::Value = resp.json().await.unwrap_or_default();
+    Ok(v.get("user_id")
+        .and_then(|u| u.as_str())
+        .map(|s| s.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +125,38 @@ pub fn save_account(config: &AccountConfig) -> Result<()> {
     }
     invalidate_entitlement_cache();
     Ok(())
+}
+
+/// One-time migration off the old `remote.toml`, which carried a second copy
+/// of the account token and drifted out of sync with `account.toml` (the copy
+/// went stale, the relay 401'd, and the machine showed offline while the app
+/// looked signed in). Adopt its token only when there is nothing signed in,
+/// then delete the file — the machine link no longer needs storing.
+pub fn migrate_remote_toml() {
+    let path = crate::paths::linggen_home().join("remote.toml");
+    if !path.exists() {
+        return;
+    }
+    if load_account().is_none() {
+        if let Some(token) = std::fs::read_to_string(&path).ok().and_then(|raw| {
+            raw.parse::<toml::Table>()
+                .ok()?
+                .get("api_token")?
+                .as_str()
+                .map(|s| s.to_string())
+        }) {
+            let _ = save_account(&AccountConfig {
+                api_token: token,
+                user_id: None,
+                user_name: None,
+                avatar_url: None,
+            });
+            tracing::info!("Adopted the remote-access token into account.toml");
+        }
+    }
+    if std::fs::remove_file(&path).is_ok() {
+        tracing::info!("Removed remote.toml — the account token is the single credential now");
+    }
 }
 
 /// Returns whether a config existed and was removed.

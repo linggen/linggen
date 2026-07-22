@@ -66,14 +66,14 @@ pub(crate) async fn update_room_config(
         } else {
             "disabled"
         };
-        if let Some(remote) = crate::cli::login::load_remote_config() {
+        if let Some((token, _)) = crate::account::resolve_token() {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default();
             let _ = client
-                .patch(format!("{}/api/rooms", remote.relay_url))
-                .bearer_auth(&remote.api_token)
+                .patch(format!("{}/api/rooms", crate::account::site_url()))
+                .bearer_auth(&token)
                 .json(&serde_json::json!({ "status": status }))
                 .send()
                 .await;
@@ -195,15 +195,12 @@ pub(crate) async fn proxy_rooms(
     let is_public_endpoint = method == axum::http::Method::GET
         && (room_path == "public" || room_path.starts_with("preview/"));
 
-    let config = crate::cli::login::load_remote_config();
-    if config.is_none() && !is_public_endpoint {
+    let account = crate::account::resolve_token();
+    if account.is_none() && !is_public_endpoint {
         return (StatusCode::UNAUTHORIZED, "Not logged in to linggen.dev").into_response();
     }
 
-    let relay_url = config
-        .as_ref()
-        .map(|c| c.relay_url.clone())
-        .unwrap_or_else(|| "https://linggen.dev".to_string());
+    let relay_url = crate::account::site_url();
 
     // linggen.dev routes match `/api/rooms` exactly for room create/update/delete.
     // Normalize both local `/api/rooms` and `/api/rooms/` to the same upstream URL.
@@ -225,15 +222,15 @@ pub(crate) async fn proxy_rooms(
         _ => return (StatusCode::METHOD_NOT_ALLOWED, "Method not allowed").into_response(),
     };
 
-    if let Some(cfg) = &config {
-        req = req.bearer_auth(&cfg.api_token);
+    if let Some((token, _)) = &account {
+        req = req.bearer_auth(token);
     }
     if !body.is_empty() {
         // Auto-inject instance_id for room creation/update if not already present.
         if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&body) {
             if json.get("instance_id").is_none() || json["instance_id"].is_null() {
-                if let Some(cfg) = &config {
-                    json["instance_id"] = serde_json::Value::String(cfg.instance_id.clone());
+                if let Ok(id) = crate::account::instance_id() {
+                    json["instance_id"] = serde_json::Value::String(id);
                 }
             }
             req = req

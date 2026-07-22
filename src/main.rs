@@ -109,13 +109,7 @@ enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
-    /// Link this machine to linggen.dev for remote access
-    Login,
-    /// Remove remote access configuration
-    Logout,
-    /// Show remote access status
-    Remote,
-    /// Manage the linggen.dev account (billing sign-in, subscriptions)
+    /// Manage the linggen.dev account (sign-in, subscriptions, machine link)
     Account {
         #[command(subcommand)]
         action: AccountAction,
@@ -124,7 +118,7 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum AccountAction {
-    /// Sign in to linggen.dev (browser flow; writes ~/.linggen/account.toml)
+    /// Sign in to linggen.dev (browser flow; the web UI does the same thing)
     Login,
     /// Sign out (remove account.toml)
     Logout,
@@ -219,15 +213,6 @@ async fn main() -> Result<()> {
         }
         Some(Command::Install) | Some(Command::Update) => {
             return cli::self_update::run().await;
-        }
-        Some(Command::Login) => {
-            return cli::login::run().await;
-        }
-        Some(Command::Logout) => {
-            return cli::login::run_logout().await;
-        }
-        Some(Command::Remote) => {
-            return cli::login::run_status().await;
         }
         Some(Command::Account { action }) => {
             return match action {
@@ -461,9 +446,6 @@ async fn main() -> Result<()> {
         | Some(Command::Update)
         | Some(Command::Skills { .. })
         | Some(Command::Auth { .. })
-        | Some(Command::Login)
-        | Some(Command::Logout)
-        | Some(Command::Remote)
         | Some(Command::Account { .. }) => unreachable!(),
     }
 

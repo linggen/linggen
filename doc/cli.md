@@ -28,7 +28,6 @@ ling stop                         # Stop background daemon
 ling status                       # Show agent status
 ling doctor                       # Full health diagnostics
 
-ling login                        # Set up remote access
 ling auth login                   # Sign in with ChatGPT subscription
 ling auth logout                  # Clear ChatGPT tokens
 ling auth status                  # Check auth status
@@ -240,11 +239,15 @@ ling account logout   # remove account.toml
 ling account status   # signed-in source, subscriptions, trial usage
 ```
 
-Billing sign-in for the linggen.dev account — separate from `ling login`
-(remote access): no instance is registered. When `account.toml` is absent,
-an existing `remote.toml` token is used read-only (same account). The daemon
-exposes the same operations at `/api/account*` for app shells and the web UI;
-see `linggensite/doc/entitlement-spec.md`.
+Sign in to linggen.dev. This is the ONE account credential — it covers
+billing, cloud models, remote access, and rooms — and it lives only in
+`~/.linggen/account.toml`. Signing in also registers this machine (an
+idempotent upsert on `~/.linggen/instance_id`), so a signed-in daemon is an
+online daemon; signing out takes it offline.
+
+The web UI does exactly the same thing through `/api/account*`, and is the
+normal way in — this command exists for terminals. See
+`linggensite/doc/entitlement-spec.md`.
 
 ---
 

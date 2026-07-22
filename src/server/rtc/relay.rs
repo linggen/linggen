@@ -1,16 +1,38 @@
 //! Remote relay client — heartbeat + offer polling for linggen.dev signaling.
 //!
-//! When `~/.linggen/remote.toml` exists, the server:
-//! 1. Sends heartbeats every 5 minutes to keep the instance "online" on the dashboard.
-//! 2. Polls for incoming SDP offers from remote browser clients.
-//! 3. Feeds offers into `create_peer()` and posts answers back.
+//! Driven entirely by the account credential: while signed in, the server
+//! 1. registers this machine (idempotent upsert on the instance id),
+//! 2. heartbeats every 5 minutes so the dashboard shows it online,
+//! 3. polls for incoming SDP offers and feeds them into `create_peer()`.
+//!
+//! Signing in on any surface therefore brings the machine online, and signing
+//! out takes it offline — there is no separate link to keep in sync.
 
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn, debug};
 
-use crate::cli::login::{load_remote_config, RemoteConfig};
 use crate::server::ServerState;
+
+/// Everything a relay round needs: the one account credential plus this
+/// machine's address. Rebuilt from disk each cycle, never cached to a file.
+#[derive(Clone)]
+struct Link {
+    token: String,
+    instance_id: String,
+    base: String,
+}
+
+impl Link {
+    fn current() -> Option<Self> {
+        let (token, _) = crate::account::resolve_token()?;
+        Some(Self {
+            token,
+            instance_id: crate::account::instance_id().ok()?,
+            base: crate::account::site_url(),
+        })
+    }
+}
 
 fn build_relay_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -28,111 +50,74 @@ pub fn spawn_relay_tasks(state: Arc<ServerState>) {
     });
 }
 
-/// Supervisor that starts/restarts relay tasks when remote.toml appears or changes.
+/// Supervisor: follows the account credential. Starts relay tasks when signed
+/// in, restarts them when the token changes, stops when signed out.
 async fn relay_supervisor(state: Arc<ServerState>) {
     let mut last_token: Option<String> = None;
 
     loop {
-        let config = load_remote_config();
+        let link = Link::current();
 
-        match (&config, &last_token) {
-            (Some(cfg), None) => {
-                info!("Remote access enabled: {} ({})", cfg.instance_name, cfg.instance_id);
+        match (&link, &last_token) {
+            (Some(l), None) => {
+                info!("Remote access enabled: {} ({})", crate::account::instance_name(), l.instance_id);
             }
-            (Some(cfg), Some(old)) if cfg.api_token != *old => {
-                info!("Remote credentials updated — restarting relay tasks");
+            (Some(l), Some(old)) if l.token != *old => {
+                info!("Account credential changed — restarting relay tasks");
             }
             (Some(_), Some(_)) => {
-                // No change — sleep and check again
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
             (None, _) => {
+                if last_token.is_some() {
+                    info!("Signed out — remote access is off");
+                }
                 last_token = None;
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
         }
 
-        let mut config = config.unwrap();
-        last_token = Some(config.api_token.clone());
+        let link = link.unwrap();
+        last_token = Some(link.token.clone());
 
-        // Backfill user profile if missing from old logins
-        if config.user_name.is_none() || config.avatar_url.is_none() || config.user_id.is_none() {
-            backfill_user_profile(&config).await;
-            // Reload config after backfill
-            if let Some(updated) = load_remote_config() {
-                config = updated;
-            }
+        // Assert the machine's registration before serving. Idempotent, so this
+        // both creates the row on first sign-in and refreshes a renamed host.
+        match crate::account::register_instance().await {
+            Ok(_) => debug!("Instance registered"),
+            Err(e) => warn!("Instance registration failed: {e}"),
         }
 
-        // Run heartbeat and offer polling until auth fails or config changes
-        let cfg1 = config.clone();
-        let cfg2 = config.clone();
+        let l1 = link.clone();
+        let l2 = link.clone();
         let st = state.clone();
 
-        let hb = tokio::spawn(async move { heartbeat_loop(&cfg1).await });
-        let poll = tokio::spawn(async move { offer_poll_loop(&cfg2, st).await });
+        let hb = tokio::spawn(async move { heartbeat_loop(&l1).await });
+        let poll = tokio::spawn(async move { offer_poll_loop(&l2, st).await });
 
-        // Wait for either task to exit (auth failure causes return)
         tokio::select! {
             _ = hb => {}
             _ = poll => {}
         }
 
-        // One of the tasks exited (likely 401). Wait a bit, then re-check config.
         info!("Relay tasks stopped — will re-check credentials in 30s");
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
-/// Fetch user profile from relay and update remote.toml if fields are missing.
-async fn backfill_user_profile(config: &RemoteConfig) {
-    let client = build_relay_client();
-    let url = format!("{}/api/instances", config.relay_url);
-    match client
-        .post(&url)
-        .bearer_auth(&config.api_token)
-        .json(&serde_json::json!({ "instance_id": config.instance_id, "name": config.instance_name }))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                let user_id = data.get("user_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let user_name = data.get("user_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let avatar_url = data.get("avatar_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                if user_name.is_some() || avatar_url.is_some() || user_id.is_some() {
-                    let mut updated = config.clone();
-                    if updated.user_id.is_none() { updated.user_id = user_id; }
-                    if updated.user_name.is_none() { updated.user_name = user_name; }
-                    if updated.avatar_url.is_none() { updated.avatar_url = avatar_url; }
-                    if let Ok(toml_str) = toml::to_string_pretty(&updated) {
-                        let path = crate::paths::linggen_home().join("remote.toml");
-                        if std::fs::write(&path, &toml_str).is_ok() {
-                            info!("Backfilled user profile in remote.toml");
-                        }
-                    }
-                }
-            }
-        }
-        Ok(resp) => { debug!("Profile backfill skipped: {}", resp.status()); }
-        Err(e) => { debug!("Profile backfill error: {e}"); }
-    }
-}
-
 /// Send heartbeats every 5 minutes to keep the instance online.
-async fn heartbeat_loop(config: &RemoteConfig) {
+async fn heartbeat_loop(link: &Link) {
     let client = build_relay_client();
     let url = format!(
         "{}/api/instances/{}/heartbeat",
-        config.relay_url, config.instance_id
+        link.base, link.instance_id
     );
 
     loop {
         match client
             .post(&url)
-            .bearer_auth(&config.api_token)
+            .bearer_auth(&link.token)
             .send()
             .await
         {
@@ -156,18 +141,18 @@ async fn heartbeat_loop(config: &RemoteConfig) {
 }
 
 /// Poll for incoming SDP offers and create peer connections.
-async fn offer_poll_loop(config: &RemoteConfig, state: Arc<ServerState>) {
+async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
     let client = build_relay_client();
     let url = format!(
         "{}/api/signaling/{}/offer",
-        config.relay_url, config.instance_id
+        link.base, link.instance_id
     );
     let mut error_backoff = Duration::from_secs(5);
 
     loop {
         match client
             .get(&url)
-            .bearer_auth(&config.api_token)
+            .bearer_auth(&link.token)
             .send()
             .await
         {
@@ -204,14 +189,14 @@ async fn offer_poll_loop(config: &RemoteConfig, state: Arc<ServerState>) {
                             } else {
                                 // Owner — Admin permission
                                 info!("Received remote offer (nonce: {nonce})");
-                                super::UserContext::owner(config.user_id.clone())
+                                super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
                             };
 
-                            let cfg = config.clone();
+                            let lk = link.clone();
                             let st = state.clone();
                             let cl = client.clone();
                             tokio::spawn(async move {
-                                handle_remote_offer(&cfg, &st, &cl, &nonce, &sdp, user_ctx).await;
+                                handle_remote_offer(&lk, &st, &cl, &nonce, &sdp, user_ctx).await;
                             });
                         }
                     }
@@ -244,7 +229,7 @@ async fn offer_poll_loop(config: &RemoteConfig, state: Arc<ServerState>) {
 
 /// Process a remote SDP offer: create peer connection and post answer back.
 async fn handle_remote_offer(
-    config: &RemoteConfig,
+    link: &Link,
     state: &Arc<ServerState>,
     client: &reqwest::Client,
     nonce: &str,
@@ -258,12 +243,12 @@ async fn handle_remote_offer(
 
             let answer_url = format!(
                 "{}/api/signaling/{}/answer",
-                config.relay_url, config.instance_id
+                link.base, link.instance_id
             );
 
             match client
                 .post(&answer_url)
-                .bearer_auth(&config.api_token)
+                .bearer_auth(&link.token)
                 .json(&serde_json::json!({
                     "nonce": nonce,
                     "sdp": answer_sdp,

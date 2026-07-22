@@ -44,7 +44,6 @@ use api::account::{
     get_account, get_account_callback, post_account_checkout, post_account_login,
     post_account_logout,
 };
-use api::auth::{auth_callback, auth_login, auth_logout, get_user_me};
 use api::config::{
     codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
     get_credentials_api, get_models_health, start_codex_auth_login, update_config_api,
@@ -1117,10 +1116,6 @@ async fn prepare_server(
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))
-        .route("/api/user/me", get(get_user_me))
-        .route("/api/auth/login", get(auth_login))
-        .route("/api/auth/callback", get(auth_callback))
-        .route("/api/auth/logout", post(auth_logout))
         .route("/api/account", get(get_account))
         .route("/api/account/login", post(post_account_login))
         .route("/api/account/callback", get(get_account_callback))
@@ -1217,6 +1212,9 @@ async fn prepare_server(
     }
 
     // Spawn remote relay tasks (heartbeat + offer polling) if remote.toml exists.
+    // One-time cleanup of the retired remote.toml (its token was a second copy
+    // of the account credential and drifted; see account::migrate_remote_toml).
+    crate::account::migrate_remote_toml();
     rtc::relay::spawn_relay_tasks(state.clone());
 
     // Auto-connect to joined proxy rooms (linggen server consumer mode)

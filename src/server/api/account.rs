@@ -124,6 +124,12 @@ pub(crate) async fn get_account_callback(
     if let Err(e) = account::save_account(&account::config_from_me(token, &me)) {
         return fail_page(&format!("Could not save account: {e}"));
     }
+    // Signed in ⇒ this machine is reachable. Registering here is what makes
+    // "signed in on the web UI" and "online on the dashboard" the same fact;
+    // the relay supervisor picks up the new credential within 30s.
+    if let Err(e) = account::register_instance().await {
+        tracing::warn!("Signed in, but machine registration failed: {e}");
+    }
     Html(
         "<html><body><h2>Signed in!</h2><p>You can close this tab and return to the app.</p>\
          <script>window.close()</script></body></html>"

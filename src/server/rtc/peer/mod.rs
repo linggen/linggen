@@ -38,7 +38,7 @@ use session::handle_session_message;
 pub async fn create_peer(offer_sdp: String, state: Arc<ServerState>) -> Result<String> {
     // Local WHIP — owner with Admin permission
     let user_ctx =
-        super::UserContext::owner(crate::cli::login::load_remote_config().and_then(|c| c.user_id));
+        super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id));
     create_peer_inner(offer_sdp, state, false, user_ctx).await
 }
 
