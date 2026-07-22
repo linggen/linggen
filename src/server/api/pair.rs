@@ -336,6 +336,11 @@ pub(crate) async fn get_pair_me(
         "device_id": d.device_id,
         "settings": d.settings,
         "models": resolve_model_catalog(&allow, &config),
+        // Where to reach this Mac when the phone is off the LAN: the relay
+        // signals per instance. Not a secret — an address. Absent while
+        // signed out, since the relay leg needs the account credential.
+        "instance_id": crate::account::resolve_token()
+            .and(crate::account::instance_id().ok()),
     }))
     .into_response()
 }
