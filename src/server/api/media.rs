@@ -70,6 +70,31 @@ fn delete_queue_path() -> PathBuf {
     data_dir().join("phone-delete-queue.json")
 }
 
+/// Announce Mac-side media changes so the phone stops polling for them: the
+/// delete queue (what the Mac is asking the phone to remove) and scan verdicts
+/// (blurry/dark/dupe flags). Watching the directory rather than hooking the
+/// writers means it works whichever surface made the change — the skill's scan,
+/// an API call, or a script.
+pub(crate) fn spawn_media_watchers(state: std::sync::Arc<crate::server::ServerState>) {
+    let dir = data_dir();
+    super::topic::watch_dir(
+        state.clone(),
+        dir.clone(),
+        "media",
+        "delete-requested",
+        std::time::Duration::from_millis(500),
+        Some(|p| p.file_name().is_some_and(|n| n == "phone-delete-queue.json")),
+    );
+    super::topic::watch_dir(
+        state,
+        dir,
+        "media",
+        "verdicts-updated",
+        std::time::Duration::from_secs(2),
+        Some(|p| p.file_name().is_some_and(|n| n == "flags.json")),
+    );
+}
+
 fn load_delete_queue() -> Vec<String> {
     std::fs::read_to_string(delete_queue_path())
         .ok()

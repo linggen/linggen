@@ -26,54 +26,16 @@ fn is_ext(name: &str, exts: &[&str]) -> bool {
         .is_some_and(|(_, e)| exts.contains(&e.to_lowercase().as_str()))
 }
 
-/// Watch `~/Music/DJ` and publish `dj/library-changed` on the device-topic
-/// bus, so paired phones re-sync the moment music lands instead of polling.
-/// Debounced: dropping an album in fires dozens of filesystem events.
+/// Announce library changes so paired phones sync on push instead of polling.
 pub(crate) fn spawn_library_watcher(state: std::sync::Arc<crate::server::ServerState>) {
-    let dir = dj_dir();
-    if !dir.is_dir() {
-        return;
-    }
-    tokio::spawn(async move {
-        use notify::Watcher;
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut watcher = match notify::recommended_watcher(
-            move |res: notify::Result<notify::Event>| {
-                if let Ok(ev) = res {
-                    if ev.kind.is_create() || ev.kind.is_remove() || ev.kind.is_modify() {
-                        let _ = tx.send(());
-                    }
-                }
-            },
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!("[dj] library watcher unavailable: {e}");
-                return;
-            }
-        };
-        if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::Recursive) {
-            tracing::warn!("[dj] watching {} failed: {e}", dir.display());
-            return;
-        }
-        tracing::info!("[dj] watching {} for library changes", dir.display());
-        while rx.recv().await.is_some() {
-            // Drain the burst before announcing once.
-            while tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-                .await
-                .is_ok_and(|v| v.is_some())
-            {}
-            let _ = state
-                .events_tx
-                .send(crate::server::ServerEvent::DeviceTopic {
-                    topic: "dj".to_string(),
-                    op: "library-changed".to_string(),
-                    payload: serde_json::Value::Null,
-                    from_device: None,
-                });
-            tracing::info!("[dj] library changed → devices notified");
-        }
-    });
+    super::topic::watch_dir(
+        state,
+        dj_dir(),
+        "dj",
+        "library-changed",
+        std::time::Duration::from_secs(2),
+        None,
+    );
 }
 
 /// GET /api/dj/library — every audio file with its sidecar availability.

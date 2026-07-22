@@ -883,8 +883,9 @@ async fn prepare_server(
         });
     }
 
-    // Push DJ library changes to paired devices instead of making them poll.
+    // Push Mac-side changes to paired devices instead of making them poll.
     api::dj::spawn_library_watcher(state.clone());
+    api::media::spawn_media_watchers(state.clone());
 
     // Pre-warm ling-mem when any installed skill uses scoped memory
     // (`memory-context`). Those apps auto-recall every turn, so get the
