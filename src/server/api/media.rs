@@ -120,6 +120,15 @@ fn sha_set(rows: &[Value]) -> HashSet<String> {
         .collect()
 }
 
+fn rewrite_jsonl(path: &Path, rows: &[&Value]) -> std::io::Result<()> {
+    let tmp = path.with_extension("jsonl.tmp");
+    let mut f = std::fs::File::create(&tmp)?;
+    for r in rows {
+        writeln!(f, "{r}")?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 fn append_jsonl(path: &Path, row: &Value) -> std::io::Result<()> {
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{row}")
@@ -227,6 +236,130 @@ pub(crate) async fn verify_handler(Json(body): Json<VerifyBody>) -> Response {
         .filter(|id| sha_by_local_id.get(id.as_str()).is_some_and(|sha| archived.contains(*sha)))
         .collect();
     Json(json!({"verified": verified})).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/media/reconcile
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReconcileBody {
+    all_local_ids: Vec<String>,
+}
+
+/// The mirror's delete leg (phone → Mac): after a sync the phone posts its
+/// complete roll; wireless rows whose asset no longer exists on the phone are
+/// pruned, along with staged files no surviving row references. The archive
+/// is never touched — backup copies outlive phone deletions.
+pub(crate) async fn reconcile_handler(Json(body): Json<ReconcileBody>) -> Response {
+    // An empty roll is indistinguishable from a client that failed to index
+    // (e.g. Photos permission revoked) — never treat it as "delete everything".
+    if body.all_local_ids.is_empty() {
+        return Json(json!({"pruned": 0})).into_response();
+    }
+    let _guard = MEDIA_LOCK.lock().await;
+    let pruned =
+        tokio::task::spawn_blocking(move || reconcile_wireless(&body.all_local_ids)).await;
+    match pruned {
+        Ok(Ok(n)) => {
+            if n > 0 {
+                tracing::info!("[media] reconcile pruned {n} wireless rows");
+                schedule_wireless_scan(); // flags must drop the pruned items
+            }
+            Json(json!({"pruned": n})).into_response()
+        }
+        Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("reconcile task: {e}")),
+    }
+}
+
+fn reconcile_wireless(all: &[String]) -> anyhow::Result<usize> {
+    let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
+    let rows = load_jsonl(&manifest_path());
+    let gone = |r: &Value| {
+        r.get("path")
+            .and_then(Value::as_str)
+            .and_then(|p| p.strip_prefix(WIRELESS_PREFIX))
+            .is_some_and(|local_id| !on_phone.contains(local_id))
+    };
+    let (pruned, kept): (Vec<&Value>, Vec<&Value>) = rows.iter().partition(|r| gone(r));
+    if pruned.is_empty() {
+        return Ok(0);
+    }
+    let referenced: HashSet<&str> =
+        kept.iter().filter_map(|r| r.get("staged").and_then(Value::as_str)).collect();
+    for r in &pruned {
+        if let Some(staged) = r.get("staged").and_then(Value::as_str) {
+            if !referenced.contains(staged) {
+                let _ = std::fs::remove_file(staging_dir().join(staged));
+            }
+        }
+    }
+    rewrite_jsonl(&manifest_path(), &kept)?;
+    Ok(pruned.len())
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/media/backup
+// ---------------------------------------------------------------------------
+
+/// The explicit backup step, phone-triggered: copy every staged wireless
+/// original into `~/Pictures/iPhone Backup` with a re-hash verify and append
+/// the ledger — the same gate the USB flow's Back up all writes. Idempotent.
+pub(crate) async fn backup_handler() -> Response {
+    let _guard = MEDIA_LOCK.lock().await;
+    let done = tokio::task::spawn_blocking(backup_wireless).await;
+    match done {
+        Ok(Ok((archived, failed))) => {
+            if archived > 0 {
+                tracing::info!("[media] phone backup archived {archived} originals");
+            }
+            Json(json!({"archived": archived, "failed": failed})).into_response()
+        }
+        Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("backup task: {e}")),
+    }
+}
+
+fn backup_wireless() -> anyhow::Result<(usize, usize)> {
+    let rows = load_jsonl(&manifest_path());
+    let archived_shas = sha_set(&load_jsonl(&ledger_path()));
+    let mut done = HashSet::new();
+    let (mut archived, mut failed) = (0usize, 0usize);
+    for r in &rows {
+        let is_wireless = r
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|p| p.starts_with(WIRELESS_PREFIX));
+        let (Some(sha), Some(staged)) = (
+            r.get("sha256").and_then(Value::as_str),
+            r.get("staged").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if !is_wireless || archived_shas.contains(sha) || !done.insert(sha.to_string()) {
+            continue;
+        }
+        if !staging_dir().join(staged).exists() {
+            continue;
+        }
+        // staged rel is `wireless/<sha12>-<original filename>`
+        let filename = staged
+            .strip_prefix(WIRELESS_PREFIX)
+            .and_then(|n| n.get(13..))
+            .unwrap_or(staged);
+        let created_ms = r.get("mtime").and_then(Value::as_i64).map(|s| s * 1000);
+        let size = r.get("size").and_then(Value::as_u64).unwrap_or(0);
+        match ensure_archived(sha, created_ms, filename, staged, size) {
+            Ok(()) => archived += 1,
+            Err(e) => {
+                tracing::warn!("[media] backup failed for {staged}: {e}");
+                failed += 1;
+            }
+        }
+    }
+    Ok((archived, failed))
 }
 
 // ---------------------------------------------------------------------------
@@ -392,8 +525,12 @@ async fn stream_to_tmp(
     Ok((tmp, hex(&hasher.finalize()), size))
 }
 
-/// Stage + archive + ledger, under MEDIA_LOCK. Each step no-ops if a previous
+/// Stage + manifest row, under MEDIA_LOCK. Each step no-ops if a previous
 /// (possibly partial) run already did it, keyed by content hash.
+///
+/// Sync is a MIRROR, not a backup: ingest deliberately does NOT archive.
+/// The archive copy (+ ledger row, the phone's delete gate) happens only in
+/// the explicit backup step (`backup_handler` / the Mac's Back up all).
 fn finalize_ingest(
     local_id: &str,
     sha: &str,
@@ -404,7 +541,6 @@ fn finalize_ingest(
 ) -> anyhow::Result<()> {
     let rows = load_jsonl(&manifest_path());
     let staged_rel = ensure_staged(&rows, sha, filename, tmp)?;
-    ensure_archived(sha, created_ms, filename, &staged_rel, size)?;
     ensure_wireless_row(&rows, local_id, sha, created_ms, &staged_rel, size)?;
     Ok(())
 }

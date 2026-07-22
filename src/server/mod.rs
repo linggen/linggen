@@ -1074,6 +1074,8 @@ async fn prepare_server(
                 .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024 * 1024)),
         )
         .route("/api/media/verify", post(api::media::verify_handler))
+        .route("/api/media/reconcile", post(api::media::reconcile_handler))
+        .route("/api/media/backup", post(api::media::backup_handler))
         .route("/api/tts", post(api::tts::tts_handler))
         .route("/api/yinyue/say", post(api::yinyue::say_handler))
         .route("/api/bridge/socket", get(bridge::socket_handler))
