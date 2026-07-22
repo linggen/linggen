@@ -12,6 +12,24 @@ pub(super) const MAX_CHUNK_RAW: usize = 48_000;
 /// Max pending data channel writes before dropping new messages.
 pub(super) const MAX_DC_WRITE_QUEUE: usize = 4000;
 
+/// One queued data-channel write. The flag matters: SCTP frames carry a
+/// text/binary type, and a client reading `isBinary` needs it honest — media
+/// downloads are raw bytes, everything else is JSON.
+pub(super) struct DcWrite {
+    pub channel: str0m::channel::ChannelId,
+    pub binary: bool,
+    pub data: Vec<u8>,
+}
+
+impl DcWrite {
+    pub fn text(channel: str0m::channel::ChannelId, msg: impl Into<String>) -> Self {
+        Self { channel, binary: false, data: msg.into().into_bytes() }
+    }
+    pub fn binary(channel: str0m::channel::ChannelId, data: Vec<u8>) -> Self {
+        Self { channel, binary: true, data }
+    }
+}
+
 /// Enqueue a response, using gzip + base64 for large bodies.
 ///
 /// Protocol for large responses (all text, no binary DC):
@@ -21,7 +39,7 @@ pub(super) const MAX_DC_WRITE_QUEUE: usize = 4000;
 ///
 /// Client collects base64 chunks, decodes to binary, decompresses gzip.
 pub(super) fn enqueue_response(
-    queue: &mut VecDeque<(str0m::channel::ChannelId, String)>,
+    queue: &mut VecDeque<DcWrite>,
     cid: str0m::channel::ChannelId,
     request_id: &str,
     result: serde_json::Value,
@@ -74,7 +92,7 @@ pub(super) fn enqueue_response(
                     "DC write queue too full for gzip response ({needed} entries needed), dropping {request_id}"
                 );
                 let err = serde_json::json!({ "request_id": request_id, "error": "Queue full" });
-                queue.push_back((cid, err.to_string()));
+                queue.push_back(DcWrite::text(cid, err.to_string()));
                 return;
             }
 
@@ -83,7 +101,7 @@ pub(super) fn enqueue_response(
                 "request_id": request_id,
                 "gzip_start": { "total_bytes": compressed.len(), "chunks": num_chunks, "status": status }
             });
-            queue.push_back((cid, header.to_string()));
+            queue.push_back(DcWrite::text(cid, header.to_string()));
 
             // Base64-encoded chunks
             for chunk in &raw_chunks {
@@ -92,7 +110,7 @@ pub(super) fn enqueue_response(
                     "request_id": request_id,
                     "gzip_chunk": encoded
                 });
-                queue.push_back((cid, msg.to_string()));
+                queue.push_back(DcWrite::text(cid, msg.to_string()));
             }
 
             // Footer
@@ -100,7 +118,7 @@ pub(super) fn enqueue_response(
                 "request_id": request_id,
                 "gzip_end": true
             });
-            queue.push_back((cid, footer.to_string()));
+            queue.push_back(DcWrite::text(cid, footer.to_string()));
             return;
         }
     }
@@ -108,7 +126,7 @@ pub(super) fn enqueue_response(
     // Small response — single JSON message
     let mut resp = result;
     resp["request_id"] = serde_json::Value::String(request_id.to_string());
-    queue.push_back((cid, resp.to_string()));
+    queue.push_back(DcWrite::text(cid, resp.to_string()));
 }
 
 /// Enqueue an unsolicited push (no request_id), e.g. `page_state`.
@@ -126,14 +144,14 @@ pub(super) fn enqueue_response(
 /// 2. `{ push_gzip_chunk: "<base64>" }` × N
 /// 3. `{ push_gzip_end: true }`
 pub(super) fn enqueue_push(
-    queue: &mut VecDeque<(str0m::channel::ChannelId, String)>,
+    queue: &mut VecDeque<DcWrite>,
     cid: str0m::channel::ChannelId,
     msg: serde_json::Value,
 ) {
     let serialized = msg.to_string();
     if serialized.len() <= MAX_CHUNK_RAW {
         if queue.len() < MAX_DC_WRITE_QUEUE {
-            queue.push_back((cid, serialized));
+            queue.push_back(DcWrite::text(cid, serialized));
         }
         return;
     }
@@ -167,13 +185,13 @@ pub(super) fn enqueue_push(
     let header = serde_json::json!({
         "push_gzip_start": { "total_bytes": compressed.len(), "chunks": num_chunks }
     });
-    queue.push_back((cid, header.to_string()));
+    queue.push_back(DcWrite::text(cid, header.to_string()));
 
     for chunk in &raw_chunks {
         let msg = serde_json::json!({ "push_gzip_chunk": b64.encode(chunk) });
-        queue.push_back((cid, msg.to_string()));
+        queue.push_back(DcWrite::text(cid, msg.to_string()));
     }
 
     let footer = serde_json::json!({ "push_gzip_end": true });
-    queue.push_back((cid, footer.to_string()));
+    queue.push_back(DcWrite::text(cid, footer.to_string()));
 }

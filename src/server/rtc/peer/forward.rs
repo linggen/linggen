@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::server::ServerState;
 
-use super::MAX_DC_WRITE_QUEUE;
+use super::{DcWrite, MAX_DC_WRITE_QUEUE};
 
 /// Max buffered events per session before the channel opens.
 pub(super) const MAX_PENDING_EVENTS: usize = 2000;
@@ -39,7 +39,7 @@ pub(super) fn forward_event_to_channels(
     control_channel_id: Option<str0m::channel::ChannelId>,
     inference_channel_id: Option<str0m::channel::ChannelId>,
     pending_events: &mut HashMap<String, (Instant, Vec<String>)>,
-    pending_dc_writes: &mut VecDeque<(str0m::channel::ChannelId, String)>,
+    pending_dc_writes: &mut VecDeque<DcWrite>,
     state: &Arc<ServerState>,
     dirty_flags: &mut u64,
     filter: &mut EventFilter<'_>,
@@ -74,7 +74,7 @@ pub(super) fn forward_event_to_channels(
                 "data": { "present": present },
             });
             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                pending_dc_writes.push_back((cid, msg.to_string()));
+                pending_dc_writes.push_back(DcWrite::text(cid, msg.to_string()));
             }
         }
         return;
@@ -233,7 +233,7 @@ pub(super) fn forward_event_to_channels(
                             dbg_user, cid
                         );
                     }
-                    pending_dc_writes.push_back((cid, json.clone()));
+                    pending_dc_writes.push_back(DcWrite::text(cid, json.clone()));
                 }
             }
         }
@@ -241,14 +241,14 @@ pub(super) fn forward_event_to_channels(
             // Send to the session's dedicated channel
             if let Some(&cid) = session_channels.get(sid) {
                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                    pending_dc_writes.push_back((cid, json.clone()));
+                    pending_dc_writes.push_back(DcWrite::text(cid, json.clone()));
                 }
             } else if is_broadcast {
                 // No session channel — send broadcast events to control so the
                 // main page still reacts (session list updates etc).
                 if let Some(cid) = control_channel_id {
                     if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                        pending_dc_writes.push_back((cid, json.clone()));
+                        pending_dc_writes.push_back(DcWrite::text(cid, json.clone()));
                     }
                 } else {
                     tracing::debug!(
@@ -311,7 +311,7 @@ pub(super) fn forward_event_to_channels(
                     "[room_chat] forward → inference DC user={} channel={:?}",
                     dbg_user, cid
                 );
-                pending_dc_writes.push_back((cid, chat_msg.to_string()));
+                pending_dc_writes.push_back(DcWrite::text(cid, chat_msg.to_string()));
             }
         }
     }

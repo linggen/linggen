@@ -29,7 +29,7 @@ mod session;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
 use inference::process_inference_request;
-use response::{enqueue_push, enqueue_response, MAX_DC_WRITE_QUEUE};
+use response::{enqueue_push, enqueue_response, DcWrite, MAX_DC_WRITE_QUEUE};
 use session::handle_session_message;
 
 /// Create a new WebRTC peer connection from a WHIP SDP offer.
@@ -154,6 +154,10 @@ async fn run_peer(
     // so they never pass through the control channel's text envelope.
     let mut media_channel_id: Option<str0m::channel::ChannelId> = None;
     let mut media_transfer: Option<media_channel::MediaTransfer> = None;
+    // Download chunks are produced off-loop and queued here; bounded so a slow
+    // peer applies backpressure to the reader instead of growing memory.
+    let (media_out_tx, mut media_out_rx) =
+        tokio::sync::mpsc::channel::<response::DcWrite>(64);
     let mut inference_channel_id: Option<str0m::channel::ChannelId> = None;
     // Per-peer token counter — synced with persistent store for consumers.
     let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
@@ -177,9 +181,10 @@ async fn run_peer(
         str0m::channel::ChannelId,
         serde_json::Value,
     )>(32);
-    // Queue of pending data channel writes — drained as fast as SCTP buffer allows.
-    // Messages are either text (JSON) or binary (gzip-compressed file data).
-    let mut pending_dc_writes: std::collections::VecDeque<(str0m::channel::ChannelId, String)> =
+    // Queue of pending data channel writes — drained as fast as SCTP buffer
+    // allows. Each entry carries its own text/binary flag: control and session
+    // frames are JSON, media downloads are raw bytes.
+    let mut pending_dc_writes: std::collections::VecDeque<DcWrite> =
         std::collections::VecDeque::new();
     let mut dc_write_paused = false;
     // Track when ICE entered Disconnected state for timeout-based cleanup.
@@ -207,15 +212,15 @@ async fn run_peer(
     loop {
         // Drain ONE pending write per cycle — writing multiple crashes str0m's SCTP.
         if !dc_write_paused {
-            if let Some((cid, msg)) = pending_dc_writes.pop_front() {
+            if let Some(write) = pending_dc_writes.pop_front() {
                 let written = rtc
-                    .channel(cid)
-                    .map(|mut ch| ch.write(false, msg.as_bytes()))
+                    .channel(write.channel)
+                    .map(|mut ch| ch.write(write.binary, &write.data))
                     .unwrap_or(Ok(false));
                 match written {
                     Ok(true) => { /* accepted */ }
                     _ => {
-                        pending_dc_writes.push_front((cid, msg));
+                        pending_dc_writes.push_front(write);
                         dc_write_paused = true;
                     }
                 }
@@ -289,7 +294,7 @@ async fn run_peer(
                                 "data": data,
                             });
                             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                pending_dc_writes.push_back((id, info_msg.to_string()));
+                                pending_dc_writes.push_back(DcWrite::text(id, info_msg.to_string()));
                             }
                             // Privacy warning for consumers
                             if user_ctx.is_consumer {
@@ -302,7 +307,7 @@ async fn run_peer(
                                     }
                                 });
                                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes.push_back((id, warning.to_string()));
+                                    pending_dc_writes.push_back(DcWrite::text(id, warning.to_string()));
                                 }
                             }
                         } else if label == "inference" {
@@ -340,7 +345,7 @@ async fn run_peer(
                                     );
                                     for json in buffered {
                                         if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                            pending_dc_writes.push_back((id, json));
+                                            pending_dc_writes.push_back(DcWrite::text(id, json));
                                         }
                                     }
                                 }
@@ -354,11 +359,19 @@ async fn run_peer(
                                 media_channel::handle_binary(&data.data, &mut media_transfer).await
                             } else {
                                 let text = String::from_utf8_lossy(&data.data).to_string();
+                                if media_channel::spawn_get(
+                                    &text,
+                                    state.port,
+                                    data.id,
+                                    media_out_tx.clone(),
+                                ) {
+                                    continue;
+                                }
                                 media_channel::handle_text(&text, &mut media_transfer).await
                             };
                             if let Some(msg) = reply {
                                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes.push_back((data.id, msg));
+                                    pending_dc_writes.push_back(DcWrite::text(data.id, msg));
                                 }
                             }
                             continue;
@@ -401,7 +414,7 @@ async fn run_peer(
                                             });
                                             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
                                                 pending_dc_writes
-                                                    .push_back((data.id, err.to_string()));
+                                                    .push_back(DcWrite::text(data.id, err.to_string()));
                                             }
                                         }
                                         continue;
@@ -613,6 +626,16 @@ async fn run_peer(
 
         // Wait for either: UDP packet, server event, or timeout
         tokio::select! {
+            // Media download chunks, produced off-loop by spawn_get. Guarded:
+            // while the SCTP buffer is full this arm is always ready and would
+            // starve the socket read below — no ACKs, no drain, no progress.
+            // Leaving the chunks in the bounded channel backpressures the
+            // producer instead, which is what we want anyway.
+            Some(write) = media_out_rx.recv(),
+                if !dc_write_paused && pending_dc_writes.len() < MAX_DC_WRITE_QUEUE => {
+                pending_dc_writes.push_back(write);
+            }
+
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((n, source)) => {
@@ -637,6 +660,9 @@ async fn run_peer(
                             contents: contents.try_into()?,
                         };
                         rtc.handle_input(Input::Receive(Instant::now(), receive))?;
+                        // An inbound packet may carry SCTP acks, which is what
+                        // frees send-buffer space — retry any paused write.
+                        dc_write_paused = false;
                     }
                     Err(e) => {
                         tracing::warn!("UDP recv error: {e}");

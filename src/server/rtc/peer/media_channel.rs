@@ -15,7 +15,17 @@
 //! ← {"type":"put_ok","id","bytes"} | {"type":"put_err","id","error"}
 //! ```
 //!
-//! Completed transfers land through the same `finalize_ingest` the HTTP upload
+//! Downloads run the same way in reverse — the phone asks for an API path and
+//! the daemon streams the response body as binary chunks:
+//!
+//! ```text
+//! → {"type":"get","id","url"}
+//! ← {"type":"get_begin","id","status","size"}
+//! ← <binary chunk> …
+//! ← {"type":"get_end","id"} | {"type":"get_err","id","error"}
+//! ```
+//!
+//! Completed uploads land through the same `finalize_ingest` the HTTP upload
 //! uses, so archiving, the ledger, and the scan trigger behave identically no
 //! matter which path carried the file.
 
@@ -81,6 +91,100 @@ pub(super) async fn handle_text(
         }
         _ => None,
     }
+}
+
+/// Chunk size for downloads — the same 16 KB every SCTP implementation
+/// agrees on.
+const DOWNLOAD_CHUNK: usize = 8 * 1024;
+
+/// Serve a `get`: fetch the path from our own API and stream the bytes back.
+/// Runs off the str0m loop; chunks are handed to the writer as they're ready.
+/// Returns false when the message wasn't a `get`.
+pub(super) fn spawn_get(
+    text: &str,
+    port: u16,
+    channel: str0m::channel::ChannelId,
+    out: tokio::sync::mpsc::Sender<super::response::DcWrite>,
+) -> bool {
+    let Ok(msg) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    if msg.get("type").and_then(Value::as_str) != Some("get") {
+        return false;
+    }
+    let (Some(id), Some(url)) = (
+        msg.get("id").and_then(Value::as_str).map(String::from),
+        msg.get("url").and_then(Value::as_str).map(String::from),
+    ) else {
+        return false;
+    };
+    // Same allowlist as the control channel's http_request: our own API only.
+    if !url.starts_with("/api/") || url.contains("..") || url.contains("://") {
+        let _ = out.try_send(super::response::DcWrite::text(
+            channel,
+            json!({"type": "get_err", "id": id, "error": "invalid url"}).to_string(),
+        ));
+        return true;
+    }
+
+    tracing::info!("[media] get {url}");
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let resp = client.get(format!("http://127.0.0.1:{port}{url}")).send().await;
+        let (status, bytes) = match resp {
+            Ok(r) => {
+                let s = r.status().as_u16();
+                match r.bytes().await {
+                    Ok(b) => (s, b),
+                    Err(e) => {
+                        let _ = out
+                            .send(super::response::DcWrite::text(
+                                channel,
+                                json!({"type": "get_err", "id": id, "error": format!("read: {e}")})
+                                    .to_string(),
+                            ))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = out
+                    .send(super::response::DcWrite::text(
+                        channel,
+                        json!({"type": "get_err", "id": id, "error": format!("fetch: {e}")})
+                            .to_string(),
+                    ))
+                    .await;
+                return;
+            }
+        };
+
+        let _ = out
+            .send(super::response::DcWrite::text(
+                channel,
+                json!({"type": "get_begin", "id": id, "status": status, "size": bytes.len()})
+                    .to_string(),
+            ))
+            .await;
+        for chunk in bytes.chunks(DOWNLOAD_CHUNK) {
+            if out
+                .send(super::response::DcWrite::binary(channel, chunk.to_vec()))
+                .await
+                .is_err()
+            {
+                return; // peer gone
+            }
+        }
+        tracing::info!("[media] get done: {} bytes", bytes.len());
+        let _ = out
+            .send(super::response::DcWrite::text(
+                channel,
+                json!({"type": "get_end", "id": id}).to_string(),
+            ))
+            .await;
+    });
+    true
 }
 
 /// Handle one binary chunk. Returns an error reply if the transfer must abort.
