@@ -65,6 +65,24 @@ fn flags_path() -> PathBuf {
     data_dir().join("flags.json")
 }
 
+/// Mac-requested phone deletions the phone hasn't executed yet.
+fn delete_queue_path() -> PathBuf {
+    data_dir().join("phone-delete-queue.json")
+}
+
+fn load_delete_queue() -> Vec<String> {
+    std::fs::read_to_string(delete_queue_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.get("localIds").cloned())
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+fn save_delete_queue(ids: &[String]) -> std::io::Result<()> {
+    std::fs::write(delete_queue_path(), json!({ "localIds": ids }).to_string())
+}
+
 /// Mac Shifu's scan verdicts (blurry/dark/…), keyed by content hash. The
 /// phone borrows these instead of re-implementing image analysis in Dart —
 /// standalone gets the cheap detectors, paired gets the Mac's brains.
@@ -197,8 +215,51 @@ pub(crate) async fn manifest_handler(Json(body): Json<ManifestBody>) -> Response
             verdicts.insert(a.local_id.clone(), json!(flags));
         }
     }
-    Json(json!({"needed": needed, "verified": verified, "verdicts": verdicts}))
-        .into_response()
+    // Mac-requested deletions ride every manifest reply; the phone executes
+    // them via PhotoKit (system confirm) and reconcile clears the queue.
+    let delete_requested = load_delete_queue();
+    Json(json!({
+        "needed": needed,
+        "verified": verified,
+        "verdicts": verdicts,
+        "deleteRequested": delete_requested,
+    }))
+    .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/media/request-delete · GET /api/media/pending-deletes
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RequestDeleteBody {
+    local_ids: Vec<String>,
+}
+
+/// The Mac review queues photos for on-phone deletion. The queue is intent,
+/// not action: nothing is touched until the phone's user confirms the
+/// PhotoKit dialog; cache rows stay until reconcile sees the photo gone.
+pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) -> Response {
+    let _guard = MEDIA_LOCK.lock().await;
+    let mut queue = load_delete_queue();
+    for id in body.local_ids {
+        if !queue.contains(&id) {
+            queue.push(id);
+        }
+    }
+    let n = queue.len();
+    if let Err(e) = save_delete_queue(&queue) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("queue write: {e}"));
+    }
+    tracing::info!("[media] phone-delete queue now {n} ids");
+    Json(json!({"queued": n})).into_response()
+}
+
+/// Lightweight poll for the phone's foreground timer — deleting on the Mac
+/// while holding the phone should feel immediate.
+pub(crate) async fn pending_deletes_handler() -> Response {
+    Json(json!({"localIds": load_delete_queue()})).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +337,14 @@ pub(crate) async fn reconcile_handler(Json(body): Json<ReconcileBody>) -> Respon
 
 fn reconcile_wireless(all: &[String]) -> anyhow::Result<usize> {
     let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
+    // Queue entries whose photo is no longer on the phone are done (executed,
+    // or deleted by hand) — the roll report is the ack, no protocol needed.
+    let queue = load_delete_queue();
+    let live: Vec<String> =
+        queue.iter().filter(|id| on_phone.contains(id.as_str())).cloned().collect();
+    if live.len() != queue.len() {
+        let _ = save_delete_queue(&live);
+    }
     let rows = load_jsonl(&manifest_path());
     let gone = |r: &Value| {
         r.get("path")
