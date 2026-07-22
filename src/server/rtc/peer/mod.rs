@@ -21,6 +21,7 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig}
 use crate::server::ServerState;
 
 mod control;
+mod media_channel;
 mod forward;
 mod inference;
 mod response;
@@ -149,6 +150,10 @@ async fn run_peer(
 ) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut control_channel_id = None;
+    // Bulk bytes live on their own channel so a photo can't stall chat, and
+    // so they never pass through the control channel's text envelope.
+    let mut media_channel_id: Option<str0m::channel::ChannelId> = None;
+    let mut media_transfer: Option<media_channel::MediaTransfer> = None;
     let mut inference_channel_id: Option<str0m::channel::ChannelId> = None;
     // Per-peer token counter — synced with persistent store for consumers.
     let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
@@ -247,7 +252,9 @@ async fn run_peer(
 
                     Event::ChannelOpen(id, label) => {
                         tracing::info!("Data channel opened: {label} (id: {id:?})");
-                        if label == "control" {
+                        if label == "media" {
+                            media_channel_id = Some(id);
+                        } else if label == "control" {
                             control_channel_id = Some(id);
                             // Send connection metadata: user info + room info.
                             let data = if user_ctx.is_consumer {
@@ -342,6 +349,20 @@ async fn run_peer(
                     }
 
                     Event::ChannelData(data) => {
+                        if Some(data.id) == media_channel_id {
+                            let reply = if data.binary {
+                                media_channel::handle_binary(&data.data, &mut media_transfer).await
+                            } else {
+                                let text = String::from_utf8_lossy(&data.data).to_string();
+                                media_channel::handle_text(&text, &mut media_transfer).await
+                            };
+                            if let Some(msg) = reply {
+                                if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                                    pending_dc_writes.push_back((data.id, msg));
+                                }
+                            }
+                            continue;
+                        }
                         let text = String::from_utf8_lossy(&data.data).to_string();
                         tracing::trace!(
                             "Data channel message on {:?}: {}bytes",

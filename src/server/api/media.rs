@@ -49,7 +49,7 @@ fn data_dir() -> PathBuf {
     crate::paths::global_skills_dir().join("mac-shifu").join("data").join("media")
 }
 
-fn staging_dir() -> PathBuf {
+pub(crate) fn staging_dir() -> PathBuf {
     data_dir().join("staging")
 }
 
@@ -540,7 +540,7 @@ pub(crate) async fn ingest_handler(mut multipart: Multipart) -> Response {
 /// [`SCAN_QUIESCE`], run the Media pipeline's `scan` (analyzers over staging —
 /// no phone involved) so synced photos get dupe/blurry/dark verdicts without
 /// a Media-tab visit, and the phone sees them on its next manifest call.
-fn schedule_wireless_scan() {
+pub(crate) fn schedule_wireless_scan() {
     use std::sync::atomic::Ordering;
     let gen = SCAN_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     tokio::spawn(async move {
@@ -588,7 +588,7 @@ fn discard(received: &Option<(PathBuf, String, u64)>) {
     }
 }
 
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
@@ -633,7 +633,7 @@ async fn stream_to_tmp(
 /// Sync is a MIRROR, not a backup: ingest deliberately does NOT archive.
 /// The archive copy (+ ledger row, the phone's delete gate) happens only in
 /// the explicit backup step (`backup_handler` / the Mac's Back up all).
-fn finalize_ingest(
+pub(crate) fn finalize_ingest(
     local_id: &str,
     sha: &str,
     created_ms: Option<i64>,
