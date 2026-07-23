@@ -21,6 +21,23 @@ fn dj_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join("Music").join("DJ")
 }
 
+/// Karaoke sources (instrumental mp3 + karaoke video) live in a hidden
+/// `.karaoke/` subdir so the library scan never adopts them as tracks. The
+/// phone reaches them via `/api/dj/file?dir=karaoke&name=…`.
+fn karaoke_dir() -> PathBuf {
+    dj_dir().join(".karaoke")
+}
+
+fn read_names(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect()
+}
+
 fn is_ext(name: &str, exts: &[&str]) -> bool {
     name.rsplit_once('.')
         .is_some_and(|(_, e)| exts.contains(&e.to_lowercase().as_str()))
@@ -38,31 +55,32 @@ pub(crate) fn spawn_library_watcher(state: std::sync::Arc<crate::server::ServerS
     );
 }
 
-/// GET /api/dj/library — every audio file with its sidecar availability.
+/// GET /api/dj/library — every audio file with its sidecar availability
+/// (`.lrc`, cover) plus the karaoke sources in `.karaoke/` (instrumental mp3
+/// and karaoke video), keyed off the track's stem + " (Karaoke)".
 pub(crate) async fn get_library() -> impl IntoResponse {
     let dir = dj_dir();
+    let names = read_names(&dir);
+    let knames = read_names(&karaoke_dir());
     let mut tracks = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        let names: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect();
-        for name in names.iter().filter(|n| is_ext(n, AUDIO_EXTS)) {
-            let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-            let lrc = format!("{stem}.lrc");
-            let cover = COVER_EXTS
-                .iter()
-                .map(|e| format!("{stem}.{e}"))
-                .find(|c| names.contains(c));
-            let size = std::fs::metadata(dir.join(name)).map(|m| m.len()).unwrap_or(0);
-            tracks.push(serde_json::json!({
-                "name": name,
-                "size": size,
-                "lrc": names.contains(&lrc).then_some(lrc),
-                "cover": cover,
-            }));
-        }
+    for name in names.iter().filter(|n| is_ext(n, AUDIO_EXTS)) {
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        let lrc = format!("{stem}.lrc");
+        let cover = COVER_EXTS
+            .iter()
+            .map(|e| format!("{stem}.{e}"))
+            .find(|c| names.contains(c));
+        let karaoke_audio = format!("{stem} (Karaoke).mp3");
+        let karaoke_video = format!("{stem} (Karaoke).mp4");
+        let size = std::fs::metadata(dir.join(name)).map(|m| m.len()).unwrap_or(0);
+        tracks.push(serde_json::json!({
+            "name": name,
+            "size": size,
+            "lrc": names.contains(&lrc).then_some(lrc),
+            "cover": cover,
+            "karaoke_audio": knames.contains(&karaoke_audio).then_some(karaoke_audio),
+            "karaoke_video": knames.contains(&karaoke_video).then_some(karaoke_video),
+        }));
     }
     tracks.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     Json(serde_json::json!({ "tracks": tracks }))
@@ -71,6 +89,9 @@ pub(crate) async fn get_library() -> impl IntoResponse {
 #[derive(Deserialize)]
 pub(crate) struct FileQuery {
     name: String,
+    /// `karaoke` serves from the `.karaoke/` subdir; absent = the library root.
+    #[serde(default)]
+    dir: Option<String>,
 }
 
 /// Per-device sync ledger (`~/.linggen/dj-sync.json`): which library files each
@@ -181,17 +202,27 @@ pub(crate) async fn get_devices() -> impl IntoResponse {
     Json(serde_json::json!({ "devices": devices }))
 }
 
-/// GET /api/dj/file?name=… — serve one library file (audio / .lrc / cover).
-/// Plain file names only; anything path-like is rejected.
+/// GET /api/dj/file?name=…[&dir=karaoke] — serve one file. Plain file names
+/// only (anything path-like is rejected); `dir=karaoke` picks the `.karaoke/`
+/// subdir. The subdir is chosen by the param, never by a path inside `name`.
 pub(crate) async fn get_file(headers: HeaderMap, Query(q): Query<FileQuery>) -> Response {
     if q.name.contains('/') || q.name.contains('\\') || q.name.starts_with('.') {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }
-    let path = dj_dir().join(&q.name);
+    let base = match q.dir.as_deref() {
+        None => dj_dir(),
+        Some("karaoke") => karaoke_dir(),
+        Some(_) => return (StatusCode::BAD_REQUEST, "bad dir").into_response(),
+    };
+    let path = base.join(&q.name);
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
-            if let Some(device) = device_from_headers(&headers) {
-                record_fetch(&device.id, &q.name);
+            // Only library-root fetches count toward per-phone coverage; karaoke
+            // sources are extras, not part of the tracked library set.
+            if q.dir.is_none() {
+                if let Some(device) = device_from_headers(&headers) {
+                    record_fetch(&device.id, &q.name);
+                }
             }
             let mime = match q.name.rsplit_once('.').map(|(_, e)| e.to_lowercase()) {
                 Some(e) if e == "mp3" => "audio/mpeg",
@@ -199,6 +230,7 @@ pub(crate) async fn get_file(headers: HeaderMap, Query(q): Query<FileQuery>) -> 
                 Some(e) if e == "flac" => "audio/flac",
                 Some(e) if e == "wav" => "audio/wav",
                 Some(e) if e == "ogg" => "audio/ogg",
+                Some(e) if e == "mp4" => "video/mp4",
                 Some(e) if e == "lrc" => "text/plain; charset=utf-8",
                 Some(e) if e == "webp" => "image/webp",
                 Some(e) if e == "jpg" || e == "jpeg" => "image/jpeg",
