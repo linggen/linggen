@@ -18,80 +18,76 @@ pub struct WebSearchResult {
     pub snippet: String,
 }
 
-/// Search the web using Tavily API and return structured results.
-///
-/// Requires a Tavily API key stored in `~/.linggen/credentials.json`
-/// under the key `"tavily"`, or via env var `TAVILY_API_KEY`.
+/// Search the web through the Linggen Cloud proxy (Tavily behind the account
+/// token). There is no per-user Tavily key: the proxy holds the key and meters
+/// each search against the account's monthly pool, so sign-in is required.
 pub async fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>> {
-    let api_key = resolve_tavily_key()
-        .context("Tavily API key not found. Get a free key at https://tavily.com then set it in ~/.linggen/credentials.json under \"tavily\" or env var TAVILY_API_KEY")?;
+    let (token, _) = crate::account::resolve_token()
+        .context("Please sign in to linggen.dev to use web search.")?;
 
-    tavily_search(&api_key, query, max_results).await
+    cloud_search(&token, query, max_results).await
 }
 
-/// Resolve the Tavily API key from credentials.json or env var.
-fn resolve_tavily_key() -> Option<String> {
-    // 1. credentials.json
-    let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
-    if let Some(key) = creds.get_api_key("tavily") {
-        if !key.is_empty() {
-            return Some(key.to_string());
-        }
-    }
-    // 2. Environment variable
-    if let Ok(key) = std::env::var("TAVILY_API_KEY") {
-        if !key.is_empty() {
-            return Some(key);
-        }
-    }
-    None
-}
-
-/// Tavily search API response.
+/// Cloud search proxy response — `{ results: [{ title, url, content }] }`,
+/// matching `linggensite/functions/api/_lib/search.ts`.
 #[derive(Debug, Deserialize)]
-struct TavilyResponse {
-    results: Vec<TavilyResult>,
+struct SearchResponse {
+    #[serde(default)]
+    results: Vec<SearchItem>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TavilyResult {
+struct SearchItem {
+    #[serde(default)]
     title: String,
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     content: String,
 }
 
-async fn tavily_search(
-    api_key: &str,
+async fn cloud_search(
+    token: &str,
     query: &str,
     max_results: usize,
 ) -> Result<Vec<WebSearchResult>> {
+    let url = format!("{}/api/search", crate::account::site_url());
     let body = serde_json::json!({
         "query": query,
         "max_results": max_results,
-        "include_answer": false,
     });
 
     let resp = HTTP_CLIENT
-        .post("https://api.tavily.com/search")
-        .header("Content-Type", "application/json")
-        .bearer_auth(api_key)
+        .post(&url)
+        .bearer_auth(token)
         .json(&body)
         .send()
         .await
-        .context("failed to call Tavily search API")?;
+        .context("failed to reach the Linggen search service")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Tavily API error ({}): {}", status, text);
+    let status = resp.status();
+    if !status.is_success() {
+        // An expired or rejected token reads to the user as "not signed in".
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            anyhow::bail!("Please sign in to linggen.dev to use web search.");
+        }
+        // Otherwise surface the server's own message (trial used up, monthly
+        // cap reached, not configured, …) verbatim.
+        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        let msg = body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("web search failed");
+        anyhow::bail!("{} ({})", msg, status);
     }
 
-    let tavily_resp: TavilyResponse = resp
+    let parsed: SearchResponse = resp
         .json()
         .await
-        .context("failed to parse Tavily response")?;
+        .context("failed to parse the search response")?;
 
-    let results = tavily_resp
+    let results = parsed
         .results
         .into_iter()
         .take(max_results)
@@ -110,14 +106,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_tavily_response() {
+    fn test_parse_search_response() {
         let json = r#"{
             "results": [
                 {"title": "Example", "url": "https://example.com", "content": "A snippet here", "score": 0.9},
                 {"title": "Test Page", "url": "https://test.com", "content": "Another snippet", "score": 0.8}
             ]
         }"#;
-        let resp: TavilyResponse = serde_json::from_str(json).unwrap();
+        let resp: SearchResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.results.len(), 2);
         assert_eq!(resp.results[0].title, "Example");
         assert_eq!(resp.results[0].url, "https://example.com");
@@ -125,23 +121,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_tavily_response_empty() {
+    fn test_parse_search_response_empty() {
         let json = r#"{"results": []}"#;
-        let resp: TavilyResponse = serde_json::from_str(json).unwrap();
+        let resp: SearchResponse = serde_json::from_str(json).unwrap();
         assert!(resp.results.is_empty());
     }
 
     #[test]
-    fn test_tavily_to_web_search_result() {
-        let tavily = TavilyResult {
+    fn test_search_item_to_web_search_result() {
+        let item = SearchItem {
             title: "Rust Lang".to_string(),
             url: "https://rust-lang.org".to_string(),
             content: "A systems programming language".to_string(),
         };
         let result = WebSearchResult {
-            title: tavily.title,
-            url: tavily.url,
-            snippet: tavily.content,
+            title: item.title,
+            url: item.url,
+            snippet: item.content,
         };
         assert_eq!(result.title, "Rust Lang");
         assert_eq!(result.snippet, "A systems programming language");

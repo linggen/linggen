@@ -620,7 +620,7 @@ impl Tool for WebSearchTool {
             "name": "WebSearch",
             "args": {"query": "string", "max_results": "number?"},
             "returns": "{results:[{title,url,snippet}]}",
-            "notes": "Search the web via DuckDuckGo. Default 5 results, max 10."
+            "notes": "Search the web. Default 5 results, max 10. Requires sign-in to linggen.dev."
         })
     }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
