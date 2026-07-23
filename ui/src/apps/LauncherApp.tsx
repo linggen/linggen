@@ -11,7 +11,6 @@ import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
-import { UsageMeter } from '../components/UsageMeter';
 
 interface AppSkill {
   name: string;
@@ -135,7 +134,6 @@ export const LauncherApp: React.FC = () => {
           })}
         </div>
         <div className="ml-auto shrink-0 flex items-center gap-2">
-          <UsageMeter />
           {/* Billing account the daemon spends from — always visible.
               Remounts when Settings closes so a sign in/out done there
               reflects immediately. */}

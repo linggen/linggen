@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
+import { UsageMeter } from './UsageMeter';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
@@ -399,6 +400,10 @@ export const ModelsTab: React.FC<{
                         {codexAuthLoading ? 'Waiting for browser login...' : 'Sign in with ChatGPT'}
                       </button>
                     )
+                  ) : m.provided_by === 'Linggen Cloud' ? (
+                    // The account's cloud allowance ("19.2M left") is spent only
+                    // by Linggen Cloud models, so the meter lives on this row.
+                    <UsageMeter />
                   ) : (
                     <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
                   )}
