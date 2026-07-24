@@ -38,8 +38,8 @@ pub(crate) fn publish_topic(
 pub(crate) fn watch_dir(
     state: Arc<ServerState>,
     dir: PathBuf,
-    topic: &'static str,
-    op: &'static str,
+    topic: String,
+    op: String,
     debounce: Duration,
     filter: Option<fn(&std::path::Path) -> bool>,
 ) {
@@ -81,7 +81,7 @@ pub(crate) fn watch_dir(
                 .await
                 .is_ok_and(|v| v.is_some())
             {}
-            publish_topic(&state, topic, op, serde_json::Value::Null);
+            publish_topic(&state, &topic, &op, serde_json::Value::Null);
             tracing::info!("[topic] {topic}/{op} — devices notified");
         }
     });

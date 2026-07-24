@@ -26,6 +26,44 @@ pub struct AppConfig {
     pub height: Option<u32>,
 }
 
+/// One sidecar file resolved from a primary item's stem — a lyric file next to
+/// a song, a cover next to a photo. `subdir` names an entry in
+/// [`SyncConfig::subdirs`]; `suffix` is inserted between the stem and the
+/// extension (`"聽海"` + `" (Karaoke)"` + `.mp3`).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncCompanion {
+    pub name: String,
+    pub exts: Vec<String>,
+    #[serde(default)]
+    pub subdir: Option<String>,
+    #[serde(default)]
+    pub suffix: Option<String>,
+}
+
+/// A directory the skill asks the engine to serve to paired devices.
+///
+/// The engine reads this and does something entirely generic with it — it
+/// never learns what the files mean. See `doc/skill-spec.md` § Device sync for
+/// why this is declarative rather than a module per app.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncConfig {
+    /// Directory to serve. Tilde-expandable (`~/Music/DJ`).
+    pub dir: String,
+    /// Extensions that count as a primary item. Everything else in `dir` is
+    /// only reachable as a companion.
+    pub items: Vec<String>,
+    /// Named subdirectories the skill may serve from, e.g. `karaoke: .karaoke`.
+    /// A request may only name a key here — never a path.
+    #[serde(default)]
+    pub subdirs: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub companions: Vec<SyncCompanion>,
+    /// When set, changes under `dir` are announced as `<topic>/library-changed`
+    /// so devices sync on push instead of polling.
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum SkillSource {
@@ -95,6 +133,10 @@ pub struct Skill {
     /// Install script path relative to skill directory. Run once on install.
     #[serde(default)]
     pub install: Option<String>,
+    /// Directory this skill wants served to paired devices. The engine wires a
+    /// generic file-sync surface from it — see `SyncConfig`.
+    #[serde(default)]
+    pub sync: Option<SyncConfig>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

@@ -80,16 +80,16 @@ pub(crate) fn spawn_media_watchers(state: std::sync::Arc<crate::server::ServerSt
     super::topic::watch_dir(
         state.clone(),
         dir.clone(),
-        "media",
-        "delete-requested",
+        "media".to_string(),
+        "delete-requested".to_string(),
         std::time::Duration::from_millis(500),
         Some(|p| p.file_name().is_some_and(|n| n == "phone-delete-queue.json")),
     );
     super::topic::watch_dir(
         state,
         dir,
-        "media",
-        "verdicts-updated",
+        "media".to_string(),
+        "verdicts-updated".to_string(),
         std::time::Duration::from_secs(2),
         Some(|p| p.file_name().is_some_and(|n| n == "flags.json")),
     );

@@ -46,6 +46,17 @@ The skill is the **unit of distribution and the unit of composition** in Linggen
 
 This is what lets the same runtime power "your personal assistant" out of the box and "an AI app you built last weekend" with no architectural change. The dual framing in the product vision (app engine + assistant) is *enabled* by the skill system.
 
+### The kernel boundary
+
+**A skill is external. No skill-specific Rust lives in the engine.** No module, route, config key, or branch may be named after one app. The moment the engine knows what a "track" or a "photo" is, first-party skills have become privileged and the platform claim is false.
+
+When a skill needs something it can't do from HTML/JS/scripts, add a **general primitive** — one the skill *declares* in frontmatter or *calls* through a generic route:
+
+- Declared → the engine reads a config block and does something generic with it (see `sync`).
+- Called → a route that takes the skill name as a parameter, never as a path literal.
+
+Test before writing engine code: *would a second, unrelated skill use this?* If no, it's the skill's job. If it can't be generalized, it doesn't belong in the engine yet.
+
 ### Design goals
 
 | Goal | What it enables |
@@ -121,6 +132,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `permission` | Permission request, prompted at activation |
 | `cwd` | Starting cwd for sessions invoking this skill |
 | `install` | Script that runs once on installation |
+| `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `provides` / `implements` | Marks the skill as a service backend for an engine-defined capability |
 | `requires` | External dependencies to resolve at install |
 
@@ -172,6 +184,36 @@ The first capability is `memory` — see `memory-spec.md`. Future capabilities m
 The point is **swappability**: two memory skills expose identical `Memory_*` tools to the model because both conform to the same engine-defined contract. Users can switch backends without the model seeing any change.
 
 A skill can also ship its own private tools (unique to itself) alongside any capabilities it implements.
+
+## Device sync
+
+A skill's UI only exists while its panel is open, so a skill cannot answer a paired phone on its own. Rather than let each phone-integrated app grow a bespoke server module in the engine (the kernel-boundary violation above), a skill **declares** the directory it wants served:
+
+```yaml
+sync:
+  dir: ~/Music/DJ           # what to serve
+  topic: dj                 # publish <topic>/library-changed when it changes
+  items: [mp3, m4a, flac]   # extensions that count as a primary item
+  subdirs:
+    karaoke: .karaoke       # named subdirs the skill may serve from
+  companions:               # sidecar files resolved from an item's stem
+    - { name: lrc,           exts: [lrc] }
+    - { name: cover,         exts: [webp, jpg, png] }
+    - { name: karaoke_audio, subdir: karaoke, suffix: " (Karaoke)", exts: [mp3] }
+```
+
+The engine then serves four generic routes, keyed by skill name — it never learns what the files mean:
+
+| Route | Purpose |
+| :---- | :------ |
+| `GET /api/skill-sync/{skill}/items` | Every primary file with its size and resolved companions |
+| `GET /api/skill-sync/{skill}/file?name=…[&dir=…]` | One file; `dir` must be a declared subdir |
+| `GET /api/skill-sync/{skill}/devices` | Paired devices joined with their per-device sync ledger |
+| `POST /api/skill-sync/{skill}/have` | A device reports its full inventory, replacing its ledger row |
+
+The ledger lives at `~/.linggen/sync/{skill}.json` and tracks only primary items — companions are extras, not coverage. Serving is read-only and plain-name-only: anything path-like is rejected, and subdirs are chosen by parameter, never by a path inside the name. `topic` additionally starts a debounced watcher so devices are pushed to instead of polling.
+
+Ingest (a device writing *into* the Mac) is not covered — that still needs a skill's own server half.
 
 ## App skills
 

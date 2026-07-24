@@ -884,7 +884,11 @@ async fn prepare_server(
     }
 
     // Push Mac-side changes to paired devices instead of making them poll.
-    api::dj::spawn_library_watcher(state.clone());
+    // Skill-declared sync dirs get theirs from frontmatter — no app named here.
+    {
+        let sync_state = state.clone();
+        tokio::spawn(async move { api::skill_sync::spawn_watchers(sync_state).await });
+    }
     api::media::spawn_media_watchers(state.clone());
 
     // Pre-warm ling-mem when any installed skill uses scoped memory
@@ -1133,10 +1137,22 @@ async fn prepare_server(
         )
         .route("/pair", get(api::pair::get_pair_page))
         .route("/api/topic/publish", post(api::topic::publish))
-        .route("/api/dj/library", get(api::dj::get_library))
-        .route("/api/dj/file", get(api::dj::get_file))
-        .route("/api/dj/devices", get(api::dj::get_devices))
-        .route("/api/dj/have", post(api::dj::post_have))
+        .route(
+            "/api/skill-sync/{skill}/items",
+            get(api::skill_sync::get_items),
+        )
+        .route(
+            "/api/skill-sync/{skill}/file",
+            get(api::skill_sync::get_file),
+        )
+        .route(
+            "/api/skill-sync/{skill}/devices",
+            get(api::skill_sync::get_devices),
+        )
+        .route(
+            "/api/skill-sync/{skill}/have",
+            post(api::skill_sync::post_have),
+        )
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))

@@ -4,7 +4,6 @@
 pub(super) mod account;
 pub(super) mod agents;
 pub(super) mod config;
-pub(super) mod dj;
 pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod pair;
@@ -12,6 +11,7 @@ pub(super) mod missions;
 pub(super) mod permissions;
 pub(super) mod rooms;
 pub(super) mod sessions;
+pub(super) mod skill_sync;
 pub(super) mod skills;
 pub(super) mod status;
 pub(super) mod storage;

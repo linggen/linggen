@@ -15,6 +15,14 @@ Linggen is **a local AI app engine — and your general-purpose personal assista
 
 Architecturally, Linggen is **the root system for AI agents** — the core runtime manages agent processes, communication, and execution; everything else (skills, agents, missions) grows on top as files. Skills follow the [Agent Skills](https://agentskills.io) open standard (aligned with Claude Code) and work across AI tools.
 
+### The kernel boundary
+
+**No skill-specific Rust in the engine.** The engine is a general core. Every capability it offers must be usable by any skill and named in general terms — never after one app. A skill is external: markdown, HTML, JS, and its own scripts.
+
+When a skill needs something the engine can't do, the fix is a **general primitive the skill declares or calls**, never a module named after the skill. If it can't be generalized, it doesn't belong in the engine yet.
+
+Test before adding engine code: *would a second, unrelated skill use this?* If no, it's the skill's job.
+
 For background on why an AI app engine is needed, plus landscape and roadmap, see [`insight.md`](insight.md).
 
 ### OS analogy

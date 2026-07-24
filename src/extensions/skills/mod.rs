@@ -288,7 +288,7 @@ fn parse_frontmatter_meta(text: &str) -> Option<(String, String)> {
 /// for callers that import them through this module. Permission grant
 /// types live in `engine::permission`.
 pub use crate::engine::permission::{Grants as SkillPermission, PathGrant};
-pub use crate::engine::skill::{AppConfig, Skill, SkillSource};
+pub use crate::engine::skill::{AppConfig, Skill, SkillSource, SyncConfig};
 
 use crate::extensions::frontmatter::deserialize_string_or_vec;
 
@@ -340,6 +340,11 @@ struct SkillFrontmatter {
     cwd: Option<String>,
     #[serde(default)]
     install: Option<String>,
+    /// Directory this skill wants served to paired devices. Purely declarative
+    /// — the engine wires a generic sync surface and never learns what the
+    /// files are. See `doc/skill-spec.md` § Device sync.
+    #[serde(default)]
+    sync: Option<SyncConfig>,
 }
 
 pub struct SkillLoader {
@@ -601,6 +606,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         permission: frontmatter.permission,
         cwd: frontmatter.cwd,
         install: frontmatter.install,
+        sync: frontmatter.sync,
         skill_dir: None,
     })
 }
