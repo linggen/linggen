@@ -67,6 +67,20 @@ fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
     std::fs::write(devices_path(), serde_json::to_string_pretty(devices)?)
 }
 
+/// What a brand-new phone's allow-list starts with: the zero-setup Linggen
+/// Cloud model. `cloud` kind needs only the account token the phone adopts on
+/// pair, so the Model picker is usable the moment pairing finishes instead of
+/// empty until the Mac owner curates it. Re-pairs carry the prior settings, so
+/// removing it on the Mac sticks.
+fn default_device_settings() -> serde_json::Map<String, serde_json::Value> {
+    let mut settings = serde_json::Map::new();
+    settings.insert(
+        "models".to_string(),
+        serde_json::json!([crate::provider::models::LINGGEN_CLOUD_MODEL_ID]),
+    );
+    settings
+}
+
 /// Mint a token for a freshly-confirmed device and persist it. A phone that
 /// sends a stable `device_id` replaces its own prior row (re-pairing refreshes
 /// the token/name in place instead of stacking duplicates); without one — older
@@ -87,7 +101,7 @@ fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<Pai
         secret: random_hex(24),
         created_at: chrono::Utc::now().timestamp(),
         device_id: device_id.clone(),
-        settings: carried.unwrap_or_default(),
+        settings: carried.unwrap_or_else(default_device_settings),
     };
     if let Some(did) = device_id {
         devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
