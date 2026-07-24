@@ -1121,7 +1121,6 @@ async fn prepare_server(
         .route("/api/account/login", post(post_account_login))
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))
-        .route("/api/account/mobile-token", get(api::account::get_mobile_token))
         .route("/api/pair/request", post(api::pair::post_pair_request))
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
         .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
