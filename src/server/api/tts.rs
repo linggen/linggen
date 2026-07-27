@@ -1,15 +1,18 @@
 //! `POST /api/tts` — synthesize speech for Yinyue's voice.
 //!
 //! Voice synthesis sits behind the [`TtsProvider`] trait so the engine that
-//! produces the audio is a swap, not a rewrite. Phase 1 ships
-//! [`SystemSayProvider`] (macOS `say` — neural system voices, zero
-//! dependencies), which proves the full pipeline end-to-end: text in, WAV
-//! bytes out, played by the desktop pet with amplitude-driven lip-sync.
+//! produces the audio is a swap, not a rewrite. The daemon's voice is
+//! [`KokoroProvider`] (see [`default_provider`]); [`SystemSayProvider`] is no
+//! longer a stand-in for it but its offline fallback.
 //!
-//! The planned local provider is Kokoro (ONNX, bundled, cross-platform); it
-//! drops in behind this same trait. A model-holding provider lives in
+//! A model-holding provider lives in
 //! [`ServerState`](crate::server::ServerState) so it loads once, not per
 //! request — `SystemSayProvider` is stateless and simply ignored by that rule.
+//!
+//! Returns one COMPLETE WAV clip, not a stream. The caller needs the whole
+//! buffer anyway: the web surface decodes it and computes an amplitude
+//! envelope from the decoded samples to drive lip-sync, which cannot be done
+//! incrementally. Chunked synthesis would mean an incremental envelope too.
 
 use std::sync::Arc;
 
@@ -60,9 +63,9 @@ pub fn default_provider() -> Arc<dyn TtsProvider> {
     Arc::new(KokoroProvider::new())
 }
 
-/// macOS `say` — neural system voices, no dependencies. A faithful stand-in
-/// that exercises the entire voice path while the bundled Kokoro provider is
-/// built out behind the same trait.
+/// macOS `say` — neural system voices, no dependencies. Kokoro's fallback:
+/// reached when the weights can't be loaded (offline, download failed), so the
+/// pet always has a voice. Not the daemon's default provider.
 pub struct SystemSayProvider;
 
 #[async_trait]
@@ -100,10 +103,13 @@ impl TtsProvider for SystemSayProvider {
 /// backend (no ONNX Runtime), so there's nothing native to bundle.
 ///
 /// The ~300 MB weights are fetched from HuggingFace (`hexgrad/Kokoro-82M`) on
-/// first use and cached under `~/.linggen/models`. Loading is therefore lazy:
-/// the daemon boots instantly and the model only materializes when Yinyue
-/// first speaks. If it can't load (offline, download failed), synthesis falls
-/// back to `say` so the pet always has a voice.
+/// first use and cached under `~/.linggen/models`. Loading is lazy by
+/// construction (a `OnceCell`), but [`prewarm_on_boot`](TtsProvider::prewarm_on_boot)
+/// returns `true`, so when the pet is enabled the daemon warms the model at
+/// boot rather than making Yinyue's first utterance pay for it; with the pet
+/// disabled nothing loads until she actually speaks. If it can't load
+/// (offline, download failed), synthesis falls back to `say` so the pet always
+/// has a voice.
 pub struct KokoroProvider {
     model: OnceCell<Arc<dyn TtsModel>>,
     voice: String,
