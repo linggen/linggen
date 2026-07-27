@@ -209,6 +209,14 @@ Linggen ships three UI entries, each a separate HTML + JS bundle:
 
 On connect, the client sends a `set_view_context` control message including a `view` field (`"main" | "embed" | "consumer"`). The server uses this to scope pushes so an embed peer never observes cross-session state.
 
+### Catch-up on channel open
+
+Opening a `sess-{id}` channel marks scoped page state dirty, so the peer immediately receives a fresh scoped snapshot (busy sessions, agent runs, message queue).
+
+Buffered events are not a substitute: the per-session buffer only covers the window before a channel first opens, is pruned after 60s, and dies with the peer. A channel that reopens later — or a fresh peer after a reconnect — keeps whatever the UI last painted unless the server re-states the truth.
+
+State that only matters at its latest value therefore belongs in the snapshot, not only in an event stream. `queued` is in `page_state` for exactly this reason: there is no endpoint to re-read the queue, so a client that missed the drain showed a queue the server had already discarded and refused new messages as "agent is busy". State-carrying kinds (`agent_status`, `queue`) also fall back to the control channel when a peer has no session channel.
+
 ### Embed isolation
 
 Embed peers are pinned to a single session. The server enforces:

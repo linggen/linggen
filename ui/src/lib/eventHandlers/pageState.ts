@@ -18,6 +18,7 @@ export function handlePageState(item: UiEvent): void {
   applyGlobalLists(ps);
   applyPendingAskUser(ps);
   applyBusySessions(ps);
+  applyQueued(ps);
   applyScopedState(ps);
 }
 
@@ -96,6 +97,25 @@ function applyBusySessions(ps: any): void {
     }
     return next;
   });
+}
+
+/// The server's authoritative queue for the scoped session, as
+/// `[{agent_id, items}]` — already scoped to this peer's view context, and
+/// flattened here because the store holds one list whose items carry their own
+/// `agent_id` (ChatPanel filters by the selected agent).
+///
+/// Deliberately applies an EMPTY array too: an absent agent means nothing is
+/// queued, and that is the case that used to strand the composer. A `queue`
+/// event only reaches a client that was listening, and there is no endpoint to
+/// re-read the queue — so a client that missed the drain (channel closed,
+/// reconnected as a fresh peer) kept showing a queue the server had already
+/// thrown away, and refused every new message as "agent is busy".
+function applyQueued(ps: any): void {
+  if (ps.queued === undefined) return;
+  const items = (Array.isArray(ps.queued) ? ps.queued : []).flatMap((entry: any) =>
+    Array.isArray(entry?.items) ? entry.items : []
+  );
+  useInteractionStore.getState().setQueuedMessages(items);
 }
 
 function applyScopedState(ps: any): void {

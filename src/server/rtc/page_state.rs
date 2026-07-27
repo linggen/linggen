@@ -78,6 +78,20 @@ pub struct PageState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_runs: Option<Vec<serde_json::Value>>,
 
+    /// Messages waiting behind a busy agent in the scoped session, as
+    /// `{agent_id, items}` — one entry per agent with a non-empty queue, so an
+    /// ABSENT agent means "nothing queued".
+    ///
+    /// The queue also arrives live as a `queue` event, but an event only helps
+    /// a client that was listening. There is no endpoint to re-read it, so
+    /// before this a client that missed the event — its channel closed, or it
+    /// reconnected as a fresh peer — kept showing a queue that no longer
+    /// existed and refused every new message as "agent is busy". A snapshot
+    /// cannot diverge that way: it is the whole truth, pushed on every
+    /// (re)connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queued: Option<Vec<serde_json::Value>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sessions: Option<Vec<serde_json::Value>>,
 
@@ -86,6 +100,29 @@ pub struct PageState {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<serde_json::Value>>,
+}
+
+/// Queue entries for one session as `{agent_id, items}`.
+///
+/// Keys are `project_root|session_id|agent_id`, so this matches on the session
+/// segment rather than splitting on '|' — a project root is a path and may
+/// contain one. Agents with an empty queue are omitted: absent means nothing
+/// queued, which is what lets the snapshot express a drained queue.
+fn queued_entries(
+    all: &std::collections::HashMap<String, Vec<crate::server::events::QueuedChatItem>>,
+    session_id: &str,
+) -> Vec<serde_json::Value> {
+    let marker = format!("|{session_id}|");
+    all.iter()
+        .filter(|(_, items)| !items.is_empty())
+        .filter_map(|(key, items)| {
+            let at = key.find(&marker)?;
+            Some(serde_json::json!({
+                "agent_id": &key[at + marker.len()..],
+                "items": items,
+            }))
+        })
+        .collect()
 }
 
 /// Dirty-flag bits for tracking which data categories changed.
@@ -124,6 +161,7 @@ pub async fn build_page_state(
         busy_sessions: None,
         agents: None,
         agent_runs: None,
+        queued: None,
         sessions: None,
         session_permission: None,
         files: None,
@@ -294,6 +332,12 @@ pub async fn build_page_state(
                 ps.agent_runs = Some(runs.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect());
             }
 
+            let queued = {
+                let guard = state.queued_chats.lock().await;
+                queued_entries(&guard, session_id)
+            };
+            ps.queued = Some(queued);
+
             let session_dir = crate::paths::global_sessions_dir().join(session_id);
             let perms = crate::engine::permission::SessionPermissions::load(&session_dir);
             let mut perm_val = serde_json::to_value(&perms).unwrap_or_default();
@@ -329,3 +373,52 @@ pub async fn build_page_state(
     ps
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::events::QueuedChatItem;
+    use std::collections::HashMap;
+
+    fn item(session: &str, agent: &str) -> QueuedChatItem {
+        QueuedChatItem {
+            id: "q1".into(),
+            agent_id: agent.into(),
+            session_id: session.into(),
+            preview: "hello".into(),
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn extracts_the_agent_from_a_project_root_containing_a_pipe() {
+        // Splitting the key on '|' would read the agent as garbage here.
+        let mut all = HashMap::new();
+        all.insert(
+            "/tmp/od|d/proj|sess-1|ling".to_string(),
+            vec![item("sess-1", "ling")],
+        );
+        let out = queued_entries(&all, "sess-1");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["agent_id"], "ling");
+    }
+
+    #[test]
+    fn a_drained_queue_yields_no_entry() {
+        // The snapshot must be able to say "nothing queued" — that is the state
+        // a cancelled run leaves behind, and the one clients used to miss.
+        let mut all = HashMap::new();
+        all.insert("/p|sess-1|ling".to_string(), Vec::new());
+        assert!(queued_entries(&all, "sess-1").is_empty());
+    }
+
+    #[test]
+    fn other_sessions_are_not_leaked() {
+        let mut all = HashMap::new();
+        all.insert("/p|sess-1|ling".to_string(), vec![item("sess-1", "ling")]);
+        all.insert("/p|sess-2|ling".to_string(), vec![item("sess-2", "ling")]);
+        let out = queued_entries(&all, "sess-1");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["items"][0]["session_id"], "sess-1");
+    }
+}

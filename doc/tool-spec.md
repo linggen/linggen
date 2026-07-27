@@ -110,6 +110,19 @@ The session's effective permission mode for the target path controls which tools
 
 **Implementation**: `engine/permission.rs`, `engine/tool_exec.rs`, `ui/src/components/ToolPermissionCard.tsx`.
 
+## Call deadlines
+
+Each tool declares a wall-clock ceiling via `Tool::max_duration()` — a backstop against hangs, not a latency policy.
+
+- Default 300s. Tree walks (`Glob`, `Grep`) 60s.
+- `None` = unbounded, for work that is open-ended by nature: `AskUser` (waits on a person), `Task` (a subagent), `Bash`, `Skill`, `RunApp`.
+- Unknown/skill-provided tools are unbounded — a skill declares its own work and the engine cannot guess its cost.
+- On expiry the call is abandoned and the model receives a `timeout:` tool error, so the turn continues instead of stalling. A thread already blocked inside a syscall runs until the kernel returns, but it no longer owns the run.
+
+Without a ceiling a blocking tool owns the run indefinitely: the turn never ends, the session stays busy, and cancellation cannot help because the block is inside a syscall that does not accept it.
+
+**Implementation**: `engine/tools/builtin.rs` (`max_duration`, `tool_max_duration`), `engine/tool_exec.rs`.
+
 ## File safety
 
 - All paths sanitized to workspace root.

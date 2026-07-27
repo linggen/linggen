@@ -335,6 +335,15 @@ async fn run_peer(
                             } else {
                                 session_channels.insert(session_id.to_string(), id);
                                 channel_sessions.insert(id, session_id.to_string());
+                                // Catch up whoever just attached. The buffer
+                                // below only covers the window before a channel
+                                // first opens — it is pruned after 60s and dies
+                                // with the peer — so a channel that reopens
+                                // late, or a fresh peer after a reconnect, would
+                                // otherwise keep whatever the UI last painted.
+                                // A scoped push re-states the truth: busy
+                                // sessions, runs, and the message queue.
+                                dirty_flags |= super::page_state::DIRTY_SCOPED;
                                 // Flush buffered events through the write queue (not directly —
                                 // direct writes without poll_output() cause SCTP corruption).
                                 if let Some((_created, buffered)) =

@@ -992,12 +992,41 @@ impl AgentEngine {
                 self.tools.builtins.parent_path_modes = self.session_permissions.path_modes.clone();
                 self.tools.builtins.parent_interactive = self.session_permissions.interactive;
                 let tools_clone = self.tools.clone();
+                // Each tool declares its own ceiling (`Tool::max_duration`);
+                // `None` means open-ended by nature — AskUser waits on a
+                // person, Task on a subagent. The progress tick below is
+                // already a 150 ms heartbeat, so the deadline needs no timer
+                // of its own.
+                let ceiling = tools::tool_max_duration(&exec.canonical_tool);
+                let started = std::time::Instant::now();
                 let mut exec_fut = std::pin::pin!(tools_clone.execute(call));
                 let result = loop {
                     tokio::select! {
                         res = &mut exec_fut => break res,
                         _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
                             self.drain_tool_progress(progress_rx).await;
+                            let Some(limit) = ceiling else { continue };
+                            if started.elapsed() < limit {
+                                continue;
+                            }
+                            // Abandon the call and hand the model an error it
+                            // can act on. Dropping the future frees the RUN;
+                            // a thread already inside a blocking syscall keeps
+                            // going until the kernel returns, which we cannot
+                            // help — but it no longer owns the turn.
+                            warn!(
+                                "[{}] Tool {} exceeded {}s — abandoned",
+                                self.run_id.as_deref().unwrap_or("root"),
+                                exec.canonical_tool,
+                                limit.as_secs()
+                            );
+                            break Err(anyhow::anyhow!(
+                                "timeout: {} did not finish within {}s and was abandoned. \
+                                 Narrow the scope (a specific directory or pattern rather than \
+                                 a whole tree) or try another approach.",
+                                exec.canonical_tool,
+                                limit.as_secs()
+                            ));
                         }
                     }
                 };

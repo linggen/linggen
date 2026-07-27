@@ -27,6 +27,7 @@ use async_trait::async_trait;
 use chrono::Timelike;
 use serde_json::{json, Value};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -67,6 +68,22 @@ pub trait Tool: Send + Sync {
     /// identical call can legitimately return new data.
     fn cacheable(&self) -> bool {
         true
+    }
+
+    /// Wall-clock ceiling for one call. A backstop against hangs, not a
+    /// latency policy — hence generous by default.
+    ///
+    /// Without one, a tool that blocks owns the run indefinitely: the turn
+    /// never ends, the session stays busy, and cancellation cannot help
+    /// because the block is inside a syscall that does not accept it. That is
+    /// not hypothetical — a `**` glob rooted at a home directory descended
+    /// into a network-backed cloud folder and held a run for 19 minutes.
+    ///
+    /// `None` = unbounded, for work that is open-ended by nature: waiting on
+    /// the user, on a delegated subagent, or on a shell command the user
+    /// asked for.
+    fn max_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(300))
     }
 
     /// Run the tool.
@@ -136,6 +153,16 @@ pub fn tool_cacheable(name: &str) -> bool {
     lookup(name).map(|t| t.cacheable()).unwrap_or(true)
 }
 
+/// Wall-clock ceiling for a tool call, used by `engine::tool_exec`.
+///
+/// Unknown (custom / skill) tools are unbounded: a skill declares its own
+/// work, and plenty of it legitimately runs for minutes (fetching media,
+/// driving a long script). The engine has no basis for guessing their cost,
+/// and a wrong guess here would abort real work.
+pub fn tool_max_duration(name: &str) -> Option<Duration> {
+    lookup(name).and_then(|t| t.max_duration())
+}
+
 /// JSON-Schema entries for the model-facing built-in tools. Used by
 /// `engine::tools::json_schema::oai_tool_definitions`.
 pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
@@ -164,6 +191,9 @@ pub struct GlobTool;
 #[async_trait]
 impl Tool for GlobTool {
     fn name(&self) -> &'static str { "Glob" }
+    // A filesystem walk. The default 5 min is meaningless here: a glob that
+    // has not answered in a minute is walking somewhere it should not be.
+    fn max_duration(&self) -> Option<Duration> { Some(Duration::from_secs(60)) }
     fn description(&self) -> &'static str {
         "Find files by glob pattern. Returns matching file paths sorted by modification time."
     }
@@ -254,6 +284,8 @@ pub struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
     fn name(&self) -> &'static str { "Grep" }
+    // Same reasoning as Glob — it walks the tree.
+    fn max_duration(&self) -> Option<Duration> { Some(Duration::from_secs(60)) }
     fn description(&self) -> &'static str {
         "Search file contents using regex. Returns matching lines with file path, line number, and snippet."
     }
@@ -332,6 +364,9 @@ pub struct BashTool;
 #[async_trait]
 impl Tool for BashTool {
     fn name(&self) -> &'static str { "Bash" }
+    // The user asked for this command; builds and downloads run long, and the
+    // shell layer bounds itself.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn description(&self) -> &'static str {
         "Run a shell command via sh -c. Working directory persists across calls (cd is remembered). Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
     }
@@ -494,6 +529,8 @@ pub struct TaskTool;
 #[async_trait]
 impl Tool for TaskTool {
     fn name(&self) -> &'static str { "Task" }
+    // A delegated subagent run — open-ended by nature.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn aliases(&self) -> &'static [&'static str] { &["delegate_to_agent"] }
     fn description(&self) -> &'static str {
         "Delegate a task to another agent. Send a specific task description with clear scope and expected output."
@@ -528,6 +565,8 @@ pub struct SkillTool;
 #[async_trait]
 impl Tool for SkillTool {
     fn name(&self) -> &'static str { "Skill" }
+    // A skill defines its own work, and plenty of it runs for minutes.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn aliases(&self) -> &'static [&'static str] { &["skill"] }
     fn description(&self) -> &'static str {
         "Invoke a skill by name. Returns the skill's full instructions. Use to discover and run installed skills."
@@ -562,6 +601,8 @@ pub struct RunAppTool;
 #[async_trait]
 impl Tool for RunAppTool {
     fn name(&self) -> &'static str { "RunApp" }
+    // Hands off to an app; the run does not own its lifetime.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn aliases(&self) -> &'static [&'static str] { &["run_app"] }
     fn description(&self) -> &'static str {
         "Launch an app-enabled skill. The skill must have an 'app' config with a launcher (web/bash/url). For web apps, returns the URL to open in the UI."
@@ -1043,6 +1084,8 @@ pub struct AgentChatTool;
 #[async_trait]
 impl Tool for AgentChatTool {
     fn name(&self) -> &'static str { "agent_chat" }
+    // Waits on another agent to answer.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn aliases(&self) -> &'static [&'static str] { &["AgentChat"] }
     fn description(&self) -> &'static str {
         "Send a brief one-way message to another agent (e.g. tell Yinyue something \
@@ -1117,6 +1160,9 @@ pub struct AskUserTool;
 #[async_trait]
 impl Tool for AskUserTool {
     fn name(&self) -> &'static str { "AskUser" }
+    // Waits on a person. A deadline here would cancel every prompt the user
+    // has not answered yet, which is the opposite of what it is for.
+    fn max_duration(&self) -> Option<Duration> { None }
     fn aliases(&self) -> &'static [&'static str] { &["ask_user"] }
     fn description(&self) -> &'static str {
         "Ask the user 1-4 structured questions with 2-6 options each. User can always type custom text. Blocks until response (5 min timeout)."
@@ -1201,5 +1247,33 @@ mod express_tests {
             .as_array()
             .expect("sequence items enum array");
         assert_eq!(seq.len(), actions.len(), "sequence vocab must match action vocab");
+    }
+}
+
+#[cfg(test)]
+mod max_duration_tests {
+    use super::*;
+
+    #[test]
+    fn tools_that_wait_on_something_else_are_unbounded() {
+        // A ceiling here would abort the user's own prompt, a subagent mid-run,
+        // or a build they asked for.
+        for name in ["AskUser", "Task", "Bash", "Skill", "RunApp", "agent_chat"] {
+            assert_eq!(tool_max_duration(name), None, "{name} must stay unbounded");
+        }
+    }
+
+    #[test]
+    fn tree_walks_are_bounded_tighter_than_the_default() {
+        let walk = tool_max_duration("Glob").expect("Glob must be bounded");
+        let default = tool_max_duration("Read").expect("Read must be bounded");
+        assert!(walk < default, "a walk should give up sooner than the default");
+        assert_eq!(tool_max_duration("Grep"), Some(walk));
+    }
+
+    #[test]
+    fn unknown_tools_are_unbounded() {
+        // Skill-provided tools declare their own work; the engine cannot guess.
+        assert_eq!(tool_max_duration("SomeSkillProvidedTool"), None);
     }
 }
