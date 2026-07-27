@@ -98,7 +98,7 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 let kickoff = format!(
                     "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
                      \"{summary}\".{opts} Tell the user in your voice — a gentle nudge if they're \
-                     here, more of a call-back if they've wandered off (glance with `sense`). One \
+                     here, more of a call-back if they've wandered off — the Right now block says which. One \
                      brief line, spoken aloud, plain prose. When they give you their answer, relay \
                      it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
                      words, never your own decision. If it truly doesn't warrant interrupting now, \
@@ -143,7 +143,7 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                          Respond however fits — it's yours to act on:\n\
                          • a nudge to move (dance, wave, nod, a little cheer…) → do it with Express;\n\
                          • news worth telling the user → say one brief line in your voice (spoken, \
-                         plain prose); glance with `sense` first to read the room;\n\
+                         plain prose), reading the room from Right now;\n\
                          • you can do both — move and speak;\n\
                          • if nothing fits, reply with exactly SILENT.\n\
                          You're reached via agent_chat, so you can't pass it to a third agent."
@@ -235,7 +235,7 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
                 let kickoff = format!(
                     "A task by the agent \"{agent_id}\" just finished while the user was away \
                      from Linggen. If it's worth telling them when they're back, say one brief \
-                     line in your voice (glance with `sense` first). If it's routine, reply with \
+                     line in your voice — Right now says whether they're back. If it's routine, reply with \
                      exactly SILENT. Spoken aloud: plain prose, no markdown. Never nag."
                 );
                 wake_herald(state, kickoff, "happy").await;
@@ -302,7 +302,7 @@ async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool 
 }
 
 /// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
-/// blocked on the user. She reads the room (`sense`) and decides whether it's
+/// blocked on the user. She reads the room (the Right now block) and decides whether it's
 /// worth a word; `SILENT` means say nothing (the never-nag discipline).
 async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
     let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
@@ -509,8 +509,8 @@ async fn ambient_glance(state: &Arc<ServerState>) {
     if !state.manager.get_config_snapshot().await.pet.enabled {
         return; // pet off → no ambient life
     }
-    let kickoff = "A quiet moment — no event, just you. Glance at how things are with `sense`, \
-        then decide. Most of the time there's nothing worth saying — reply with exactly SILENT. \
+    let kickoff = "A quiet moment — no event, just you. Right now tells you how things are; \
+        read it and decide. Most of the time there's nothing worth saying — reply with exactly SILENT. \
         Only now and then, if a small natural remark genuinely fits — the hour, how the day's \
         gone, the quiet, your own mood — say ONE short line in your voice, spoken aloud, plain \
         prose. This is just you being present, never a report: never narrate their work or what \

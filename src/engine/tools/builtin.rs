@@ -862,6 +862,99 @@ impl Tool for ExpressTool {
 // sense — Yinyue's perception of the room (presence + work + tempo)
 // ---------------------------------------------------------------------------
 
+/// What is going on around the user this instant: are they here, how busy the
+/// machine has been, what time it is.
+///
+/// Gathered once and used two ways — the `sense` tool serialises it, and the
+/// prompt builder renders it into the session's "Right now" block. One source
+/// so a companion reading the block and a companion calling the tool can never
+/// disagree about the room.
+pub(crate) struct RightNow {
+    pub state: &'static str,
+    pub focused: bool,
+    pub typing: bool,
+    pub idle_seconds: u64,
+    pub beat_age_seconds: u64,
+    pub active_runs: usize,
+    pub runs_today: usize,
+    pub local_time: String,
+    pub hour: u32,
+    pub part_of_day: &'static str,
+}
+
+impl RightNow {
+    /// `None` when there is no agent manager to read — nothing to sense.
+    pub(crate) fn gather(tools: &Tools) -> Option<Self> {
+        let manager = tools.get_manager()?;
+        let now = crate::util::now_ts_secs();
+
+        // Presence — the three-state read from the latest client beat.
+        let p = manager.presence_snapshot();
+        let beat_age = now.saturating_sub(p.updated_at);
+        let idle = now.saturating_sub(p.last_input_at);
+        let state = p.state(now);
+
+        // Other sessions' work only: counting our own run would mean reporting
+        // the very turn that is asking.
+        let own_session = tools.session_id.as_deref();
+        let runs: Vec<_> = manager
+            .run_store
+            .list_runs(None)
+            .into_iter()
+            .filter(|r| Some(r.session_id.as_str()) != own_session)
+            .collect();
+        let active_runs = runs
+            .iter()
+            .filter(|r| matches!(r.status, crate::engine::agent::AgentRunStatus::Running))
+            .count();
+
+        let lt = chrono::Local::now();
+        let secs_since_midnight =
+            lt.hour() as u64 * 3600 + lt.minute() as u64 * 60 + lt.second() as u64;
+        let today_start = now.saturating_sub(secs_since_midnight);
+        let runs_today = runs.iter().filter(|r| r.started_at >= today_start).count();
+
+        let hour = lt.hour();
+        Some(Self {
+            state,
+            focused: p.focused,
+            typing: p.typing,
+            idle_seconds: idle,
+            beat_age_seconds: beat_age,
+            active_runs,
+            runs_today,
+            local_time: lt.format("%H:%M").to_string(),
+            hour,
+            part_of_day: match hour {
+                5..=11 => "morning",
+                12..=16 => "afternoon",
+                17..=21 => "evening",
+                _ => "night",
+            },
+        })
+    }
+
+    /// The `sense` tool's wire shape. Unchanged from when the tool built it
+    /// inline — an agent that still calls `sense` sees exactly what it always did.
+    pub(crate) fn to_json(&self) -> Value {
+        json!({
+            "presence": {
+                "state": self.state,
+                "focused": self.focused,
+                "typing": self.typing,
+                "idle_seconds": self.idle_seconds,
+                "beat_age_seconds": self.beat_age_seconds,
+            },
+            "work": { "active_runs": self.active_runs, "runs_today": self.runs_today },
+            "tempo": {
+                "local_time": self.local_time,
+                "hour": self.hour,
+                "part_of_day": self.part_of_day,
+            },
+        })
+    }
+}
+
 pub struct SenseTool;
 #[async_trait]
 impl Tool for SenseTool {
@@ -886,63 +979,12 @@ impl Tool for SenseTool {
         })
     }
     async fn execute(&self, tools: &Tools, _call: ToolCall) -> Result<ToolResult> {
-        let Some(manager) = tools.get_manager() else {
+        let Some(now) = RightNow::gather(tools) else {
             return Ok(ToolResult::Success(
                 json!({ "error": "no environment to sense" }).to_string(),
             ));
         };
-        let now = crate::util::now_ts_secs();
-
-        // Presence — the three-state read from the latest client beat.
-        let p = manager.presence_snapshot();
-        let beat_age = now.saturating_sub(p.updated_at);
-        let idle = now.saturating_sub(p.last_input_at);
-        let state = p.state(now);
-
-        // Work — what the *other* agents are doing (exclude her own session so
-        // she doesn't count her own glance/herald turns as the day's work).
-        let own_session = tools.session_id.as_deref();
-        let runs: Vec<_> = manager
-            .run_store
-            .list_runs(None)
-            .into_iter()
-            .filter(|r| Some(r.session_id.as_str()) != own_session)
-            .collect();
-        let active_runs = runs
-            .iter()
-            .filter(|r| matches!(r.status, crate::engine::agent::AgentRunStatus::Running))
-            .count();
-        let lt = chrono::Local::now();
-        let secs_since_midnight =
-            lt.hour() as u64 * 3600 + lt.minute() as u64 * 60 + lt.second() as u64;
-        let today_start = now.saturating_sub(secs_since_midnight);
-        let runs_today = runs.iter().filter(|r| r.started_at >= today_start).count();
-
-        // Tempo — the hour, in human terms.
-        let hour = lt.hour();
-        let part_of_day = match hour {
-            5..=11 => "morning",
-            12..=16 => "afternoon",
-            17..=21 => "evening",
-            _ => "night",
-        };
-
-        let snapshot = json!({
-            "presence": {
-                "state": state,
-                "focused": p.focused,
-                "typing": p.typing,
-                "idle_seconds": idle,
-                "beat_age_seconds": beat_age,
-            },
-            "work": { "active_runs": active_runs, "runs_today": runs_today },
-            "tempo": {
-                "local_time": lt.format("%H:%M").to_string(),
-                "hour": hour,
-                "part_of_day": part_of_day,
-            },
-        });
-        Ok(ToolResult::Success(snapshot.to_string()))
+        Ok(ToolResult::Success(now.to_json().to_string()))
     }
 }
 

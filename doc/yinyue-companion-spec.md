@@ -32,10 +32,10 @@ Inputs converge on her existing watch loop (`server/yinyue_watch.rs`) and
 - **agent_chat** (peer) — a message addressed to her from another agent
 - **timer** (ambient) — a periodic "glance" tick
 
-## Senses — the `sense` tool
+## Senses — the "Right now" block (and the `sense` tool)
 
-A built-in, deterministic, cheap (no-LLM) tool that hands Yinyue a perception
-snapshot. Richer + honest signals → more human behavior. It returns:
+A deterministic, no-LLM perception snapshot. Richer + honest signals → more human
+behavior. It carries:
 
 - **presence** — three states: `typing` / `present-reading` (focused, recent
   mouse, no keys) / `away` (tab hidden or quiet for minutes); plus `idle_ms`,
@@ -45,6 +45,23 @@ snapshot. Richer + honest signals → more human behavior. It returns:
 
 Presence is sourced from a throttled client beat (below). The "where are you"
 call-out fires only on **truly away** — never nag a present-but-reading user.
+
+### Delivery: injected, not fetched
+
+The snapshot is rendered into the **`# Right now`** prompt block and injected on
+every turn for any session whose tool set explicitly declares `sense`. The
+`sense` tool still exists and returns the identical JSON, but she rarely needs it.
+
+This is a latency decision, measured: `sense` takes no arguments and reads only
+local state, so nothing the model says can change its answer — yet fetching it
+cost a whole extra model round trip. A turn that called `sense` took two trips
+and 5–11s, and the first trip produced no text at all; the same turn now answers
+in one trip (~2–3s). Anything a tool can answer without seeing the model's output
+belongs in the prompt, not behind a call.
+
+The block is **volatile** — appended after the cached stable prefix, never inside
+it, since presence changes every turn and would otherwise invalidate the prompt
+cache.
 
 ### Presence beat (client → server)
 

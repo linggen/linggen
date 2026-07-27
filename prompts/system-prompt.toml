@@ -451,6 +451,19 @@ text = '''
 - Interface: {interface_mode}
 - Bash tool: non-interactive subprocess (no TTY, no stdin). Interactive programs (curses, GUI) cannot run inside it. For such programs, write the code and instruct the user to run it in their terminal.'''
 
+[right_now_block]
+description = "Volatile per-turn read of the user's situation — injected for sessions that hold the `sense` tool, so a companion need not spend a round trip fetching it"
+vars = ["presence", "idle", "active_runs", "runs_today", "local_time", "part_of_day"]
+text = '''
+
+# Right now
+- Them: {presence} (last input {idle} ago)
+- Work: {active_runs} running, {runs_today} today
+- Time: {local_time}, {part_of_day}
+
+This is your perception of the room, already in front of you — read it and
+decide whether and how to speak. Never read it aloud or recite the numbers.'''
+
 [consumer_frame]
 description = "Consumer-specific instructions — replaces environment/project/memory for room consumers"
 text = '''

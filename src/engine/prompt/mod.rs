@@ -452,6 +452,34 @@ impl AgentEngine {
         // Check if tools are available — skip all tool-related prompt sections when empty.
         let has_tools = allowed_tools.as_ref().map_or(true, |s| !s.is_empty());
 
+        // --- Right now (volatile — deliberately NOT in the cached stable prefix) ---
+        //
+        // This block IS the `sense` tool's answer, handed over before it can be
+        // asked for. `sense` takes no arguments and reads only local state, so
+        // nothing the model says can change its result — which is what makes
+        // injecting it equivalent to the call, minus a whole model round trip.
+        // Measured on the companion: a turn that called `sense` cost two round
+        // trips (5-11s), and the first produced no text at all.
+        //
+        // Gated on the session EXPLICITLY declaring `sense`, never on an agent's
+        // name: an unrestricted tool set (`None` = everything allowed) must not
+        // pull presence data into every coding session.
+        if allowed_tools.as_ref().is_some_and(|s| s.contains("sense")) {
+            if let Some(now) = tools::RightNow::gather(&self.tools.builtins) {
+                system.push_str(&self.prompt_store.render_or_fallback(
+                    crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
+                    &[
+                        ("presence", now.state),
+                        ("idle", &humanize_secs(now.idle_seconds)),
+                        ("active_runs", &now.active_runs.to_string()),
+                        ("runs_today", &now.runs_today.to_string()),
+                        ("local_time", &now.local_time),
+                        ("part_of_day", now.part_of_day),
+                    ],
+                ));
+            }
+        }
+
         // --- Response Format ---
         if has_tools {
             if native_tools {
@@ -781,4 +809,40 @@ impl AgentEngine {
         crate::prompts::PromptStore::substitute(template, &[("tool", tool)])
     }
 
+}
+
+/// Seconds as a person would say them — "40s", "12m", "2h 3m".
+///
+/// The companion reads this, so it must not sound like telemetry: "740" invites
+/// her to recite a number, "12m" invites her to notice they stepped away.
+fn humanize_secs(secs: u64) -> String {
+    match secs {
+        0..=89 => format!("{secs}s"),
+        90..=3599 => format!("{}m", (secs + 30) / 60),
+        _ => {
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            if m == 0 {
+                format!("{h}h")
+            } else {
+                format!("{h}h {m}m")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod right_now_tests {
+    use super::*;
+
+    #[test]
+    fn humanizes_the_way_a_person_would_say_it() {
+        assert_eq!(humanize_secs(0), "0s");
+        assert_eq!(humanize_secs(45), "45s");
+        assert_eq!(humanize_secs(89), "89s");
+        assert_eq!(humanize_secs(90), "2m"); // rounds to nearest minute
+        assert_eq!(humanize_secs(740), "12m");
+        assert_eq!(humanize_secs(3600), "1h");
+        assert_eq!(humanize_secs(7380), "2h 3m");
+    }
 }

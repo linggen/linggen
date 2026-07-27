@@ -1,6 +1,7 @@
 mod builtin;
 pub use builtin::builtin_tier;
 pub(crate) use builtin::tool_cacheable;
+pub(crate) use builtin::RightNow;
 pub(crate) use builtin::tool_max_duration;
 
 pub(crate) mod browser_tool;
