@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.6.0] - 2026-07-27
+
+### The engine grew a phone
+
+Everything Linggen Mobile needs to be a real second device rather than a
+viewer. The bulk of this release is one arc.
+
+- **Pairing** — QR pairing with identity preview, a LAN gate (per-device
+  tokens + a screen-confirm handshake) so strangers on your Wi-Fi can't
+  reach the daemon, Bonjour advertisement on LAN binds, device dedup by a
+  stable id, inline rename, and a Settings → Phone tab to run it all.
+  `GET /api/pair/me` resolves a per-device model catalog, so a phone offers
+  exactly the models that Mac allows it.
+- **Media sync** — `/api/media/*`: wireless Photos backup, manifests
+  carrying Mac Shifu scan verdicts, mirror-vs-archive split (reconcile +
+  backup), a reversible Mac→phone delete queue, and an auto-run of the
+  Media pipeline scan once an ingest quiesces.
+- **Transport** — a binary media channel moving bulk bytes at ~30 MB/s
+  instead of 0.4, device topics so the Mac announces and the phone stops
+  polling, and the relay address handed to the phone so all of it works off
+  the LAN.
+- **DJ** — per-device sync ledger, library routes, karaoke instrumental and
+  video exposed to the phone.
+
+### Also
+
+- **One account credential.** `~/.linggen/account.toml` covers billing,
+  cloud models, relay and rooms; the second stale copy is gone. Signed in
+  means online. `/api/account/mobile-token` was removed — a paired phone no
+  longer adopts this Mac's account token.
+- **Device sync is declarative** — skills describe what to sync in their
+  frontmatter; no app-named Rust in the engine.
+- **`app.list: true|false`** — a skill can declare itself out of the
+  launcher's tab bar while staying installed and runnable.
+- **Web search is login-only cloud** — no per-user Tavily key.
+- **`/api/health` reports the engine version.**
+
+### Fixed
+
+- **One dead peer could take the whole daemon down.** A WebRTC peer whose
+  DTLS had failed asked for a timeout already in the past, on a branch with
+  no `.await` — so it pinned a tokio worker at 100% and starved the runtime.
+  The daemon stopped answering everything, including `/api/health`. Now the
+  branch yields, and a peer that makes no progress for 5s is torn down.
+- A dead channel can't strand the UI, and no tool owns a run forever.
+- A half-received transfer is dropped when the peer goes away.
+- Yinyue speaks Chinese again — the voice was hardcoded to English.
+
+## [1.5.0] – [1.5.1] - 2026-07-17
+
+Dual port migration: the engine moved to **9527** (ling-mem to 9528), with
+`LINGGEN_PORT` to override. `memory_dream_status` passes counts through.
+
 ## [1.4.0] - 2026-07-10
 
 ### MCP front door — use Linggen from any agent
