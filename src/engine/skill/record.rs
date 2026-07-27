@@ -24,6 +24,15 @@ pub struct AppConfig {
     /// Suggested panel height in pixels.
     #[serde(default)]
     pub height: Option<u32>,
+    /// Whether the launcher offers this app as a tab. Default true — declaring
+    /// `list: false` keeps a skill that is installed but not finished out of
+    /// the way without uninstalling it, so it still runs when opened directly.
+    #[serde(default = "listed_by_default")]
+    pub list: bool,
+}
+
+fn listed_by_default() -> bool {
+    true
 }
 
 /// One sidecar file resolved from a primary item's stem — a lyric file next to

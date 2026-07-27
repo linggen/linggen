@@ -14,7 +14,7 @@ import { AccountAvatar } from '../components/AccountAvatar';
 
 interface AppSkill {
   name: string;
-  app: { launcher: string; entry: string };
+  app: { launcher: string; entry: string; list?: boolean };
 }
 
 /** Friendly labels for the known apps; falls back to the raw skill name. */
@@ -64,7 +64,9 @@ export const LauncherApp: React.FC = () => {
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
         const list: any[] = Array.isArray(data) ? data : data?.skills ?? [];
-        const web = list.filter((s) => s.app && s.app.launcher === 'web');
+        // `list: false` is how a skill that is installed but not finished stays
+        // out of the tab bar. It still runs when opened directly.
+        const web = list.filter((s) => s.app && s.app.launcher === 'web' && s.app.list !== false);
         web.sort((a, b) =>
           orderIndex(a.name) - orderIndex(b.name) ||
           labelFor(a.name).localeCompare(labelFor(b.name)));

@@ -226,6 +226,8 @@ A skill with an `app:` section is a runnable app — invoking it opens a UI.
 
 Three launcher types: `web` (static files in an embedded panel), `bash` (run a script, stream output), `url` (external URL).
 
+`list: false` keeps a `web` app out of the launcher's tab bar while leaving it installed and runnable — what a skill that isn't finished declares about itself. Defaults to true.
+
 Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same HTTP/WebRTC surface as the main UI; no custom endpoints needed.
 
 Every app skill receives a built-in `PageUpdate` data tool — the agent calls it whenever state the user should see changes, and the iframe re-renders. Each app defines its own page layout schema in its SKILL.md.
