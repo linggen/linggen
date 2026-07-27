@@ -32,6 +32,18 @@ use inference::process_inference_request;
 use response::{enqueue_push, enqueue_response, DcWrite, MAX_DC_WRITE_QUEUE};
 use session::handle_session_message;
 
+/// How long a peer may make no progress at all before we stop waiting for it.
+/// Generous on purpose: any packet in either direction resets the clock, so
+/// only a peer that is genuinely stuck ever reaches this.
+const SPIN_LIMIT: Duration = Duration::from_secs(5);
+
+/// Track a run of do-nothing iterations, and report when it has gone on past
+/// [SPIN_LIMIT]. Returns when the stall began, or `None` while still in grace.
+fn stall_deadline(since: &mut Option<Instant>, now: Instant) -> Option<Instant> {
+    let started = *since.get_or_insert(now);
+    (now.duration_since(started) > SPIN_LIMIT).then_some(started)
+}
+
 /// Create a new WebRTC peer connection from a WHIP SDP offer.
 ///
 /// Returns the SDP answer string to send back to the client.
@@ -208,6 +220,11 @@ async fn run_peer(
     let mut last_page_state_at = Instant::now();
     let mut page_state_interval = tokio::time::interval(Duration::from_secs(2));
     page_state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    // When the loop last had something to do. A peer that keeps asking for a
+    // timeout already in the past, while neither sending nor receiving, is not
+    // waiting for anything — it is stuck. See [SPIN_LIMIT].
+    let mut stalled_since: Option<Instant> = None;
 
     loop {
         // Drain ONE pending write per cycle — writing multiple crashes str0m's SCTP.
@@ -630,10 +647,38 @@ async fn run_peer(
 
         // Keep spinning without blocking if: timeout elapsed OR we have writes ready to send.
         // But do NOT spin when paused — we need to enter select! to receive UDP (SCTP ACKs).
-        if wait.is_zero() || (!dc_write_paused && !pending_dc_writes.is_empty()) {
+        let draining = !dc_write_paused && !pending_dc_writes.is_empty();
+        if wait.is_zero() || draining {
+            if draining {
+                // Emptying the write queue is progress, however long it takes.
+                stalled_since = None;
+            } else if let Some(since) = stall_deadline(&mut stalled_since, now) {
+                // Nothing to send, nothing received, and str0m wants a timeout
+                // that has already passed — so this branch runs again
+                // immediately, forever. That is what a failed DTLS handshake
+                // looks like from here: `handle_timeout` keeps erroring
+                // non-fatally, `?` never fires, and the peer never dies.
+                //
+                // It cost a live daemon on 2026-07-27: one such peer pinned a
+                // runtime worker at 100% and, because this branch never awaits,
+                // starved the whole runtime — /api/health stopped answering and
+                // every memory call through /mcp hung. Hence both guards: give
+                // up on a peer that has made no progress at all for
+                // SPIN_LIMIT, and yield below so a spin can never again starve
+                // the tasks that have real work.
+                tracing::warn!(
+                    "WebRTC peer made no progress for {:?} (alive={}) — tearing it down",
+                    now.duration_since(since),
+                    rtc.is_alive()
+                );
+                media_channel::abandon(&mut media_transfer).await;
+                return Ok(());
+            }
             rtc.handle_input(Input::Timeout(Instant::now()))?;
+            tokio::task::yield_now().await;
             continue;
         }
+        stalled_since = None;
 
         // Wait for either: UDP packet, server event, or timeout
         tokio::select! {
