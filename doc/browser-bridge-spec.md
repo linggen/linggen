@@ -58,9 +58,11 @@ Skills speak only HTTP — they never open a WebSocket. The daemon is the broker
 
 ## Transport
 
-The extension is the WebSocket **client**; the daemon is the server. An MV3 worker cannot run a localhost server, so the extension dials the daemon and holds the socket open (an open socket also keeps the MV3 worker alive). On disconnect the extension reconnects with backoff. At most one bridge connection is active; a second connection supersedes the first.
+The extension is the WebSocket **client**; the daemon is the server. An MV3 worker cannot run a localhost server, so the extension dials the daemon and holds the socket open. On disconnect the extension reconnects with backoff. At most one bridge connection is active; a second connection supersedes the first.
 
-WebSocket-level ping/pong is the keepalive. If the socket is closed when a skill calls, the daemon returns `no_bridge` immediately.
+An open socket does **not** by itself keep the MV3 worker alive. Chrome terminates an idle extension service worker after 30 seconds, and only WebSocket *messages* reset that timer — protocol-level ping/pong is handled below the WebSocket API and doesn't count. Since this socket is silent whenever no skill is calling, the extension sends an application-level keepalive every 20 seconds; the daemon ignores it. Without it the worker dies half a minute after each start and the bridge is only connected for part of every minute.
+
+If the socket is closed when a skill calls, the daemon returns `no_bridge` immediately.
 
 ## Frames
 
@@ -85,6 +87,12 @@ ext → daemon   { "t": "res", "id": "01H...", "ok": false, "code": "not_logged_
 
 ```
 ext → daemon   { "t": "status", "modules": [{ "id": "x", "ready": false }] }
+```
+
+**Keepalive** — sent every 20s while the socket is open. It exists to keep Chrome from suspending the extension's service worker (see Transport), not to probe the link, so the daemon ignores it and answers nothing:
+
+```
+ext → daemon   { "t": "ping" }
 ```
 
 ## X module
