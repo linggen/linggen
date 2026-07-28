@@ -6,6 +6,7 @@ set -euo pipefail
 #        Version should be without 'v' prefix (e.g., "0.2.2")
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib-common.sh"
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
@@ -30,6 +31,7 @@ if [ -f "$ROOT_DIR/Cargo.toml" ]; then
 
   # Update Cargo.lock — required so the built binary's `--version` matches.
   # Don't swallow failures here: a broken lockfile means a broken release.
+  ensure_cargo
   (cd "$ROOT_DIR" && cargo fetch)
   echo "  ✅ Updated Cargo.lock"
 fi

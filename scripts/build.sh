@@ -49,6 +49,10 @@ VERSION_NUM="${VERSION#v}"
 echo "🏗️  Building Linggen ${VERSION} (platform: ${PLATFORM})"
 echo "=============================="
 
+# Fail here, before any work, if the toolchain isn't reachable. Exported PATH
+# carries into sync-version.sh and build-mac.sh.
+ensure_cargo
+
 # 0. Sync version to all project files
 echo "🔄 Syncing version $VERSION_NUM to all project files..."
 "$ROOT_DIR/scripts/sync-version.sh" "$VERSION_NUM"

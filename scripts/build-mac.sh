@@ -17,6 +17,8 @@ VERSION_NUM="${VERSION#v}"
 DIST_DIR="$ROOT_DIR/dist"
 mkdir -p "$DIST_DIR"
 
+ensure_cargo
+
 SLUG=$(detect_platform)
 ARCH="$(uname -m)"
 
