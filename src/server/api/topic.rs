@@ -4,7 +4,7 @@
 //! same messages phones publish over the data channel.
 //!
 //! Skills, scripts, and app shells have no WebRTC peer of their own, so this
-//! is how mac-shifu announces new media verdicts, CFO announces an import, and
+//! is how apple-shifu announces new media verdicts, CFO announces an import, and
 //! so on. Gated like every other route: loopback (local skills) passes, LAN
 //! callers need their device token.
 

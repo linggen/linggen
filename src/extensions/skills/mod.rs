@@ -312,6 +312,11 @@ struct SkillFrontmatter {
     allowed_tools: Option<Vec<String>>,
     #[serde(default, rename = "allow-skills", deserialize_with = "deserialize_string_or_vec")]
     allow_skills: Option<Vec<String>>,
+    /// Slugs this skill used to be called. An install still carrying one of
+    /// them gets its `data/` moved across on load, so a rename never resets
+    /// the user's state. Oldest last: `renamed-from: [mac-shifu, sys-doctor]`.
+    #[serde(default, rename = "renamed-from", deserialize_with = "deserialize_string_or_vec")]
+    renamed_from: Option<Vec<String>>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -367,7 +372,7 @@ impl SkillLoader {
         // 1. Load Global Skills (~/.linggen/skills/)
         {
             let global_dir = crate::paths::global_skills_dir();
-            migrate_renamed_skill_data(&global_dir, "sys-doctor", "mac-shifu");
+            migrate_declared_renames(&global_dir);
             let _ = self
                 .load_from_dir_nested(&global_dir, SkillSource::Global, &mut *skills)
                 .await;
@@ -651,6 +656,33 @@ fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
     skill.skill_dir = Some(dir);
 }
 
+/// Honour every `renamed-from:` an installed skill declares, before any skill
+/// loads. Runs first so a stale copy of the old slug is gone by load time —
+/// otherwise both names register and the user sees the skill twice.
+///
+/// Declarative on purpose: the engine is a general core, so it reads the
+/// rename off the skill instead of carrying a hardcoded table of app names.
+/// A chain still works — apple-shifu declares `[mac-shifu, sys-doctor]`, and
+/// whichever slug an old install actually has is the one that migrates.
+fn migrate_declared_renames(skills_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(skills_dir) else { return };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Some(current) = dir.file_name().and_then(|n| n.to_str()).map(String::from) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) else { continue };
+        let (Some(yaml), _) = crate::extensions::frontmatter::split(&text) else { continue };
+        let Ok(fm) = serde_yml::from_str::<SkillFrontmatter>(yaml) else { continue };
+        for old in fm.renamed_from.into_iter().flatten() {
+            if old == current {
+                continue; // a skill can't be renamed from itself
+            }
+            migrate_renamed_skill_data(skills_dir, &old, &current);
+        }
+    }
+}
+
 /// One-time migration for a renamed skill: move `<skills>/<old>/data` (user
 /// state — media manifests, archive ledger, removal history) to
 /// `<skills>/<new>/data`, then drop the stale old dir so both names can't
@@ -676,11 +708,55 @@ fn migrate_renamed_skill_data(skills_dir: &Path, old: &str, new: &str) {
             tracing::warn!("could not migrate {old}/data -> {new}/data: {e}");
             return; // keep the old dir intact so nothing is lost
         }
+        rewrite_slug_paths(&new_data, old, new);
         tracing::info!("migrated skill data {old}/data -> {new}/data");
     }
     match std::fs::remove_dir_all(&old_dir) {
         Ok(()) => tracing::info!("removed stale renamed skill dir {}", old_dir.display()),
         Err(e) => tracing::warn!("could not remove {}: {e}", old_dir.display()),
+    }
+}
+
+/// Text state files record ABSOLUTE paths — a trash entry, a staging copy, a
+/// chosen destination. Moving `data/` leaves every one of them pointing at a
+/// directory that no longer exists, which silently breaks restore and purge.
+/// Rewrite `skills/<old>/` to `skills/<new>/` in the small text files;
+/// binaries (thumbnails, venv) never carry the path and are skipped by
+/// extension.
+fn rewrite_slug_paths(data_dir: &Path, old: &str, new: &str) {
+    const TEXT_EXT: &[&str] = &["json", "jsonl", "log", "txt", "toml", "csv"];
+    const MAX_BYTES: u64 = 32 * 1024 * 1024;
+    let (from, to) = (format!("skills/{old}/"), format!("skills/{new}/"));
+
+    let mut stack = vec![data_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                // A venv holds thousands of files and never records our slug.
+                if path.file_name().is_some_and(|n| n == "venv") {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            let is_text = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| TEXT_EXT.contains(&e));
+            if !is_text || meta.len() > MAX_BYTES {
+                continue;
+            }
+            let Ok(body) = std::fs::read_to_string(&path) else { continue };
+            if !body.contains(&from) {
+                continue;
+            }
+            if let Err(e) = std::fs::write(&path, body.replace(&from, &to)) {
+                tracing::warn!("could not rewrite paths in {}: {e}", path.display());
+            }
+        }
     }
 }
 
@@ -897,16 +973,16 @@ No app."#;
             ("sys-doctor/SKILL.md", "---\nname: sys-doctor\n---\n"),
             ("sys-doctor/data/media/removals.jsonl", "{}\n"),
         ]);
-        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(!tmp.path().join("sys-doctor").exists());
-        assert!(tmp.path().join("mac-shifu/data/media/removals.jsonl").exists());
+        assert!(tmp.path().join("apple-shifu/data/media/removals.jsonl").exists());
     }
 
     #[test]
     fn test_migrate_renamed_skill_no_data_still_removes_old() {
         let tmp = tempfile::tempdir().unwrap();
         seed(tmp.path(), &[("sys-doctor/SKILL.md", "x")]);
-        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(!tmp.path().join("sys-doctor").exists());
     }
 
@@ -916,18 +992,76 @@ No app."#;
         seed(tmp.path(), &[
             ("sys-doctor/SKILL.md", "x"),
             ("sys-doctor/data/a.txt", "old"),
-            ("mac-shifu/data/b.txt", "new"),
+            ("apple-shifu/data/b.txt", "new"),
         ]);
-        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(tmp.path().join("sys-doctor/data/a.txt").exists());
-        assert!(tmp.path().join("mac-shifu/data/b.txt").exists());
+        assert!(tmp.path().join("apple-shifu/data/b.txt").exists());
     }
 
     #[test]
     fn test_migrate_renamed_skill_ignores_foreign_dir() {
         let tmp = tempfile::tempdir().unwrap();
         seed(tmp.path(), &[("sys-doctor/data/a.txt", "no SKILL.md here")]);
-        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "mac-shifu");
+        migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(tmp.path().join("sys-doctor/data/a.txt").exists());
+    }
+
+    /// State files record absolute paths; a move that leaves them pointing at
+    /// the old slug silently breaks restore and purge (which is exactly what
+    /// the sys-doctor rename shipped in 2026-07).
+    #[test]
+    fn test_migrate_rewrites_absolute_paths_in_state_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[
+            ("old/SKILL.md", "x"),
+            (
+                "old/data/media/removals.jsonl",
+                "{\"trash\":\"/home/u/.linggen/skills/old/data/media/trash/a.HEIC\"}\n",
+            ),
+            ("old/data/media/notes.bin", "/home/u/.linggen/skills/old/keep"),
+        ]);
+        migrate_renamed_skill_data(tmp.path(), "old", "new");
+
+        let moved =
+            std::fs::read_to_string(tmp.path().join("new/data/media/removals.jsonl")).unwrap();
+        assert!(moved.contains("skills/new/data/media/trash/a.HEIC"));
+        assert!(!moved.contains("skills/old/"));
+
+        // Non-text extensions are left byte-identical — thumbnails and venv
+        // binaries must never be rewritten.
+        let untouched = std::fs::read_to_string(tmp.path().join("new/data/media/notes.bin")).unwrap();
+        assert!(untouched.contains("skills/old/keep"));
+    }
+
+    #[test]
+    fn test_declared_rename_migrates_without_a_hardcoded_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[
+            ("mac-shifu/SKILL.md", "---\nname: mac-shifu\ndescription: d\n---\n"),
+            ("mac-shifu/data/media/archive.jsonl", "{}\n"),
+            (
+                "apple-shifu/SKILL.md",
+                "---\nname: apple-shifu\ndescription: d\nrenamed-from: [mac-shifu, sys-doctor]\n---\n",
+            ),
+        ]);
+        migrate_declared_renames(tmp.path());
+        assert!(!tmp.path().join("mac-shifu").exists(), "old slug should be gone");
+        assert!(tmp.path().join("apple-shifu/data/media/archive.jsonl").exists());
+    }
+
+    #[test]
+    fn test_declared_rename_leaves_unrelated_skills_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed(tmp.path(), &[
+            ("cfo/SKILL.md", "---\nname: cfo\ndescription: d\n---\n"),
+            ("cfo/data/ledger.json", "{}\n"),
+            (
+                "apple-shifu/SKILL.md",
+                "---\nname: apple-shifu\ndescription: d\nrenamed-from: mac-shifu\n---\n",
+            ),
+        ]);
+        migrate_declared_renames(tmp.path());
+        assert!(tmp.path().join("cfo/data/ledger.json").exists());
     }
 }

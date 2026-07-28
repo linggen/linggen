@@ -14,7 +14,7 @@ viewer. The bulk of this release is one arc.
   `GET /api/pair/me` resolves a per-device model catalog, so a phone offers
   exactly the models that Mac allows it.
 - **Media sync** — `/api/media/*`: wireless Photos backup, manifests
-  carrying Mac Shifu scan verdicts, mirror-vs-archive split (reconcile +
+  carrying Apple Shifu scan verdicts, mirror-vs-archive split (reconcile +
   backup), a reversible Mac→phone delete queue, and an auto-run of the
   Media pipeline scan once an ingest quiesces.
 - **Transport** — a binary media channel moving bulk bytes at ~30 MB/s

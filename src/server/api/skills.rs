@@ -12,8 +12,28 @@ use std::sync::Arc;
 
 use super::{canonical_project_root, ProjectQuery};
 
-pub(crate) async fn list_skills(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    let skills: Vec<Skill> = state.skills.list_skills().await;
+/// `?brief=1` drops each skill's `content` — the whole SKILL.md body.
+///
+/// A caller that only wants to know WHICH skills exist pays 192 KB for 3 KB of
+/// names otherwise, because the bodies are 72% of the response. That is merely
+/// wasteful on loopback and genuinely breaks a phone, where the same JSON has
+/// to be gzipped, chunked and reassembled across a WebRTC data channel.
+#[derive(Deserialize)]
+pub(crate) struct SkillListQuery {
+    #[serde(default)]
+    brief: bool,
+}
+
+pub(crate) async fn list_skills(
+    State(state): State<Arc<ServerState>>,
+    Query(q): Query<SkillListQuery>,
+) -> impl IntoResponse {
+    let mut skills: Vec<Skill> = state.skills.list_skills().await;
+    if q.brief {
+        for skill in &mut skills {
+            skill.content = String::new();
+        }
+    }
     Json(skills).into_response()
 }
 

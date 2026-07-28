@@ -14,8 +14,9 @@ interface AppSkill {
 
 const LABELS: Record<string, string> = {
   cfo: 'CFO',
-  'mac-shifu': 'Mac Shifu',
-  'sys-doctor': 'Mac Shifu',
+  'apple-shifu': 'Apple Shifu',
+  'mac-shifu': 'Apple Shifu',
+  'sys-doctor': 'Apple Shifu',
   pulse: 'Pulse',
   dj: 'DJ',
   'shared-memory': 'Memory',
@@ -23,7 +24,7 @@ const LABELS: Record<string, string> = {
 const labelFor = (n: string) => LABELS[n] ?? n;
 
 /** Apps that ship a settings.html (others have no per-app settings to show). */
-const HAS_SETTINGS = new Set(['cfo', 'mac-shifu', 'sys-doctor', 'pulse', 'dj']);
+const HAS_SETTINGS = new Set(['cfo', 'apple-shifu', 'mac-shifu', 'sys-doctor', 'pulse', 'dj']);
 
 type Section = { id: string; label: string; kind: 'general' | 'account' | 'model' | 'yinyue' | 'app'; skill?: AppSkill };
 

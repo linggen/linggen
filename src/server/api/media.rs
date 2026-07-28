@@ -4,7 +4,7 @@
 //! manifest (what does the Mac need / already hold), ingest (one original per
 //! multipart POST), verify (which uploads are now safe to delete on-phone).
 //!
-//! Files land in the mac-shifu Media pipeline's own staging + archive, so the
+//! Files land in the apple-shifu Media pipeline's own staging + archive, so the
 //! Mac review UI and the phone share one source of truth:
 //! - staging rows append to `data/media/manifest.jsonl` with a `wireless/…`
 //!   path (the USB pull's ghost-reconcile skips non-`/` paths);
@@ -46,7 +46,7 @@ const SCAN_QUIESCE: std::time::Duration = std::time::Duration::from_secs(20);
 const WIRELESS_PREFIX: &str = "wireless/";
 
 fn data_dir() -> PathBuf {
-    crate::paths::global_skills_dir().join("mac-shifu").join("data").join("media")
+    crate::paths::global_skills_dir().join("apple-shifu").join("data").join("media")
 }
 
 pub(crate) fn staging_dir() -> PathBuf {
@@ -108,7 +108,7 @@ fn save_delete_queue(ids: &[String]) -> std::io::Result<()> {
     std::fs::write(delete_queue_path(), json!({ "localIds": ids }).to_string())
 }
 
-/// Mac Shifu's scan verdicts (blurry/dark/…), keyed by content hash. The
+/// Apple Shifu's scan verdicts (blurry/dark/…), keyed by content hash. The
 /// phone borrows these instead of re-implementing image analysis in Dart —
 /// standalone gets the cheap detectors, paired gets the Mac's brains.
 fn load_verdicts() -> HashMap<String, Vec<String>> {
@@ -556,13 +556,13 @@ pub(crate) fn schedule_wireless_scan() {
     });
 }
 
-/// Invoke the mac-shifu Media pipeline's `scan` with its own venv python.
+/// Invoke the apple-shifu Media pipeline's `scan` with its own venv python.
 /// Silently a no-op until the user has run the Media tab's one-time setup —
 /// without the venv there are no analyzers to run.
 async fn run_media_scan() {
     let py = data_dir().join("venv").join("bin").join("python");
     let pipeline = crate::paths::global_skills_dir()
-        .join("mac-shifu")
+        .join("apple-shifu")
         .join("scripts")
         .join("media")
         .join("media_pipeline.py");

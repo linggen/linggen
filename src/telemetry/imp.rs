@@ -239,7 +239,7 @@ fn save_state(path: &Path, state: &State) -> std::io::Result<()> {
 // ── install-source marker ──────────────────────────────────────────────────
 
 /// Read the install-source marker file written by the installer (linggen.dev
-/// wrapper, Mac Shifu's "Set up Linggen" flow, brew, etc.) into a payload
+/// wrapper, Apple Shifu's "Set up Linggen" flow, brew, etc.) into a payload
 /// map. Missing file → empty map; caller fills in `via=unknown`.
 fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTreeMap<String, String> {
     let path = data_dir.join(format!(".{product}-install-source"));
@@ -262,13 +262,16 @@ fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTre
 
 /// Snapshot of which sibling Linggen products are present on this machine.
 /// Used as a payload field in `engine.start` so the server can attribute
-/// adoption of Mac Shifu (and any other product without its own telemetry)
+/// adoption of Apple Shifu (and any other product without its own telemetry)
 /// without each needing a phone-home path of its own. Probe re-uses the
 /// install-source marker that installers already write — file existence is
 /// the install signal, `installer_version` is the version field.
 pub fn read_system_state(data_dir: &Path) -> serde_json::Value {
-    // mac-shifu is the renamed sys-doctor; older installs still have the old marker
-    let sys_doctor = read_install_source_full(data_dir, "mac-shifu")
+    // Two renames deep (sys-doctor → mac-shifu → apple-shifu), and an install
+    // that has not been migrated yet still carries whichever marker it was
+    // installed with — try newest first.
+    let sys_doctor = read_install_source_full(data_dir, "apple-shifu")
+        .or_else(|| read_install_source_full(data_dir, "mac-shifu"))
         .or_else(|| read_install_source_full(data_dir, "sys-doctor"));
     let ling_mem = read_install_source_full(data_dir, "ling-mem");
     serde_json::json!({
