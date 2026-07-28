@@ -20,8 +20,17 @@ use super::{canonical_project_root, ProjectQuery};
 /// to be gzipped, chunked and reassembled across a WebRTC data channel.
 #[derive(Deserialize)]
 pub(crate) struct SkillListQuery {
+    /// Taken as a string, not a bool: serde only accepts a literal `true` for
+    /// the latter, so `?brief=1` — which is what a caller actually writes —
+    /// comes back as a 400 instead of a listing.
     #[serde(default)]
-    brief: bool,
+    brief: Option<String>,
+}
+
+impl SkillListQuery {
+    fn is_brief(&self) -> bool {
+        matches!(self.brief.as_deref(), Some("1" | "true" | "yes" | ""))
+    }
 }
 
 pub(crate) async fn list_skills(
@@ -29,7 +38,7 @@ pub(crate) async fn list_skills(
     Query(q): Query<SkillListQuery>,
 ) -> impl IntoResponse {
     let mut skills: Vec<Skill> = state.skills.list_skills().await;
-    if q.brief {
+    if q.is_brief() {
         for skill in &mut skills {
             skill.content = String::new();
         }
