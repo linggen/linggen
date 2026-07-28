@@ -135,6 +135,27 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `provides` / `implements` | Marks the skill as a service backend for an engine-defined capability |
 | `requires` | External dependencies to resolve at install |
+| `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
+
+## Renaming a skill
+
+A skill's directory is replaced on every install, but its `data/` belongs to
+the user. Renaming the slug without moving that data starts everyone from
+empty, so a renamed skill declares where it came from:
+
+```yaml
+name: apple-shifu
+renamed-from: [mac-shifu, sys-doctor]   # newest first; a single string also works
+```
+
+Before any skill loads, the engine reads each installed `SKILL.md` and, for
+every declared old slug still present on disk, moves `<old>/data` to
+`<new>/data`, rewrites `skills/<old>/` inside the text state files it moved
+(state files record absolute paths — a move alone leaves them dangling), and
+removes the stale directory so both names cannot register as two skills.
+
+If both sides already have a `data/` directory the old one is left untouched
+and nothing is deleted — an ambiguous merge is the user's call, not ours.
 
 ## Custom tools
 
