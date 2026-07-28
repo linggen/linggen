@@ -1,6 +1,7 @@
 # Rust
 /target
-Cargo.lock
+# Cargo.lock IS committed: linggen is a binary crate, and the mac build and the
+# two build-linux.yml runners must resolve identical dependency versions.
 
 # Node.js / UI
 /ui/node_modules
