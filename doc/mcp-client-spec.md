@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: designed 2026-07-29, not built. Phase 1 has independent value; phase 2 depends on it.
+status: PHASE 1 BUILT 2026-07-29 (client, tool surface, project scope, McpTab). Phase 2 not started.
 ---
 
 # Ling as an MCP client
@@ -36,7 +36,11 @@ So anything in the engine can call an MCP tool, including code paths that run
 before the model. That is what makes auto-recall over MCP possible, and it
 removes the last reason for a separate memory address.
 
-## Phase 1 — the generic client
+## Phase 1 — the generic client — BUILT
+
+`src/mcp_client/` (config, transport, client, registry), `[mcp_servers]` in
+`linggen.runtime.toml`, `GET /api/mcp`, and Settings → MCP. Commits `7c07dec`,
+`2b851f2`, `bfcf576`, `1738049`.
 
 A user adds an MCP server the way they would in any other agent, and its
 tools appear in the session.
