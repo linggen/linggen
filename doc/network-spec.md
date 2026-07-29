@@ -95,7 +95,7 @@ flowchart LR
 
   cc2 -->|"mcp — browser_* x_* agent_*"| ling2
   cc2 -->|"mcp — memory_*"| lingmem2
-  hooks2 -->|spawn| cli2
+  hooks2 -->|"curl · mcp tools/call"| lingmem2
   cli2 -->|http| lingmem2
   ling2 -->|"mcp client — tools + auto-recall"| lingmem2
   ling2 -->|"mcp client"| third
@@ -114,9 +114,11 @@ What changes from the diagram above:
   `x-linggen-device` token store both daemons already share. `ling-mem` still
   binds loopback unless explicitly opened, and refuses to open without that
   token file.
-- **`recall.sh` is unchanged.** A `UserPromptSubmit` hook has no model and
-  must answer synchronously, so it stays on the CLI. That is the one path
-  that can never be MCP, on any host.
+- **`recall.sh` moves to MCP too.** A hook can't *be* a model's tool call,
+  but it can *make* one — `curl` posting JSON-RPC. That is what lets a second
+  machine's Claude Code recall from this store with **no `ling-mem` binary at
+  all**: the CLI resolves through `daemon.json`, which only ever describes a
+  local daemon.
 
 ## The two daemons
 

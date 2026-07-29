@@ -134,6 +134,34 @@ recall injects nothing, says so once, and the turn proceeds. Never a hang,
 never a failed turn — the engine has `--idle-shutdown-secs 300`, so an absent
 daemon is an ordinary condition, not an exception.
 
+### Recall over MCP — including from a hook
+
+A hook cannot *be* a model's tool call. It can perfectly well *make* an MCP
+call: `tools/call` is an HTTP POST with a JSON-RPC body, which `curl` does.
+An earlier draft of this spec claimed `recall.sh` "can never be MCP"; that was
+wrong, and it mattered.
+
+```bash
+curl -s "$LINGGEN_MEMORY_URL" -H 'content-type: application/json' \
+     -H "x-linggen-device: $TOKEN" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+          "params":{"name":"memory_search","arguments":{"query":"…"}}}' \
+  | jq -r '.result.content[0].text'
+```
+
+`recall.sh` already depends on `jq`, and rows carry `hybrid_score`, `score`
+and `contexts`, so the missing `min_score` is a client-side filter it is
+already shaped to do.
+
+**Why this matters more than tidiness: a remote host then needs no `ling-mem`
+binary at all.** The CLI resolves through `daemon.json`, which can only
+describe a *local* daemon — so CLI recall cannot reach another machine's
+store, and a second machine would need its own binary, its own daemon and its
+own store, which forks memory. Over MCP it needs a URL and a token.
+
+Consequence for `autostart.sh`: installing and starting the binary should be
+skippable on a host that only *reads* a remote store.
+
 ### `memory_*` is REMOVED from ling's `/mcp`
 
 One memory service, not two. The tools come from ling-mem, so ling-mem is
