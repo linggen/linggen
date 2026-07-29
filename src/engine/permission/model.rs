@@ -627,6 +627,24 @@ pub fn check_permission(
         return PermissionCheckResult::Allowed;
     }
 
+    // 0c. An MCP server whose entry declares `gated = false`. The user, who
+    // is the host, said they trust it — the direct analogue of a Claude Code
+    // allow rule covering a whole server, and the only direction trust flows.
+    // A server can never clear its own gate: `readOnlyHint` is an advisory
+    // hint from the thing being gated.
+    //
+    // The built-in memory server ships this way, which is why nothing here
+    // knows ling-mem's name. It also has to be mode-independent: a chat-mode
+    // session that cannot remember defeats the feature, and auto-recall
+    // already runs before the model with no tool call to gate — so gating
+    // the write half while the read half is free would be incoherent.
+    //
+    // `enabled = false` on the entry is how memory is turned off. This
+    // decides whether tools *prompt*, never whether they exist.
+    if crate::mcp_client::is_mcp_tool(tool) && !crate::mcp_client::registry().is_gated(tool) {
+        return PermissionCheckResult::Allowed;
+    }
+
     // Chat mode is the lowest tier — any concrete tool's action_tier
     // (Read/Edit/Admin) exceeds it, so step 4 below produces an
     // ExceedsCeiling prompt offering to switch to the needed mode. We

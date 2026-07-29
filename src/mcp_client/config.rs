@@ -52,9 +52,28 @@ pub struct McpServerConfig {
     pub kind: Option<String>,
 
     /// Off without deleting the entry — so a server can be parked without
-    /// losing how it was configured.
+    /// losing how it was configured. This, not a permission rule, is how you
+    /// turn a server off: `gated` below decides whether its tools *prompt*,
+    /// never whether they exist.
     #[serde(default = "crate::config::default_true")]
     pub enabled: bool,
+
+    /// Whether this server's tools go through the permission gate.
+    ///
+    /// **Defaults to `true`** — an added server is a third-party process that
+    /// can write files and call APIs, which is what `permission-spec.md`
+    /// exists for. `false` is the direct analogue of a Claude Code allow rule
+    /// covering a whole server: the user, who is the host here, deciding they
+    /// trust it. That is the only direction trust flows. A *server* can never
+    /// clear its own gate — MCP's `readOnlyHint` is an advisory hint from the
+    /// thing being gated, and must never widen access.
+    ///
+    /// The built-in memory server ships `false`, which is why nothing in the
+    /// permission code needs to know ling-mem's name. If gating memory were a
+    /// hardcoded exemption instead of a declared one it would be invisible;
+    /// as a field it round-trips through the config, the API, and the tab.
+    #[serde(default = "crate::config::default_true")]
+    pub gated: bool,
 }
 
 /// Hand-written, NOT derived. `#[serde(default = ...)]` only applies when
@@ -72,8 +91,48 @@ impl Default for McpServerConfig {
             headers: BTreeMap::new(),
             kind: None,
             enabled: true,
+            gated: true,
         }
     }
+}
+
+/// The name the built-in memory server is listed under. A user entry with
+/// this name wins — see [`with_builtin`].
+pub const BUILTIN_MEMORY: &str = "memory";
+
+/// The built-in memory server, added to whatever the user configured.
+///
+/// Memory is not a third party: it ships with the product, so the question
+/// permission exists to answer — *do I trust this server?* — was settled at
+/// install. Gating it would also break the thing it is for, since a chat-mode
+/// session that cannot remember defeats the feature, and auto-recall already
+/// runs before the model with no tool call to gate.
+///
+/// `gated: false` is carried on the entry rather than special-cased in the
+/// permission code, so the exemption is visible wherever servers are and the
+/// engine never learns this server's name.
+pub fn builtin_memory(url: &str) -> McpServerConfig {
+    McpServerConfig {
+        url: Some(format!("{}/mcp", url.trim_end_matches('/'))),
+        gated: false,
+        ..Default::default()
+    }
+}
+
+/// Merge the built-in memory server into the user's list.
+///
+/// A user entry named `memory` wins outright — including a disabled one,
+/// which is how memory is turned off. Silently re-adding it would make
+/// `enabled = false` a lie, and a switch that doesn't switch is worse than
+/// no switch.
+pub fn with_builtin(
+    configured: &BTreeMap<String, McpServerConfig>,
+    memory_url: &str,
+) -> BTreeMap<String, McpServerConfig> {
+    let mut out = configured.clone();
+    out.entry(BUILTIN_MEMORY.to_string())
+        .or_insert_with(|| builtin_memory(memory_url));
+    out
 }
 
 /// How to reach a server, once derived.
@@ -163,6 +222,61 @@ mod tests {
         let from_file: McpServerConfig = serde_json::from_str("{}").unwrap();
         assert!(from_rust, "a server built in Rust must default to enabled");
         assert_eq!(from_rust, from_file.enabled);
+    }
+
+    /// The safe default is the whole point: an entry the user pasted from
+    /// somewhere is a third-party process until they say otherwise.
+    #[test]
+    fn an_added_server_is_gated_unless_it_says_otherwise() {
+        let pasted: McpServerConfig =
+            serde_json::from_str(r#"{"command":"npx","args":["-y","gh-mcp"]}"#).unwrap();
+        assert!(pasted.gated);
+        assert!(McpServerConfig::default().gated);
+
+        // And a user who trusts one can say so — the host-side de-escalation
+        // that CC spells as an allow rule.
+        let trusted: McpServerConfig =
+            serde_json::from_str(r#"{"url":"http://x/mcp","gated":false}"#).unwrap();
+        assert!(!trusted.gated);
+    }
+
+    #[test]
+    fn the_builtin_memory_server_is_added_ungated() {
+        let none = BTreeMap::new();
+        let merged = with_builtin(&none, "http://127.0.0.1:9528");
+        let mem = &merged[BUILTIN_MEMORY];
+        assert_eq!(mem.url.as_deref(), Some("http://127.0.0.1:9528/mcp"));
+        assert!(!mem.gated, "memory ships ungated");
+        assert!(mem.enabled);
+
+        // A trailing slash on the configured base must not double up.
+        let slashed = with_builtin(&none, "http://127.0.0.1:9528/");
+        assert_eq!(slashed[BUILTIN_MEMORY].url.as_deref(), Some("http://127.0.0.1:9528/mcp"));
+    }
+
+    /// Silently re-adding it would make `enabled = false` a lie, and a switch
+    /// that doesn't switch is worse than no switch.
+    #[test]
+    fn the_users_own_memory_entry_wins_including_a_disabled_one() {
+        let mut user = BTreeMap::new();
+        user.insert(
+            BUILTIN_MEMORY.to_string(),
+            McpServerConfig { enabled: false, url: Some("http://elsewhere/mcp".into()), ..Default::default() },
+        );
+        let merged = with_builtin(&user, "http://127.0.0.1:9528");
+        assert!(!merged[BUILTIN_MEMORY].enabled, "turning memory off must stick");
+        assert_eq!(merged[BUILTIN_MEMORY].url.as_deref(), Some("http://elsewhere/mcp"));
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn other_servers_survive_the_merge_and_keep_their_gate() {
+        let mut user = BTreeMap::new();
+        user.insert("gh".to_string(), McpServerConfig { command: Some("npx".into()), ..Default::default() });
+        let merged = with_builtin(&user, "http://127.0.0.1:9528");
+        assert_eq!(merged.len(), 2);
+        assert!(merged["gh"].gated);
+        assert!(!merged[BUILTIN_MEMORY].gated);
     }
 
     #[test]

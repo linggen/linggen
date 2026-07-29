@@ -56,6 +56,10 @@ pub struct ServerStatus {
     pub error: Option<String>,
     pub tools: Vec<String>,
     pub enabled: bool,
+    /// Whether this server's tools go through the permission gate. Shown
+    /// because a tab that adds a server without saying what it may do is a
+    /// phantom: real capability, invisible.
+    pub gated: bool,
 }
 
 #[derive(Default)]
@@ -99,8 +103,9 @@ impl McpRegistry {
         for (name, cfg) in configs.iter().map(|(n, c)| (n.clone(), c.clone())) {
             set.spawn(async move {
                 let target = describe(&cfg);
+                let gated = cfg.gated;
                 if !cfg.enabled {
-                    return Attempt { name, target, enabled: false, found: None, error: None };
+                    return Attempt { name, target, enabled: false, gated, found: None, error: None };
                 }
                 let outcome = tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await;
                 let (found, error) = match outcome {
@@ -108,7 +113,7 @@ impl McpRegistry {
                     Ok(Err(e)) => (None, Some(format!("{e:#}"))),
                     Err(_) => (None, Some(format!("no answer in {DISCOVERY_TIMEOUT:?}"))),
                 };
-                Attempt { name, target, enabled: true, found, error }
+                Attempt { name, target, enabled: true, gated, found, error }
             });
         }
 
@@ -117,7 +122,7 @@ impl McpRegistry {
         let mut servers = Vec::new();
         while let Some(joined) = set.join_next().await {
             let Ok(attempt) = joined else { continue };
-            let Attempt { name, target, enabled, found, error } = attempt;
+            let Attempt { name, target, enabled, gated, found, error } = attempt;
             match found {
                 Some(found) => {
                     info!("MCP `{name}` connected — {} tool(s)", found.tools.len());
@@ -128,6 +133,7 @@ impl McpRegistry {
                         error: None,
                         tools: found.tools.iter().map(|t| t.qualified.clone()).collect(),
                         enabled,
+                        gated,
                     });
                     tools.extend(found.tools);
                     clients.insert(name, found.client);
@@ -143,6 +149,7 @@ impl McpRegistry {
                         error,
                         tools: Vec::new(),
                         enabled,
+                        gated,
                     });
                 }
             }
@@ -179,6 +186,24 @@ impl McpRegistry {
         client.call_tool(&original, args).await
     }
 
+    /// Does this qualified tool go through the permission gate?
+    ///
+    /// Answered from the owning server's `gated` field, so the gate reads the
+    /// same declaration the config and the Settings tab show. An unknown name
+    /// is gated: a tool we cannot attribute is not one to wave through.
+    pub fn is_gated(&self, qualified: &str) -> bool {
+        let state = self.state.read().unwrap();
+        let Some(tool) = state.tools.iter().find(|t| t.qualified == qualified) else {
+            return true;
+        };
+        state
+            .servers
+            .iter()
+            .find(|s| s.name == tool.server)
+            .map(|s| s.gated)
+            .unwrap_or(true)
+    }
+
     /// Doctrine each connected server shipped in `initialize`, as
     /// (server, instructions). This is how a server states its own rules
     /// instead of the host hand-copying them.
@@ -196,6 +221,7 @@ struct Attempt {
     name: String,
     target: String,
     enabled: bool,
+    gated: bool,
     found: Option<Discovered>,
     error: Option<String>,
 }
@@ -343,5 +369,43 @@ mod tests {
 
         // Leave the global registry as we found it for other tests.
         registry().connect_all(&BTreeMap::new()).await;
+    }
+
+    /// The gate reads the owning server's declaration. Two servers, one
+    /// ungated, so a pass can't come from a global default.
+    #[tokio::test]
+    async fn the_gate_follows_the_servers_own_declaration() {
+        let up = reqwest::Client::new()
+            .get("http://127.0.0.1:9528/api/health")
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !up {
+            eprintln!("skipped: no ling-mem on 9528");
+            return;
+        }
+
+        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let mut cfgs = BTreeMap::new();
+        cfgs.insert(
+            "trusted".to_string(),
+            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), gated: false, ..Default::default() },
+        );
+        cfgs.insert(
+            "guarded".to_string(),
+            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), ..Default::default() },
+        );
+        reg.connect_all(&cfgs).await;
+
+        assert!(!reg.is_gated(&qualify("trusted", "memory_search")));
+        assert!(reg.is_gated(&qualify("guarded", "memory_search")));
+        // Same tool name, opposite answers — so the lookup is by server, not
+        // by anything about the tool itself.
+
+        // A name we can't attribute is gated: fail closed.
+        assert!(reg.is_gated("mcp__ghost__whatever"));
+        assert!(reg.is_gated("Read"));
     }
 }

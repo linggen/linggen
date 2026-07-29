@@ -19,7 +19,12 @@ interface McpServer {
   connected: boolean;
   error: string | null;
   tools: string[];
+  /** Whether this server's tools go through the permission gate. */
+  gated: boolean;
   tier: string;
+  /** Shipped with Linggen rather than added by the user. Presentation only —
+   *  the permission decision is `gated`. */
+  builtin: boolean;
 }
 
 export const McpTab: React.FC = () => {
@@ -80,11 +85,11 @@ export const McpTab: React.FC = () => {
         <ServerCard key={s.name} server={s} />
       ))}
 
-      {servers.some((s) => s.connected) && (
+      {servers.some((s) => s.connected && s.gated) && (
         <p className="flex items-start gap-2 text-xs opacity-60 pt-1">
           <ShieldAlert size={13} className="mt-0.5 shrink-0" />
           <span>
-            Tools from these servers run at the <strong>admin</strong> tier and are
+            Gated tools run at the <strong>admin</strong> tier and are
             permission-gated like any other admin action — they can write files and
             call out to the network. Only add servers you trust.
           </span>
@@ -113,6 +118,32 @@ const ServerCard: React.FC<{ server: McpServer }> = ({ server: s }) => {
       <div className="flex items-center gap-2 flex-wrap">
         <Plug size={14} className="opacity-60 shrink-0" />
         <span className="font-medium text-sm">{s.name}</span>
+
+        {/* The gate, per server. Adding a server without saying what its
+            tools may do would be a phantom: real capability, invisible. */}
+        <span
+          className={`text-[10px] px-1.5 py-0.5 rounded border ${
+            s.gated
+              ? 'bg-slate-500/10 opacity-70 border-slate-200/50 dark:border-slate-600/40'
+              : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-200/50 dark:border-indigo-500/20'
+          }`}
+          title={
+            s.gated
+              ? 'Tools from this server are permission-gated at the admin tier.'
+              : 'Tools from this server run without a permission prompt, in any mode. Set gated = true to change that, or enabled = false to turn the server off entirely.'
+          }
+        >
+          {s.gated ? 'gated' : 'ungated'}
+        </span>
+
+        {s.builtin && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-200/50 dark:border-emerald-500/20"
+            title="Ships with Linggen. Override it by defining a server of the same name in [mcp_servers]."
+          >
+            built-in
+          </span>
+        )}
 
         {state === 'connected' && (
           <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">

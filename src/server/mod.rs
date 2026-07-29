@@ -938,11 +938,13 @@ async fn prepare_server(
             // inside a cloned repo means launching whatever it names, and this
             // daemon resolves one workspace root at boot — there is nowhere
             // sound to put the approval prompt that would make it safe.
-            let configured = manager.get_config_snapshot().await.mcp_servers;
-            if configured.is_empty() {
-                return;
-            }
-            crate::mcp_client::registry().connect_all(&configured).await;
+            //
+            // Memory joins that list rather than sitting beside it: one
+            // mechanism for every tool. Never empty as a result, so the
+            // early return is gone.
+            let cfg = manager.get_config_snapshot().await;
+            let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
+            crate::mcp_client::registry().connect_all(&servers).await;
         });
     }
 

@@ -286,13 +286,14 @@ pub(crate) async fn get_claude_auth_status() -> impl IntoResponse {
 /// configured", which is a different and misleading thing. Same rule as the
 /// rest of the UI — show the server's state, never a prettier version of it.
 ///
-/// `tier` rides along because a tab that lets you add a server without saying
+/// `gated` rides along because a tab that lets you add a server without saying
 /// what its tools may do is a phantom: real capability, invisible.
 pub(crate) async fn list_mcp_api() -> impl IntoResponse {
     let servers: Vec<serde_json::Value> = crate::mcp_client::registry()
         .status()
         .into_iter()
         .map(|s| {
+            let builtin = s.name == crate::mcp_client::BUILTIN_MEMORY;
             serde_json::json!({
                 "name": s.name,
                 "target": s.target,
@@ -300,10 +301,16 @@ pub(crate) async fn list_mcp_api() -> impl IntoResponse {
                 "connected": s.connected,
                 "error": s.error,
                 "tools": s.tools,
-                // Every tool from every added server sits here; it is not
-                // per-server today, and saying so is better than implying a
-                // per-server choice that does not exist.
-                "tier": "admin",
+                // What the gate actually does with this server's tools —
+                // read from the entry, not inferred here, so the UI cannot
+                // disagree with what the engine enforces.
+                "gated": s.gated,
+                "tier": if s.gated { "admin" } else { "ungated" },
+                // Provenance is presentation only. The permission decision is
+                // `gated` above; this just lets the tab explain why the
+                // shipped entry differs, and why removing it is a config edit
+                // rather than a mistake.
+                "builtin": builtin,
             })
         })
         .collect();
