@@ -45,6 +45,25 @@ enum Backend {
     DreamRun,
 }
 
+/// Notice, once per process, that a caller is still on the deprecated
+/// `memory_*` proxies on this front door.
+///
+/// Once, not per call: a host wired this way calls memory constantly, and a
+/// line per call would bury the log it is trying to be visible in.
+fn warn_memory_group_deprecated(tool: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SAID: AtomicBool = AtomicBool::new(false);
+    if SAID.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    tracing::warn!(
+        "`{tool}` came in on the engine's /mcp. The memory_* group here is \
+         DEPRECATED — memory is served by ling-mem's own /mcp (default \
+         127.0.0.1:9528/mcp). Add that server alongside this one; these \
+         proxies will be removed."
+    );
+}
+
 /// One MCP tool: its wire name, the backend it brokers to, its schema.
 /// `timeout_ms` applies to bridge calls; memory calls carry their own.
 struct McpTool {
@@ -283,10 +302,26 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: READ_MODULE_TIMEOUT_MS,
     },
-    // --- memory_*: the user's durable cross-host memory (ling-mem) ---------
-    // Thin proxy to the ling-mem daemon; names and shapes mirror ling-mem's
-    // own MCP so migrating users keep muscle memory. Dream-pipeline verbs
-    // (harvest/remember/sweep/chains/days) stay engine-internal.
+    // --- memory_*: DEPRECATED proxies to the ling-mem daemon ---------------
+    //
+    // These have been here since 1.4.0 (2026-07-10), when `mcp-spec.md` chose
+    // one front door for every channel. Phase 2 of `mcp-client-spec.md`
+    // reverses that: the tools come from ling-mem, so ling-mem is where they
+    // are served, and a host that wants memory adds that server. Two servers
+    // offering identical schemas is precisely the duplication to avoid — the
+    // model cannot tell a proxied `memory_search` from a direct one and picks
+    // between them arbitrarily.
+    //
+    // Kept for a deprecation window rather than cut dead, because anyone who
+    // wired this front door for memory would otherwise lose it without
+    // warning. The description carries the notice; `Backend::Memory` logs one
+    // per process. Remove the group once the window closes.
+    //
+    // `memory_dream_status` / `memory_dream_run` below are NOT part of this:
+    // they are engine capabilities, not memory-server ones. dream_status
+    // composes the daemon's rollup with the engine's in-flight run state, and
+    // dream_run drives the engine's mission executor — ling-mem cannot serve
+    // either, so they stay regardless of the window.
     McpTool {
         name: "memory_search",
         backend: Backend::Memory { verb: "search" },
@@ -480,7 +515,10 @@ fn initialize_result() -> Value {
             browser_click / browser_type by ref; mutating actions may pause for the \
             user's permission prompt in the browser. x_* tools return structured data \
             from the user's logged-in x.com session. A no_bridge error means the \
-            extension is not connected. memory_* tools read and write the user's \
+            extension is not connected. The memory_* tools here are DEPRECATED \
+            proxies — memory is served by ling-mem's own MCP server (default \
+            127.0.0.1:9528/mcp); add that server alongside this one and prefer its \
+            tools, which are the same names and shapes. They read and write the user's \
             durable cross-host memory (three tiers: core = always-on identity \
             universals, semantic = curated long-term facts, episodic = per-turn \
             staging judged nightly). Search memory before answering questions that \
@@ -506,13 +544,27 @@ fn initialize_result() -> Value {
     })
 }
 
+/// Prefix stamped onto the deprecated `memory_*` proxies at list time.
+///
+/// On the description rather than hand-written into each one: it applies to
+/// every tool with a `Memory` backend by definition, so deriving it means a
+/// tool cannot be added to that group and quietly miss the notice. It also
+/// disappears in one edit when the window closes.
+const MEMORY_DEPRECATION: &str = "DEPRECATED — memory has moved to ling-mem's own MCP server \
+    (default 127.0.0.1:9528/mcp); add it alongside this one and use its tools instead. \
+    This proxy still works and will be removed. ";
+
 fn tools_list_result() -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
         .map(|t| {
+            let description = match t.backend {
+                Backend::Memory { .. } => format!("{MEMORY_DEPRECATION}{}", t.description),
+                _ => t.description.to_string(),
+            };
             json!({
                 "name": t.name,
-                "description": t.description,
+                "description": description,
                 "inputSchema": (t.schema)(),
             })
         })
@@ -585,6 +637,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
             Ok(tool_content(text, true))
         }
         Backend::Memory { verb } => {
+            warn_memory_group_deprecated(tool.name);
             let mut args = args;
             if let Some(obj) = args.as_object_mut() {
                 obj.insert("verb".to_string(), json!(verb));
