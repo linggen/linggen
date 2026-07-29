@@ -52,10 +52,15 @@ tools appear in the session.
   host stores its server list — CC uses `.mcp.json` + `~/.claude.json`, Codex
   uses `[mcp_servers]`, Cursor uses `.cursor/mcp.json`. The shape is what
   travels.
-- **Two scopes.** *User* scope is `linggen.runtime.toml`, fully editable.
-  *Project* scope is the workspace's own `.mcp.json`, read as-is — which
-  means any repo already set up for CC or Cursor works in Linggen with no
-  configuration at all.
+- **One scope.** Every server is the user's own, in `[mcp_servers]`. A repo's
+  `.mcp.json` is **not** read. Project scope shipped in phase 1 and was
+  removed 2026-07-29: a stdio entry is `command` + `args`, so honouring a
+  file inside a cloned repo means launching whatever it names, and nothing
+  gated it. CC offers the same feature only behind an approval prompt, and
+  since v2.1.196 refuses to let a repo approve itself. The engine had nowhere
+  sound to put that prompt — it resolved *one* workspace root at daemon boot
+  and applied it to every session, including sessions working elsewhere. Not
+  global, not per-project: the boot cwd, frozen.
 - **Transports** — stdio (what most servers ship) and streamable HTTP (what
   ours ships). Not WebRTC: the *client* picks the transport and we do not own
   CC's, so a WebRTC dialect would be speakable by exactly one client, which
@@ -69,16 +74,39 @@ tools appear in the session.
   turn. Discovery is best-effort per session; a missing server means missing
   tools and a line saying so, never a hang.
 
-### The permission question
+### The permission question — DECIDED 2026-07-29: follow Claude Code
 
 `Memory_query` / `Memory_write` are **Chat-tier — ungated, no prompts**
-(`engine/permission/model.rs:653`). A user-added MCP server must not be: its
+(`engine/permission/model.rs`). A user-added MCP server must not be: its
 tools can write files and call APIs, which is precisely what
 `permission-spec.md` exists for.
 
-So the permission model needs to tell the built-in server from added ones.
-Decide this deliberately — it is the one part of this work that is a design
-choice rather than a mechanical change.
+First, the premise to discard: **MCP has no permission model to inherit.**
+The protocol defines transport, discovery, and *advisory* tool annotations,
+and says those annotations are untrusted hints from the server. "Follow the
+MCP standard" is not an answer.
+
+So we follow CC's, **for MCP tools only** — built-in tools keep the
+chat/read/edit/admin ladder and `path_modes[]`. That is two vocabularies in
+one engine, accepted deliberately: the alternative rewrites a permission
+model that was just simplified.
+
+- **Rules are `deny` → `ask` → `allow`**, matched on `mcp__<server>` (whole
+  server), `mcp__<server>__*`, or `mcp__<server>__<tool>`. An allow glob must
+  be anchored after a literal server segment — an unanchored one approves
+  nothing. No match falls through to the session's permission mode.
+- **A server may escalate, never de-escalate.** CC honours
+  `_meta["anthropic/requiresUserInteraction"]` to force a prompt on every
+  call that no allow rule can skip, and has no inverse: a server cannot
+  declare itself safe. So `readOnlyHint` must never *widen* access. Trust
+  flows one way, from the user's own config.
+- **No Chat tier for MCP.** The built-in memory server is un-gated by a
+  shipped-default allow rule the user can see and revoke, not by a hardcoded
+  tier — which also keeps `memory_*` from being privileged wherever it comes
+  from.
+- **Auto-recall is not gated at all.** It is engine code acting for the user
+  before the model runs, not the agent choosing a tool, and permission gates
+  the agent.
 
 ### The Settings tab
 
@@ -87,9 +115,10 @@ way `[[models]]` and `[[agents]]` already are (`POST /api/config` →
 `update_config_api`). An McpTab follows that pattern. Three things it must
 show, or it violates the show-everything rule:
 
-- **Project-scope servers**, read-only and labelled with their source. The
-  engine loading a server the UI never shows is hidden state. Linggen must
-  not rewrite a file the repo owns.
+- **Every server it connects to**, and only those. With project scope gone
+  there is one list and it is the user's, so the tab can no longer show a
+  server the user did not add — the hidden-state risk this bullet used to
+  guard against is now structural.
 - **The permission tier per server.** A tab that adds a server without
   showing what it may do is a phantom: real capability, invisible.
 - **Live connection state** — connected / failed / N tools discovered, read

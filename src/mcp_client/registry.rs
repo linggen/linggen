@@ -12,7 +12,7 @@
 //! one of them hanging must not be able to own the agent.
 
 use super::client::McpClient;
-use super::config::{McpServerConfig, Scope};
+use super::config::McpServerConfig;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -49,7 +49,6 @@ pub struct AdvertisedTool {
 #[derive(Debug, Clone)]
 pub struct ServerStatus {
     pub name: String,
-    pub scope: Scope,
     /// `stdio: npx …` or the URL — what the user needs to recognise it.
     pub target: String,
     pub connected: bool,
@@ -91,22 +90,17 @@ impl McpRegistry {
     ///
     /// Replaces the previous set wholesale, so this doubles as reload.
     /// Servers are dialled concurrently: a slow one shouldn't delay the rest.
+    ///
+    /// Every server here is the user's own, from `[mcp_servers]` — there is
+    /// no second scope to merge in. See `config.rs` for why a repo's
+    /// `.mcp.json` is not read.
     pub async fn connect_all(&self, configs: &BTreeMap<String, McpServerConfig>) {
-        let scoped: Vec<_> = configs
-            .iter()
-            .map(|(n, c)| (n.clone(), c.clone(), Scope::User))
-            .collect();
-        self.connect_scoped(&scoped).await;
-    }
-
-    /// Connect a merged user+project set, remembering each server's scope.
-    pub async fn connect_scoped(&self, configs: &[(String, McpServerConfig, Scope)]) {
         let mut set = tokio::task::JoinSet::new();
-        for (name, cfg, scope) in configs.iter().cloned() {
+        for (name, cfg) in configs.iter().map(|(n, c)| (n.clone(), c.clone())) {
             set.spawn(async move {
                 let target = describe(&cfg);
                 if !cfg.enabled {
-                    return Attempt { name, scope, target, enabled: false, found: None, error: None };
+                    return Attempt { name, target, enabled: false, found: None, error: None };
                 }
                 let outcome = tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await;
                 let (found, error) = match outcome {
@@ -114,7 +108,7 @@ impl McpRegistry {
                     Ok(Err(e)) => (None, Some(format!("{e:#}"))),
                     Err(_) => (None, Some(format!("no answer in {DISCOVERY_TIMEOUT:?}"))),
                 };
-                Attempt { name, scope, target, enabled: true, found, error }
+                Attempt { name, target, enabled: true, found, error }
             });
         }
 
@@ -123,13 +117,12 @@ impl McpRegistry {
         let mut servers = Vec::new();
         while let Some(joined) = set.join_next().await {
             let Ok(attempt) = joined else { continue };
-            let Attempt { name, scope, target, enabled, found, error } = attempt;
+            let Attempt { name, target, enabled, found, error } = attempt;
             match found {
                 Some(found) => {
                     info!("MCP `{name}` connected — {} tool(s)", found.tools.len());
                     servers.push(ServerStatus {
                         name: name.clone(),
-                        scope,
                         target,
                         connected: true,
                         error: None,
@@ -145,7 +138,6 @@ impl McpRegistry {
                     }
                     servers.push(ServerStatus {
                         name,
-                        scope,
                         target,
                         connected: false,
                         error,
@@ -202,7 +194,6 @@ impl McpRegistry {
 
 struct Attempt {
     name: String,
-    scope: Scope,
     target: String,
     enabled: bool,
     found: Option<Discovered>,

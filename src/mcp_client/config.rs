@@ -5,7 +5,16 @@
 //! `~/.claude.json`, Codex uses `[mcp_servers]`, Cursor uses
 //! `.cursor/mcp.json`. What every one of them agrees on is the *shape* of an
 //! entry, so we mirror it exactly: an entry copies across from any of them
-//! without being rewritten, and a repo's own `.mcp.json` can be read as-is.
+//! without being rewritten.
+//!
+//! **One scope.** Every server Linggen connects to is the user's own, listed
+//! in `[mcp_servers]`. There is no project scope: the engine does not read a
+//! repo's `.mcp.json`. That is a deliberate removal, not a gap — a stdio
+//! entry is `command` + `args`, so honouring a file inside a cloned repo
+//! means launching whatever it names. Claude Code can offer that because it
+//! gates it behind an approval prompt and refuses to let a repo approve
+//! itself; a daemon with one workspace root resolved at boot has nowhere
+//! sound to put that prompt.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -106,77 +115,19 @@ impl McpServerConfig {
     }
 }
 
-/// The `mcpServers` object as every host in the ecosystem writes it. Used to
-/// read a project's `.mcp.json` verbatim.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct McpServersFile {
-    #[serde(rename = "mcpServers", default)]
-    pub mcp_servers: BTreeMap<String, McpServerConfig>,
-}
-
-/// Which file an entry came from, so the UI can show a project-scoped
-/// server as read-only and say where it is from. A server the engine loads
-/// but never shows would be hidden state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Scope {
-    /// `linggen.runtime.toml` — the user's own, editable.
-    User,
-    /// The workspace's `.mcp.json` — the repo's, read-only here.
-    Project,
-}
-
-/// Read a workspace's own `.mcp.json`, if it has one.
-///
-/// This is why the field names are the ecosystem's: a repo already set up
-/// for Claude Code or Cursor works in Linggen with no configuration at all.
-/// Missing file is the normal case, not an error; a malformed one is
-/// reported rather than silently ignored, because a repo that meant to
-/// offer tools and doesn't is worth a line.
-pub fn read_project_file(workspace_root: &std::path::Path) -> (BTreeMap<String, McpServerConfig>, Option<String>) {
-    let path = workspace_root.join(".mcp.json");
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return (BTreeMap::new(), None);
-    };
-    match serde_json::from_str::<McpServersFile>(&raw) {
-        Ok(f) => (f.mcp_servers, None),
-        Err(e) => (BTreeMap::new(), Some(format!("{}: {e}", path.display()))),
-    }
-}
-
-/// Merge project entries under the user's. A name defined in both is the
-/// USER's — their own config is the one they can see and edit in Settings,
-/// so it must not be silently overridden by a file inside a repo they
-/// cloned.
-pub fn merge_scopes(
-    user: &BTreeMap<String, McpServerConfig>,
-    project: &BTreeMap<String, McpServerConfig>,
-) -> Vec<(String, McpServerConfig, Scope)> {
-    let mut out: Vec<(String, McpServerConfig, Scope)> = user
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone(), Scope::User))
-        .collect();
-    for (k, v) in project {
-        if !user.contains_key(k) {
-            out.push((k.clone(), v.clone(), Scope::Project));
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_claude_code_entry_parses_unchanged() {
-        // Copied from the shape CC writes, `type` and all.
-        let f: McpServersFile = serde_json::from_str(
-            r#"{"mcpServers":{"linggen":{"type":"http","url":"http://127.0.0.1:9527/mcp"}}}"#,
+        // Copied from the shape CC writes, `type` and all. The file it came
+        // from is not read; the *entry* still transliterates, which is the
+        // property worth keeping.
+        let s: McpServerConfig = serde_json::from_str(
+            r#"{"type":"http","url":"http://127.0.0.1:9527/mcp"}"#,
         )
         .unwrap();
-        let s = &f.mcp_servers["linggen"];
         assert_eq!(
             s.transport().unwrap(),
             Transport::Http {
@@ -190,12 +141,11 @@ mod tests {
 
     #[test]
     fn a_stdio_entry_parses_unchanged() {
-        let f: McpServersFile = serde_json::from_str(
-            r#"{"mcpServers":{"gh":{"command":"npx","args":["-y","gh-mcp"],
-                 "env":{"GH_TOKEN":"x"}}}}"#,
+        let s: McpServerConfig = serde_json::from_str(
+            r#"{"command":"npx","args":["-y","gh-mcp"],"env":{"GH_TOKEN":"x"}}"#,
         )
         .unwrap();
-        match f.mcp_servers["gh"].transport().unwrap() {
+        match s.transport().unwrap() {
             Transport::Stdio { command, args, env } => {
                 assert_eq!(command, "npx");
                 assert_eq!(args, ["-y", "gh-mcp"]);
@@ -213,52 +163,6 @@ mod tests {
         let from_file: McpServerConfig = serde_json::from_str("{}").unwrap();
         assert!(from_rust, "a server built in Rust must default to enabled");
         assert_eq!(from_rust, from_file.enabled);
-    }
-
-    #[test]
-    fn a_repo_set_up_for_another_host_just_works() {
-        let dir = std::env::temp_dir().join(format!("mcp_proj_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join(".mcp.json"),
-            r#"{"mcpServers":{"gh":{"command":"npx","args":["-y","gh-mcp"]}}}"#,
-        )
-        .unwrap();
-        let (found, err) = read_project_file(&dir);
-        assert!(err.is_none());
-        assert!(found.contains_key("gh"));
-        // Enabled, because the repo listed it and didn't say otherwise.
-        assert!(found["gh"].enabled);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn no_project_file_is_normal_but_a_broken_one_is_reported() {
-        let dir = std::env::temp_dir().join(format!("mcp_none_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (found, err) = read_project_file(&dir);
-        assert!(found.is_empty() && err.is_none(), "a repo without one is ordinary");
-
-        std::fs::write(dir.join(".mcp.json"), "{ not json").unwrap();
-        let (_, err) = read_project_file(&dir);
-        assert!(err.is_some(), "a repo that meant to offer tools deserves a line");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn the_users_own_entry_wins_over_a_cloned_repos() {
-        let mut user = BTreeMap::new();
-        user.insert("gh".to_string(), McpServerConfig { url: Some("http://mine".into()), ..Default::default() });
-        let mut project = BTreeMap::new();
-        project.insert("gh".to_string(), McpServerConfig { command: Some("theirs".into()), ..Default::default() });
-        project.insert("extra".to_string(), McpServerConfig { command: Some("x".into()), ..Default::default() });
-
-        let merged = merge_scopes(&user, &project);
-        let gh = merged.iter().find(|(n, _, _)| n == "gh").unwrap();
-        assert_eq!(gh.2, Scope::User);
-        assert_eq!(gh.1.url.as_deref(), Some("http://mine"));
-        // …and the repo's other server still comes along.
-        assert_eq!(merged.iter().find(|(n, _, _)| n == "extra").unwrap().2, Scope::Project);
     }
 
     #[test]

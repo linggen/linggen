@@ -295,7 +295,6 @@ pub(crate) async fn list_mcp_api() -> impl IntoResponse {
         .map(|s| {
             serde_json::json!({
                 "name": s.name,
-                "scope": s.scope,
                 "target": s.target,
                 "enabled": s.enabled,
                 "connected": s.connected,

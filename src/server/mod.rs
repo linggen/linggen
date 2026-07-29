@@ -933,19 +933,16 @@ async fn prepare_server(
     {
         let manager = state.manager.clone();
         tokio::spawn(async move {
-            let user = manager.get_config_snapshot().await.mcp_servers;
-            // A repo's own .mcp.json counts too — which is what lets a project
-            // already set up for Claude Code or Cursor work here untouched.
-            let root = crate::paths::resolve_workspace_root(None).unwrap_or_default();
-            let (project, err) = crate::mcp_client::read_project_file(&root);
-            if let Some(err) = err {
-                warn!("project .mcp.json ignored — {err}");
-            }
-            let merged = crate::mcp_client::merge_scopes(&user, &project);
-            if merged.is_empty() {
+            // `[mcp_servers]` only. A repo's own .mcp.json is deliberately NOT
+            // read: a stdio entry is `command` + `args`, so honouring a file
+            // inside a cloned repo means launching whatever it names, and this
+            // daemon resolves one workspace root at boot — there is nowhere
+            // sound to put the approval prompt that would make it safe.
+            let configured = manager.get_config_snapshot().await.mcp_servers;
+            if configured.is_empty() {
                 return;
             }
-            crate::mcp_client::registry().connect_scoped(&merged).await;
+            crate::mcp_client::registry().connect_all(&configured).await;
         });
     }
 

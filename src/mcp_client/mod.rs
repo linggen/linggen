@@ -16,7 +16,5 @@ mod registry;
 mod transport;
 
 pub use client::{McpClient, McpTool};
-pub use config::{
-    merge_scopes, read_project_file, McpServerConfig, McpServersFile, Scope, Transport,
-};
+pub use config::{McpServerConfig, Transport};
 pub use registry::{is_mcp_tool, registry, AdvertisedTool, ServerStatus};

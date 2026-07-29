@@ -11,11 +11,8 @@ import { AlertTriangle, Check, Circle, Plug, RefreshCw, ShieldAlert } from 'luci
  * different and misleading thing.
  */
 
-type Scope = 'user' | 'project';
-
 interface McpServer {
   name: string;
-  scope: Scope;
   /** `stdio: npx …` or the URL — what you recognise it by. */
   target: string;
   enabled: boolean;
@@ -24,12 +21,6 @@ interface McpServer {
   tools: string[];
   tier: string;
 }
-
-const scopeBadge: Record<Scope, string> = {
-  user: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-200/50 dark:border-indigo-500/20',
-  project:
-    'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-200/50 dark:border-emerald-500/20',
-};
 
 export const McpTab: React.FC = () => {
   const [servers, setServers] = useState<McpServer[] | null>(null);
@@ -67,8 +58,9 @@ export const McpTab: React.FC = () => {
           Servers Linggen connects to for extra tools. Add them in{' '}
           <code className="text-xs">linggen.runtime.toml</code> under{' '}
           <code className="text-xs">[mcp_servers]</code>, in the same shape Claude
-          Code and Cursor use. A repo's own <code className="text-xs">.mcp.json</code>{' '}
-          is picked up automatically and shown here read-only.
+          Code and Cursor use — an entry copies across unchanged. A repo's own{' '}
+          <code className="text-xs">.mcp.json</code> is <strong>not</strong> read:
+          every server here is one you added.
         </p>
         <button
           onClick={load}
@@ -85,7 +77,7 @@ export const McpTab: React.FC = () => {
       )}
 
       {servers.map((s) => (
-        <ServerCard key={`${s.scope}:${s.name}`} server={s} />
+        <ServerCard key={s.name} server={s} />
       ))}
 
       {servers.some((s) => s.connected) && (
@@ -122,12 +114,6 @@ const ServerCard: React.FC<{ server: McpServer }> = ({ server: s }) => {
         <Plug size={14} className="opacity-60 shrink-0" />
         <span className="font-medium text-sm">{s.name}</span>
 
-        <span
-          className={`text-[10px] px-1.5 py-0.5 rounded border ${scopeBadge[s.scope]}`}
-        >
-          {s.scope === 'project' ? 'from this repo' : 'yours'}
-        </span>
-
         {state === 'connected' && (
           <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
             <Check size={12} /> connected · {s.tools.length} tool
@@ -153,13 +139,6 @@ const ServerCard: React.FC<{ server: McpServer }> = ({ server: s }) => {
       {s.error && (
         <div className="text-xs text-amber-600 dark:text-amber-400 break-all">
           {s.error}
-        </div>
-      )}
-
-      {s.scope === 'project' && (
-        <div className="text-xs opacity-50">
-          Defined by this project's <code>.mcp.json</code> — edit it there. A server
-          you also define yourself takes precedence.
         </div>
       )}
 
