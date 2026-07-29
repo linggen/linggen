@@ -140,12 +140,23 @@ works identically on the LAN and over the relay.
 
 ## One MCP, on purpose
 
-`ling-mem` serves its own `/mcp` with 13 tools, and **nothing connects to it.**
-That is a decision, not an oversight — see `mcp-spec.md` (2026-07-10): one MCP
-front door for every channel, because two servers offering the same memory
-tools confuses migrating users, and a memory-only install can't run the dream
-missions. The engine is the base install; `ling-mem` is the component it
-manages and proxies.
+`ling-mem` serves its own `/mcp` with 13 tools, and nothing of ours connects
+to it. It is **superseded as the promoted path, frozen as public API, and
+still maintained** — three separate facts, easily confused:
+
+- It was built for outside agents first (`3df4919`, 2026-05-27: "HTTP endpoint
+  serving 5 memory tools to CC/Codex/Cursor") — six weeks *before* the engine
+  had a `/mcp` at all.
+- `mcp-spec.md` (2026-07-10) then chose one front door for every channel, so
+  the engine's `/mcp` became the promoted one. That decided which we *promote*,
+  not that this one is dead.
+- 1.0.0 froze "the CLI / HTTP / **MCP** API surface" — removing it is a 2.0.
+  It is still being fixed (`memory_update` and `memory_harvest_day` exposed;
+  an `episodic` table-scope bug in `memory_search`).
+
+Whether anyone is on it is unknown — no telemetry, and it isn't advertised in
+the README or on the site. It shipped stable on 2026-05-27 and has been in
+every release since.
 
 Consequence: memory reaches an outside agent by the long route —
 `agent → ling /mcp → HTTP REST → ling-mem` — and the dispatch-normalisation
@@ -180,12 +191,13 @@ default. `ling` should write a discovery file the way `ling-mem` already does,
 `.mcp.json` should use `${LINGGEN_PORT:-9527}` expansion (supported in `url`),
 and the hardcoded constants should read rather than restate.
 
-**Remote endpoints.** A second machine (e.g. DS242) using the Mac's memory
-cannot be solved by discovery — a remote address has to be stated. Two shapes,
-undecided: through the engine's already-authenticated `/mcp` (consistent with
-the one-front-door decision, reuses device tokens and the relay), or `ling-mem`
-learning to bind and authenticate (keeps it standalone, but reopens a decision
-already made, and adds a second auth surface to secure).
+**Remote endpoints — decided 2026-07-29, see `mcp-client-spec.md`.** A second
+machine's `ling` reaches the first's memory by becoming an **MCP client** of
+its `/mcp`, exactly as Claude Code does: same URL, same `x-linggen-device`
+gate, same tools. No proxy route, no second auth system, and `ling-mem` never
+leaves loopback. What remains is that machine's engine-internal auto-recall,
+which runs before the model and so has no tool call to make — that one is
+`ling_mem_url` pointing at a reachable daemon.
 
 **Two daemons, one relay instance.** Both registrations are accepted, and the
 phone's offers are answered by whichever polls first. The second should be
