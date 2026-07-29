@@ -589,6 +589,22 @@ mod tests {
     }
 
     #[test]
+    /// The safety property phase 1 of the MCP client rests on: a tool from a
+    /// server the USER added is gated, and gated *by default* — not by a rule
+    /// someone has to remember to write for each one. Memory's ungated Chat
+    /// tier is precisely what it must never inherit.
+    #[test]
+    fn mcp_tools_are_admin_tier_never_chat() {
+        assert_eq!(
+            tool_action_tier("mcp__github__create_issue"),
+            PermissionMode::Admin
+        );
+        assert_eq!(tool_action_tier("mcp__ling-mem__memory_search"), PermissionMode::Admin);
+        // The contrast that makes the point.
+        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Chat);
+    }
+
+    #[test]
     fn test_tool_action_tier() {
         assert_eq!(tool_action_tier("Read"), PermissionMode::Read);
         assert_eq!(tool_action_tier("WebFetch"), PermissionMode::Read);

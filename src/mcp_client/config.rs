@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 /// `url` means streamable HTTP. That is how the ecosystem's files read, and
 /// asking the user to state a `type` they already implied is a knob with no
 /// decision behind it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpServerConfig {
     /// Executable for a stdio server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -46,6 +46,25 @@ pub struct McpServerConfig {
     /// losing how it was configured.
     #[serde(default = "crate::config::default_true")]
     pub enabled: bool,
+}
+
+/// Hand-written, NOT derived. `#[serde(default = ...)]` only applies when
+/// deserializing, so a derived `Default` would give `enabled: false` and
+/// every config built in Rust would be silently switched off while the same
+/// entry read from a file was on. Two defaults that disagree is the whole
+/// class of bug this arc exists to remove.
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            kind: None,
+            enabled: true,
+        }
+    }
 }
 
 /// How to reach a server, once derived.
@@ -133,6 +152,16 @@ mod tests {
             }
             other => panic!("expected stdio, got {other:?}"),
         }
+    }
+
+    /// The derived default said `enabled: false` while the same entry parsed
+    /// from a file said true — so a server configured in Rust never dialled.
+    #[test]
+    fn the_rust_default_and_the_file_default_agree() {
+        let from_rust = McpServerConfig::default().enabled;
+        let from_file: McpServerConfig = serde_json::from_str("{}").unwrap();
+        assert!(from_rust, "a server built in Rust must default to enabled");
+        assert_eq!(from_rust, from_file.enabled);
     }
 
     #[test]

@@ -23,6 +23,10 @@ pub fn oai_tool_definitions(allowed: Option<&HashSet<String>>) -> Vec<Value> {
         .into_iter()
         .map(|(name, description, parameters)| tool_def(&name, &description, parameters))
         .chain(plan_mode_schemas())
+        // Tools discovered from configured MCP servers. They are not `Tool`
+        // impls — they are found at runtime, so they join here, at the same
+        // seam plan mode uses.
+        .chain(mcp_schemas())
         .collect();
 
     match allowed {
@@ -49,6 +53,14 @@ pub fn oai_tool_definitions(allowed: Option<&HashSet<String>>) -> Vec<Value> {
             })
             .collect(),
     }
+}
+
+/// Tool schemas discovered from MCP servers, server-qualified.
+fn mcp_schemas() -> impl Iterator<Item = Value> {
+    crate::mcp_client::registry()
+        .advertised()
+        .into_iter()
+        .map(|t| tool_def(&t.qualified, &t.description, t.input_schema))
 }
 
 /// Plan-mode tool schemas. Not real `Tool` impls — they're parsed as

@@ -363,10 +363,19 @@ impl Tools {
             call.tool,
             summarize_tool_args(&call.tool, &call.args)
         );
-        match builtin::lookup(&call.tool) {
-            Some(tool) => tool.execute(self, call).await,
-            None => anyhow::bail!("unknown tool: {}", call.tool),
+        if let Some(tool) = builtin::lookup(&call.tool) {
+            return tool.execute(self, call).await;
         }
+        // A tool from a configured MCP server. Discovered at runtime, so it
+        // is not in the static registry — it is routed by its qualified
+        // `mcp__<server>__<tool>` name instead.
+        if crate::mcp_client::is_mcp_tool(&call.tool) {
+            let out = crate::mcp_client::registry()
+                .call(&call.tool, call.args.clone())
+                .await?;
+            return Ok(ToolResult::Success(out));
+        }
+        anyhow::bail!("unknown tool: {}", call.tool)
     }
 
     /// AskUser is async-native — it uses tokio oneshot + timeout + Mutex

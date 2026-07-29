@@ -926,6 +926,21 @@ async fn prepare_server(
         tokio::spawn(async move { tts.prewarm().await });
     }
 
+    // Connect the MCP servers this engine is a client of, off the hot path.
+    // Best effort by design (see mcp_client::registry): a third-party server
+    // that hangs costs its own tools and a log line, never a turn — so this
+    // is spawned rather than awaited, and startup never waits on it.
+    {
+        let manager = state.manager.clone();
+        tokio::spawn(async move {
+            let servers = manager.get_config_snapshot().await.mcp_servers;
+            if servers.is_empty() {
+                return;
+            }
+            crate::mcp_client::registry().connect_all(&servers).await;
+        });
+    }
+
     // Idle-shutdown watcher: when --idle-shutdown-secs is set, exit the
     // process after that many seconds with zero connected WebRTC peers.
     // Used by bundled apps so the daemon doesn't outlive its last client.

@@ -12,7 +12,9 @@
 
 mod client;
 mod config;
+mod registry;
 mod transport;
 
 pub use client::{McpClient, McpTool};
 pub use config::{McpServerConfig, McpServersFile, Transport};
+pub use registry::{is_mcp_tool, registry, AdvertisedTool};

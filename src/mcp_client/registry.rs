@@ -1,0 +1,288 @@
+//! Every connected server, and the tools they offer, for the life of the
+//! daemon.
+//!
+//! Connection is async and happens once at startup; the tool list is read
+//! synchronously on every turn (the advertised-schema path is not async).
+//! Hence a snapshot behind a lock rather than dialling a server to answer
+//! "what tools exist".
+//!
+//! Discovery is **best effort**. A server that is slow, dead, or misconfigured
+//! costs its own tools and a line in the log — never a turn. That is not a
+//! nicety: a user's MCP server is a third-party process we do not control, and
+//! one of them hanging must not be able to own the agent.
+
+use super::client::McpClient;
+use super::config::McpServerConfig;
+use anyhow::{anyhow, Result};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock, RwLock};
+use std::time::Duration;
+use tracing::{info, warn};
+
+/// How long one server gets to connect and list its tools before we move on
+/// without it. Startup is not the place to wait on someone else's process.
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The separator the ecosystem uses (`mcp__<server>__<tool>`). Kept rather
+/// than invented: it is what models have seen from every other host, and a
+/// familiar shape is one less thing for them to get wrong.
+const PREFIX: &str = "mcp__";
+
+/// A tool as the model sees it — server-qualified — plus what it takes to
+/// call it.
+#[derive(Debug, Clone)]
+pub struct AdvertisedTool {
+    /// `mcp__<server>__<tool>`.
+    pub qualified: String,
+    /// The server's own name for it, which is what goes back on the wire.
+    pub original: String,
+    pub server: String,
+    pub description: String,
+    pub input_schema: Value,
+}
+
+#[derive(Default)]
+struct State {
+    clients: BTreeMap<String, Arc<McpClient>>,
+    tools: Vec<AdvertisedTool>,
+}
+
+pub struct McpRegistry {
+    state: RwLock<State>,
+}
+
+static REGISTRY: LazyLock<McpRegistry> =
+    LazyLock::new(|| McpRegistry { state: RwLock::new(State::default()) });
+
+pub fn registry() -> &'static McpRegistry {
+    &REGISTRY
+}
+
+pub fn qualify(server: &str, tool: &str) -> String {
+    format!("{PREFIX}{server}__{tool}")
+}
+
+/// Is this a name we serve? Cheap enough to ask before a map lookup.
+pub fn is_mcp_tool(name: &str) -> bool {
+    name.starts_with(PREFIX)
+}
+
+impl McpRegistry {
+    /// Connect every enabled server and record what it offers.
+    ///
+    /// Replaces the previous set wholesale, so this doubles as reload.
+    /// Servers are dialled concurrently: a slow one shouldn't delay the rest.
+    pub async fn connect_all(&self, configs: &BTreeMap<String, McpServerConfig>) {
+        let dials = configs.iter().filter(|(_, c)| c.enabled).map(|(name, cfg)| {
+            let name = name.clone();
+            let cfg = cfg.clone();
+            async move {
+                match tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await {
+                    Ok(Ok(found)) => Some(found),
+                    Ok(Err(e)) => {
+                        warn!("MCP server `{name}` unavailable: {e:#}");
+                        None
+                    }
+                    Err(_) => {
+                        warn!("MCP server `{name}` did not answer in {DISCOVERY_TIMEOUT:?}");
+                        None
+                    }
+                }
+            }
+        });
+
+        let mut set = tokio::task::JoinSet::new();
+        for dial in dials {
+            set.spawn(dial);
+        }
+
+        let mut clients = BTreeMap::new();
+        let mut tools = Vec::new();
+        while let Some(joined) = set.join_next().await {
+            let Ok(Some(found)) = joined else { continue };
+            info!(
+                "MCP server `{}` connected — {} tool(s)",
+                found.name,
+                found.tools.len()
+            );
+            tools.extend(found.tools);
+            clients.insert(found.name, found.client);
+        }
+
+        let disabled = configs.values().filter(|c| !c.enabled).count();
+        if disabled > 0 {
+            info!("MCP: {disabled} server(s) disabled by config");
+        }
+
+        *self.state.write().unwrap() = State { clients, tools };
+    }
+
+    /// Everything currently on offer, for the advertised tool list.
+    pub fn advertised(&self) -> Vec<AdvertisedTool> {
+        self.state.read().unwrap().tools.clone()
+    }
+
+    /// Which server owns a qualified name, and what it calls the tool.
+    fn route(&self, qualified: &str) -> Option<(Arc<McpClient>, String)> {
+        let state = self.state.read().unwrap();
+        let tool = state.tools.iter().find(|t| t.qualified == qualified)?;
+        let client = state.clients.get(&tool.server)?.clone();
+        Some((client, tool.original.clone()))
+    }
+
+    /// Call a tool by its qualified name.
+    pub async fn call(&self, qualified: &str, args: Value) -> Result<String> {
+        let (client, original) = self
+            .route(qualified)
+            .ok_or_else(|| anyhow!("no MCP server offers `{qualified}`"))?;
+        client.call_tool(&original, args).await
+    }
+
+    /// Doctrine each connected server shipped in `initialize`, as
+    /// (server, instructions). This is how a server states its own rules
+    /// instead of the host hand-copying them.
+    pub fn instructions(&self) -> Vec<(String, String)> {
+        let state = self.state.read().unwrap();
+        state
+            .clients
+            .iter()
+            .filter_map(|(name, c)| c.instructions().map(|i| (name.clone(), i.to_string())))
+            .collect()
+    }
+}
+
+struct Discovered {
+    name: String,
+    client: Arc<McpClient>,
+    tools: Vec<AdvertisedTool>,
+}
+
+async fn discover(name: &str, cfg: &McpServerConfig) -> Result<Discovered> {
+    let client = Arc::new(McpClient::connect(name, cfg).await?);
+    let tools = client
+        .list_tools()
+        .await?
+        .into_iter()
+        .map(|t| AdvertisedTool {
+            qualified: qualify(name, &t.name),
+            original: t.name,
+            server: name.to_string(),
+            description: t.description,
+            input_schema: t.input_schema,
+        })
+        .collect();
+    Ok(Discovered { name: name.to_string(), client, tools })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn qualified_names_keep_two_servers_apart() {
+        assert_eq!(qualify("github", "search"), "mcp__github__search");
+        assert_ne!(qualify("github", "search"), qualify("sentry", "search"));
+        assert!(is_mcp_tool("mcp__github__search"));
+        assert!(!is_mcp_tool("Read"));
+        assert!(!is_mcp_tool("Memory_query"));
+    }
+
+    /// An unconnected registry answers rather than panics — the state every
+    /// test process and every fresh daemon starts in.
+    #[tokio::test]
+    async fn an_empty_registry_offers_nothing_and_routes_nowhere() {
+        let empty = McpRegistry { state: RwLock::new(State::default()) };
+        assert!(empty.advertised().is_empty());
+        assert!(empty.instructions().is_empty());
+        let err = empty.call("mcp__nope__x", serde_json::json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("no MCP server offers"), "{err}");
+    }
+
+    /// A configured-but-unreachable server must not stall or poison the set:
+    /// discovery is best effort, and the daemon carries on without it.
+    #[tokio::test]
+    async fn an_unreachable_server_costs_only_its_own_tools() {
+        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let mut cfgs = BTreeMap::new();
+        cfgs.insert(
+            "dead".to_string(),
+            McpServerConfig {
+                // Nothing listens here; connect fails fast rather than hanging.
+                url: Some("http://127.0.0.1:9/mcp".into()),
+                ..Default::default()
+            },
+        );
+        cfgs.insert(
+            "parked".to_string(),
+            McpServerConfig { url: Some("http://127.0.0.1:9/mcp".into()), enabled: false, ..Default::default() },
+        );
+        reg.connect_all(&cfgs).await;
+        assert!(reg.advertised().is_empty());
+    }
+
+    /// The whole chain in one process: config -> connect -> discover ->
+    /// advertise -> call. Populates the REAL global registry, which is what
+    /// the advertised-tool path reads, so this proves the wiring and not
+    /// just the pieces.
+    ///
+    /// Self-gating on a live ling-mem, like the client's own live test.
+    #[tokio::test]
+    async fn a_configured_server_reaches_the_model_s_tool_list() {
+        let up = reqwest::Client::new()
+            .get("http://127.0.0.1:9528/api/health")
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !up {
+            eprintln!("skipped: no ling-mem on 9528");
+            return;
+        }
+
+        let mut cfgs = BTreeMap::new();
+        cfgs.insert(
+            "ling-mem".to_string(),
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9528/mcp".into()),
+                ..Default::default()
+            },
+        );
+        registry().connect_all(&cfgs).await;
+
+        // Discovered, and server-qualified so two servers could both offer it.
+        let want = qualify("ling-mem", "memory_search");
+        assert!(
+            registry().advertised().iter().any(|t| t.qualified == want),
+            "advertised: {:?}",
+            registry().advertised().iter().map(|t| &t.qualified).collect::<Vec<_>>()
+        );
+
+        // Reaches the list the model is actually shown.
+        let defs = crate::engine::tools::json_schema::oai_tool_definitions(None);
+        let names: Vec<&str> = defs
+            .iter()
+            .filter_map(|d| d.get("function")?.get("name")?.as_str())
+            .collect();
+        assert!(names.contains(&want.as_str()), "not advertised to the model");
+        // …alongside the built-ins, not instead of them.
+        assert!(names.contains(&"Read"));
+
+        // And it dispatches by that qualified name.
+        let out = registry()
+            .call(&want, serde_json::json!({"query": "linggen", "limit": 1}))
+            .await
+            .expect("dispatch");
+        serde_json::from_str::<serde_json::Value>(&out).expect("rows should be JSON");
+
+        // The server's own doctrine came across on initialize — the hook
+        // phase 2 needs to stop hand-copying the memory protocol.
+        assert!(
+            registry().instructions().iter().any(|(s, i)| s == "ling-mem" && !i.is_empty()),
+            "expected ling-mem to ship instructions"
+        );
+
+        // Leave the global registry as we found it for other tests.
+        registry().connect_all(&BTreeMap::new()).await;
+    }
+}

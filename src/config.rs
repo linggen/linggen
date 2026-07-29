@@ -22,6 +22,11 @@ pub struct Config {
     /// Surfaced in Settings → General → Pet.
     #[serde(default)]
     pub pet: PetConfig,
+    /// MCP servers this engine connects to as a *client* — the same shape
+    /// every other host writes, so an entry copies across unchanged. See
+    /// `doc/mcp-client-spec.md`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub mcp_servers: std::collections::BTreeMap<String, crate::mcp_client::McpServerConfig>,
 }
 
 /// Settings for the desktop pet / companion (Yinyue today). The recall fields
@@ -540,6 +545,7 @@ impl Default for Config {
             },
             home_path: None,
             pet: PetConfig::default(),
+            mcp_servers: Default::default(),
         }
     }
 }
