@@ -19,6 +19,7 @@ flowchart LR
     cc["Claude Code<br/>linggen plugin"]
     codex["Codex<br/>linggen plugin"]
     hooks["plugin hooks<br/>autostart.sh · recall.sh"]
+    skill["ClawHub skill<br/>shared-memory"]
   end
 
   subgraph mac["The user's Mac"]
@@ -46,6 +47,7 @@ flowchart LR
   cc -->|mcp / http| ling
   codex -->|mcp / http| ling
   hooks -->|spawn| cli
+  skill -->|"Bash ling-mem verb"| cli
   cli -->|http| lingmem
   ling -->|http · /api/memory| lingmem
   lingmem -.->|"/mcp — built, unused by design"| lingmem
@@ -101,7 +103,28 @@ cannot point it elsewhere.
 | `ling` | HTTP REST | `POST /api/memory/<verb>`, URL from `[agent].ling_mem_url` |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json` |
 | Plugin hooks | spawn the CLI | `ling-mem search`, `days`, `status`, `start` |
+| ClawHub `shared-memory` skill | spawn the CLI | `Bash ling-mem <verb>` — every op, no exception |
 | Browser | HTTP | `/` — the Data Browser UI |
+
+### Four front doors to one store
+
+| Caller | Route | Needs the engine? |
+|:--|:--|:--|
+| Outside agent via the plugin | `/mcp` → `call_memory_http` → REST | yes |
+| Linggen's own agents | `Memory_query` / `Memory_write` → REST | yes |
+| ClawHub skill, plugin hooks, any agent with Bash | `ling-mem` CLI → REST | **no** |
+| `ling-mem`'s own `/mcp` | direct | no — but unused, see below |
+
+The CLI route is the engine-free channel and the reason it exists: a ClawHub
+user installs the skill, the skill installs the binary (`install-bin.sh
+--version '^1'`), and memory works with no `ling` on the machine at all. The
+same `SKILL.md` also lists `Memory_query`/`Memory_write` in `allowed-tools`,
+but that block is Linggen-only — "Claude Code / Codex ignore this block" — so
+one skill file takes the engine route on Linggen and the CLI route everywhere
+else.
+
+Worth holding next to the `mcp-spec.md` line that the engine is the base
+install for every channel: for the ClawHub channel today, it isn't.
 
 **Out of the Mac**
 
