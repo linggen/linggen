@@ -296,7 +296,7 @@ pub struct RoutingConfig {
     pub auto_fallback: bool,
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 

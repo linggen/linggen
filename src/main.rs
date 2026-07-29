@@ -6,6 +6,7 @@ mod engine;
 mod eval;
 mod extensions;
 mod logging;
+mod mcp_client;
 mod message;
 mod paths;
 mod prompts;
