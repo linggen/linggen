@@ -274,3 +274,39 @@ pub(crate) async fn get_claude_auth_status() -> impl IntoResponse {
         .into_response(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// MCP servers — what the Settings tab renders
+// ---------------------------------------------------------------------------
+
+/// `GET /api/mcp` — every configured MCP server and what became of it.
+///
+/// Deliberately includes servers that FAILED, with the reason. A server the
+/// engine tried and could not reach must be visible: absent reads as "not
+/// configured", which is a different and misleading thing. Same rule as the
+/// rest of the UI — show the server's state, never a prettier version of it.
+///
+/// `tier` rides along because a tab that lets you add a server without saying
+/// what its tools may do is a phantom: real capability, invisible.
+pub(crate) async fn list_mcp_api() -> impl IntoResponse {
+    let servers: Vec<serde_json::Value> = crate::mcp_client::registry()
+        .status()
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "scope": s.scope,
+                "target": s.target,
+                "enabled": s.enabled,
+                "connected": s.connected,
+                "error": s.error,
+                "tools": s.tools,
+                // Every tool from every added server sits here; it is not
+                // per-server today, and saying so is better than implying a
+                // per-server choice that does not exist.
+                "tier": "admin",
+            })
+        })
+        .collect();
+    axum::Json(serde_json::json!({ "servers": servers }))
+}

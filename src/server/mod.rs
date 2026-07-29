@@ -31,7 +31,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 use api::agents::{
     cancel_agent_run, cancel_tool_execution, clear_queued_messages,
@@ -933,11 +933,19 @@ async fn prepare_server(
     {
         let manager = state.manager.clone();
         tokio::spawn(async move {
-            let servers = manager.get_config_snapshot().await.mcp_servers;
-            if servers.is_empty() {
+            let user = manager.get_config_snapshot().await.mcp_servers;
+            // A repo's own .mcp.json counts too — which is what lets a project
+            // already set up for Claude Code or Cursor work here untouched.
+            let root = crate::paths::resolve_workspace_root(None).unwrap_or_default();
+            let (project, err) = crate::mcp_client::read_project_file(&root);
+            if let Some(err) = err {
+                warn!("project .mcp.json ignored — {err}");
+            }
+            let merged = crate::mcp_client::merge_scopes(&user, &project);
+            if merged.is_empty() {
                 return;
             }
-            crate::mcp_client::registry().connect_all(&servers).await;
+            crate::mcp_client::registry().connect_scoped(&merged).await;
         });
     }
 
@@ -1055,6 +1063,7 @@ async fn prepare_server(
         // Models & skills GETs — used by SharingTab and SkillsTab Settings pages directly.
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
+        .route("/api/mcp", get(api::config::list_mcp_api))
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
         .route("/api/config", get(get_config_api).post(update_config_api))

@@ -12,7 +12,7 @@
 //! one of them hanging must not be able to own the agent.
 
 use super::client::McpClient;
-use super::config::McpServerConfig;
+use super::config::{McpServerConfig, Scope};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -42,10 +42,28 @@ pub struct AdvertisedTool {
     pub input_schema: Value,
 }
 
+/// What became of one configured server. Kept whether or not it connected:
+/// a server the engine tried and failed to reach must be visible with its
+/// reason, not simply absent from the UI. Absent reads as "not configured",
+/// which is a different and misleading thing.
+#[derive(Debug, Clone)]
+pub struct ServerStatus {
+    pub name: String,
+    pub scope: Scope,
+    /// `stdio: npx …` or the URL — what the user needs to recognise it.
+    pub target: String,
+    pub connected: bool,
+    /// Why it isn't connected, when it isn't.
+    pub error: Option<String>,
+    pub tools: Vec<String>,
+    pub enabled: bool,
+}
+
 #[derive(Default)]
 struct State {
     clients: BTreeMap<String, Arc<McpClient>>,
     tools: Vec<AdvertisedTool>,
+    servers: Vec<ServerStatus>,
 }
 
 pub struct McpRegistry {
@@ -74,48 +92,78 @@ impl McpRegistry {
     /// Replaces the previous set wholesale, so this doubles as reload.
     /// Servers are dialled concurrently: a slow one shouldn't delay the rest.
     pub async fn connect_all(&self, configs: &BTreeMap<String, McpServerConfig>) {
-        let dials = configs.iter().filter(|(_, c)| c.enabled).map(|(name, cfg)| {
-            let name = name.clone();
-            let cfg = cfg.clone();
-            async move {
-                match tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await {
-                    Ok(Ok(found)) => Some(found),
-                    Ok(Err(e)) => {
-                        warn!("MCP server `{name}` unavailable: {e:#}");
-                        None
-                    }
-                    Err(_) => {
-                        warn!("MCP server `{name}` did not answer in {DISCOVERY_TIMEOUT:?}");
-                        None
-                    }
-                }
-            }
-        });
+        let scoped: Vec<_> = configs
+            .iter()
+            .map(|(n, c)| (n.clone(), c.clone(), Scope::User))
+            .collect();
+        self.connect_scoped(&scoped).await;
+    }
 
+    /// Connect a merged user+project set, remembering each server's scope.
+    pub async fn connect_scoped(&self, configs: &[(String, McpServerConfig, Scope)]) {
         let mut set = tokio::task::JoinSet::new();
-        for dial in dials {
-            set.spawn(dial);
+        for (name, cfg, scope) in configs.iter().cloned() {
+            set.spawn(async move {
+                let target = describe(&cfg);
+                if !cfg.enabled {
+                    return Attempt { name, scope, target, enabled: false, found: None, error: None };
+                }
+                let outcome = tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await;
+                let (found, error) = match outcome {
+                    Ok(Ok(f)) => (Some(f), None),
+                    Ok(Err(e)) => (None, Some(format!("{e:#}"))),
+                    Err(_) => (None, Some(format!("no answer in {DISCOVERY_TIMEOUT:?}"))),
+                };
+                Attempt { name, scope, target, enabled: true, found, error }
+            });
         }
 
         let mut clients = BTreeMap::new();
         let mut tools = Vec::new();
+        let mut servers = Vec::new();
         while let Some(joined) = set.join_next().await {
-            let Ok(Some(found)) = joined else { continue };
-            info!(
-                "MCP server `{}` connected — {} tool(s)",
-                found.name,
-                found.tools.len()
-            );
-            tools.extend(found.tools);
-            clients.insert(found.name, found.client);
+            let Ok(attempt) = joined else { continue };
+            let Attempt { name, scope, target, enabled, found, error } = attempt;
+            match found {
+                Some(found) => {
+                    info!("MCP `{name}` connected — {} tool(s)", found.tools.len());
+                    servers.push(ServerStatus {
+                        name: name.clone(),
+                        scope,
+                        target,
+                        connected: true,
+                        error: None,
+                        tools: found.tools.iter().map(|t| t.qualified.clone()).collect(),
+                        enabled,
+                    });
+                    tools.extend(found.tools);
+                    clients.insert(name, found.client);
+                }
+                None => {
+                    if let Some(e) = &error {
+                        warn!("MCP `{name}` unavailable: {e}");
+                    }
+                    servers.push(ServerStatus {
+                        name,
+                        scope,
+                        target,
+                        connected: false,
+                        error,
+                        tools: Vec::new(),
+                        enabled,
+                    });
+                }
+            }
         }
+        servers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let disabled = configs.values().filter(|c| !c.enabled).count();
-        if disabled > 0 {
-            info!("MCP: {disabled} server(s) disabled by config");
-        }
+        *self.state.write().unwrap() = State { clients, tools, servers };
+    }
 
-        *self.state.write().unwrap() = State { clients, tools };
+    /// Every configured server and what became of it — what the Settings tab
+    /// renders, including the ones that failed.
+    pub fn status(&self) -> Vec<ServerStatus> {
+        self.state.read().unwrap().servers.clone()
     }
 
     /// Everything currently on offer, for the advertised tool list.
@@ -149,6 +197,26 @@ impl McpRegistry {
             .iter()
             .filter_map(|(name, c)| c.instructions().map(|i| (name.clone(), i.to_string())))
             .collect()
+    }
+}
+
+struct Attempt {
+    name: String,
+    scope: Scope,
+    target: String,
+    enabled: bool,
+    found: Option<Discovered>,
+    error: Option<String>,
+}
+
+/// How a server is addressed, for the user to recognise it by.
+fn describe(cfg: &McpServerConfig) -> String {
+    match cfg.transport() {
+        Ok(super::config::Transport::Stdio { command, args, .. }) => {
+            if args.is_empty() { format!("stdio: {command}") } else { format!("stdio: {command} {}", args.join(" ")) }
+        }
+        Ok(super::config::Transport::Http { url, .. }) => url,
+        Err(why) => format!("misconfigured — {why}"),
     }
 }
 
