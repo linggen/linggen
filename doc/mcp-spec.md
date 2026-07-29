@@ -20,19 +20,37 @@ valuable.
 |:------|:-------|:-------|
 | `browser_*` | linggen-browser extension (control module) | live |
 | `x_*` | linggen-browser extension (x session reads) | live |
-| `memory_*` | ling-mem daemon (`:9528`) | live |
+| `memory_*` | ling-mem daemon (`:9528`) | live — **being removed**, see below |
 | `agent_*` | Linggen agents (delegate a task) | live |
 
-Decided (2026-07-10): **one MCP for all users — including memory-only users.**
-Two servers offering the same memory tools would confuse anyone migrating, and
-a ling-mem-only install can't run missions (dream, nightly condense) — the
-engine brings those. So the engine is the base install for every channel;
-ling-mem remains the memory component the engine manages and proxies, not a
-separately-promoted MCP.
+~~Decided (2026-07-10): one MCP for all users — including memory-only users.~~
+**REVERSED 2026-07-29** — see `mcp-client-spec.md`.
 
-## memory_* group
+The original reasoning was that two servers offering the same memory tools
+would confuse migrating users. That holds, and it is now the argument for the
+other answer: once `ling` becomes an MCP *client* and the plugin ships both
+servers, a proxied `memory_search` and a direct one are two tools with
+identical schemas, and the model picks between them arbitrarily. The way to
+have one memory tool is to serve it in one place.
 
-Thin proxy to the ling-mem daemon — no code moves between repos.
+So **`memory_*` leaves this front door.** Memory is served by ling-mem, whose
+`/mcp` has existed since 2026-05-27 and is part of the frozen 1.x contract;
+this door keeps `browser_*`, `x_*` and `agent_*`. A host adds the servers
+whose capabilities it wants.
+
+The old decision's second premise also weakened: a ling-mem-only install
+can't run the dream missions, which is still true, but that is an argument
+for shipping both binaries — which the plugin already does — not for hiding
+one behind the other.
+
+Deprecation, not a cut: `memory_*` has been served here since 1.4.0
+(2026-07-10), so keep the group with a notice for a window before removing
+it.
+
+## memory_* group — deprecated
+
+Thin proxy to the ling-mem daemon — no code moves between repos. Retained for
+a deprecation window; point new integrations at ling-mem's own `/mcp`.
 
 - Tools: `memory_search`, `memory_add`, `memory_get`, `memory_update`,
   `memory_delete`, `memory_list`. Names and schemas mirror ling-mem's MCP so

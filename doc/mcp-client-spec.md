@@ -18,37 +18,84 @@ MCP servers. Linggen connects to none. For a product whose premise is an OS
 for agents, that is an OS that cannot load third-party drivers. This is the
 gap to close.
 
-The agent `ling` is a model in a loop, exactly like those peers. Its tools
-belong on a model-facing protocol. That is a different question from how the
-*engine process* talks to its own components — see "What stays REST".
+## A model is needed to CHOOSE a tool, not to CALL one
+
+This is the load-bearing fact for everything below, and it is easy to get
+wrong (this spec's first draft did). MCP is JSON-RPC. The client is a
+program. Verified against the running daemon with nothing but curl — no
+agent, no model, no `initialize` handshake, because the server is stateless:
+
+```
+POST 127.0.0.1:9528/mcp
+{"jsonrpc":"2.0","id":1,"method":"tools/call",
+ "params":{"name":"memory_search","arguments":{"query":"…","limit":2}}}
+→ 2 rows
+```
+
+So anything in the engine can call an MCP tool, including code paths that run
+before the model. That is what makes auto-recall over MCP possible, and it
+removes the last reason for a separate memory address.
 
 ## Phase 1 — the generic client
 
 A user adds an MCP server the way they would in any other agent, and its
 tools appear in the session.
 
-- **Config** — `[[mcp_servers]]` in `linggen.runtime.toml`, mirroring Claude
-  Code's `.mcp.json` and Codex's `[mcp_servers]` so a user can copy an entry
-  across. Name, transport, command/args/env or url/headers.
+- **Config** — `[mcp_servers]` in `linggen.runtime.toml`, with the same field
+  names as the de-facto `mcpServers` JSON shape (`command`/`args`/`env`, or
+  `type`/`url`/`headers`) so an entry transliterates from Claude Code's
+  `.mcp.json` without thinking. MCP standardises the protocol, not where a
+  host stores its server list — CC uses `.mcp.json` + `~/.claude.json`, Codex
+  uses `[mcp_servers]`, Cursor uses `.cursor/mcp.json`. The shape is what
+  travels.
+- **Two scopes.** *User* scope is `linggen.runtime.toml`, fully editable.
+  *Project* scope is the workspace's own `.mcp.json`, read as-is — which
+  means any repo already set up for CC or Cursor works in Linggen with no
+  configuration at all.
 - **Transports** — stdio (what most servers ship) and streamable HTTP (what
-  ours ships). Both, or the client is only half useful.
-- **Protocol** — `initialize`, `tools/list`, `tools/call`, and the
-  notifications. `initialize.instructions` is not decoration: it is how a
-  server ships its own doctrine, and phase 2 depends on honouring it.
+  ours ships). Not WebRTC: the *client* picks the transport and we do not own
+  CC's, so a WebRTC dialect would be speakable by exactly one client, which
+  defeats the purpose of being a server.
+- **Protocol** — `initialize`, `tools/list`, `tools/call`, notifications.
+  `initialize.instructions` is not decoration; phase 2 depends on honouring
+  it.
 - **Tool surface** — discovered tools join the session's tool list,
   name-prefixed by server so two servers can both offer `search`.
-- **Permission** — user-added tools land **inside** `permission-spec.md`, not
-  beside it. An external server that writes files or calls an API is exactly
-  what the permission model is for. They are never Chat-tier.
 - **Failure** — a server that is slow, dead, or never starts must not wedge a
   turn. Discovery is best-effort per session; a missing server means missing
   tools and a line saying so, never a hang.
+
+### The permission question
+
+`Memory_query` / `Memory_write` are **Chat-tier — ungated, no prompts**
+(`engine/permission/model.rs:653`). A user-added MCP server must not be: its
+tools can write files and call APIs, which is precisely what
+`permission-spec.md` exists for.
+
+So the permission model needs to tell the built-in server from added ones.
+Decide this deliberately — it is the one part of this work that is a design
+choice rather than a mechanical change.
+
+### The Settings tab
+
+Config, server struct and web form are three views of one schema, the same
+way `[[models]]` and `[[agents]]` already are (`POST /api/config` →
+`update_config_api`). An McpTab follows that pattern. Three things it must
+show, or it violates the show-everything rule:
+
+- **Project-scope servers**, read-only and labelled with their source. The
+  engine loading a server the UI never shows is hidden state. Linggen must
+  not rewrite a file the repo owns.
+- **The permission tier per server.** A tab that adds a server without
+  showing what it may do is a phantom: real capability, invisible.
+- **Live connection state** — connected / failed / N tools discovered, read
+  from the client. Not a green dot meaning "configured".
 
 ## Phase 2 — ling-mem as the built-in server
 
 Memory stops being a hand-built special case (`engine/tools/memory_tool.rs`,
 `Memory_query` / `Memory_write`) and becomes the MCP server that ships
-enabled. One mechanism for every tool.
+enabled — one entry in `[mcp_servers]`, one mechanism for every tool.
 
 **Why it is worth doing beyond tidiness:** the memory doctrine is currently
 hand-copied across three surfaces that drift — ling-mem's `mcp.rs`
@@ -57,34 +104,68 @@ and the skill's `SKILL.md`. A client that honours `initialize.instructions`
 receives the doctrine from the server, and the engine stops carrying its own
 copy. Three surfaces become two.
 
-It also makes memory replaceable — point at a different memory server — which
-is what "platform" has to mean.
+It also makes memory replaceable — point at a different memory server —
+which is what "platform" has to mean.
 
-### What stays REST
+### Auto-recall
 
-Auto-recall injects recalled rows into the prompt **before the model runs**.
-There is no model, so there is no tool call, so it cannot be MCP. That path
-stays `call_memory_http` against `ling_mem_url`, and `ling_mem_url` does not
-go away.
+Auto-recall injects rows into the prompt before the model runs. It is not a
+tool *choice*, but it is a tool *call*, so it goes through the engine's own
+client like everything else:
 
-Usefully, per-skill scoping (`memory-context`, which CFO relies on) lives on
-exactly that path — `server/chat/runtime.rs:389`, `server/chat/handler.rs:519`
-— not on the tool call. So scoping is not part of the migration.
+```
+1. engine takes the user's prompt
+2. its MCP client → tools/call memory_search
+     { query: <prompt>, contexts: [...], limit: K }
+3. → the memory server in [mcp_servers]
+4. filter by min_score, inject top-K
+5. model runs
+```
 
-The same split already exists in the Claude Code plugin, and is worth copying
-rather than fighting: `hooks/recall.sh` **reads** over the `ling-mem` CLI,
-then injects text telling the model to **write** through the MCP verbs. A hook
-has no model; the model has no shell. Each uses what it can reach.
+Local and remote are the same code with a different URL. Two details:
 
-### The permission question
+- **`contexts` already exists** in ling-mem's `memory_search` schema, so
+  per-skill scoping (`memory-context`, which CFO relies on) survives intact.
+- **`min_score` does not.** Either add it to the schema or filter client-side
+  on the `hybrid_score` rows already carry.
 
-`Memory_query` / `Memory_write` are **Chat-tier — ungated, no prompts**
-(`engine/permission/model.rs:653`). A user-added MCP server must not be. So
-the permission model needs to distinguish the built-in server from added
-ones, or every memory write starts prompting.
+**Fail soft is a hard requirement.** If the memory server is unreachable,
+recall injects nothing, says so once, and the turn proceeds. Never a hang,
+never a failed turn — the engine has `--idle-shutdown-secs 300`, so an absent
+daemon is an ordinary condition, not an exception.
 
-Decide this deliberately. It is the one part of phase 2 that is a design
-choice rather than a mechanical change.
+### `memory_*` is REMOVED from ling's `/mcp`
+
+One memory service, not two. The tools come from ling-mem, so ling-mem is
+where they are served — a host that wants memory adds ling-mem, a host that
+wants the browser adds ling.
+
+A proxy on the engine was considered and rejected: with the plugin shipping
+both servers, a proxied `memory_search` and a direct one appear as two
+distinguishable tools with identical schemas, and the model picks between
+them arbitrarily. That is exactly the duplication `mcp-spec.md` warned about,
+self-inflicted.
+
+**Breaking change, deliberately.** `memory_*` has been on the engine's
+`/mcp` since 1.4.0 (2026-07-10). Anyone who wired the engine's front door for
+memory must add the second server. Keep the group for a deprecation window
+with a notice rather than cutting it dead.
+
+**This reverses the 2026-07-10 decision in `mcp-spec.md`** ("one MCP for all
+users … two servers offering the same memory tools would confuse anyone
+migrating"). The reversal belongs on that page too — a doc that still asserts
+the opposite is the hidden-state failure, not a stale comment.
+
+### Where the dispatch fixes live
+
+`apply_dispatch_fixes` exists twice; ling-mem's copy says it is "ported from"
+the engine's `memory_tool.rs`. The right single home is **ling-mem's MCP
+layer** — those fixes exist because *models* fill arguments in sloppily
+(`until: ""`, empty arrays narrowing to nothing). CLI arguments come from
+clap, typed, from a human; REST does not need them.
+
+Once the proxy lands, the engine's copy has no callers left — auto-recall
+having moved to MCP too — so it is a deletion, not a migration.
 
 ### Migration
 
@@ -92,17 +173,42 @@ Mechanical, but it touches a lot: `Memory_query` / `Memory_write` become
 `memory_search` / `memory_add` / … across `agents/*.md` tool lists,
 `prompts/system-prompt.toml`, `SKILL.md`, and CFO's `allowed-tools`.
 
-## What this makes unnecessary
+And `[agent].ling_mem_url` must be **resolved, not left**. After phase 2 its
+only consumer was auto-recall, which now goes through `[mcp_servers]`. If it
+is dead, delete it — never leave a knob with no consumer.
 
-**A remote-memory gateway on the engine.** Once ling is an MCP client, a
-second machine's ling connects to the first machine's `/mcp` exactly the way
-Claude Code does — same URL, same `x-linggen-device` gate, same `memory_*`
-tools. No proxy route, no exposing `ling-mem` beyond loopback, no second auth
-system. An `/api/memory/*` passthrough would be dead code the day this lands;
-do not build it.
+## Remote memory — a second machine on the LAN
 
-Its engine-internal auto-recall is a separate question, answered by
-`ling_mem_url` pointing at a reachable daemon — see `network-spec.md`.
+A second machine's `ling` reaches the store by being an MCP client of
+**ling-mem directly**:
+
+```
+DS242 ling ──LAN──► Mac ling-mem :9528/mcp   (x-linggen-device)
+```
+
+LAN is the scope. No relay, no VPN, no tunnel, no proxy hop.
+
+**The auth is not new.** The engine's LAN gate is small — loopback passes,
+`/api/health` and `/api/pair/*` pass, everything else needs an
+`x-linggen-device` header matching a `secret` in
+`~/.linggen/paired-devices.json` (`server/mod.rs`, `api/pair::is_valid_device_token`).
+Both daemons live on the same machine under the same `~/.linggen`, so
+**ling-mem validates against the same file**. Pair a machine once, through
+the engine's existing screen-confirm flow, and the token works for both.
+
+Safe defaults, so nobody exposes a biography by accident:
+
+- ling-mem binds **loopback unless explicitly told otherwise**.
+- Binding non-loopback **requires the token file to exist**; refuse to start
+  otherwise rather than serve the store open on the Wi-Fi.
+- A memory-only user never binds wide, so never needs the gate at all.
+
+**This kills the `/api/memory/*` gateway** proposed earlier in
+`network-spec.md`. Do not build it.
+
+## What is deliberately not decided
+
+- **Hub mode** — republishing every configured server on ling's `/mcp`.
 
 ## Sequencing
 
@@ -110,3 +216,7 @@ Phase 1 pays off the day it lands: GitHub, Playwright, Sentry, Figma and
 every other MCP server become reachable from Linggen. Phase 2 is a follow-on.
 Bundled together, a memory migration blocks a capability that stands on its
 own.
+
+Collapsing `apply_dispatch_fixes` to one copy is **prep for phase 2**, not
+follow-up: the engine should not start depending on ling-mem's MCP while that
+layer is still one of two.

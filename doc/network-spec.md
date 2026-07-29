@@ -68,6 +68,56 @@ flowchart LR
   ling -->|https · register + poll| relay
 ```
 
+## Where this is going
+
+Decided 2026-07-29, not built — see `mcp-client-spec.md`. `ling` becomes an
+MCP **client**, `ling-mem` becomes the one memory server, and `memory_*`
+leaves the engine's front door so no tool is served twice.
+
+```mermaid
+flowchart LR
+  subgraph agents2["Coding agents"]
+    cc2["Claude Code · Codex<br/>linggen plugin"]
+    hooks2["recall.sh"]
+  end
+
+  subgraph mac2["The user's Mac"]
+    ling2["ling · engine<br/>0.0.0.0:9527"]
+    lingmem2["ling-mem<br/>:9528 · loopback by default"]
+    cli2["ling-mem CLI"]
+  end
+
+  subgraph ds["DS242 · same LAN"]
+    ds242["ling · engine"]
+  end
+
+  third["third-party MCP servers<br/>github · playwright · sentry"]
+
+  cc2 -->|"mcp — browser_* x_* agent_*"| ling2
+  cc2 -->|"mcp — memory_*"| lingmem2
+  hooks2 -->|spawn| cli2
+  cli2 -->|http| lingmem2
+  ling2 -->|"mcp client — tools + auto-recall"| lingmem2
+  ling2 -->|"mcp client"| third
+  ds242 -->|"mcp — x-linggen-device"| lingmem2
+```
+
+What changes from the diagram above:
+
+- **`ling` gains a client.** Today it can only be driven by MCP; here it
+  consumes any server the user adds, and reaches memory the same way.
+- **`memory_*` leaves `ling`'s `/mcp`.** The plugin wires two servers, each
+  tool served in exactly one place.
+- **Auto-recall goes over MCP too** — a tool *call* needs no model, only a
+  client — so recall works across machines with the same code.
+- **A second machine talks to `ling-mem` directly**, gated by the same
+  `x-linggen-device` token store both daemons already share. `ling-mem` still
+  binds loopback unless explicitly opened, and refuses to open without that
+  token file.
+- **`recall.sh` is unchanged.** A `UserPromptSubmit` hook has no model and
+  must answer synchronously, so it stays on the CLI. That is the one path
+  that can never be MCP, on any host.
+
 ## The two daemons
 
 | | `ling` (engine) | `ling-mem` (memory) |
