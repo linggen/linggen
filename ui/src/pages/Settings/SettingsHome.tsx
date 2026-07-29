@@ -6,6 +6,7 @@ import { ModelsTab } from '../../components/ModelsTab';
 import { AgentsTab } from '../../components/AgentsTab';
 import { SkillsTab } from '../../components/SkillsTab';
 import { ToolsTab } from '../../components/ToolsTab';
+import { McpTab } from '../../components/McpTab';
 import { GeneralTab } from '../../components/GeneralTab';
 import { PhoneTab } from '../../components/PhoneTab';
 import { MissionPage } from '../../components/MissionPage';
@@ -22,6 +23,7 @@ const tabs: { key: ManagementTab; label: string }[] = [
   { key: 'agents', label: 'Agents' },
   { key: 'skills', label: 'Skills' },
   { key: 'tools', label: 'Tools' },
+  { key: 'mcp', label: 'MCP' },
   { key: 'mission', label: 'Mission' },
   { key: 'storage', label: 'Storage' },
   { key: 'room', label: 'Room' },
@@ -171,6 +173,7 @@ export const SettingsHome: React.FC = () => {
           </div>
         )}
 
+        {activeTab === 'mcp' && <McpTab />}
         {activeTab === 'agents' && <AgentsTab projectRoot={projectRoot} />}
 
         {activeTab === 'skills' && (
