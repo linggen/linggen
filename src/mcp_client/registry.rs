@@ -371,6 +371,66 @@ mod tests {
         registry().connect_all(&BTreeMap::new()).await;
     }
 
+    /// Auto-recall's exact call shape, including `min_score` — which is
+    /// deliberately NOT in `memory_search`'s advertised schema, because a
+    /// model guessing a relevance threshold narrows recall to nothing.
+    ///
+    /// That makes it the one argument whose passthrough isn't covered by the
+    /// schema, so it is the one worth a test: if ling-mem's MCP layer ever
+    /// dropped unadvertised fields, recall would silently lose its floor and
+    /// inject weak rows.
+    #[tokio::test]
+    async fn auto_recalls_min_score_survives_the_mcp_passthrough() {
+        let up = reqwest::Client::new()
+            .get("http://127.0.0.1:9528/api/health")
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !up {
+            eprintln!("skipped: no ling-mem on 9528");
+            return;
+        }
+
+        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let mut cfgs = BTreeMap::new();
+        cfgs.insert(
+            "memory".to_string(),
+            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), ..Default::default() },
+        );
+        reg.connect_all(&cfgs).await;
+        let tool = qualify("memory", "memory_search");
+
+        let rows = |v: &str| -> usize {
+            serde_json::from_str::<Value>(v).ok()
+                .and_then(|j| j.as_array().map(|a| a.len()))
+                .unwrap_or(0)
+        };
+
+        let loose = reg
+            .call(&tool, serde_json::json!({"query": "linggen memory", "limit": 10}))
+            .await
+            .expect("dispatch");
+        // A threshold almost nothing clears. Not asserted to be *zero*: the
+        // hybrid score is cosine plus a keyword boost, so a row that matches
+        // the query closely can saturate near 1.0. What must hold is that the
+        // floor bit at all — if the field were dropped on the way through,
+        // this would come back identical to the loose call.
+        let strict = reg
+            .call(&tool, serde_json::json!({"query": "linggen memory", "limit": 10, "min_score": 0.999}))
+            .await
+            .expect("dispatch");
+
+        assert!(rows(&loose) > 1, "need a few rows for this to mean anything");
+        assert!(
+            rows(&strict) < rows(&loose),
+            "the floor did nothing — loose={} strict={}",
+            rows(&loose),
+            rows(&strict)
+        );
+    }
+
     /// The gate reads the owning server's declaration. Two servers, one
     /// ungated, so a pass can't come from a global default.
     #[tokio::test]

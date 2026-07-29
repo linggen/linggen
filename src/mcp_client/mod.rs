@@ -17,4 +17,4 @@ mod transport;
 
 pub use client::{McpClient, McpTool};
 pub use config::{with_builtin, McpServerConfig, Transport, BUILTIN_MEMORY};
-pub use registry::{is_mcp_tool, registry, AdvertisedTool, ServerStatus};
+pub use registry::{is_mcp_tool, qualify, registry, AdvertisedTool, ServerStatus};

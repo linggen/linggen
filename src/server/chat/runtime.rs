@@ -200,6 +200,26 @@ fn format_recall_for_model(rows: &[RecallRow]) -> String {
     out
 }
 
+/// Say once, at WARN, that recall is running without memory — then drop to
+/// DEBUG for the rest of the process.
+///
+/// Silence would be wrong: the turn still succeeds, so nothing else tells the
+/// user their agent has stopped remembering. Repeating it every turn would be
+/// worse, because a memory server that is down stays down and the line would
+/// bury the log.
+fn warn_recall_unreachable(why: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SAID: AtomicBool = AtomicBool::new(false);
+    if SAID.swap(true, Ordering::Relaxed) {
+        tracing::debug!("auto-recall: still unreachable — {why}");
+    } else {
+        tracing::warn!(
+            "auto-recall: memory server unreachable, injecting nothing — {why}. \
+             Turns continue without recall until it is back."
+        );
+    }
+}
+
 /// Per-turn semantic recall against the active memory provider.
 ///
 /// Bails silently on any path that could block the user: short prompts,
@@ -213,7 +233,6 @@ async fn auto_recall_memory(
     min_score: Option<f32>,
     top_k: usize,
     contexts: Option<Vec<String>>,
-    ling_mem_url: &str,
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
@@ -227,10 +246,11 @@ async fn auto_recall_memory(
         return None;
     }
 
-    // Memory is engine-built-in now; no `active_provider("memory")`
-    // gate. If the daemon isn't up, the dispatch call's autostart
-    // (`ling-mem start`) will spin it up; if even that fails, the
-    // dispatch errors out and recall silently bails below.
+    // Memory is a configured MCP server now; no `active_provider("memory")`
+    // gate. If it isn't reachable, the call errors and recall bails below —
+    // fail-soft is a hard requirement here, since the engine runs with
+    // `--idle-shutdown-secs`, so an absent daemon is an ordinary condition
+    // and not an exception.
 
     let project_name: Option<String> = session_id
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
@@ -244,11 +264,14 @@ async fn auto_recall_memory(
     // way the daemon drops weak rows before they cross the wire; there's no
     // separate aggregate gate.
     let mut args = serde_json::json!({
-        "verb": "search",
         "query": trimmed,
         "limit": FETCH_LIMIT,
     });
     if let Some(s) = min_score {
+        // Not in `memory_search`'s advertised schema, on purpose — a model
+        // guessing a relevance threshold narrows recall to nothing. The REST
+        // handler behind the MCP loopback takes it, and this caller is a
+        // program, not a model.
         args["min_score"] = serde_json::json!(s);
     }
     // Scoped per-app recall: restrict the search to this namespace on the
@@ -261,23 +284,30 @@ async fn auto_recall_memory(
         "auto-recall: min_score={:?} top_k={} contexts={:?}",
         min_score, top_k, contexts
     );
-    let dispatch = crate::engine::tools::memory_tool::call_memory_http(
-        ling_mem_url,
-        "Memory_query",
-        args,
-    );
-    let result = match tokio::time::timeout(RECALL_BUDGET, dispatch).await {
+    // Over the engine's own MCP client, the same way an agent's tool call
+    // reaches it. A model is needed to CHOOSE a tool, not to CALL one — so
+    // running before the model is no obstacle, and local and remote become
+    // the same code with a different URL.
+    let qualified = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "memory_search");
+    let dispatch = crate::mcp_client::registry().call(&qualified, args);
+    let raw = match tokio::time::timeout(RECALL_BUDGET, dispatch).await {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
-            tracing::debug!("auto-recall: dispatch failed: {e}");
+            warn_recall_unreachable(&e.to_string());
             return None;
         }
         Err(_) => {
-            tracing::debug!("auto-recall: dispatch exceeded {}s budget", RECALL_BUDGET.as_secs());
+            warn_recall_unreachable(&format!(
+                "no answer in {}s", RECALL_BUDGET.as_secs()
+            ));
             return None;
         }
     };
 
+    let Ok(result) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        tracing::debug!("auto-recall: memory_search returned non-JSON");
+        return None;
+    };
     let rows = result.as_array()?;
     if rows.is_empty() {
         return None;
@@ -383,7 +413,6 @@ pub(super) async fn push_user_turn_with_recall(
             engine.cfg.memory_inject_min_score,
             engine.cfg.memory_recall_count,
             None,
-            &engine.cfg.ling_mem_url,
         )
         .await
     } else if let Some(ctx_tag) = engine.prompt_profile.memory_context.clone() {
@@ -400,7 +429,6 @@ pub(super) async fn push_user_turn_with_recall(
                 .or(engine.cfg.memory_inject_min_score),
             engine.prompt_profile.memory_recall_count.unwrap_or(3),
             Some(vec![ctx_tag]),
-            &engine.cfg.ling_mem_url,
         )
         .await
     } else {
