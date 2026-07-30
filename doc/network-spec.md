@@ -95,7 +95,7 @@ not memory-server ones.
 | | `ling` (engine) | `ling-mem` (memory) |
 |:--|:--|:--|
 | Binds | `0.0.0.0:9527` | `127.0.0.1:9528` — loopback unless `--host`, which is refused without paired devices |
-| Address from | `~/.linggen/config/linggen.runtime.toml` `[server]` | compiled `daemon::DEFAULT_PORT`, or `--port` |
+| Address from | `[server].url` in `~/.linggen/config/linggen.runtime.toml` | compiled `daemon::DEFAULT_PORT`, or `--port` |
 | Publishes where it bound | — | `~/.linggen/memory/linggen-memory/daemon.json` |
 | Started by | `Linggen.app` shell (LaunchAgent), `--idle-shutdown-secs 300` | `ling-mem start`, plugin autostart, or first CLI use |
 | Outbound | LLM providers, `linggen.dev` relay | none — embeddings run in-process |
@@ -195,15 +195,34 @@ the tools.
 
 ## Where an address comes from, today
 
-| Consumer | Reads | Overridable |
+Two different questions, and conflating them is the bug that keeps recurring:
+**serve at** is a machine's declaration about its own daemon; **connect to** is
+a host's declaration about where it goes looking. On the machine that runs
+everything they coincide, which is exactly what makes them easy to merge by
+mistake — on a second machine they are facts about different computers.
+
+**Serve at**
+
+| Daemon | Reads | Notes |
 |:--|:--|:--|
-| `ling` server bind | `linggen.runtime.toml` `[server]` | yes |
-| plugin `.mcp.json` | hardcoded `127.0.0.1:9527` | **no** |
-| plugin `autostart.sh` | `LINGGEN_PORT`, default `9527` | env only |
-| `ling` → `ling-mem` (MCP + REST) | `[agent].ling_mem_url` | yes |
+| `ling` | `[server].url` in `linggen.runtime.toml` | `--port` / `LINGGEN_PORT` override; legacy `host`+`port` still parse and say so at startup |
+| `ling-mem` | `--port` / `--host` | no config file; publishes `daemon.json` |
+
+Nothing else asserts a bind address. The app shell and the plugin's autostart
+both **read** `[server].url` and no longer pass `--port` — they used to assert
+their own default, which is how a user's `[server].port` could be set and
+ignored, and how the 9898 stray daemon was launched.
+
+**Connect to**
+
+| Client | Reads | Notes |
+|:--|:--|:--|
+| plugin hooks | `~/.linggen/client.json` | env > file > default, via `hooks/mcp.sh` |
+| plugin `.mcp.json` | `${LINGGEN_HOST/PORT}`, `${LING_MEM_HOST/PORT}` | CC expands at startup, **before** any hook — so it can only take env; `config.sh` mirrors `client.json` into `settings.json` `env` |
+| `ling` → `ling-mem` | `[agent].ling_mem_url` | full URL, so it can already point off-machine |
 | `ling` `cli/status.rs` | `DEFAULT_LING_MEM_PORT` const | **no** — ignores the above |
 | `ling` permission check | hardcoded `127.0.0.1:9528` | **no** |
-| `ling-mem` CLI | `daemon.json` | n/a — discovery |
+| `ling-mem` CLI | `daemon.json` | discovery; local only by construction |
 | `linggen-vscode` | its own `linggen.dashboard.port` | yes |
 
 `linggen/src/config.rs` carries `DEFAULT_LING_MEM_PORT` with a comment saying
@@ -215,11 +234,11 @@ relay instance and split the phone's traffic.
 
 ## Open
 
-**One source of truth for addresses.** Resolution order for every consumer:
-env → a shared `endpoints.toml` → the daemon's own discovery file → compiled
-default. `ling` should write a discovery file the way `ling-mem` already does,
-`.mcp.json` should use `${LINGGEN_PORT:-9527}` expansion (supported in `url`),
-and the hardcoded constants should read rather than restate.
+**The last two restatements.** `cli/status.rs` and the permission check still
+carry a hardcoded ling-mem address instead of reading `[agent].ling_mem_url`.
+And `ling` still publishes no discovery file the way `ling-mem` does — which is
+what a client would read to find a *running* daemon rather than a configured
+one.
 
 **A second machine, end to end.** Every piece is built — the plugin's two
 server entries, hooks over curl, `autostart.sh` skipping the binary on a remote

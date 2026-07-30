@@ -289,13 +289,14 @@ async fn main() -> Result<()> {
     // Default (bare `ling`) or --daemon: start background daemon + open browser
     if cli.daemon || (!cli.web && cli.cmd.is_none()) {
         let daemon_host = global_host.clone().or_else(|| {
-            // Use config host if it's not the default 127.0.0.1
-            let h = &config.server.host;
-            if h != "127.0.0.1" { Some(h.clone()) } else { None }
+            // Pass the configured host on only when it isn't the default —
+            // `start_agent` treats `None` as "whatever the config says".
+            let h = config.server.host();
+            (h != "127.0.0.1").then_some(h)
         });
         cli::daemon::start_agent(&config, global_port, daemon_host, global_root).await?;
         // Open browser on macOS
-        let port = global_port.unwrap_or(config.server.port);
+        let port = global_port.unwrap_or(config.server.port());
         let url = format!("http://localhost:{}", port);
         #[cfg(target_os = "macos")]
         {
@@ -349,8 +350,11 @@ async fn main() -> Result<()> {
         // --web (foreground mode)
         None => {
             let ws_root = crate::paths::resolve_workspace_root(global_root)?;
-            let port = global_port.unwrap_or(config.server.port);
-            let host = global_host.clone().unwrap_or_else(|| config.server.host.clone());
+            let (cfg_host, cfg_port) = config.server.addr();
+            let port = global_port.unwrap_or(cfg_port);
+            let host = global_host.clone().unwrap_or(cfg_host);
+            // Captured before the config moves into the manager below.
+            let migrated_legacy_addr = config.server.migrated_legacy_addr;
 
             // Install/update built-in agent specs to ~/.linggen/agents/
             if let Err(e) = cli::init::install_default_agents() {
@@ -407,7 +411,13 @@ async fn main() -> Result<()> {
                     tracing::info!("Config File: (default)");
                 }
                 tracing::info!("Workspace Root: {}", ws_root.display());
-                tracing::info!("Server Port: {}", port);
+                tracing::info!("Server Address: {host}:{port}");
+                if migrated_legacy_addr {
+                    tracing::info!(
+                        "[server] host/port are superseded by `url = \"{host}:{port}\"` \
+                         — still honoured, write the one field when convenient"
+                    );
+                }
                 if let Some(dir) = log_dir.as_ref() {
                     tracing::info!("Log Directory: {}", dir.display());
                 }

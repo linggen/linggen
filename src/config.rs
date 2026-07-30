@@ -138,19 +138,103 @@ pub struct AgentSpecRef {
 /// The daemon's default listen port. Single source of truth — every engine
 /// consumer of the default (CLI, config default, install/autostart scripts,
 /// clients) resolves to this rather than a scattered literal. Override per
-/// install via `[server].port` in linggen.toml or `--port`.
+/// install via `[server].url` in linggen.toml or `--port`.
 pub const DEFAULT_PORT: u16 = 9527;
 
+/// Where this machine's daemon listens.
+///
+/// **This is the SERVE declaration** — where the engine on this machine binds.
+/// It is not where a *client* goes looking: a second machine reaching this one
+/// has its own client config, and reading a server's file to find a server on
+/// another host is how those two facts get confused.
+///
+/// One field, `url`, because a listen address is one fact. It was `host` +
+/// `port`, two fields that could only ever be used together, and every launcher
+/// that wanted "the address" had to reassemble them — which is how three of them
+/// ended up assembling their own default instead.
+///
+/// `host` and `port` still parse so an existing install keeps working; when
+/// present without `url` they are used, logged once as superseded, and replaced
+/// by `url` the next time the config is written.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerConfig {
-    #[serde(default = "default_server_port")]
-    pub port: u16,
-    #[serde(default = "default_server_host")]
-    pub host: String,
+    /// `host:port` — e.g. `127.0.0.1:9527`, or `0.0.0.0:9527` to accept the LAN.
+    /// A `http://` prefix is accepted and ignored, since that is how the same
+    /// address is written everywhere it is *consumed*.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Superseded by `url`. Kept readable, never written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Superseded by `url`. Kept readable, never written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+
+    /// Set at load when a legacy pair was folded into `url`. Runtime-only —
+    /// never read from or written to the file — so the startup banner can say
+    /// so at a point where the log actually goes somewhere.
+    #[serde(skip)]
+    pub migrated_legacy_addr: bool,
 }
 
-fn default_server_port() -> u16 {
-    DEFAULT_PORT
+impl ServerConfig {
+    /// The bind address this config asks for, as `(host, port)`.
+    ///
+    /// `url` wins; then the legacy pair; then the defaults. Resolved in one
+    /// place so no caller has to know the precedence — the reason the two-field
+    /// shape drifted is that each caller reassembled it privately.
+    pub fn addr(&self) -> (String, u16) {
+        if let Some(raw) = self.url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(parsed) = parse_addr(raw) {
+                return parsed;
+            }
+            tracing::warn!(
+                "[server].url = {raw:?} is not host:port — falling back to {}:{DEFAULT_PORT}",
+                default_server_host()
+            );
+        }
+        (
+            self.host.clone().unwrap_or_else(default_server_host),
+            self.port.unwrap_or(DEFAULT_PORT),
+        )
+    }
+
+    pub fn host(&self) -> String {
+        self.addr().0
+    }
+
+    pub fn port(&self) -> u16 {
+        self.addr().1
+    }
+
+    /// Fold a legacy `host` + `port` pair into `url`, so the next write emits
+    /// one field. Returns whether it did, because config load runs BEFORE the
+    /// tracing subscriber exists — a message logged here goes nowhere, and a
+    /// config that changes shape under the user in silence is the hidden state
+    /// this whole change is against. The caller reports it where the user looks.
+    pub fn migrate_legacy_fields(&mut self) -> bool {
+        if self.url.is_some() || (self.host.is_none() && self.port.is_none()) {
+            return false;
+        }
+        let (host, port) = self.addr();
+        self.url = Some(format!("{host}:{port}"));
+        self.host = None;
+        self.port = None;
+        true
+    }
+}
+
+/// `host:port`, with an optional scheme that is accepted and dropped.
+fn parse_addr(raw: &str) -> Option<(String, u16)> {
+    let rest = raw.split_once("://").map(|(_, r)| r).unwrap_or(raw);
+    let rest = rest.trim_end_matches('/');
+    let (host, port) = rest.rsplit_once(':')?;
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port.trim().parse().ok()?))
 }
 
 fn default_server_host() -> String {
@@ -364,6 +448,7 @@ impl Config {
             if path.exists() {
                 let content = fs::read_to_string(&path)?;
                 let mut config: Config = toml::from_str(&content)?;
+                config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
                 config.migrate_retired_chatgpt_builtins();
                 return Ok((config, Some(path)));
             }
@@ -452,7 +537,7 @@ impl Config {
                 );
             }
         }
-        if self.server.port == 0 {
+        if self.server.port() == 0 {
             anyhow::bail!("Server port must be greater than 0");
         }
         if self.agent.max_iters == 0 {
@@ -517,7 +602,12 @@ impl Default for Config {
             // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
             // provider/models.rs), so a fresh install needs nothing here.
             models: Vec::new(),
-            server: ServerConfig { port: DEFAULT_PORT, host: default_server_host() },
+            server: ServerConfig {
+                url: Some(format!("{}:{DEFAULT_PORT}", default_server_host())),
+                port: None,
+                host: None,
+                migrated_legacy_addr: false,
+            },
             agent: AgentConfig {
                 max_iters: 200,
                 write_safety_mode: WriteSafetyMode::default(),
@@ -646,7 +736,7 @@ mod tests {
     #[test]
     fn test_validate_port_zero() {
         let mut cfg = valid_config();
-        cfg.server.port = 0;
+        cfg.server.url = Some("127.0.0.1:0".to_string());
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("port must be greater than 0"));
     }
@@ -705,13 +795,74 @@ mod tests {
 
     // ---- Config TOML round-trip ----
 
+    /// The shape an existing install has on disk. It must keep working, and
+    /// `0.0.0.0` must survive — the field pair is how a user opens the daemon
+    /// to their LAN, and silently reverting that to loopback would take the
+    /// machine off the network without saying so.
+    #[test]
+    fn a_legacy_host_port_pair_still_binds_where_it_says() {
+        let cfg: ServerConfig =
+            toml::from_str("port = 9527\nhost = \"0.0.0.0\"").unwrap();
+        assert_eq!(cfg.addr(), ("0.0.0.0".to_string(), 9527));
+    }
+
+    /// …and folds into one field on the next write, saying so rather than
+    /// changing shape under the user in silence.
+    #[test]
+    fn the_legacy_pair_migrates_to_one_field() {
+        let mut cfg: ServerConfig =
+            toml::from_str("port = 9600\nhost = \"0.0.0.0\"").unwrap();
+        cfg.migrate_legacy_fields();
+        assert_eq!(cfg.url.as_deref(), Some("0.0.0.0:9600"));
+        assert!(cfg.port.is_none() && cfg.host.is_none());
+        assert_eq!(toml::to_string(&cfg).unwrap().trim(), "url = \"0.0.0.0:9600\"");
+    }
+
+    /// `url` is authored, so it wins outright — a stale legacy pair left in the
+    /// file must not quietly outrank the field the user just set.
+    #[test]
+    fn url_wins_over_a_leftover_pair() {
+        let cfg: ServerConfig =
+            toml::from_str("url = \"0.0.0.0:9600\"\nport = 9527\nhost = \"127.0.0.1\"").unwrap();
+        assert_eq!(cfg.addr(), ("0.0.0.0".to_string(), 9600));
+    }
+
+    /// A scheme is accepted and dropped: the same address is written with one
+    /// everywhere it is *consumed*, so pasting that form must not silently
+    /// fall back to the default port.
+    #[test]
+    fn a_scheme_is_accepted_and_ignored() {
+        assert_eq!(parse_addr("http://0.0.0.0:9527"), Some(("0.0.0.0".into(), 9527)));
+        assert_eq!(parse_addr("http://192.168.1.5:9527/"), Some(("192.168.1.5".into(), 9527)));
+        assert_eq!(parse_addr("127.0.0.1:9527"), Some(("127.0.0.1".into(), 9527)));
+        // Not an address: no port, empty host, unparseable port.
+        assert_eq!(parse_addr("127.0.0.1"), None);
+        assert_eq!(parse_addr(":9527"), None);
+        assert_eq!(parse_addr("127.0.0.1:http"), None);
+    }
+
+    /// An unusable `url` falls back rather than panicking or binding somewhere
+    /// unintended — a typo should cost a warning and the default, not the LAN.
+    #[test]
+    fn a_malformed_url_falls_back_to_the_default() {
+        let cfg: ServerConfig = toml::from_str("url = \"nonsense\"").unwrap();
+        assert_eq!(cfg.addr(), ("127.0.0.1".to_string(), DEFAULT_PORT));
+    }
+
+    /// An empty `[server]` is the fresh-install case.
+    #[test]
+    fn an_empty_server_table_is_the_default_address() {
+        let cfg: ServerConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.addr(), ("127.0.0.1".to_string(), DEFAULT_PORT));
+    }
+
     #[test]
     fn test_config_toml_roundtrip() {
         let cfg = Config::default();
         let toml_str = toml::to_string_pretty(&cfg).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.models.len(), cfg.models.len());
-        assert_eq!(parsed.server.port, cfg.server.port);
+        assert_eq!(parsed.server.addr(), cfg.server.addr());
         assert_eq!(parsed.agent.max_iters, cfg.agent.max_iters);
     }
 }

@@ -91,7 +91,7 @@ pub async fn start_agent(
     host_override: Option<String>,
     root: Option<PathBuf>,
 ) -> Result<()> {
-    let port = port_override.unwrap_or(config.server.port);
+    let port = port_override.unwrap_or(config.server.port());
 
     if is_port_listening(port).await {
         println!("Agent server already running on port {}", port);

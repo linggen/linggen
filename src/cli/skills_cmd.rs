@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Notify the running server to reload skills (best-effort, no error if server isn't running).
 async fn notify_reload(config: &Config) {
-    let port = config.server.port;
+    let port = config.server.port();
     let url = format!("http://localhost:{}/api/skills/reload", port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))

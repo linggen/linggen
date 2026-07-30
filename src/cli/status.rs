@@ -54,7 +54,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     }
 
     // 4. Agent server
-    let port = config.server.port;
+    let port = config.server.port();
     let listening = is_port_listening(port).await;
     let pid = std::fs::read_to_string(crate::paths::linggen_home().join("ling.pid"))
         .ok()
