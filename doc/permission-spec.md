@@ -27,7 +27,7 @@ There is no separate config rule layer, no per-tool ask/deny patterns, and no "r
 
 | Actor | Path | Permission check |
 |:---|:---|:---|
-| Agent's in-process tools (`Bash`, `Read`, `Write`, `Edit`, capability tools) | Through `check_permission` | Yes — path-mode + hardcoded deny floor |
+| Agent's in-process tools (`Bash`, `Read`, `Write`, `Edit`) and MCP tools | Through `check_permission` | Yes — path-mode + hardcoded deny floor for the built-ins; an MCP tool is gated unless its server declares otherwise |
 | User-typed `!`-shortcut in chat | `POST /api/bash` | No |
 | Skill iframe JS calling backend (e.g. dashboard widgets) | `POST /api/bash` etc. | No |
 

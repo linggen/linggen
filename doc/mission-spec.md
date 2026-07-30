@@ -29,7 +29,7 @@ Two sibling subsystems in the linggen engine, discovered and loaded the same way
 
 **Mission = scheduled task.** Cron-triggered. Consumes tools and capabilities that skills register. Renders no UI of its own — the agent communicates through the session transcript (visible after the run via the mission's run history). Whether a mission can ask the user is up to its `allowed-tools`: a scheduled overnight mission like `dream` omits `AskUser` because there's nobody to answer; a manually-triggered or catch-up mission may list `AskUser` if its author wants it to.
 
-A mission looks like a `SKILL.md` with a `schedule:` field. It uses built-in engine tools plus capability tools (like `Memory_*`) that installed skills have registered, calling them directly. Missions do **not** delegate to skills — the `Skill` tool is never part of a mission's tool surface (see "Tools missions can use").
+A mission looks like a `SKILL.md` with a `schedule:` field. It uses built-in engine tools plus the tools of any connected MCP server (memory's, say), calling them directly. Missions do **not** delegate to skills — the `Skill` tool is never part of a mission's tool surface (see "Tools missions can use").
 
 ## File layout
 

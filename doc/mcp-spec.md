@@ -20,7 +20,8 @@ valuable.
 |:------|:-------|:-------|
 | `browser_*` | linggen-browser extension (control module) | live |
 | `x_*` | linggen-browser extension (x session reads) | live |
-| `memory_*` | ling-mem daemon (`:9528`) | live — **being removed**, see below |
+| `memory_*` | ling-mem daemon (`:9528`) | **deprecated 2026-07-30** — served through a window, see below |
+| `memory_dream_*` | the engine's own mission executor | live, and staying — ling-mem cannot serve these |
 | `agent_*` | Linggen agents (delegate a task) | live |
 
 ~~Decided (2026-07-10): one MCP for all users — including memory-only users.~~
@@ -45,18 +46,29 @@ one behind the other.
 
 Deprecation, not a cut: `memory_*` has been served here since 1.4.0
 (2026-07-10), so keep the group with a notice for a window before removing
-it.
+it. **Shipped 2026-07-30** — the notice is live.
 
 ## memory_* group — deprecated
 
-Thin proxy to the ling-mem daemon — no code moves between repos. Retained for
-a deprecation window; point new integrations at ling-mem's own `/mcp`.
+Thin proxy to the ling-mem daemon. Retained for a deprecation window; point
+new integrations at ling-mem's own `/mcp`. Inside Linggen the proxy has no
+callers left: the engine's own agents reach ling-mem as an MCP client.
+
+The DEPRECATED notice is **derived** at `tools_list_result` from
+`Backend::Memory`, not typed into each description — so a tool added to the
+group cannot join it and miss the mark. One WARN per process covers the
+operator side.
 
 - Tools: `memory_search`, `memory_add`, `memory_get`, `memory_update`,
   `memory_delete`, `memory_list`. Names and schemas mirror ling-mem's MCP so
   migrating users keep muscle memory. Dream-pipeline verbs (`harvest_day`,
   `remember_day`, `sweep`, `chains`, `days`) stay engine-internal — missions
   run them; third-party agents don't.
+- **`memory_dream_status` and `memory_dream_run` are NOT part of the
+  deprecation.** They are engine capabilities wearing the `memory_` prefix:
+  the first composes ling-mem's days rollup with the engine's in-flight run
+  state, the second drives the mission executor. ling-mem cannot serve either,
+  so they stay on this door after the window closes.
 - **Dream + review-queue tools** (2026-07-17): `memory_dream_status` (daemon
   days rollup + open review items + in-flight flag + last run outcome, with
   `last_run_error` pulled from a failed run's session tail so the host can
@@ -116,10 +128,11 @@ deprecation window:
   machine) migrates as part of Phase 2 verification — never run both, two
   plugins means a doubled recall hook.
 - **ClawHub `ling-mem` skill** — renamed to `linggen` (slug redirect). Done.
-- **ling-mem's own MCP server** — code stays (harmless) but is no longer
-  promoted anywhere; docs and install pages route everyone to the linggen
-  endpoint. The ling-mem binary/daemon itself is unchanged — it is the memory
-  engine behind the proxy.
+- **ling-mem's own MCP server** — ~~code stays (harmless) but is no longer
+  promoted anywhere~~. **Reversed 2026-07-29**: it is the promoted memory
+  endpoint. Everything of Linggen's is on it — the engine's agents via its MCP
+  client, a second machine on the LAN directly — and the plugin pointing
+  outside agents there is what closes the window above.
 - Site installers: `install-shared-memory.sh` is a guidance stub pointing at
   the plugin channels; `install.sh` is the base for every channel. Done.
 

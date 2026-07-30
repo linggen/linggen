@@ -11,7 +11,8 @@ status: describes what ships today; the open section is not built
 
 Two daemons on the user's machine, and everything else is a client of one of
 them. Every edge below is in the shipped code; the transport on each arrow is
-what actually runs, not what could.
+what actually runs, not what could. What is decided but not yet built lives in
+`## Open`, never in the diagram — an arrow that doesn't run is a phantom.
 
 ```mermaid
 flowchart LR
@@ -42,15 +43,18 @@ flowchart LR
     llmapi["/api/llm<br/>/api/search"]
   end
 
+  third["third-party MCP servers<br/>github · playwright · sentry"]
   providers["LLM providers<br/>chatgpt · anthropic · openai<br/>gemini · deepseek"]
 
-  cc -->|mcp / http| ling
-  codex -->|mcp / http| ling
+  cc -->|"mcp — browser_* x_* agent_* memory_*"| ling
+  codex -->|"mcp — browser_* x_* agent_* memory_*"| ling
   hooks -->|spawn| cli
   skill -->|"Bash ling-mem verb"| cli
   cli -->|http| lingmem
-  ling -->|http · /api/memory| lingmem
-  lingmem -.->|"/mcp — built, unused by design"| lingmem
+
+  ling -->|"mcp client — tools + auto-recall"| lingmem
+  ling -->|"mcp client"| third
+  ling -->|"http · dream · core block · skill pages"| lingmem
 
   shell -->|http · health keepalive| ling
   shell -->|webrtc · whip| ling
@@ -68,63 +72,27 @@ flowchart LR
   ling -->|https · register + poll| relay
 ```
 
-## Where this is going
+**`ling` is an MCP client** (shipped 2026-07-30). It consumes any server the
+user adds, and reaches memory the same way — `ling-mem` is the built-in one,
+merged into `[mcp_servers]` at connect time and declared `gated: false`, so
+nothing in the permission code knows its name. Auto-recall rides the same
+client even though it fires *before* the model: a tool **call** is a JSON-RPC
+request, and making one needs a program, not a model.
 
-Decided 2026-07-29, not built — see `mcp-client-spec.md`. `ling` becomes an
-MCP **client**, `ling-mem` becomes the one memory server, and `memory_*`
-leaves the engine's front door so no tool is served twice.
+The engine still speaks REST to `ling-mem` where it is a program rather than an
+agent — the dream rollup, the mission scheduler's stats, the core block, and
+`/apps/<skill>/capability/*` for a skill webpage's own clicks.
 
-```mermaid
-flowchart LR
-  subgraph agents2["Coding agents"]
-    cc2["Claude Code · Codex<br/>linggen plugin"]
-    hooks2["recall.sh"]
-  end
-
-  subgraph mac2["The user's Mac"]
-    ling2["ling · engine<br/>0.0.0.0:9527"]
-    lingmem2["ling-mem<br/>:9528 · loopback by default"]
-    cli2["ling-mem CLI"]
-  end
-
-  subgraph ds["DS242 · same LAN"]
-    ds242["ling · engine"]
-  end
-
-  third["third-party MCP servers<br/>github · playwright · sentry"]
-
-  cc2 -->|"mcp — browser_* x_* agent_*"| ling2
-  cc2 -->|"mcp — memory_*"| lingmem2
-  hooks2 -->|"curl · mcp tools/call"| lingmem2
-  cli2 -->|http| lingmem2
-  ling2 -->|"mcp client — tools + auto-recall"| lingmem2
-  ling2 -->|"mcp client"| third
-  ds242 -->|"mcp — x-linggen-device"| lingmem2
-```
-
-What changes from the diagram above:
-
-- **`ling` gains a client.** Today it can only be driven by MCP; here it
-  consumes any server the user adds, and reaches memory the same way.
-- **`memory_*` leaves `ling`'s `/mcp`.** The plugin wires two servers, each
-  tool served in exactly one place.
-- **Auto-recall goes over MCP too** — a tool *call* needs no model, only a
-  client — so recall works across machines with the same code.
-- **A second machine talks to `ling-mem` directly**, gated by the same
-  `x-linggen-device` token store both daemons already share. `ling-mem` still
-  binds loopback unless explicitly opened, and refuses to open without that
-  token file.
-- **`recall.sh` moves to MCP too.** A hook can't *be* a model's tool call,
-  but it can *make* one — `curl` posting JSON-RPC. That is what lets a second
-  machine's Claude Code recall from this store with **no `ling-mem` binary at
-  all**: the CLI resolves through `daemon.json`, which only ever describes a
-  local daemon.
+`memory_*` on `ling`'s `/mcp` is **deprecated, not gone**: it has been the
+outside agent's route since 1.4.0, so it stays through a window, marked
+DEPRECATED in the tool list. The plugin pointing those agents at `ling-mem`
+directly is the step that closes it — see `## Open`.
 
 ## The two daemons
 
 | | `ling` (engine) | `ling-mem` (memory) |
 |:--|:--|:--|
-| Binds | `0.0.0.0:9527` | `127.0.0.1:9528` |
+| Binds | `0.0.0.0:9527` | `127.0.0.1:9528` — loopback unless `--host`, which is refused without paired devices |
 | Address from | `~/.linggen/config/linggen.runtime.toml` `[server]` | compiled `daemon::DEFAULT_PORT`, or `--port` |
 | Publishes where it bound | — | `~/.linggen/memory/linggen-memory/daemon.json` |
 | Started by | `Linggen.app` shell (LaunchAgent), `--idle-shutdown-secs 300` | `ling-mem start`, plugin autostart, or first CLI use |
@@ -152,7 +120,9 @@ cannot point it elsewhere.
 
 | From | Transport | Path |
 |:--|:--|:--|
-| `ling` | HTTP REST | `POST /api/memory/<verb>`, URL from `[agent].ling_mem_url` |
+| `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp` |
+| `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages |
+| A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device` |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json` |
 | Plugin hooks | spawn the CLI | `ling-mem search`, `days`, `status`, `start` |
 | ClawHub `shared-memory` skill | spawn the CLI | `Bash ling-mem <verb>` — every op, no exception |
@@ -162,10 +132,10 @@ cannot point it elsewhere.
 
 | Caller | Route | Needs the engine? |
 |:--|:--|:--|
-| Outside agent via the plugin | `/mcp` → `call_memory_http` → REST | yes |
-| Linggen's own agents | `mcp__memory__memory_*` → MCP | yes |
+| Linggen's own agents | `mcp__memory__memory_*` → `ling-mem` `/mcp` | yes |
+| Outside agent via the plugin | `ling` `/mcp` → REST — **deprecated**, see `## Open` | yes |
 | ClawHub skill, plugin hooks, any agent with Bash | `ling-mem` CLI → REST | **no** |
-| `ling-mem`'s own `/mcp` | direct | no — but unused, see below |
+| A second machine's agents | `ling-mem` `/mcp` + `x-linggen-device` | **no** |
 
 The CLI route is the engine-free channel and the reason it exists: a ClawHub
 user installs the skill, the skill installs the binary (`install-bin.sh
@@ -176,7 +146,10 @@ one skill file takes the engine route on Linggen and the CLI route everywhere
 else.
 
 Worth holding next to the `mcp-spec.md` line that the engine is the base
-install for every channel: for the ClawHub channel today, it isn't.
+install for every channel: for the ClawHub channel today, it isn't — and the
+fourth door is the case where that stops being an accident and becomes the
+point. A second machine needs a URL and a token, not 107 MB of binary and a
+store of its own.
 
 **Out of the Mac**
 
@@ -190,30 +163,34 @@ Everything else the phone does — skills, memory, DJ files, photos, Ling's
 chat — is tunnelled inside the WebRTC data channel as `http_request`, so it
 works identically on the LAN and over the relay.
 
-## One MCP, on purpose
+## `ling-mem`'s own `/mcp` — the promoted path now
 
-`ling-mem` serves its own `/mcp` with 13 tools, and nothing of ours connects
-to it. It is **superseded as the promoted path, frozen as public API, and
-still maintained** — three separate facts, easily confused:
+It was built for outside agents first (`3df4919`, 2026-05-27: "HTTP endpoint
+serving 5 memory tools to CC/Codex/Cursor") — six weeks *before* the engine had
+a `/mcp` at all. `mcp-spec.md` (2026-07-10) then chose one front door for every
+channel and this became the unpromoted one; **that choice was reversed on
+2026-07-29**, and the reversal is written into `mcp-spec.md` itself rather than
+left as a stale page asserting the opposite.
 
-- It was built for outside agents first (`3df4919`, 2026-05-27: "HTTP endpoint
-  serving 5 memory tools to CC/Codex/Cursor") — six weeks *before* the engine
-  had a `/mcp` at all.
-- `mcp-spec.md` (2026-07-10) then chose one front door for every channel, so
-  the engine's `/mcp` became the promoted one. That decided which we *promote*,
-  not that this one is dead.
-- 1.0.0 froze "the CLI / HTTP / **MCP** API surface" — removing it is a 2.0.
-  It is still being fixed (`memory_update` and `memory_harvest_day` exposed;
-  an `episodic` table-scope bug in `memory_search`).
+Fourteen tools, and everything of ours is on them: the engine's own agents by
+its MCP client, and a second machine on the LAN directly. What remains on the
+engine's `/mcp` is a deprecation window for the outside agents that have used
+that route since 1.4.0 — the tools are still served, marked DEPRECATED, and the
+mark is derived from the backend so a new memory tool cannot join the group and
+miss it.
 
-Whether anyone is on it is unknown — no telemetry, and it isn't advertised in
-the README or on the site. It shipped stable on 2026-05-27 and has been in
-every release since.
+Two tools do NOT leave: `memory_dream_status` and `memory_dream_run` are
+**engine** capabilities. The first composes the daemon's rollup with the
+engine's in-flight run state; the second drives the mission executor. `ling-mem`
+cannot serve either, so they stay on `ling`'s front door after the window
+closes. (`mcp-client-spec.md`'s blanket "`memory_*` is removed" is wrong on
+exactly these two.)
 
-Consequence: memory reaches an outside agent by the long route —
-`agent → ling /mcp → HTTP REST → ling-mem` — and the dispatch-normalisation
-step exists in both repos (`ling-mem` `src/http/mcp.rs` says its
-`apply_dispatch_fixes` are "ported from" the engine's `memory_tool.rs`).
+The dispatch-normalisation step now lives in one place — `ling-mem`'s
+`src/http/mcp.rs`. Those fixes exist because *models* fill arguments in sloppily
+(`until: ""`, empty arrays narrowing to nothing); CLI arguments come from clap,
+typed, from a human, and REST callers are programs. The engine's copy went with
+the tools.
 
 ## Where an address comes from, today
 
@@ -222,7 +199,7 @@ step exists in both repos (`ling-mem` `src/http/mcp.rs` says its
 | `ling` server bind | `linggen.runtime.toml` `[server]` | yes |
 | plugin `.mcp.json` | hardcoded `127.0.0.1:9527` | **no** |
 | plugin `autostart.sh` | `LINGGEN_PORT`, default `9527` | env only |
-| `ling` → `ling-mem` | `[agent].ling_mem_url` | yes |
+| `ling` → `ling-mem` (MCP + REST) | `[agent].ling_mem_url` | yes |
 | `ling` `cli/status.rs` | `DEFAULT_LING_MEM_PORT` const | **no** — ignores the above |
 | `ling` permission check | hardcoded `127.0.0.1:9528` | **no** |
 | `ling-mem` CLI | `daemon.json` | n/a — discovery |
@@ -243,13 +220,21 @@ default. `ling` should write a discovery file the way `ling-mem` already does,
 `.mcp.json` should use `${LINGGEN_PORT:-9527}` expansion (supported in `url`),
 and the hardcoded constants should read rather than restate.
 
-**Remote endpoints — decided 2026-07-29, see `mcp-client-spec.md`.** A second
-machine's `ling` reaches the first's memory by becoming an **MCP client** of
-its `/mcp`, exactly as Claude Code does: same URL, same `x-linggen-device`
-gate, same tools. No proxy route, no second auth system, and `ling-mem` never
-leaves loopback. What remains is that machine's engine-internal auto-recall,
-which runs before the model and so has no tool call to make — that one is
-`ling_mem_url` pointing at a reachable daemon.
+**The plugin's second MCP entry.** The daemon side is done; the plugin still
+ships one entry pointing at `ling` `:9527`. Two entries — `ling` for
+`browser_*` / `x_*` / `agent_*`, `ling-mem` for `memory_*` — is what closes the
+deprecation window, and what lets a second machine's Claude Code recall with
+**no `ling-mem` binary at all**: the CLI resolves through `daemon.json`, which
+can only ever describe a *local* daemon, so a CLI-based remote recall would
+need its own binary, daemon and store — which forks the user's memory.
+
+**`recall.sh` over MCP.** A hook can't *be* a model's tool call, but it can
+*make* one — `curl` posting JSON-RPC. The rows come back carrying
+`hybrid_score`, `score` and `contexts`, so the one thing the MCP schema
+withholds (`min_score`, deliberately — a model guessing a threshold narrows
+recall to zero) becomes a client-side `jq` filter the script is already shaped
+to do. Follow-on: `autostart.sh` should skip installing and starting the binary
+on a read-only remote host.
 
 **Two daemons, one relay instance.** Both registrations are accepted, and the
 phone's offers are answered by whichever polls first. The second should be

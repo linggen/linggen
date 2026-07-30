@@ -4,19 +4,20 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: PHASE 1 BUILT 2026-07-29 (client, tool surface, project scope, McpTab). Phase 2 not started.
+status: BUILT. Phase 1 2026-07-29 (client, tool surface, project scope, McpTab); phase 2 2026-07-30 (built-in memory server, auto-recall over MCP, tool-name migration, ling-mem's LAN gate). Open: the plugin's second MCP entry and recall.sh over MCP — both in linggen-memory.
 ---
 
 # Ling as an MCP client
 
-Linggen can be *driven by* MCP and cannot *consume* it. `src/server/mcp.rs`
-and `src/server/mcp_agent.rs` are both servers; there is no outbound
-`tools/list` anywhere in the tree.
+Linggen could be *driven by* MCP and not *consume* it: `src/server/mcp.rs` and
+`src/server/mcp_agent.rs` were both servers, with no outbound `tools/list`
+anywhere in the tree.
 
 Every peer — Claude Code, Codex, Cursor, Cline, Zed — connects to arbitrary
-MCP servers. Linggen connects to none. For a product whose premise is an OS
-for agents, that is an OS that cannot load third-party drivers. This is the
-gap to close.
+MCP servers. Linggen connected to none. For a product whose premise is an OS
+for agents, that was an OS that could not load third-party drivers. **Both
+phases are built** (`src/mcp_client/`); what follows is the design as it
+shipped, with what remains marked in place.
 
 ## A model is needed to CHOOSE a tool, not to CALL one
 
@@ -76,9 +77,10 @@ tools appear in the session.
 
 ### The permission question — DECIDED 2026-07-29: follow Claude Code
 
-`Memory_query` / `Memory_write` are **Chat-tier — ungated, no prompts**
-(`engine/permission/model.rs`). A user-added MCP server must not be: its
-tools can write files and call APIs, which is precisely what
+Memory was **Chat-tier — ungated, no prompts** as two built-in tools, and
+stayed ungated as a server (its entry declares `gated: false`, so nothing in
+`engine/permission/model.rs` knows its name). A user-added MCP server must not
+be: its tools can write files and call APIs, which is precisely what
 `permission-spec.md` exists for.
 
 First, the premise to discard: **MCP has no permission model to inherit.**
@@ -124,10 +126,10 @@ show, or it violates the show-everything rule:
 - **Live connection state** — connected / failed / N tools discovered, read
   from the client. Not a green dot meaning "configured".
 
-## Phase 2 — ling-mem as the built-in server
+## Phase 2 — ling-mem as the built-in server — BUILT 2026-07-30
 
-Memory stops being a hand-built special case (`engine/tools/memory_tool.rs`,
-`Memory_query` / `Memory_write`) and becomes the MCP server that ships
+Memory stopped being a hand-built special case (`engine/tools/memory_tool.rs`,
+`Memory_query` / `Memory_write`) and became the MCP server that ships
 enabled — one entry in `[mcp_servers]`, one mechanism for every tool.
 
 **Why it is worth doing beyond tidiness:** the memory doctrine is currently
@@ -195,7 +197,7 @@ own store, which forks memory. Over MCP it needs a URL and a token.
 Consequence for `autostart.sh`: installing and starting the binary should be
 skippable on a host that only *reads* a remote store.
 
-### `memory_*` is REMOVED from ling's `/mcp`
+### `memory_*` is DEPRECATED on ling's `/mcp`
 
 One memory service, not two. The tools come from ling-mem, so ling-mem is
 where they are served — a host that wants memory adds ling-mem, a host that
@@ -209,13 +211,20 @@ self-inflicted.
 
 **Breaking change, deliberately.** `memory_*` has been on the engine's
 `/mcp` since 1.4.0 (2026-07-10). Anyone who wired the engine's front door for
-memory must add the second server. Keep the group for a deprecation window
-with a notice rather than cutting it dead.
+memory must add the second server. The group is kept for a deprecation window
+with a notice rather than cut dead — shipped that way 2026-07-30, the notice
+derived from the backend so a new tool cannot join the group and miss it.
+
+**Correction to this section's title claim:** `memory_dream_status` and
+`memory_dream_run` are NOT removed, ever. They wear the `memory_` prefix but
+are *engine* capabilities — dream_status composes ling-mem's rollup with the
+engine's in-flight run state, dream_run drives the mission executor. ling-mem
+cannot serve either. They stay after the window closes.
 
 **This reverses the 2026-07-10 decision in `mcp-spec.md`** ("one MCP for all
 users … two servers offering the same memory tools would confuse anyone
-migrating"). The reversal belongs on that page too — a doc that still asserts
-the opposite is the hidden-state failure, not a stale comment.
+migrating"). The reversal is written into that page too — a doc that still
+asserted the opposite would be the hidden-state failure, not a stale comment.
 
 ### Where the dispatch fixes live
 
@@ -225,18 +234,34 @@ layer** — those fixes exist because *models* fill arguments in sloppily
 (`until: ""`, empty arrays narrowing to nothing). CLI arguments come from
 clap, typed, from a human; REST does not need them.
 
-Once the proxy lands, the engine's copy has no callers left — auto-recall
-having moved to MCP too — so it is a deletion, not a migration.
+Done: `linggen-memory` `3c3bb0a` collapsed them into ling-mem's MCP layer, and
+the engine's copy went with the tools. Not ported deliberately: the engine's
+`host: "linggen"` default. That is the *caller* naming itself, and a daemon
+that also serves Claude Code, Codex and Cursor would mislabel their rows —
+so each caller stamps its own (`engine/tools/memory_mcp.rs`).
 
-### Migration
+### Migration — DONE 2026-07-30
 
-Mechanical, but it touches a lot: `Memory_query` / `Memory_write` become
-`memory_search` / `memory_add` / … across `agents/*.md` tool lists,
-`prompts/system-prompt.toml`, `SKILL.md`, and CFO's `allowed-tools`.
+Mechanical, and it touched a lot: `Memory_query` / `Memory_write` became
+`memory_*` across `agents/*.md` tool lists, `prompts/system-prompt.toml`, the
+dream mission, `SKILL.md`, and CFO's `allowed-tools`.
 
-And `[agent].ling_mem_url` must be **resolved, not left**. After phase 2 its
-only consumer was auto-recall, which now goes through `[mcp_servers]`. If it
-is dead, delete it — never leave a knob with no consumer.
+A declaration names the **server**, not each tool: `mcp__memory` in an agent's
+`tools:`, a skill's `allowed-tools:` or a mission's expands to what that server
+advertises, through one rule shared by prompt assembly and the scope sets
+(`extensions/scope.rs`). Pulse is the exception — it reads the founder's
+context and never curates it, so it names the three read tools.
+
+`[agent].ling_mem_url` was resolved and **stays**: it is where the built-in
+memory server's endpoint comes from (`+ /mcp`), and where the engine's
+program-side REST calls go. Not a knob without a consumer — a knob with two.
+
+Four things a raw pass-through would have lost, and where they went: the
+calling host's name, the authoring session id, a skill's `memory_context`
+scope, and the AskUser unlock on the user-voice guard. All four are filled in
+client-side by `engine/tools/memory_mcp.rs`, each field only where the
+server's own advertised schema declares it. That is argument shaping, not the
+proxy above — nothing republishes ling-mem's tools.
 
 ## Remote memory — a second machine on the LAN
 
@@ -257,11 +282,15 @@ Both daemons live on the same machine under the same `~/.linggen`, so
 **ling-mem validates against the same file**. Pair a machine once, through
 the engine's existing screen-confirm flow, and the token works for both.
 
-Safe defaults, so nobody exposes a biography by accident:
+Safe defaults, so nobody exposes a biography by accident — **built
+2026-07-30** in `linggen-memory` `src/http/gate.rs`:
 
-- ling-mem binds **loopback unless explicitly told otherwise**.
-- Binding non-loopback **requires the token file to exist**; refuse to start
-  otherwise rather than serve the store open on the Wi-Fi.
+- ling-mem binds **loopback unless `--host` says otherwise**.
+- Binding non-loopback **requires the token file to exist**; it refuses to
+  start otherwise, checked before the listener exists so a refusal is never a
+  port briefly open and unguarded.
+- A non-loopback request must carry a paired device's token; loopback passes,
+  and `/api/health` stays open as a probe.
 - A memory-only user never binds wide, so never needs the gate at all.
 
 **This kills the `/api/memory/*` gateway** proposed earlier in
@@ -270,6 +299,19 @@ Safe defaults, so nobody exposes a biography by accident:
 ## What is deliberately not decided
 
 - **Hub mode** — republishing every configured server on ling's `/mcp`.
+
+## What is left
+
+Both remaining pieces are in `linggen-memory`, and neither breaks anything
+today because the deprecation window keeps `memory_*` on `ling` `:9527`:
+
+- **The plugin's second MCP entry** — `.mcp.json` still ships one server. Two
+  entries is what closes the window, and what lets a second machine's Claude
+  Code recall with no `ling-mem` binary at all.
+- **`recall.sh` over MCP** — `curl` posting JSON-RPC. MCP rows carry
+  `hybrid_score`, `score` and `contexts`, so the withheld `min_score` becomes a
+  client-side `jq` filter. Follow-on: `autostart.sh` should skip installing and
+  starting the binary on a read-only remote host.
 
 ## Sequencing
 

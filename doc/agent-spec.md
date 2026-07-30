@@ -62,7 +62,7 @@ Ling is the universal agent. Specialized behavior comes from skills:
 - **Game-table skill** — bound to game sessions, zero tools, pure conversation
 - **Linggen-guide skill** — documentation lookup and Q&A
 - **Apple Shifu skill** — system health analyst with web dashboard
-- **Ling-mem skill** — semantic memory store with typed `Memory_*` tools
+- **Shared-memory skill** — the memory store's CLI and Data Browser (the tools themselves come from ling-mem's MCP server, not the skill)
 
 Missions are a sibling subsystem to skills (cron-scheduled), not a skill type. See `mission-spec.md`.
 

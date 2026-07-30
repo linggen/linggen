@@ -26,9 +26,10 @@ This is what makes Linggen a platform, not a single product. The same agent loop
 | :----- | :----------- | :------ |
 | **Instructions** | Gives the agent rules and context for a topic. The body shapes how the agent responds; tools stay the same. | `linggen-guide` (documentation Q&A) |
 | **App** | Has its own UI in an embedded panel. The agent drives the UI through `PageUpdate` data tools. | `apple-shifu`, `game-table`, `arcade-game` |
-| **Service** | Backs an engine-defined capability (currently memory; later search, vcs, notifications). The model uses generic tool names; the skill is a swappable backend. | `ling-mem` |
 
-Most skills are the first kind. App skills are how you ship full AI apps with custom UI. Service skills are how Linggen lets you swap a built-in capability without the model noticing.
+Most skills are the first kind. App skills are how you ship full AI apps with custom UI.
+
+There used to be a third: a **service** skill backing an engine-defined capability, with the engine owning the tool names and the skill swappable underneath. That layer is gone — its one instance was memory, and memory is an **MCP server** now (`mcp-client-spec.md`). Swappability is better served there: point the `memory` entry in `[mcp_servers]` at a different server and the model sees whatever that server advertises. The engine defines no tool names on anyone's behalf.
 
 ## How skills get invoked
 
@@ -66,7 +67,6 @@ Test before writing engine code: *would a second, unrelated skill use this?* If 
 | **Portable** | Same directory works in Linggen, Claude Code, and Codex via the open [Agent Skills](https://agentskills.io) standard — the ecosystem isn't owned by any one vendor. |
 | **Progressive disclosure** | Context is precious. Metadata for all skills, body only when active, resources only when read. The agent stays sharp with hundreds of skills installed. |
 | **One primitive, many shapes** | Transient invocation, session-bound, iframe app, long-running daemon. Same `SKILL.md`, different deployments. |
-| **Swappable backends** | Service skills implement engine-defined capabilities. Users can replace the backend; the model never sees a difference. |
 | **Permission isolation** | Each skill declares its permission ask up front; activation grants exactly the listed paths and modes. |
 
 ## Related docs
@@ -75,7 +75,7 @@ Test before writing engine code: *would a second, unrelated skill use this?* If 
 - `tool-spec.md` — built-in tools (the kernel API).
 - `agent-spec.md` — how agents use skills.
 - `permission-spec.md` — what `permission:` does at activation.
-- `memory-spec.md` — first capability example.
+- `memory-spec.md` — how memory itself works.
 
 ## Format
 
@@ -133,7 +133,6 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `cwd` | Starting cwd for sessions invoking this skill |
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
-| `provides` / `implements` | Marks the skill as a service backend for an engine-defined capability |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -192,19 +191,13 @@ Shell and HTTP tools obey the skill's `permission.mode`. A `tier: read` tool run
 
 ### Reuse across kinds
 
-App skills automatically receive a built-in `PageUpdate` data tool — you do not declare it. Service-backend skills (those with `implements:` for an engine-defined capability like `memory`) inherit the engine's tool names and schemas; their declared `tools:` are private extensions on top of the capability's contract.
+App skills automatically receive a built-in `PageUpdate` data tool — you do not declare it. A skill's `allowed-tools:` may also name an MCP server (`mcp__memory`) or one of its tools (`mcp__memory__memory_search`); a whole-server entry expands to what that server currently advertises.
 
 Tool definitions are parsed once at skill-load time. Editing `tools:` requires a server restart to register; editing scripts pointed to by `cmd:` does not.
 
-## Service skills
+## Service skills — retired
 
-Most skills are "instructions + tools." A few skills are **service backends**: they implement a named **capability** that the engine defines (e.g. `memory`). The engine owns the tool names, schemas, and permission tiers; the skill only declares which capability it provides and where its daemon lives.
-
-The first capability is `memory` — see `memory-spec.md`. Future capabilities may include `search`, `vcs`, `notifications`.
-
-The point is **swappability**: two memory skills expose identical `Memory_*` tools to the model because both conform to the same engine-defined contract. Users can switch backends without the model seeing any change.
-
-A skill can also ship its own private tools (unique to itself) alongside any capabilities it implements.
+`provides:` / `implements:` marked a skill as the backend for a capability the engine defined, so two memory skills would expose identical tool names and users could swap one for the other. Neither field is read by the engine and no skill declares one; the concept's only instance, memory, became an MCP server instead (`mcp-client-spec.md`). A server states its own tools, which is the same swappability without the engine standing in the middle naming things for it.
 
 ## Device sync
 
@@ -324,7 +317,7 @@ For runtime context (briefs, voice samples, identity), the existing patterns suf
 
 ## Skill tools
 
-Beyond capability tools, a skill can register its own:
+Beyond the built-ins and any MCP server it names, a skill can register its own:
 
 - **Command tools** — execute a shell command with template substitution. Same gating as `Bash`.
 - **Data tools** — pass structured data from the agent to the app UI (no shell, no side effects). The engine emits a `content_block` event; the app iframe receives it and re-renders. Enables real-time structured updates without text-tag parsing.
