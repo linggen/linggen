@@ -66,6 +66,15 @@ pub async fn passthrough(
     let args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
 
+    // The engine logs its own ling-mem calls (`call_memory_http`); this path
+    // is the one that arrives from another machine, so it is the one worth
+    // seeing in the log at all. Keys only — a memory row's content is the
+    // user's, and this line is not where it should turn up.
+    tracing::info!(
+        "memory passthrough → {verb} {:?}",
+        args.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+    );
+
     match crate::engine::tools::memory_http::post_memory_verb(&ling_mem_url, &verb, &args).await {
         // The daemon answered. Its envelope is the answer — `{ok, data}` or
         // `{ok:false, error, code}` — and it goes back untouched, code and all,
