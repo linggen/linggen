@@ -70,6 +70,14 @@ pub fn global_missions_dir() -> PathBuf {
     linggen_home().join("missions")
 }
 
+/// `~/.linggen/topics/` — the last retained payload per device topic.
+///
+/// One file per `<topic>/<op>`, overwritten on every retained publish. See
+/// `server::api::topic`.
+pub fn topics_dir() -> PathBuf {
+    linggen_home().join("topics")
+}
+
 
 /// `~/.linggen/memory/` — root of the memory tree.
 ///

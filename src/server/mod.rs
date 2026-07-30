@@ -1163,6 +1163,7 @@ async fn prepare_server(
         )
         .route("/pair", get(api::pair::get_pair_page))
         .route("/api/topic/publish", post(api::topic::publish))
+        .route("/api/topic/latest", get(api::topic::latest))
         .route(
             "/api/skill-sync/{skill}/items",
             get(api::skill_sync::get_items),

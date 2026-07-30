@@ -122,6 +122,13 @@ pub(super) fn handle_control_message(
                 return None;
             }
             tracing::info!("[topic] {topic}/{op} published by a device");
+            // A phone publishing what it is — rather than that something
+            // changed — asks for the value to be kept, because the surfaces
+            // that want it (skill pages) have no peer to receive it live.
+            if msg.get("retain").and_then(|v| v.as_bool()).unwrap_or(false) {
+                let payload = msg.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+                crate::server::api::topic::retain(topic, op, &payload);
+            }
             let _ = state.events_tx.send(crate::server::ServerEvent::DeviceTopic {
                 topic: topic.to_string(),
                 op: op.to_string(),
