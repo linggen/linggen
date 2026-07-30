@@ -367,22 +367,12 @@ fn initialize_result() -> Value {
             browser_click / browser_type by ref; mutating actions may pause for the \
             user's permission prompt in the browser. x_* tools return structured data \
             from the user's logged-in x.com session. A no_bridge error means the \
-            extension is not connected. The memory_* tools here are DEPRECATED \
-            proxies — memory is served by ling-mem's own MCP server (default \
-            127.0.0.1:9528/mcp); add that server alongside this one and prefer its \
-            tools, which are the same names and shapes. They read and write the user's \
-            durable cross-host memory (three tiers: core = always-on identity \
-            universals, semantic = curated long-term facts, episodic = per-turn \
-            staging judged nightly). Search memory before answering questions that \
-            could connect to past preferences or decisions, and cite rows you use. On \
-            writes, pass source_session and host; capture uncertain-durability signal \
-            to tier=episodic. Replacing or rewriting a row the user authored requires \
-            user_directed:true grounded in their current message (with replace_ids \
-            for an atomic swap) — the daemon blocks it otherwise. Delete only by id. \
-            Status rows are perishable: when writing that something SHIPPED, was \
-            fixed, or went dormant, search for the prior status row on that subject \
-            and supersede it in the same memory_add via replace_ids — never leave an \
-            'in progress' row beside its own outcome. Memory upkeep: \
+            extension is not connected. Memory is NOT served here — the memory_* \
+            proxies were cut on 2026-07-30, and ling-mem serves those tools on its \
+            own MCP server (default 127.0.0.1:9528/mcp). Add that server alongside \
+            this one for memory_search, memory_add and the rest; it carries the \
+            memory protocol in its own instructions. What stays here is upkeep, \
+            because it is the engine's rather than the store's: \
             memory_dream_status says whether nightly judgment passes are due \
             (first_undreamed / undreamed_days; first_unscanned flags a day whose \
             session logs were never scanned) and whether review items await the \

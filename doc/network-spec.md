@@ -65,6 +65,7 @@ flowchart LR
   ext -->|websocket · /api/bridge/socket| ling
 
   mobile -->|"webrtc · LAN whip"| ling
+  mobile -->|"webrtc · POST /api/memory/*"| ling
   mobile -->|https| llmapi
   relay -->|sdp offer| ling
   mobile -->|"webrtc · relay"| relay
@@ -82,8 +83,28 @@ client even though it fires *before* the model: a tool **call** is a JSON-RPC
 request, and making one needs a program, not a model.
 
 The engine still speaks REST to `ling-mem` where it is a program rather than an
-agent — the dream rollup, the mission scheduler's stats, the core block, and
-`/apps/<skill>/capability/*` for a skill webpage's own clicks.
+agent — the dream rollup, the mission scheduler's stats, the core block,
+`/apps/<skill>/capability/*` for a skill webpage's own clicks, and the phone's
+`POST /api/memory/<verb>` passthrough.
+
+**The phone reaches memory through `ling`, and must** (2026-07-30). Yinyue is
+resident on the phone: her tool loop runs there, so she is the one caller that
+needs this store from off-machine — and off the LAN there is no IP route to the
+Mac at all, only `http_request` frames on the WebRTC channel, which terminate in
+the engine's router. So `POST /api/memory/<verb>` forwards to
+`[agent].ling_mem_url` and returns ling-mem's envelope whole. One route covers
+all eighteen verbs; ling-mem stays the authority on which exist. The phone never
+learns a port — moving `ling-mem` is a Mac-side config change and nothing else.
+
+This is not the tool proxy cut from `/mcp` the same day. That put a second copy
+of ling-mem's tools in front of a model, which then had to guess between them.
+This declares no tool: no schema, no dispatch translation, one verb segment
+forwarded. It is transport, like the tunnel it rides on. And the phone takes the
+REST door for the reason above — three fixed verbs, choosing nothing, a program
+rather than an agent.
+
+The phone's Ling tab needs none of it: it drives a session on the Mac, and that
+agent reaches memory on its own loopback like every local caller.
 
 `memory_*` is **gone** from `ling`'s `/mcp` (2026-07-30), in the same release
 that gave the plugin its second MCP entry. Each tool is served in exactly one
@@ -117,13 +138,14 @@ cannot point it elsewhere.
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
 | linggen-browser extension | WebSocket, extension dials in | `/api/bridge/socket` |
 | Skills reaching the browser | HTTP | `POST /api/bridge/call` |
+| Phone, for Yinyue's memory | HTTP in the tunnel | `POST /api/memory/<verb>` → `ling-mem` |
 
 **Into `ling-mem` (`:9528`)**
 
 | From | Transport | Path |
 |:--|:--|:--|
 | `ling`, on behalf of a model | HTTP MCP, JSON-RPC | `/mcp` — the built-in server, URL from `[agent].ling_mem_url` + `/mcp` |
-| `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages |
+| `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages, the phone's passthrough |
 | A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device` |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json` |
 | Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep |
@@ -164,7 +186,10 @@ store of its own.
 
 Everything else the phone does — skills, memory, DJ files, photos, Ling's
 chat — is tunnelled inside the WebRTC data channel as `http_request`, so it
-works identically on the LAN and over the relay.
+works identically on the LAN and over the relay. Memory was the exception for
+three days: it addressed `/mcp` for tools the engine had stopped serving, and
+failed silently because the phone reads a missing `result` as "no Mac". Fixed
+2026-07-30 by the passthrough above.
 
 ## `ling-mem`'s own `/mcp` — the promoted path now
 
@@ -234,11 +259,13 @@ relay instance and split the phone's traffic.
 
 ## Open
 
-**The last two restatements.** `cli/status.rs` and the permission check still
-carry a hardcoded ling-mem address instead of reading `[agent].ling_mem_url`.
-And `ling` still publishes no discovery file the way `ling-mem` does — which is
-what a client would read to find a *running* daemon rather than a configured
-one.
+**The last restatement.** `cli/status.rs:106` still probes
+`DEFAULT_LING_MEM_PORT` instead of reading `[agent].ling_mem_url`, so `ling
+status` reports on a daemon the engine may not be using. (The permission check
+was listed here too and shouldn't have been — it carries no ling-mem address at
+all; every other `9528` in `src/` is a test literal or a doc comment.) And
+`ling` still publishes no discovery file the way `ling-mem` does — which is what
+a client would read to find a *running* daemon rather than a configured one.
 
 **A second machine, end to end.** Every piece is built — the plugin's two
 server entries, hooks over curl, `autostart.sh` skipping the binary on a remote

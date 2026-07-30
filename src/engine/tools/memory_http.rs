@@ -5,11 +5,12 @@
 //! what the engine adds to such a call). What is left here is the engine
 //! talking to memory as a *program*:
 //!
-//! - the deprecated `memory_*` group on ling's `/mcp` front door, live until
-//!   its window closes
 //! - `/apps/<skill>/capability/*`, the door a skill's webpage uses
 //! - the dream rollup and the mission scheduler's stats
 //! - the core-block reconcile fetch
+//! - `api::memory`, the phone's passthrough: Yinyue runs on the phone, so her
+//!   memory calls arrive over the WebRTC channel and terminate here rather
+//!   than on ling-mem's own loopback port
 //!
 //! and, separately, ownership of the dependency itself: on
 //! `ConnectionRefused` or timeout, ensure the binary is present (auto-install
@@ -26,7 +27,7 @@
 //! is each caller's own job, not this function's; see `memory_mcp::HOST`.
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 /// Per-call HTTP timeout. Matches the old `capability_tools.rs` budget.
@@ -132,16 +133,10 @@ pub async fn call_memory_http(
     };
     tracing::info!("ling-mem client → POST {url} body={args_preview}");
 
-    let mut value = match post_once(&url, &args).await {
-        Ok(v) => v,
-        Err(DispatchError::NoDaemon) => {
-            autostart()
-                .await
-                .with_context(|| format!("autostarting ling-mem after first attempt to {url} failed"))?;
-            post_once(&url, &args).await.map_err(anyhow::Error::from)?
-        }
-        Err(DispatchError::Other(e)) => return Err(e),
-    };
+    // The status is the passthrough's business, not a program's — an error is
+    // an error here, and `parse_envelope` already carries ling-mem's own code.
+    let (_status, envelope) = post_memory_verb(ling_mem_url, &verb, &args).await?;
+    let mut value = parse_envelope(envelope)?;
 
     // Deleting an already-absent row is success, not an anomaly — the row is
     // gone either way (commonly the daemon's cross-tier dedup removed the
@@ -201,7 +196,45 @@ impl From<DispatchError> for anyhow::Error {
     }
 }
 
-async fn post_once(url: &str, args: &Value) -> Result<Value, DispatchError> {
+/// The one way anything in this engine reaches ling-mem's REST surface, and
+/// the only place that knows the daemon may need starting first.
+///
+/// Returns the daemon's envelope **verbatim** — `{ok, data}` or
+/// `{ok:false, error, code}` — because its two callers want different halves
+/// of it. `call_memory_http` unwraps to `data` for programs inside the engine;
+/// `api::memory`'s passthrough hands the whole thing to the phone, which reads
+/// the same documented shape a loopback caller would. Neither reimplements the
+/// request, the autostart retry, or the error classification.
+///
+/// The daemon's HTTP status rides along with it. A non-2xx is not automatically
+/// a failure of this hop — a 404 is ling-mem saying that verb doesn't exist and
+/// a 400 is it rejecting the arguments, both of which the caller should see as
+/// themselves rather than as "memory is down". Only a daemon that never
+/// answered is our error.
+pub async fn post_memory_verb(
+    ling_mem_url: &str,
+    verb: &str,
+    body: &Value,
+) -> Result<(u16, Value)> {
+    let url = format!("{}/api/memory/{verb}", ling_mem_url.trim_end_matches('/'));
+    match post_raw(&url, body).await {
+        Ok(v) => Ok(v),
+        Err(DispatchError::NoDaemon) => {
+            autostart()
+                .await
+                .with_context(|| format!("autostarting ling-mem after first attempt to {url} failed"))?;
+            post_raw(&url, body).await.map_err(anyhow::Error::from)
+        }
+        Err(DispatchError::Other(e)) => Err(e),
+    }
+}
+
+/// One request. Returns `(status, envelope)` whenever the daemon answered at
+/// all — including a non-2xx, whose body is normally the error envelope and
+/// carries a `code` a bare status would throw away. A reply that isn't JSON
+/// (an empty 404 body from an unrouted path, say) is given the envelope shape
+/// here, so everything downstream parses exactly one thing.
+async fn post_raw(url: &str, args: &Value) -> Result<(u16, Value), DispatchError> {
     let client = reqwest::Client::builder()
         .timeout(DISPATCH_TIMEOUT)
         .build()
@@ -218,24 +251,31 @@ async fn post_once(url: &str, args: &Value) -> Result<Value, DispatchError> {
     };
 
     let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<could not read body>".to_string());
-        let trimmed = body.trim();
-        return Err(DispatchError::Other(anyhow!(
-            "ling-mem error [{}]: {}",
-            status.as_u16(),
-            if trimmed.is_empty() { "<empty body>" } else { trimmed }
-        )));
-    }
-
-    let envelope: Value = response
-        .json()
+    let body = response
+        .text()
         .await
-        .map_err(|e| DispatchError::Other(anyhow::Error::from(e).context("parsing daemon response as JSON")))?;
-    parse_envelope(envelope).map_err(DispatchError::Other)
+        .map_err(|e| DispatchError::Other(anyhow::Error::from(e).context(format!("reading {url} response"))))?;
+
+    match serde_json::from_str::<Value>(&body) {
+        Ok(envelope) if envelope.is_object() => Ok((status.as_u16(), envelope)),
+        _ => {
+            let trimmed = body.trim();
+            let message = format!(
+                "ling-mem error [{}]: {}",
+                status.as_u16(),
+                if trimmed.is_empty() { "<empty body>" } else { trimmed }
+            );
+            if status.is_success() {
+                // A 2xx that isn't the envelope is the daemon misbehaving,
+                // not a routine rejection — surface it.
+                return Err(DispatchError::Other(anyhow!(message)));
+            }
+            Ok((
+                status.as_u16(),
+                json!({ "ok": false, "error": message, "code": format!("HTTP_{}", status.as_u16()) }),
+            ))
+        }
+    }
 }
 
 fn parse_envelope(envelope: Value) -> Result<Value> {

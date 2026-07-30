@@ -1063,6 +1063,9 @@ async fn prepare_server(
         // Session list / agents / agent-runs come via page_state only (no GET route).
         .route("/api/models", get(list_models_api))
         .route("/api/mcp", get(api::config::list_mcp_api))
+        // Memory for off-machine callers — the phone, over the WebRTC tunnel.
+        // One route for all of ling-mem's verbs; see `api::memory`.
+        .route("/api/memory/{verb}", post(api::memory::passthrough))
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
         .route("/api/config", get(get_config_api).post(update_config_api))
