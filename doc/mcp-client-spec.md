@@ -4,7 +4,7 @@ reader: Coding agent and users
 guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
-status: BUILT. Phase 1 2026-07-29 (client, tool surface, project scope, McpTab); phase 2 2026-07-30 (built-in memory server, auto-recall over MCP, tool-name migration, ling-mem's LAN gate). Open: the plugin's second MCP entry and recall.sh over MCP — both in linggen-memory.
+status: BUILT, complete. Phase 1 2026-07-29 (client, tool surface, project scope, McpTab); phase 2 2026-07-30 (built-in memory server, auto-recall over MCP, tool-name migration, ling-mem's LAN gate, the plugin's second entry, recall.sh over MCP, memory_* cut from ling's /mcp). Unproven: a real second machine pointed at the store.
 ---
 
 # Ling as an MCP client
@@ -197,7 +197,7 @@ own store, which forks memory. Over MCP it needs a URL and a token.
 Consequence for `autostart.sh`: installing and starting the binary should be
 skippable on a host that only *reads* a remote store.
 
-### `memory_*` is DEPRECATED on ling's `/mcp`
+### `memory_*` is REMOVED from ling's `/mcp`
 
 One memory service, not two. The tools come from ling-mem, so ling-mem is
 where they are served — a host that wants memory adds ling-mem, a host that
@@ -209,11 +209,12 @@ distinguishable tools with identical schemas, and the model picks between
 them arbitrarily. That is exactly the duplication `mcp-spec.md` warned about,
 self-inflicted.
 
-**Breaking change, deliberately.** `memory_*` has been on the engine's
-`/mcp` since 1.4.0 (2026-07-10). Anyone who wired the engine's front door for
-memory must add the second server. The group is kept for a deprecation window
-with a notice rather than cut dead — shipped that way 2026-07-30, the notice
-derived from the backend so a new tool cannot join the group and miss it.
+**Breaking change, deliberately.** `memory_*` had been on the engine's `/mcp`
+since 1.4.0 (2026-07-10). **Cut 2026-07-30** (Liang's call), in the same
+release that gave the plugin its second entry: the plugin was the only channel
+that wired that door for memory, so it migrates its users atomically, and
+keeping both would have put two identical `memory_search` tools in front of one
+model. A hand-wired config gets `unknown tool` and `mcp-spec.md`.
 
 **Correction to this section's title claim:** `memory_dream_status` and
 `memory_dream_run` are NOT removed, ever. They wear the `memory_` prefix but
@@ -302,16 +303,12 @@ Safe defaults, so nobody exposes a biography by accident — **built
 
 ## What is left
 
-Both remaining pieces are in `linggen-memory`, and neither breaks anything
-today because the deprecation window keeps `memory_*` on `ling` `:9527`:
-
-- **The plugin's second MCP entry** — `.mcp.json` still ships one server. Two
-  entries is what closes the window, and what lets a second machine's Claude
-  Code recall with no `ling-mem` binary at all.
-- **`recall.sh` over MCP** — `curl` posting JSON-RPC. MCP rows carry
-  `hybrid_score`, `score` and `contexts`, so the withheld `min_score` becomes a
-  client-side `jq` filter. Follow-on: `autostart.sh` should skip installing and
-  starting the binary on a read-only remote host.
+**A real second machine.** Every piece is built — the plugin ships both server
+entries, both hooks talk MCP over curl, `autostart.sh` installs nothing when
+`LING_MEM_HOST` points elsewhere, and ling-mem's gate checks the token — but no
+second machine has actually been pointed at this store. `LING_MEM_HOST` +
+`LING_MEM_TOKEN`, paired once through Linggen, nothing installed locally. Until
+that run happens it is designed and unit-true, not proven.
 
 ## Sequencing
 

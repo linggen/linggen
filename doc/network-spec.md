@@ -46,9 +46,11 @@ flowchart LR
   third["third-party MCP servers<br/>github · playwright · sentry"]
   providers["LLM providers<br/>chatgpt · anthropic · openai<br/>gemini · deepseek"]
 
-  cc -->|"mcp — browser_* x_* agent_* memory_*"| ling
-  codex -->|"mcp — browser_* x_* agent_* memory_*"| ling
-  hooks -->|spawn| cli
+  cc -->|"mcp — browser_* x_* agent_*"| ling
+  codex -->|"mcp — browser_* x_* agent_*"| ling
+  cc -->|"mcp — memory_*"| lingmem
+  codex -->|"mcp — memory_*"| lingmem
+  hooks -->|"curl · mcp tools/call"| lingmem
   skill -->|"Bash ling-mem verb"| cli
   cli -->|http| lingmem
 
@@ -83,10 +85,10 @@ The engine still speaks REST to `ling-mem` where it is a program rather than an
 agent — the dream rollup, the mission scheduler's stats, the core block, and
 `/apps/<skill>/capability/*` for a skill webpage's own clicks.
 
-`memory_*` on `ling`'s `/mcp` is **deprecated, not gone**: it has been the
-outside agent's route since 1.4.0, so it stays through a window, marked
-DEPRECATED in the tool list. The plugin pointing those agents at `ling-mem`
-directly is the step that closes it — see `## Open`.
+`memory_*` is **gone** from `ling`'s `/mcp` (2026-07-30), in the same release
+that gave the plugin its second MCP entry. Each tool is served in exactly one
+place. `memory_dream_status` / `memory_dream_run` stay — engine capabilities,
+not memory-server ones.
 
 ## The two daemons
 
@@ -109,7 +111,7 @@ cannot point it elsewhere.
 
 | From | Transport | Path |
 |:--|:--|:--|
-| Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` |
+| Claude Code / Codex plugin | HTTP MCP, JSON-RPC | `/mcp` — browser, x, agents, dream |
 | Linggen.app shell | HTTP | `/api/health`, every 60s while a window is open |
 | Shell, Web UI, phone on LAN | WebRTC | `/api/rtc/token` → `/api/rtc/whip` |
 | Phone off LAN | WebRTC over relay | `linggen.dev` signalling → `/api/signaling/<nonce>/answer` |
@@ -124,7 +126,8 @@ cannot point it elsewhere.
 | `ling`, as a program | HTTP REST | `POST /api/memory/<verb>` — dream rollup, scheduler stats, core block, skill pages |
 | A second machine on the LAN | HTTP MCP, JSON-RPC | `/mcp` with `x-linggen-device` |
 | `ling-mem` CLI | HTTP REST | port read from `daemon.json` |
-| Plugin hooks | spawn the CLI | `ling-mem search`, `days`, `status`, `start` |
+| Plugin hooks | HTTP MCP, JSON-RPC | `/mcp` — `memory_search` per turn, `memory_list` for core, `memory_days` for upkeep |
+| Plugin hooks (local only) | spawn the CLI | `ling-mem status`, `start` — daemon lifecycle, skipped on a remote host |
 | ClawHub `shared-memory` skill | spawn the CLI | `Bash ling-mem <verb>` — every op, no exception |
 | Browser | HTTP | `/` — the Data Browser UI |
 
@@ -133,7 +136,7 @@ cannot point it elsewhere.
 | Caller | Route | Needs the engine? |
 |:--|:--|:--|
 | Linggen's own agents | `mcp__memory__memory_*` → `ling-mem` `/mcp` | yes |
-| Outside agent via the plugin | `ling` `/mcp` → REST — **deprecated**, see `## Open` | yes |
+| Outside agent via the plugin | `ling-mem` `/mcp` directly | **no** |
 | ClawHub skill, plugin hooks, any agent with Bash | `ling-mem` CLI → REST | **no** |
 | A second machine's agents | `ling-mem` `/mcp` + `x-linggen-device` | **no** |
 
@@ -172,19 +175,17 @@ channel and this became the unpromoted one; **that choice was reversed on
 2026-07-29**, and the reversal is written into `mcp-spec.md` itself rather than
 left as a stale page asserting the opposite.
 
-Fourteen tools, and everything of ours is on them: the engine's own agents by
-its MCP client, and a second machine on the LAN directly. What remains on the
-engine's `/mcp` is a deprecation window for the outside agents that have used
-that route since 1.4.0 — the tools are still served, marked DEPRECATED, and the
-mark is derived from the backend so a new memory tool cannot join the group and
-miss it.
+Fourteen tools, and everything is on them: the engine's own agents by its MCP
+client, the plugin's Claude Code / Codex sessions by their second server entry,
+the plugin's hooks by curl, and a second machine on the LAN directly. The
+engine's proxy was **cut** on 2026-07-30 in the same release — each tool served
+in exactly one place, which is the point.
 
-Two tools do NOT leave: `memory_dream_status` and `memory_dream_run` are
+Two tools do NOT leave `ling`: `memory_dream_status` and `memory_dream_run` are
 **engine** capabilities. The first composes the daemon's rollup with the
 engine's in-flight run state; the second drives the mission executor. `ling-mem`
-cannot serve either, so they stay on `ling`'s front door after the window
-closes. (`mcp-client-spec.md`'s blanket "`memory_*` is removed" is wrong on
-exactly these two.)
+cannot serve either. (`mcp-client-spec.md`'s blanket "`memory_*` is removed" is
+wrong on exactly these two.)
 
 The dispatch-normalisation step now lives in one place — `ling-mem`'s
 `src/http/mcp.rs`. Those fixes exist because *models* fill arguments in sloppily
@@ -220,21 +221,12 @@ default. `ling` should write a discovery file the way `ling-mem` already does,
 `.mcp.json` should use `${LINGGEN_PORT:-9527}` expansion (supported in `url`),
 and the hardcoded constants should read rather than restate.
 
-**The plugin's second MCP entry.** The daemon side is done; the plugin still
-ships one entry pointing at `ling` `:9527`. Two entries — `ling` for
-`browser_*` / `x_*` / `agent_*`, `ling-mem` for `memory_*` — is what closes the
-deprecation window, and what lets a second machine's Claude Code recall with
-**no `ling-mem` binary at all**: the CLI resolves through `daemon.json`, which
-can only ever describe a *local* daemon, so a CLI-based remote recall would
-need its own binary, daemon and store — which forks the user's memory.
-
-**`recall.sh` over MCP.** A hook can't *be* a model's tool call, but it can
-*make* one — `curl` posting JSON-RPC. The rows come back carrying
-`hybrid_score`, `score` and `contexts`, so the one thing the MCP schema
-withholds (`min_score`, deliberately — a model guessing a threshold narrows
-recall to zero) becomes a client-side `jq` filter the script is already shaped
-to do. Follow-on: `autostart.sh` should skip installing and starting the binary
-on a read-only remote host.
+**A second machine, end to end.** Every piece is built — the plugin's two
+server entries, hooks over curl, `autostart.sh` skipping the binary on a remote
+host, ling-mem's LAN gate — but nobody has yet pointed a real second machine at
+this store. `LING_MEM_HOST` + `LING_MEM_TOKEN`, pair once through Linggen, and
+nothing installed locally. Until that run happens it is designed and unit-true,
+not proven.
 
 **Two daemons, one relay instance.** Both registrations are accepted, and the
 phone's offers are answered by whichever polls first. The second should be

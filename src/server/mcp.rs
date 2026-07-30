@@ -36,7 +36,6 @@ const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 /// the engine's own mission machinery (the dream tools).
 enum Backend {
     Bridge { module: &'static str, op: &'static str },
-    Memory { verb: &'static str },
     Agent,
     /// Composed read: daemon days rollup + engine in-flight/run state.
     DreamStatus,
@@ -45,24 +44,6 @@ enum Backend {
     DreamRun,
 }
 
-/// Notice, once per process, that a caller is still on the deprecated
-/// `memory_*` proxies on this front door.
-///
-/// Once, not per call: a host wired this way calls memory constantly, and a
-/// line per call would bury the log it is trying to be visible in.
-fn warn_memory_group_deprecated(tool: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static SAID: AtomicBool = AtomicBool::new(false);
-    if SAID.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    tracing::warn!(
-        "`{tool}` came in on the engine's /mcp. The memory_* group here is \
-         DEPRECATED — memory is served by ling-mem's own /mcp (default \
-         127.0.0.1:9528/mcp). Add that server alongside this one; these \
-         proxies will be removed."
-    );
-}
 
 /// One MCP tool: its wire name, the backend it brokers to, its schema.
 /// `timeout_ms` applies to bridge calls; memory calls carry their own.
@@ -302,124 +283,24 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: READ_MODULE_TIMEOUT_MS,
     },
-    // --- memory_*: DEPRECATED proxies to the ling-mem daemon ---------------
+    // --- memory: served by ling-mem, NOT here -------------------------------
     //
-    // These have been here since 1.4.0 (2026-07-10), when `mcp-spec.md` chose
-    // one front door for every channel. Phase 2 of `mcp-client-spec.md`
-    // reverses that: the tools come from ling-mem, so ling-mem is where they
-    // are served, and a host that wants memory adds that server. Two servers
-    // offering identical schemas is precisely the duplication to avoid — the
-    // model cannot tell a proxied `memory_search` from a direct one and picks
-    // between them arbitrarily.
+    // The `memory_*` proxies lived here from 1.4.0 (2026-07-10), when
+    // `mcp-spec.md` chose one front door for every channel. Phase 2 of
+    // `mcp-client-spec.md` reversed that and they were cut on 2026-07-30:
+    // the tools come from ling-mem, so ling-mem is where they are served,
+    // and a host that wants memory adds that server (the plugin ships both).
     //
-    // Kept for a deprecation window rather than cut dead, because anyone who
-    // wired this front door for memory would otherwise lose it without
-    // warning. The description carries the notice; `Backend::Memory` logs one
-    // per process. Remove the group once the window closes.
+    // Cut rather than left through a longer window because the plugin was the
+    // only channel that wired this door for memory, and it migrates its users
+    // in the same release. Leaving both would put two `memory_search` tools
+    // with identical schemas in front of one model — the duplication this
+    // whole arc exists to remove, self-inflicted.
     //
-    // `memory_dream_status` / `memory_dream_run` below are NOT part of this:
-    // they are engine capabilities, not memory-server ones. dream_status
-    // composes the daemon's rollup with the engine's in-flight run state, and
-    // dream_run drives the engine's mission executor — ling-mem cannot serve
-    // either, so they stay regardless of the window.
-    McpTool {
-        name: "memory_search",
-        backend: Backend::Memory { verb: "search" },
-        description: "Semantic search over the user's durable cross-session memory (identity, preferences, decisions, gotchas). Search before answering questions that could connect to past preferences or decisions; cite rows you use (\"From memory: …\").",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Natural-language description of what you're looking for"},
-                "limit": {"type": "integer", "description": "Max rows (default 10)"},
-                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Omit to span all tiers"},
-                "contexts": {"type": "array", "items": {"type": "string"}, "description": "Filter to these scope tags"}
-            },
-            "required": ["query"]
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_add",
-        backend: Backend::Memory { verb: "add" },
-        description: "Insert a new memory row. Durable, cross-session signal only — identity facts, behavioural preferences, decisions with their reasoning. Uncertain-durability signal goes to tier=episodic (per-turn staging; a nightly pass promotes what lasts). Search first for core/semantic writes.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "The fact text the model will see when this row is recalled"},
-                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "episodic = per-turn capture staging (default lane); semantic = curated durable pool (search first); core = tiny always-injected universals about the person"},
-                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                "contexts": {"type": "array", "items": {"type": "string"}, "description": "Scope tags, e.g. a project name"},
-                "host": {"type": "string", "description": "Identify the calling host (e.g. claude-code, codex, cursor) for cross-host attribution"},
-                "source_session": {"type": "string", "description": "Session id that authored this content"},
-                "occurred_at": {"type": "string", "description": "RFC-3339 user-event timestamp; defaults to now"},
-                "user_directed": {"type": "boolean", "description": "Assert the user's CURRENT message states this change as SETTLED (a command, declaration, or commitment). Required when replace_ids targets from=user rows — the daemon blocks such writes otherwise. Never assert from your own inference."},
-                "replace_ids": {"type": "array", "items": {"type": "string"}, "description": "Row ids this new row replaces — inserted and deleted atomically. Use for conflict resolution; never separate add + delete calls."}
-            },
-            "required": ["content"]
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_get",
-        backend: Backend::Memory { verb: "get" },
-        description: "Fetch one memory row by id.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "The row UUID"}
-            },
-            "required": ["id"]
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_update",
-        backend: Backend::Memory { verb: "update" },
-        description: "Edit fields of an existing memory row by id. Reserve for mechanical rephrasing of the same fact; contradictions are resolved with memory_add + replace_ids after asking the user.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "The row UUID"},
-                "content": {"type": "string"},
-                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"]},
-                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"]},
-                "contexts": {"type": "array", "items": {"type": "string"}},
-                "user_directed": {"type": "boolean", "description": "Required when rewriting a from=user row: the user's current message directs the change"}
-            },
-            "required": ["id"]
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_delete",
-        backend: Backend::Memory { verb: "delete" },
-        description: "Hard-delete ONE memory row by id. Only for explicit user requests to forget (or post-ask conflict resolution). There is no bulk delete on this surface — deleting by type or context is not offered by design.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "The row UUID"}
-            },
-            "required": ["id"]
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_list",
-        backend: Backend::Memory { verb: "list" },
-        description: "Filter-only browse of memory rows (no ranking) — for audits and reviews. All filters optional and AND-combined; over-filtering is the #1 cause of empty results.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "tier": {"type": "string", "enum": ["core", "semantic", "episodic"], "description": "Omit to span all tiers"},
-                "contexts": {"type": "array", "items": {"type": "string"}},
-                "type": {"type": "string", "enum": ["fact", "preference", "decision", "tried", "fixed", "learned", "built"], "description": "Omit to return all types"},
-                "limit": {"type": "integer", "description": "Max rows (default 50)"},
-                "offset": {"type": "integer"},
-                "sort": {"type": "string", "enum": ["newest", "oldest"]}
-            }
-        }),
-        timeout_ms: 0,
-    },
+    // `memory_dream_status` / `memory_dream_run` below are NOT memory-server
+    // tools and stay: dream_status composes ling-mem's rollup with the
+    // engine's in-flight run state, and dream_run drives the engine's mission
+    // executor. ling-mem can serve neither.
     // --- dream: the nightly memory pipeline + its review queue --------------
     // Status/run wrap the engine's single mission executor (one set of
     // guards: in-flight, snapshot, run record). Issues proxy the daemon's
@@ -447,35 +328,6 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: 0,
     },
-    McpTool {
-        name: "memory_issues",
-        backend: Backend::Memory { verb: "issues" },
-        description: "The memory review queue — items the dream audit could not solve with confidence (uncertain merges, stale status claims, user-voice contradictions). Returns facts only; YOU are the solver: gather evidence (e.g. git history for a stale status claim), ask the user one item at a time when their call is needed, write the fix via memory_add + replace_ids, then close the item with memory_issue_resolve.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["open", "resolved", "dismissed", "all"], "description": "Which items to list (default open)"},
-                "limit": {"type": "integer", "description": "Max items (default 50)"}
-            }
-        }),
-        timeout_ms: 0,
-    },
-    McpTool {
-        name: "memory_issue_resolve",
-        backend: Backend::Memory { verb: "issue_resolve" },
-        description: "Close one review-queue item by id after solving it (outcome=resolved) or deciding it isn't worth fixing (outcome=dismissed). Pass a one-line note of what was done. Closing an already-closed item is a no-op success.",
-        schema: || json!({
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "The issue id from memory_issues"},
-                "outcome": {"type": "string", "enum": ["resolved", "dismissed"]},
-                "note": {"type": "string", "description": "One-line record of what was done"}
-            },
-            "required": ["id", "outcome"]
-        }),
-        timeout_ms: 0,
-    },
-    // --- agent_run: delegate a task to a local Linggen agent -----------------
     McpTool {
         name: "agent_run",
         backend: Backend::Agent,
@@ -544,27 +396,13 @@ fn initialize_result() -> Value {
     })
 }
 
-/// Prefix stamped onto the deprecated `memory_*` proxies at list time.
-///
-/// On the description rather than hand-written into each one: it applies to
-/// every tool with a `Memory` backend by definition, so deriving it means a
-/// tool cannot be added to that group and quietly miss the notice. It also
-/// disappears in one edit when the window closes.
-const MEMORY_DEPRECATION: &str = "DEPRECATED — memory has moved to ling-mem's own MCP server \
-    (default 127.0.0.1:9528/mcp); add it alongside this one and use its tools instead. \
-    This proxy still works and will be removed. ";
-
 fn tools_list_result() -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
         .map(|t| {
-            let description = match t.backend {
-                Backend::Memory { .. } => format!("{MEMORY_DEPRECATION}{}", t.description),
-                _ => t.description.to_string(),
-            };
             json!({
                 "name": t.name,
-                "description": description,
+                "description": t.description,
                 "inputSchema": (t.schema)(),
             })
         })
@@ -581,7 +419,7 @@ fn tool_content(text: String, is_error: bool) -> Value {
 fn render_data(tool: &McpTool, data: &Value) -> Value {
     let op = match tool.backend {
         Backend::Bridge { op, .. } => op,
-        Backend::Memory { .. } | Backend::Agent | Backend::DreamStatus | Backend::DreamRun => "",
+        Backend::Agent | Backend::DreamStatus | Backend::DreamRun => "",
     };
     match op {
         "screenshot" => {
@@ -635,27 +473,6 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                 _ => format!("{code}: {message}"),
             };
             Ok(tool_content(text, true))
-        }
-        Backend::Memory { verb } => {
-            warn_memory_group_deprecated(tool.name);
-            let mut args = args;
-            if let Some(obj) = args.as_object_mut() {
-                obj.insert("verb".to_string(), json!(verb));
-                // Attribute writes to some host even when the caller forgot —
-                // "mcp" beats a misleading default and never masks a real one.
-                if verb == "add" && !obj.contains_key("host") {
-                    obj.insert("host".to_string(), json!("mcp"));
-                }
-            }
-            // The engine's ling-mem client path: episodic wire translation,
-            // soft-empty cleanup, and first-use autostart all come with it.
-            // The daemon itself enforces the user-voice merge floor.
-            match crate::engine::tools::memory_http::call_memory_http(deps.ling_mem_url, tool.name, args)
-                .await
-            {
-                Ok(value) => Ok(tool_content(value.to_string(), false)),
-                Err(e) => Ok(tool_content(format!("{e:#}"), true)),
-            }
         }
         Backend::Agent => {
             let Some(state) = deps.state else {
@@ -906,25 +723,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_mirrors_control_x_and_memory_ops() {
+    async fn tools_list_is_browser_x_agent_and_the_two_dream_tools() {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 26);
+        assert_eq!(tools.len(), 18);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
-        assert!(tools.iter().any(|t| t["name"] == "memory_search"));
         assert!(tools.iter().any(|t| t["name"] == "agent_run"));
-        assert!(tools.iter().any(|t| t["name"] == "memory_dream_status"));
-        assert!(tools.iter().any(|t| t["name"] == "memory_dream_run"));
-        assert!(tools.iter().any(|t| t["name"] == "memory_issues"));
-        assert!(tools.iter().any(|t| t["name"] == "memory_issue_resolve"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
-        // Delete is by-id only — no bulk filters on the destructive surface.
-        let del = tools.iter().find(|t| t["name"] == "memory_delete").unwrap();
-        assert_eq!(del["inputSchema"]["required"], json!(["id"]));
-        assert!(del["inputSchema"]["properties"]["type"].is_null());
-        assert!(del["inputSchema"]["properties"]["contexts"].is_null());
+    }
+
+    /// Memory is ling-mem's server, and a host that wants it adds that server.
+    /// Serving it here too would put two `memory_search` tools with identical
+    /// schemas in front of one model — the duplication the MCP arc exists to
+    /// remove. This is the test that notices if one comes back.
+    #[tokio::test]
+    async fn memory_is_not_served_here_beyond_the_two_engine_dream_tools() {
+        let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
+        let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
+        let tools = res["result"]["tools"].as_array().unwrap();
+        let memory: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .filter(|n| n.starts_with("memory_"))
+            .collect();
+        // dream_status composes ling-mem's rollup with the engine's in-flight
+        // run state; dream_run drives the mission executor. Neither is
+        // something ling-mem could serve, so both stay.
+        assert_eq!(memory, ["memory_dream_status", "memory_dream_run"]);
     }
 
     #[tokio::test]
@@ -993,13 +820,6 @@ mod tests {
             let text = res["result"]["content"][0]["text"].as_str().unwrap();
             assert!(text.contains("unavailable"), "{name}: {text}");
         }
-    }
-
-    #[test]
-    fn issue_resolve_requires_id_and_outcome() {
-        let tool = TOOLS.iter().find(|t| t.name == "memory_issue_resolve").unwrap();
-        let schema = (tool.schema)();
-        assert_eq!(schema["required"], json!(["id", "outcome"]));
     }
 
     #[test]
