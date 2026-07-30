@@ -564,8 +564,7 @@ pub(super) fn is_under_temp(target: &Path) -> bool {
 /// Lookup order:
 /// 1. Built-in tools — `engine::tools::builtin_tier(name)`. Owns Read,
 ///    Write, Edit, Bash, Glob, Grep, capture_screenshot, Task, Skill,
-///    RunApp, lock_paths, unlock_paths, WebSearch, WebFetch, AskUser,
-///    Memory_query, Memory_write.
+///    RunApp, lock_paths, unlock_paths, WebSearch, WebFetch, AskUser.
 /// 2. Plan-mode tools (`EnterPlanMode`, `ExitPlanMode`, `UpdatePlan`) —
 ///    routed through actions.rs, not Tools::execute, but still need a
 ///    permission tier for the gate.
@@ -668,10 +667,9 @@ pub fn check_permission(
         tool_action_tier(tool)
     };
 
-    // 1a. Chat-tier tools (Memory_query, Memory_write — see capabilities.rs)
-    // are at the floor. Nothing exceeds Chat, and they don't touch the
-    // workspace — they hit the user's own daemon-backed memory store, not
-    // any path in `session_cwd`. Path-gating them produces a bogus
+    // 1a. Chat-tier tools (AskUser) are at the floor. Nothing exceeds Chat,
+    // and they don't touch the workspace — nothing in `session_cwd`.
+    // Path-gating them produces a bogus
     // "Switch this folder to chat" ExceedsCeiling prompt when path_modes
     // is empty. Allow unconditionally.
     if action_tier == PermissionMode::Chat {

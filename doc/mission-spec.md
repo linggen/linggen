@@ -76,8 +76,7 @@ allowed-tools:
   - Bash
   - Glob
   - Grep
-  - Memory_query
-  - Memory_write
+  - mcp__memory
 permission:
   paths:                           # per-path grants (same shape as SKILL.md)
     - { path: ~/.linggen/memory,     mode: write }
@@ -159,7 +158,7 @@ If `kickoff:` is omitted or empty, the scheduler falls back to a single generic 
 
 `kickoff-stop:` is an optional list of completion sentinels. When the assistant's final reply ends on one of them — the sentinel is the reply's final word (`DONE`, `SWEEP removed=4\nDONE`, one trailing `.`/`!` tolerated) — the engine discards the remaining queue: an early-finished run (e.g. the dream mission's `DONE` on an empty worklist) skips its leftover nudge turns. A sentinel mentioned mid-reply never matches.
 
-There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a built-in capability tool like `Memory_query`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at the dispatch boundary in `engine/tools/memory_tool.rs` — see the ling-mem `past_ttl=true` strip rule.
+There is no pre-agent shell stage. Deterministic data fetches happen inside the agent loop via the mission's `allowed-tools` (typically a memory tool like `memory_list`, or `Bash` when the mission declares it). For missions that previously relied on a shell pre-fetch to dodge LLM-judgment risk on empty results, the protection now lives at ling-mem's own MCP dispatch boundary — see the `past_ttl=true` strip rule.
 
 ## Cron syntax
 
@@ -203,11 +202,11 @@ The engine's hardcoded deny floor (`sudo`, `rm -rf /`, forkbomb, etc.) applies t
 Missions and skills are independent subsystems — a mission **cannot** delegate to a skill, and the `Skill` tool is not part of any mission's tool surface. A mission lists what it needs in `allowed-tools` and the engine resolves each name against:
 
 1. **Built-in engine tools** — `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, etc.
-2. **Built-in capability tools** — e.g. `Memory_query` / `Memory_write`. These ship with the engine and dispatch directly to the daemon URL in `agent.ling_mem_url` (see `engine/tools/memory_tool.rs`). The `ling-mem` daemon is installed alongside `ling` by the Linggen installer; no skill is consulted.
+2. **The built-in memory server's tools** — `mcp__memory__memory_*`. ling-mem ships with the product and is connected as an MCP server at `agent.ling_mem_url` + `/mcp` (see `doc/mcp-client-spec.md`); the daemon is installed alongside `ling` by the Linggen installer, and no skill is consulted. A mission may name the whole server (`mcp__memory`), which expands to the tools it advertises.
 
 If a listed tool name doesn't resolve to either bucket, the call fails at runtime with `unknown tool: <name>`. There is no separate `requires:` field — `allowed-tools` is the complete contract.
 
-The `dream` mission lists `Memory_query`, `Memory_write` — both built-ins. It runs without any installed skill being present.
+The `dream` mission lists `mcp__memory` — the built-in server. It runs without any installed skill being present.
 
 ## Session per run
 

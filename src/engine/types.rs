@@ -586,10 +586,9 @@ impl AgentEngine {
     /// tool, session-bound, or trigger-prefix paths. User sessions that
     /// never activate a skill stay clean: only built-ins + active
     /// capabilities visible to the model.
-    /// No-op stub. Memory_query / Memory_write are now plain built-in
-    /// tools (see `engine/tools/memory_tool.rs`); there is no capability
-    /// activation set anymore. Kept as a public method until callers
-    /// stop invoking it.
+    /// No-op stub. Memory is an MCP server discovered at runtime
+    /// (`mcp_client`); there is no capability activation set anymore.
+    /// Kept as a public method until callers stop invoking it.
     pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
         let _ = skills;
         if self.spec.is_none() { return };
@@ -664,9 +663,10 @@ mod tests {
 
         // Skill-only scope narrows to the skill's declared tools.
         let mut c = cfg();
-        c.skill_allowed_tools = Some(set(&["Read", "Bash", "AskUser", "Memory_write"]));
+        c.skill_allowed_tools = Some(set(&["Read", "Bash", "AskUser", "mcp__memory__memory_add"]));
         assert!(c.is_tool_allowed("Bash"));
         assert!(c.is_tool_allowed("AskUser"));
+        assert!(c.is_tool_allowed("mcp__memory__memory_add"));
         assert!(!c.is_tool_allowed("WebFetch"));
 
         // Skill ∩ mission → only tools in BOTH survive.

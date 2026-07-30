@@ -453,10 +453,11 @@ impl AgentEngine {
         // as a normal `not_permitted` tool error.
 
         // --- redundancy / cache gates ---
-        // Tools that read live mutable state (Memory_query: the store is
-        // shared across sessions and hosts) opt out entirely: an identical
-        // call can legitimately return new data, so it is neither served
-        // from cache nor counted toward the redundant-loop nudge.
+        // Tools that read live mutable state opt out entirely — every MCP
+        // tool, memory's included, since that store is shared across sessions
+        // and hosts: an identical call can legitimately return new data, so it
+        // is neither served from cache nor counted toward the redundant-loop
+        // nudge.
         let cacheable = tools::tool_cacheable(&canonical_tool);
 
         if cacheable {

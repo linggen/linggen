@@ -23,14 +23,27 @@ impl ToolRegistry {
     }
 
     pub async fn execute(&self, call: ToolCall) -> Result<ToolResult> {
-        // 1. Built-in engine tools (Read, Edit, Bash, Memory_query,
-        //    Memory_write, ...). Memory_* used to be routed through the
-        //    `memory` capability layer; they're now plain built-ins.
+        // 1. Built-in engine tools (Read, Edit, Bash, ...). Memory is not
+        //    among them — it is an MCP server, routed by qualified name in
+        //    `Tools::execute`.
         if tools::canonical_tool_name(&call.tool).is_some() {
             return self.builtins.execute(call).await;
         }
 
-        // 2. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
+        // 2. A tool from a connected MCP server, routed by its qualified
+        //    `mcp__<server>__<tool>` name. Discovered at runtime, so it is in
+        //    no static registry — `Tools::execute` owns the routing (and the
+        //    session state a memory call picks up on the way out).
+        //
+        //    This branch is why the first model-issued MCP call worked at all:
+        //    the names reached the model's schema and passed the permission
+        //    gate, then died here as "unknown tool". Nothing caught it while
+        //    memory was still a built-in and took branch 1 instead.
+        if crate::mcp_client::is_mcp_tool(&call.tool) {
+            return self.builtins.execute(call).await;
+        }
+
+        // 3. Skill-unique tools (shell `cmd`, HTTP `endpoint`, or data
         //    tool). Schema + dispatch target live on the SkillToolDef.
         if let Some(skill_tool) = self.skill_tools.get(&call.tool) {
             debug!(
@@ -61,14 +74,18 @@ impl ToolRegistry {
         ))
     }
 
-    /// Resolve a tool name to its canonical form. Returns the name if it
-    /// is a known built-in (now including Memory_*) or a registered
-    /// skill tool.
+    /// Resolve a tool name to its canonical form. Returns the name if it is a
+    /// known built-in, a registered skill tool, or a server-qualified MCP tool
+    /// (already canonical — the qualified name *is* the name, and it is what
+    /// the permission gate and the log line must show).
     pub fn canonical_tool_name<'a>(&self, tool: &'a str) -> Option<&'a str> {
         if tools::canonical_tool_name(tool).is_some() {
             return Some(tool);
         }
         if self.skill_tools.contains_key(tool) {
+            return Some(tool);
+        }
+        if crate::mcp_client::is_mcp_tool(tool) {
             return Some(tool);
         }
         None
@@ -104,8 +121,8 @@ impl ToolRegistry {
     }
 
     /// Merge built-in and skill tool schemas, filtered by the allowed
-    /// set. Built-ins now include Memory_query / Memory_write directly
-    /// (the old capability layer is gone — see PR2).
+    /// set. MCP-discovered schemas join them in `json_schema`, which is how
+    /// memory's tools reach the model.
     pub fn tool_schema_json(&self, allowed_tools: Option<&HashSet<String>>) -> String {
         let mut tools_arr = tools::full_tool_schema_entries();
         tools_arr.retain(|entry| {

@@ -381,8 +381,8 @@ export function useChatActions(
           }
         }
         // Prefer structured content blocks for tool calls — they carry the
-        // arg JSON so the export shows `Memory_query("user has a cat")`
-        // instead of the bare `Used tool: Memory_query`. Fall back to
+        // arg JSON so the export shows `memory_search("user has a cat")`
+        // instead of the bare `Used tool: …`. Fall back to
         // activityEntries when content blocks aren't present (older
         // messages, plan output, etc.).
         const blocks = Array.isArray(m.content) ? m.content : [];

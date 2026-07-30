@@ -906,7 +906,7 @@ async fn prepare_server(
                     .unwrap_or(false)
             });
             if uses_memory {
-                match crate::engine::tools::memory_tool::autostart().await {
+                match crate::engine::tools::memory_http::autostart().await {
                     Ok(()) => info!("ling-mem pre-warmed (a skill uses scoped memory)"),
                     Err(e) => {
                         info!("ling-mem pre-warm deferred to first use: {e}")
@@ -1375,7 +1375,7 @@ pub async fn start_server(
 /// Route: POST /apps/{skill_name}/capability/{tool_name}
 ///
 /// Memory is engine-built-in (HTTP to `ling-mem`); this endpoint is a
-/// thin wrapper around `tools::memory_tool::call_memory_http` so skill
+/// thin wrapper around `tools::memory_http::call_memory_http` so skill
 /// webpages can call Memory_* without hardcoding the daemon URL. The
 /// call also rides the existing WebRTC fetch proxy in remote mode
 /// (control channel forwards `/apps/*` to the host's linggen server).
@@ -1409,8 +1409,19 @@ async fn capability_dispatch(
         return (StatusCode::NOT_FOUND, format!("Skill '{}' not found", skill_name)).into_response();
     }
 
+    // Attribute the row to this host. Used to be a default inside the ling-mem
+    // client, which meant every caller of that function was silently named
+    // `linggen` — including the `/mcp` front door, which is not. Each caller
+    // says who it is now, and this one is a webpage running inside Linggen.
+    let mut args = args;
+    if let Some(obj) = args.as_object_mut() {
+        if tool_name == "Memory_write" && !obj.contains_key("host") {
+            obj.insert("host".to_string(), serde_json::json!("linggen"));
+        }
+    }
+
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    match crate::engine::tools::memory_tool::call_memory_http(&ling_mem_url, &tool_name, args).await {
+    match crate::engine::tools::memory_http::call_memory_http(&ling_mem_url, &tool_name, args).await {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {
             let msg = format!("{:#}", e);

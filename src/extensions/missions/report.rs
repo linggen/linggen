@@ -11,8 +11,22 @@
 
 use crate::state_fs::sessions::ChatMsg;
 
-const WRITE_OK: &str = "Tool Memory_write: success: ";
-const QUERY_OK: &str = "Tool Memory_query: success: ";
+const OK_MARKER: &str = ": success: ";
+
+/// The successful payload of a memory tool result line, or `None` if this
+/// message isn't one.
+///
+/// Matched by the **server** rather than by tool name: memory's tools all
+/// belong to one server, so one prefix covers the family — where a pair of
+/// hardcoded names used to, and went stale the moment those names changed.
+/// Which tool produced a payload is then read off the payload's own shape,
+/// which is what this file was always really doing.
+fn memory_result(content: &str) -> Option<&str> {
+    let prefix = format!("Tool {}", crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, ""));
+    let rest = content.strip_prefix(&prefix)?;
+    let at = rest.find(OK_MARKER)?;
+    Some(&rest[at + OK_MARKER.len()..])
+}
 
 /// Compose a run report from the session's memory tool results.
 /// `None` when the run stamped no day and ran no sweep — missions that
@@ -25,22 +39,21 @@ pub(crate) fn compose_memory_report(messages: &[ChatMsg]) -> Option<String> {
     let mut retired = 0u64;
 
     for m in messages.iter().filter(|m| m.from_id == "system") {
-        if let Some(json) = m.content.strip_prefix(WRITE_OK) {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
-                continue;
-            };
-            if let Some(line) = remember_line(&v) {
-                remembered.push(line);
-            } else if let Some(line) = sweep_line(&v) {
-                swept.push(line);
-            } else if let Some(n) = replaced_count(&v) {
-                merges += 1;
-                retired += n;
-            }
+        let Some(json) = memory_result(&m.content) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+            continue;
+        };
+        if let Some(line) = remember_line(&v) {
+            remembered.push(line);
+        } else if let Some(line) = sweep_line(&v) {
+            swept.push(line);
+        } else if let Some(n) = replaced_count(&v) {
+            merges += 1;
+            retired += n;
         } else if worklist.is_none() {
-            if let Some(json) = m.content.strip_prefix(QUERY_OK) {
-                worklist = worklist_line(json);
-            }
+            worklist = worklist_line(&v);
         }
     }
 
@@ -76,8 +89,7 @@ fn replaced_count(v: &serde_json::Value) -> Option<u64> {
 /// The rollup may be the FULL calendar (a day-scoped run's context
 /// fetch), so count only undreamed entries (past day, unjudged rows) —
 /// never the raw array length.
-fn worklist_line(json: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+fn worklist_line(v: &serde_json::Value) -> Option<String> {
     let days = v.get("days")?.as_array()?;
     let today = v.get("today").and_then(|t| t.as_str()).unwrap_or("");
     let undreamed: Vec<&serde_json::Value> = days
@@ -187,11 +199,11 @@ mod tests {
     fn full_run_report() {
         // Shapes copied verbatim from the 2026-07-06 live run transcript.
         let messages = vec![
-            sys(r#"Tool Memory_query: success: {"days":[{"date":"2026-07-03","dreamed":false,"forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"scanned":false,"unjudged":14}],"today":"2026-07-06","ttl_days":7}"#),
-            sys(r#"Tool Memory_query: success: [{"content":"unrelated search result"}]"#),
-            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"content":"a promoted row","id":"abc"}}"#),
-            sys(r#"Tool Memory_write: success: {"date":"2026-07-03","record":{"forgotten":0,"judged":14,"promoted":7,"remembered_at":"2026-07-06T17:06:50Z"}}"#),
-            sys(r#"Tool Memory_write: success: {"days":{"2026-06-29":4},"dry_run":false,"removed":4}"#),
+            sys(r#"Tool mcp__memory__memory_days: success: {"days":[{"date":"2026-07-03","dreamed":false,"forgotten":0,"harvested_at":null,"judged":0,"past_ttl":0,"promoted":0,"remembered_at":null,"rows":14,"scanned":false,"unjudged":14}],"today":"2026-07-06","ttl_days":7}"#),
+            sys(r#"Tool mcp__memory__memory_search: success: [{"content":"unrelated search result"}]"#),
+            sys(r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"content":"a promoted row","id":"abc"}}"#),
+            sys(r#"Tool mcp__memory__memory_remember_day: success: {"date":"2026-07-03","record":{"forgotten":0,"judged":14,"promoted":7,"remembered_at":"2026-07-06T17:06:50Z"}}"#),
+            sys(r#"Tool mcp__memory__memory_sweep: success: {"days":{"2026-06-29":4},"dry_run":false,"removed":4}"#),
         ];
         let report = compose_memory_report(&messages).unwrap();
         assert_eq!(
@@ -206,10 +218,10 @@ mod tests {
     #[test]
     fn condense_merges_are_counted() {
         let messages = vec![
-            sys(r#"Tool Memory_write: success: {"days":{},"dry_run":false,"removed":0}"#),
-            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"s1"},"replaced":["a","b"]}"#),
-            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"s2"},"replaced":["c"]}"#),
-            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"plain"}}"#),
+            sys(r#"Tool mcp__memory__memory_sweep: success: {"days":{},"dry_run":false,"removed":0}"#),
+            sys(r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"id":"s1"},"replaced":["a","b"]}"#),
+            sys(r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"id":"s2"},"replaced":["c"]}"#),
+            sys(r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"id":"plain"}}"#),
         ];
         let report = compose_memory_report(&messages).unwrap();
         assert_eq!(
@@ -223,8 +235,8 @@ mod tests {
     #[test]
     fn no_op_run_reports_quiet_sweep() {
         let messages = vec![
-            sys(r#"Tool Memory_query: success: {"days":[],"today":"2026-07-06","ttl_days":7}"#),
-            sys(r#"Tool Memory_write: success: {"days":{},"dry_run":false,"removed":0}"#),
+            sys(r#"Tool mcp__memory__memory_days: success: {"days":[],"today":"2026-07-06","ttl_days":7}"#),
+            sys(r#"Tool mcp__memory__memory_sweep: success: {"days":{},"dry_run":false,"removed":0}"#),
         ];
         let report = compose_memory_report(&messages).unwrap();
         assert_eq!(
@@ -237,7 +249,7 @@ mod tests {
     fn non_memory_run_stays_silent() {
         let messages = vec![
             sys("Tool Bash: success: ok"),
-            sys(r#"Tool Memory_write: success: {"action":"added","fact":{"id":"x"}}"#),
+            sys(r#"Tool mcp__memory__memory_add: success: {"action":"added","fact":{"id":"x"}}"#),
         ];
         assert!(compose_memory_report(&messages).is_none());
     }
@@ -245,7 +257,7 @@ mod tests {
     #[test]
     fn dry_run_sweep_is_ignored() {
         let messages = vec![sys(
-            r#"Tool Memory_write: success: {"days":{"2026-06-29":4},"dry_run":true,"removed":4}"#,
+            r#"Tool mcp__memory__memory_sweep: success: {"days":{"2026-06-29":4},"dry_run":true,"removed":4}"#,
         )];
         assert!(compose_memory_report(&messages).is_none());
     }

@@ -164,8 +164,8 @@ Available tools depend on the session's effective mode for the current path:
 | Mode | Available tools |
 |:-----|:---------------|
 | chat | None |
-| read | Read, Glob, Grep, WebSearch, WebFetch, capture_screenshot, plan tools, AskUser, read-class Bash, Memory_query |
-| edit | Everything in read + Write, Edit, write-class Bash, Memory_write |
+| read | Read, Glob, Grep, WebSearch, WebFetch, capture_screenshot, plan tools, AskUser, read-class Bash |
+| edit | Everything in read + Write, Edit, write-class Bash |
 | admin | Everything in edit + admin-class Bash |
 
 Reads are gated like writes — an unguarded path defaults to `chat` (no tools), so a `Read` outside any grant prompts the user just like an edit would. This is required for proxy-consumer safety (a consumer cannot reach `~/.ssh` from a session granted on `~/work`).

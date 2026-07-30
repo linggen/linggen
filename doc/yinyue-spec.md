@@ -27,8 +27,8 @@ In priority order:
 
 1. **Help the user.** Do the work herself, or marshal the other agents. The user
    talks to her; she brings back the result.
-2. **Know and spoil the user.** Recall before acting (`Memory_query`), write what
-   she learns (`Memory_write`). Spoiling is anticipation from memory — the right
+2. **Know and spoil the user.** Recall before acting (`memory_search`), write what
+   she learns (`memory_add`). Spoiling is anticipation from memory — the right
    thing before it's asked — not chatter.
 3. **Keep the world running.** Watch the agents, missions, and services for the
    user so they never babysit the machine.
@@ -330,8 +330,8 @@ days.
 
 **Memory.** Full-store, like an owner session — `include_memory = true`, unscoped
 (`contexts = None`). She auto-recalls the user's whole biography each turn (she
-shares Ling's memory — no `yinyue` namespace) and still has `Memory_query` /
-`Memory_write` for targeted lookups and saves. Core block always loaded; per-turn
+shares Ling's memory — no `yinyue` namespace) and still has the memory
+server's `memory_*` tools for targeted lookups and saves. Core block always loaded; per-turn
 capture writes episodic.
 
 **Companion latency tuning.** A companion does many small turns, so each must stay
@@ -344,7 +344,7 @@ snappy. Three guards keep it that way (all Yinyue-only):
   recall, so a day-long session never drags its whole history into a quick reply.
 - **No reflexive recall** — her prompt tells her the relevant memory is already
   injected each turn, so she answers from it instead of spending a round-trip on
-  `Memory_query`.
+  `memory_search`.
 
 Net: a "good morning" went from ~35s / 2 round-trips / 55K-char context to ~3s /
 1 round-trip / 38K, on the same model.

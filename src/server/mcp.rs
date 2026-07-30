@@ -650,7 +650,7 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
             // The engine's ling-mem client path: episodic wire translation,
             // soft-empty cleanup, and first-use autostart all come with it.
             // The daemon itself enforces the user-voice merge floor.
-            match crate::engine::tools::memory_tool::call_memory_http(deps.ling_mem_url, tool.name, args)
+            match crate::engine::tools::memory_http::call_memory_http(deps.ling_mem_url, tool.name, args)
                 .await
             {
                 Ok(value) => Ok(tool_content(value.to_string(), false)),
@@ -744,7 +744,7 @@ async fn compose_dream_status(
     state: &Arc<ServerState>,
     ling_mem_url: &str,
 ) -> anyhow::Result<Value> {
-    let rollup = crate::engine::tools::memory_tool::call_memory_http(
+    let rollup = crate::engine::tools::memory_http::call_memory_http(
         ling_mem_url,
         "memory_dream_status",
         json!({ "verb": "days", "undreamed_only": true }),

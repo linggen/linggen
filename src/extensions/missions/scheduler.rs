@@ -537,7 +537,7 @@ async fn dispatch_mission_prompt(
     // merges retire long-term rows with no undo — snapshot the store
     // first (one export per day, 7 kept, best-effort).
     if mission.agent_id == "memory" {
-        crate::engine::tools::memory_tool::backup_store_best_effort().await;
+        crate::engine::tools::memory_http::backup_store_best_effort().await;
     }
 
     let sid = session_id.as_deref().unwrap_or("default");
@@ -934,9 +934,9 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
     // Close with where the store stands — one `stats` call to the
     // daemon; skipped silently if it's unreachable.
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    if let Ok(stats) = crate::engine::tools::memory_tool::call_memory_http(
+    if let Ok(stats) = crate::engine::tools::memory_http::call_memory_http(
         &ling_mem_url,
-        "Memory_query",
+        "mission report",
         serde_json::json!({ "verb": "stats" }),
     )
     .await

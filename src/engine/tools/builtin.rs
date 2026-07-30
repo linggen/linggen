@@ -17,7 +17,6 @@ use super::browser_tool::{
 };
 use super::delegation::{RunAppArgs, SkillArgs, TaskArgs, WebFetchArgs, WebSearchArgs};
 use super::file_tools::{CaptureScreenshotArgs, ListFilesArgs, ReadFileArgs};
-use super::memory_tool::{MemoryQueryTool, MemoryWriteTool};
 use super::search_exec::{RunCommandArgs, SearchArgs};
 use super::write_tools::{EditFileArgs, LockPathsArgs, UnlockPathsArgs, WriteFileArgs};
 use super::{ToolCall, ToolResult, Tools};
@@ -113,11 +112,11 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(AnswerPromptTool),
             Arc::new(AgentChatTool),
             Arc::new(AskUserTool),
-            // Memory_query / Memory_write — engine-built-in (HTTP to
-            // `ling-mem`). Previously routed through the now-defunct
-            // `memory` capability abstraction.
-            Arc::new(MemoryQueryTool),
-            Arc::new(MemoryWriteTool),
+            // Memory is NOT here. ling-mem is an MCP server and the model
+            // uses its tools directly (`mcp__memory__memory_*`), discovered
+            // at runtime rather than compiled in — so there is one memory
+            // surface for Linggen, Claude Code, and Codex alike instead of
+            // this engine's private restatement of it.
             // Browser_* — browser control over the bridge to the
             // linggen-browser extension (browser-control-spec.md). Mutating
             // actions are gated by the extension's own permission prompt.
@@ -148,8 +147,17 @@ pub fn builtin_tier(name: &str) -> Option<PermissionMode> {
 }
 
 /// Cache/redundancy-gate participation, used by `engine::tool_exec`.
-/// Unknown (custom / skill) tools default to cacheable.
+///
+/// Unknown (custom / skill) tools default to cacheable. **An MCP tool never
+/// is**: it belongs to a process we don't control, so we have no basis for
+/// claiming an identical call returns an identical answer — and the first such
+/// server is memory, whose store is live state shared across sessions and
+/// hosts. Serving a repeat `memory_search` from cache would hide a row the
+/// user just added.
 pub fn tool_cacheable(name: &str) -> bool {
+    if crate::mcp_client::is_mcp_tool(name) {
+        return false;
+    }
     lookup(name).map(|t| t.cacheable()).unwrap_or(true)
 }
 

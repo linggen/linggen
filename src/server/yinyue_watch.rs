@@ -281,7 +281,7 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
         "You've been woken to react to a background event on the user's machine. \
          The background job \"{mission_name}\" just finished (status: {status}). \
          Decide whether it's worth telling the user. If so, reply with one or two brief \
-         sentences in your voice — what happened and anything notable (you may Memory_query, \
+         sentences in your voice — what happened and anything notable (you may search memory, \
          Read, or Grep for context). Your reply will be SPOKEN ALOUD, so write plain prose, \
          no markdown. If it's routine and not worth interrupting them, reply with exactly the \
          single word SILENT and nothing else. Be brief. Never nag."

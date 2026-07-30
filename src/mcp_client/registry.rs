@@ -170,6 +170,16 @@ impl McpRegistry {
         self.state.read().unwrap().tools.clone()
     }
 
+    /// One tool as discovery found it — its owning server and the schema that
+    /// server advertised for it.
+    ///
+    /// For a caller that fills in arguments the model didn't: the schema is
+    /// the server's own statement of what it accepts, so a field it never
+    /// declared is never invented for it.
+    pub fn advertised_tool(&self, qualified: &str) -> Option<AdvertisedTool> {
+        self.state.read().unwrap().tools.iter().find(|t| t.qualified == qualified).cloned()
+    }
+
     /// Which server owns a qualified name, and what it calls the tool.
     fn route(&self, qualified: &str) -> Option<(Arc<McpClient>, String)> {
         let state = self.state.read().unwrap();
@@ -269,7 +279,7 @@ mod tests {
         assert_ne!(qualify("github", "search"), qualify("sentry", "search"));
         assert!(is_mcp_tool("mcp__github__search"));
         assert!(!is_mcp_tool("Read"));
-        assert!(!is_mcp_tool("Memory_query"));
+        assert!(!is_mcp_tool("AskUser"));
     }
 
     /// An unconnected registry answers rather than panics — the state every

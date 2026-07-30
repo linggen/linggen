@@ -419,7 +419,7 @@ impl AgentEngine {
         // misses every raw `messages.push` site (native tool results among
         // them) — a stale low estimate blinds this trigger while the actual
         // request grows past the provider's window. Observed: a ~400 KB
-        // Memory_query list result never entered the accumulator; requests
+        // memory list result never entered the accumulator; requests
         // reached ~670 KB with the check stuck under the 64k threshold and
         // the provider killed the run. One pass over message strings per
         // loop iteration is negligible next to the model call.

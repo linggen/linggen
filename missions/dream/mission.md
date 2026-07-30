@@ -12,7 +12,7 @@ enabled: true
 # same brain the memory app's calendar reaches by triggering this
 # mission day-scoped (`kickoff-day` / `kickoff-attended` below), so
 # the mission and the UI can never drift apart. Unattended runs are
-# safe by construction: this mission's allowed-tools is Memory-only
+# safe by construction: this mission's allowed-tools is memory-only
 # (the engine adds AskUser to scope only on attended triggers) and
 # uncertainty resolves to promote.
 agent: memory
@@ -31,24 +31,24 @@ kickoff-stop: [DONE, STALLED]
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then
-    call `Memory_query({"verb":"days","undreamed_only":true})`. If no
+    call `memory_days({"undreamed_only":true})`. If no
     days are undreamed, run the finish-up per your system prompt: call
-    `Memory_write({"verb":"sweep"})`, report `SWEEP removed=<n>`, then
+    `memory_sweep()`, report `SWEEP removed=<n>`, then
     condense — call
-    `Memory_query({"verb":"chains","kind":"cited","limit":10,"derived_only":true})`,
+    `memory_chains({"kind":"cited","limit":10,"derived_only":true})`,
     collapse each returned chain (a `MERGE` line per chain; empty scan
     → no lines) — then the audit queue pass per your system prompt
-    (`Memory_query({"verb":"chains","kind":"marker","limit":5})` →
-    `Memory_write({"verb":"issue_add",...})` per stale candidate, a
+    (`memory_chains({"kind":"marker","limit":5})` →
+    `memory_issue_add({...})` per stale candidate, a
     `QUEUE` line each), and reply exactly: DONE. Otherwise remember
     the OLDEST undreamed day per your system prompt (worklist → cluster
     → promote → stamp), then stop and wait.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -57,10 +57,10 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -69,10 +69,10 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -81,10 +81,10 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -93,10 +93,10 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -105,10 +105,10 @@ kickoff:
     system prompt.
   - >-
     First action this turn: call
-    `Memory_query({"verb":"days","undreamed_only":true})` to fetch a
+    `memory_days({"undreamed_only":true})` to fetch a
     FRESH worklist — never answer from a previous turn's response.
     Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`Memory_write({"verb":"sweep"})` + `SWEEP
+    per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit queue pass with its `QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
@@ -117,8 +117,8 @@ kickoff:
     system prompt.
   - >-
     Last scheduled turn for tonight. First call
-    `Memory_query({"verb":"days","undreamed_only":true})` for a fresh
-    count, then call `Memory_write({"verb":"sweep"})`. From the fresh
+    `memory_days({"undreamed_only":true})` for a fresh
+    count, then call `memory_sweep()`. From the fresh
     result only: no undreamed days → report `SWEEP removed=<n>`, run
     the cited-chains condense per your system prompt (`MERGE` lines)
     and the audit queue pass (`QUEUE` lines), and reply exactly:
@@ -135,11 +135,11 @@ kickoff-day:
     Introduce it in one short line, then run the remember procedure
     for $DAY per your system prompt (context → day worklist → cluster
     → promote → stamp via
-    `Memory_write({"verb":"remember_day","date":"$DAY",...}` with the
+    `memory_remember_day({"date":"$DAY", ...})` with the
     judged/promoted counts). If the day has no episodic rows, reply
     exactly: CLEAN. Then stop and wait.
   - >-
-    Last turn for this run: call `Memory_write({"verb":"sweep"})`,
+    Last turn for this run: call `memory_sweep()`,
     report `SWEEP removed=<n>`, run the cited-chains condense per
     your system prompt (`MERGE` lines; empty scan → no lines) and the
     audit queue pass (`QUEUE` lines), then reply exactly: DONE.
@@ -154,15 +154,15 @@ kickoff-attended:
     the final review step only. Introduce it in one short line, then
     run the remember procedure for $DAY per your system prompt
     (context → day worklist → cluster → promote → stamp via
-    `Memory_write({"verb":"remember_day","date":"$DAY",...}` with the
+    `memory_remember_day({"date":"$DAY", ...})` with the
     judged/promoted counts). If the day has no episodic rows, reply
     exactly: CLEAN. Then stop and wait.
   - >-
-    Last turn for this run: call `Memory_write({"verb":"sweep"})`,
+    Last turn for this run: call `memory_sweep()`,
     report `SWEEP removed=<n>`, run the cited-chains condense per
     your system prompt (`MERGE` lines), then the attended review per
     your system prompt: fetch
-    `Memory_query({"verb":"chains","kind":"marker","limit":4,"derived_only":true})`
+    `memory_chains({"kind":"marker","limit":4,"derived_only":true})`
     and, if candidates return, confirm them with the user in ONE
     AskUser call — merge only what they approve; on timeout or error
     queue the candidates instead (`issue_add`, `QUEUE` lines). Then
@@ -172,9 +172,10 @@ kickoff-attended:
 # the tool list — uncertainty resolves per the agent spec (promote on
 # durability doubt). The agent spec (agents/memory.md) carries the
 # judgment doctrine; this body carries only the run protocol.
+# The memory server by name — expanded to the tools it advertises, so a
+# ling-mem that gains a verb does not need this list re-edited.
 allowed-tools:
-  - Memory_query
-  - Memory_write
+  - mcp__memory
 permission:
   warning: >-
     Talks to the local ling-mem daemon on 127.0.0.1 only. Promotes
@@ -195,7 +196,7 @@ status-line format — is in your system prompt (you are the `memory`
 agent). This mission adds only the nightly run protocol:
 
 - **One day per turn.** Each turn: fetch the undreamed-days worklist
-  (`Memory_query {"verb":"days","undreamed_only":true}`), take the
+  (`memory_days({"undreamed_only":true})`), take the
   **oldest** day, run the remember procedure on it, stamp it, stop.
   The next kickoff nudge continues the loop.
 - **Stop conditions.** Empty worklist → run the finish-up
@@ -205,11 +206,11 @@ agent). This mission adds only the nightly run protocol:
   reply `PARTIAL <n> days remain` (no condense on PARTIAL nights).
 - **Finish-up = sweep → condense → queue.** On the empty-worklist
   turn, after the sweep, fetch
-  `Memory_query {"verb":"chains","kind":"cited","limit":10,"derived_only":true}`
+  `memory_chains({"kind":"cited","limit":10,"derived_only":true})`
   ONCE and collapse each returned chain per your condense doctrine —
   one current-truth row via `replace_ids`, a `MERGE` line each. Then
   the audit queue pass per your system prompt: ONE
-  `Memory_query {"verb":"chains","kind":"marker","limit":5}` fetch,
+  `memory_chains({"kind":"marker","limit":5})` fetch,
   and `issue_add` (a `QUEUE` line each) for stale candidates you
   cannot solve with confidence. The capped fetches are the nightly
   budget; leftovers wait for tomorrow. **Only `cited` chains MERGE

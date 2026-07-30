@@ -338,9 +338,8 @@ impl AgentEngine {
         // daemon every other memory surface reads. Empty / unreachable
         // store ⇒ the bootstrap block fires instead, telling the model
         // how to populate core. Semantic retrieval over the rest of the
-        // store reaches the model through the built-in `Memory_query` /
-        // `Memory_write` tools (see `engine/tools/memory_tool.rs`) —
-        // not through here.
+        // store reaches the model through the memory server's own tools
+        // (`mcp__memory__memory_search`) — not through here.
         tracing::info!(
             "prompt build: include_memory={} active_mission={} agent={:?}",
             self.prompt_profile.include_memory,
@@ -723,15 +722,7 @@ impl AgentEngine {
                 }
                 let mut allowed = tools_list
                     .iter()
-                    .filter_map(|tool| {
-                        if let Some(name) = tools::canonical_tool_name(tool) {
-                            return Some(name.to_string());
-                        }
-                        if self.tools.has_skill_tool(tool) {
-                            return Some(tool.to_string());
-                        }
-                        None
-                    })
+                    .flat_map(|tool| self.resolve_declared_tool(tool))
                     .collect::<HashSet<String>>();
                 // The active skill's own custom tools are always allowed.
                 for td in &skill.tool_defs {
@@ -739,8 +730,8 @@ impl AgentEngine {
                 }
                 // Skill tool is always allowed so the model can discover/invoke skills.
                 allowed.insert("Skill".to_string());
-                // Core memory is curated via `Memory_write({tier:"core"})`,
-                // not file edits, so the previous auto-grant of
+                // Core memory is curated by writing a `tier: "core"` row, not
+                // by editing files, so the previous auto-grant of
                 // Read/Write/Edit on `~/.linggen/memory/` is no longer
                 // justified and has been removed. Skills that legitimately
                 // need filesystem access must declare it through their own
@@ -762,17 +753,7 @@ impl AgentEngine {
         let mut allowed = spec
             .tools
             .iter()
-            .filter_map(|tool| {
-                // Builtin tools are resolved via canonical_tool_name.
-                if let Some(name) = tools::canonical_tool_name(tool) {
-                    return Some(name.to_string());
-                }
-                // Skill tools are recognised by the registry.
-                if self.tools.has_skill_tool(tool) {
-                    return Some(tool.to_string());
-                }
-                None
-            })
+            .flat_map(|tool| self.resolve_declared_tool(tool))
             .collect::<HashSet<String>>();
 
         // Skill tool is always allowed so the model can discover/invoke skills.
@@ -782,18 +763,47 @@ impl AgentEngine {
         Some(allowed)
     }
 
-    /// Memory tools (`Memory_query` / `Memory_write`) are cross-cutting
-    /// — they live outside any single agent's declared tool list, so
-    /// owner sessions get them auto-injected. Mission / consumer
-    /// sessions opt out via `prompt_profile.include_memory == false`.
-    /// Memory_* are plain built-in tools that talk HTTP to ling-mem; see
-    /// `engine/tools/memory_tool.rs`.
+    /// One name a declaration can carry, resolved to what the model will be
+    /// offered. Empty means the entry named nothing and is dropped.
+    ///
+    /// Three kinds of name reach here: a built-in (canonicalised, so an alias
+    /// still resolves), a skill's own custom tool, and an MCP entry — either one
+    /// qualified tool or a whole server, expanded through the same rule the
+    /// scope sets use. That third arm is why memory can appear in an agent's
+    /// `tools:` or a skill's `allowed-tools:` at all: before it, an
+    /// `mcp__memory…` entry in either list was silently discarded, and a
+    /// narrowed agent lost memory without a word about it.
+    fn resolve_declared_tool(&self, tool: &str) -> Vec<String> {
+        if let Some(name) = tools::canonical_tool_name(tool) {
+            return vec![name.to_string()];
+        }
+        if self.tools.has_skill_tool(tool) {
+            return vec![tool.to_string()];
+        }
+        if crate::mcp_client::is_mcp_tool(tool) {
+            return crate::extensions::scope::expand_declaration(tool);
+        }
+        Vec::new()
+    }
+
+    /// Memory tools are cross-cutting — they live outside any single agent's
+    /// declared tool list, so owner sessions get them auto-injected. Mission /
+    /// consumer sessions opt out via `prompt_profile.include_memory == false`.
+    ///
+    /// Which tools those *are* is read from the connected memory server, not
+    /// listed here: ling-mem owns its own surface, and a version that adds a
+    /// verb should not need an engine change to be reachable. A server that
+    /// isn't connected injects nothing, which is the honest answer — the model
+    /// is offered what actually exists.
     fn inject_memory_tools(&self, allowed: &mut HashSet<String>) {
         if !self.prompt_profile.include_memory {
             return;
         }
-        allowed.insert("Memory_query".to_string());
-        allowed.insert("Memory_write".to_string());
+        for tool in crate::mcp_client::registry().advertised() {
+            if tool.server == crate::mcp_client::BUILTIN_MEMORY {
+                allowed.insert(tool.qualified);
+            }
+        }
     }
 
     pub(crate) fn is_tool_allowed(&self, allowed: &HashSet<String>, requested_tool: &str) -> bool {

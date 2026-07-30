@@ -157,7 +157,7 @@ pub(super) async fn persist_and_emit_last_assistant_text(
 }
 
 /// One row surfaced by per-turn auto-recall. Carries the id so the
-/// agent can act on duplicates / conflicts directly via `Memory_write`,
+/// agent can act on duplicates / conflicts directly via `memory_add`,
 /// and the UI can deep-link a row to the memory dashboard. Score is the
 /// raw cosine similarity from the embedding store so the UI can render
 /// match strength and the engine can gate on quality.
@@ -401,7 +401,7 @@ pub(super) async fn push_user_turn_with_recall(
 ) {
     // Same gate as the core block + memory protocol injection: skill /
     // mission sessions don't query the user's biographical memory.
-    // Without this, a Pulse turn fires Memory_query, surfaces hits, and
+    // Without this, a Pulse turn fires a recall, surfaces hits, and
     // the "🧠 N memories recalled" widget appears in a skill session that
     // shouldn't touch memory at all.
     let recalled = if engine.prompt_profile.include_memory {

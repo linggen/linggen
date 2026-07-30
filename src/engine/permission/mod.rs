@@ -588,11 +588,12 @@ mod tests {
         assert!(matches!(result, PermissionCheckResult::Blocked(_)));
     }
 
-    #[test]
     /// The safety property phase 1 of the MCP client rests on: a tool from a
     /// server the USER added is gated, and gated *by default* — not by a rule
-    /// someone has to remember to write for each one. Memory's ungated Chat
-    /// tier is precisely what it must never inherit.
+    /// someone has to remember to write for each one. The memory server's
+    /// ungated pass is precisely what it must never inherit, and it doesn't
+    /// come from the tier: every MCP tool sits at Admin here, and only a
+    /// server's own `gated: false` waves its tools through.
     #[test]
     fn mcp_tools_are_admin_tier_never_chat() {
         assert_eq!(
@@ -601,7 +602,7 @@ mod tests {
         );
         assert_eq!(tool_action_tier("mcp__ling-mem__memory_search"), PermissionMode::Admin);
         // The contrast that makes the point.
-        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Chat);
+        assert_eq!(tool_action_tier("AskUser"), PermissionMode::Chat);
     }
 
     #[test]
@@ -612,11 +613,17 @@ mod tests {
         assert_eq!(tool_action_tier("Bash"), PermissionMode::Admin);
     }
 
+    /// Memory used to be two built-in tools pinned at Chat. It is ling-mem's
+    /// own MCP server now, and nothing here knows its name: the static tier of
+    /// any MCP tool is Admin, and memory's exemption comes from its server's
+    /// declared `gated: false`, checked in `check_permission`. Re-introducing a
+    /// built-in `Memory_*` would put a second memory surface in front of the
+    /// model — this is the test that notices.
     #[test]
-    fn test_capability_tool_tier_comes_from_registry() {
-        // Both pinned at Chat — see capabilities.rs::memory_capability for why.
-        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Chat);
-        assert_eq!(tool_action_tier("Memory_write"), PermissionMode::Chat);
+    fn memory_is_no_longer_a_built_in_tool() {
+        assert!(crate::engine::tools::builtin_tier("Memory_query").is_none());
+        assert!(crate::engine::tools::builtin_tier("Memory_write").is_none());
+        assert_eq!(tool_action_tier("Memory_query"), PermissionMode::Admin);
     }
 
     #[test]

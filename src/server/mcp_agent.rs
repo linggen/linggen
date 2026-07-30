@@ -25,7 +25,9 @@ use crate::server::ServerState;
 const AGENT_RUN_TOOLS: &[&str] = &[
     "Read", "Grep", "Glob",
     "WebSearch", "WebFetch",
-    "Memory_query", "Memory_write",
+    // The memory server by name, expanded to the tools it advertises — so
+    // this list doesn't have to be re-edited when ling-mem gains a verb.
+    "mcp__memory",
     "Skill",
     "Browser_navigate", "Browser_readPage", "Browser_screenshot", "Browser_click",
     "Browser_type", "Browser_key", "Browser_scroll", "Browser_wait",
@@ -189,8 +191,8 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
     // Bash stops the `echo > file` end-run around it. cfg isn't reloaded by
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
-    engine.cfg.mission_allowed_tools =
-        Some(AGENT_RUN_TOOLS.iter().map(|s| s.to_string()).collect());
+    let declared: Vec<String> = AGENT_RUN_TOOLS.iter().map(|s| s.to_string()).collect();
+    engine.cfg.mission_allowed_tools = crate::extensions::scope::compute_tool_scope(&declared);
 
     // Permissions come from the permission.json written above — initialize_loop
     // reloads them at the top of the run.

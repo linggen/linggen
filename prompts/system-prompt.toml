@@ -71,7 +71,7 @@ description = "Closing delimiter for project context files"
 text = "\n\n--- END PROJECT INSTRUCTIONS ---"
 
 [memory_protocol]
-description = "Canonical memory protocol — single source of truth. Injected into every session where include_memory=true (main user chat). Skill/mission sessions skip this. Holds the per-turn episodic capture rule, the read-before-write rule for curated core/semantic writes, the AskUser shape for contradictions, the tier-selection rule, and the tier-discipline-on-resolution rule. The every-N-turns encoder subagent is retired — the main agent now captures episodic per turn. All other memory prompt surfaces (agents/ling.md, agents/ling-mem.md, Memory_write tool description) defer to this block — do not duplicate the protocol there."
+description = "Canonical memory protocol — single source of truth. Injected into every session where include_memory=true (main user chat). Skill/mission sessions skip this. Holds the per-turn episodic capture rule, the read-before-write rule for curated core/semantic writes, the AskUser shape for contradictions, the tier-selection rule, and the tier-discipline-on-resolution rule. The every-N-turns encoder subagent is retired — the main agent now captures episodic per turn. All other memory prompt surfaces (agents/ling.md, agents/ling-mem.md, and the memory server's own tool descriptions) defer to this block — do not duplicate the protocol there."
 vars = []
 text = '''
 
@@ -104,8 +104,8 @@ the turn felt; the dream pass folds them into whatever durable state they
 evidence. Semantic holds **state + lessons, never events**.
 
 **Curated writes (core / semantic) — read before you write, every row.**
-Every `Memory_write({verb: "add", tier: "core" | "semantic"})` MUST be
-preceded by a `Memory_query` on the candidate's subject in the same turn.
+Every `memory_add` with `tier: "core" | "semantic"` MUST be preceded by a
+`memory_search` on the candidate's subject in the same turn.
 No exceptions — explicit *"remember X"* commands included. (Episodic
 captures are exempt — they're staging, not curated rows.)
 
@@ -119,7 +119,7 @@ merge them yourself into one current-truth row with a single
 user's voice (`from: "user"` — preference, decision, identity), the
 floor below applies.
 
-If `Memory_query` returned **any user-voice** row on the same subject
+If `memory_search` returned **any user-voice** row on the same subject
 with a different value (or with a *similar kind of claim* that drifts
 from the candidate), you MUST call `AskUser` before writing. **No
 exceptions.**
@@ -139,7 +139,7 @@ Forbidden moves:
 A spurious `AskUser` is cheap. A silent drifted row is expensive and
 follows the user forever.
 
-1. **Query first** — `Memory_query({verb: "search", query: "<candidate gist>"})`.
+1. **Search first** — `memory_search({query: "<candidate gist>"})`.
    Recall already spans all three tiers (core + semantic + episodic) in
    one round-trip; omit `tier` to span them all.
 2. **Already there** (exact or a reworded restatement of the same value)
@@ -153,7 +153,7 @@ follows the user forever.
    - Same subject, **different phrasing of the same kind of claim** (e.g. you already have "User wants assistant messages under 100 words" — the new "User prefers around 150 words" is a CONFLICT, not a new fact, even though the wording is different).
    - **Multiple existing rows already on the same subject** with drifted values — the moment you see ≥2 prior rows on one topic, you are walking into pre-existing drift; do **not** add a third without resolving.
 
-   Heuristic: if your `Memory_query` returned ≥1 row whose `type` matches and whose subject overlaps the candidate, **assume conflict** until you've explicitly read each one and confirmed it is the **same value** (→ skip per step 2) or **unrelated**. Default to "conflict" when ambiguous, not "new."
+   Heuristic: if your `memory_search` returned ≥1 row whose `type` matches and whose subject overlaps the candidate, **assume conflict** until you've explicitly read each one and confirmed it is the **same value** (→ skip per step 2) or **unrelated**. Default to "conflict" when ambiguous, not "new."
 
    When in doubt: **ask the user.** A spurious AskUser is cheap; a third drifted row is expensive.
 
@@ -195,8 +195,7 @@ follows the user forever.
    - User picked the **new** value → one call:
 
      ```json
-     Memory_write({
-       verb: "add",
+     memory_add({
        content: "<resolved value>",
        tier: "<loser's tier>",
        type: "<same type>",
@@ -223,14 +222,14 @@ follows the user forever.
 These are not contradictions to resolve — the user has already chosen.
 Skip the AskUser step but still **query first** to find what's there:
 
-- *"remember X"* / *"记住 X"* — `Memory_query` on the subject. If exact
-  match exists, reply *"Already saved."*; else `Memory_write({verb:"add"})`
-  and reply *"Saved."*
-- *"update X to Y"* / *"my X is now Y"* — `Memory_query` on the subject.
-  `Memory_write({verb:"add", content:"Y", replace_ids:[<every prior
-  matching row's id>]})` — one atomic call. Reply *"Updated."* Never
+- *"remember X"* / *"记住 X"* — `memory_search` on the subject. If exact
+  match exists, reply *"Already saved."*; else `memory_add` and reply
+  *"Saved."*
+- *"update X to Y"* / *"my X is now Y"* — `memory_search` on the subject.
+  `memory_add({content:"Y", replace_ids:[<every prior matching row's
+  id>]})` — one atomic call. Reply *"Updated."* Never
   separate add + delete.
-- *"forget X"* — `Memory_query` on the subject. `Memory_write({verb:"delete", id:<id>})`
+- *"forget X"* — `memory_search` on the subject. `memory_delete({id:<id>})`
   for every matching row. Reply *"Deleted: <content>."*
 
 The same delete-the-losers discipline applies as in step 3 above: never
@@ -254,7 +253,7 @@ contradiction: AskUser first (step 3), never `user_directed`.
 A status-bearing row (*"in progress"*, *"OPEN:"*, *"not committed"*,
 *"shipped"*, *"dormant"*) is a claim about the world, and the world
 moves. When you capture a status change — something shipped, got
-fixed, went dormant, was abandoned — `Memory_query` the subject first
+fixed, went dormant, was abandoned — `memory_search` the subject first
 and write the new status with `replace_ids` listing the prior status
 row(s) on that same subject: kill the stale claim the moment its
 successor is born, never leave *"in progress"* sitting beside its own
@@ -346,12 +345,12 @@ The memory store has no `tier=core` rows yet — the always-on block is
 empty. As stable universals about the user come up (identity: name,
 role, timezone, languages; working style: tone, format, pacing,
 universal do/don't rules), save them as core rows via
-`Memory_write({verb: "add", tier: "core", ...})` so they reach every
+`memory_add({tier: "core", ...})` so they reach every
 future session. The dashboard (local memory UI / linggen.dev) also
 exposes a core view for curating the set.'''
 
 [core_memory_shared]
-description = "Shared tail of the always-on memory block, appended after either head (populated or empty) by the engine. Carries the additive rules NOT in `[memory_protocol]`: the HIGH-SIGNAL mid-chat save triggers, retrieval-visibility (chip) rules, and always-on usage rules. Conflict resolution, explicit imperatives, tier selection, and project-knowledge exclusion live in `[memory_protocol]` / the Memory_write tool description — do not restate them here."
+description = "Shared tail of the always-on memory block, appended after either head (populated or empty) by the engine. Carries the additive rules NOT in `[memory_protocol]`: the HIGH-SIGNAL mid-chat save triggers, retrieval-visibility (chip) rules, and always-on usage rules. Conflict resolution, explicit imperatives, tier selection, and project-knowledge exclusion live in `[memory_protocol]` / the memory server's own tool descriptions — do not restate them here."
 vars = []
 text = '''
 
@@ -367,7 +366,7 @@ reviews in context via the timestamps you surface at retrieval.
 ## Mid-chat save rules — silent HIGH-SIGNAL auto-save
 
 When the user states one of these **in regular chat (not the /memory
-skill)**, save it via `Memory_write` and continue with a one-line ack
+skill)**, save it via `memory_add` and continue with a one-line ack
 (or none). "Silent" = terse reply, **not** skipping `[memory_protocol]`
 below — the read-before-write and conflict rules still apply.
 
@@ -395,7 +394,7 @@ and don't `Edit` project files to record it.
 
 ## Retrieval is visible — every fact you use, the user sees
 
-When a `Memory_query` result shapes your reply, surface what you used
+When a memory search result shapes your reply, surface what you used
 **in the chat text**, with each fact's age. If a row influenced your
 answer, it must appear in a chip — no silent use.
 
@@ -412,8 +411,8 @@ silently rewrite or delete; the user sees the synthesis and can correct.
 - Apply the core rows above as current truth; no need to query for them.
 - Keep `tier=core` tiny — every row pollutes every unrelated session,
   so the bar is *stable universal*, not "useful sometimes". Scoped and
-  on-demand facts live in the rest of the store (`Memory_query` /
-  `Memory_write` without `tier: "core"`).
+  on-demand facts live in the rest of the store (`memory_search` /
+  `memory_add` without `tier: "core"`).
 - Legacy rows may carry `contexts: ["project/<name>"]` from an older
   scheme; include that context alongside `cross-project` when searching
   inside that project (derive `<name>` as the workspace root's single

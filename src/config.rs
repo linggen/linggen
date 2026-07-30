@@ -197,9 +197,11 @@ pub struct AgentConfig {
     #[serde(default = "default_memory_recall_count")]
     pub memory_recall_count: usize,
 
-    /// Base URL of the local `ling-mem` HTTP daemon. The engine's built-in
-    /// `Memory_query` / `Memory_write` tools dispatch here, and the `dream`
-    /// mission reads `episodic_ttl_days` from `<url>/api/config`. Default
+    /// Base URL of the local `ling-mem` HTTP daemon. Two things resolve
+    /// from it: the built-in memory MCP server's endpoint (`<url>/mcp`,
+    /// which is how a model reaches memory), and the engine's own program-
+    /// side calls — the `dream` mission reads `episodic_ttl_days` from
+    /// `<url>/api/config`. Default
     /// is the daemon's own default port — change only if you ran `ling-mem
     /// start` against a different `--port`, or pointed it at a remote
     /// host. Trailing slash optional; no path segment.

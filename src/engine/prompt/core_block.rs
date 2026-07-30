@@ -4,12 +4,12 @@
 //! Per `doc/memory-spec.md` §1/§2 the core tier lives as rows in the
 //! `semantic` LanceDB table, not as files on disk. The engine queries
 //! them over HTTP from the daemon at `agent.ling_mem_url` — the same
-//! wire path recall and `Memory_*` dispatch use, so every memory
-//! surface reads the same store — and renders the bodies as a bullet
-//! list for the prompt template. Promotion in and out of the core tier
-//! happens through ordinary memory writes
-//! (`Memory_write({verb: "add", tier: "core", ...})`) and the dashboard
-//! — there is no second markdown substrate to keep in sync.
+//! store every memory surface reads, reached here as a program rather
+//! than as a tool call — and renders the bodies as a bullet list for
+//! the prompt template. Promotion in and out of the core tier happens
+//! through ordinary memory writes (`memory_add` with `tier: "core"`)
+//! and the dashboard — there is no second markdown substrate to keep
+//! in sync.
 
 use serde::Deserialize;
 use std::sync::mpsc;
@@ -42,9 +42,9 @@ struct CoreRow {
     content: String,
     /// Row id — surfaced in the rendered line so the agent can act on
     /// duplicates / conflicts directly (`ling-mem delete <id>`,
-    /// `Memory_write({verb:"add", replace_ids:[<id>], ...})`). Without
-    /// this, the agent sees content-only bullets and has to round-trip
-    /// through `Memory_query` just to learn the ids. Optional so a
+    /// `memory_add({replace_ids:[<id>], ...})`). Without this, the
+    /// agent sees content-only bullets and has to round-trip through
+    /// `memory_search` just to learn the ids. Optional so a
     /// malformed row degrades to a content-only line instead of failing
     /// to parse the whole batch.
     #[serde(default)]
@@ -60,14 +60,13 @@ struct CoreRow {
 /// Footer instruction appended after the rows when there are ≥2 of them.
 /// Same intent as CC's `recall.sh` footer (so linggen and CC speak one
 /// reconcile-on-recall protocol), but (a) rephrased to use the
-/// linggen-native `Memory_*` tools instead of the `ling-mem` CLI — in
-/// owner sessions the agent dispatches through the memory capability,
-/// never shelling out — and (b) carrying the "don't ambush" gate inline
+/// `memory_*` tools instead of the `ling-mem` CLI — in owner sessions the
+/// agent calls the memory server, never shells out — and (b) carrying the "don't ambush" gate inline
 /// so the rule and its scope live in one place instead of forcing the
 /// model to reconcile a footer instruction against a separate user
 /// preference row. Single-row blocks skip the footer — nothing to dedup
 /// or compare against.
-pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — merge authority follows voice: `Memory_write({verb:\"delete\", id:\"<id>\"})` for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via `Memory_write({verb:\"add\", content:\"<merged>\", replace_ids:[\"<loser_id_1>\", ...], ...})`, no AskUser; if any row is in the user's voice (from=user — preference/decision/identity), AskUser first, then the same atomic `replace_ids` write (never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
+pub(crate) const RECONCILE_FOOTER: &str = "\n\nNote: If duplicates or conflicting rows appear above AND the user's current turn is unrelated to memory itself (incidental recall hit), resolve them on the side — merge authority follows voice: `memory_delete({id:\"<id>\"})` for exact dups; rows that are all your own notes (from=derived — built/fixed/tried/learned) merge freely into one current-truth row via `memory_add({content:\"<merged>\", replace_ids:[\"<loser_id_1>\", ...], ...})`, no AskUser; if any row is in the user's voice (from=user — preference/decision/identity), AskUser first, then the same atomic `replace_ids` write (never separate add + delete). If the user IS explicitly steering memory (\"clean up\", \"remember X\", \"what's in memory\", \"ignore the hits\"), follow their instruction and do NOT side-quest into dedup. Either way, keep memory in good shape.";
 
 /// Per-turn capture nudge, injected model-only every owner turn (NOT
 /// rendered in the recall widget — it's an instruction to the agent, not a
@@ -119,8 +118,7 @@ fn render_row(r: &CoreRow) -> String {
 }
 
 /// List `tier=core` rows over HTTP, bounded by `timeout`. Goes through
-/// `call_memory_http` — the exact wire path recall and `Memory_*`
-/// dispatch use — so the core block honors `agent.ling_mem_url` like
+/// `call_memory_http`, so the core block honors `agent.ling_mem_url` like
 /// every other memory surface (a non-default URL, e.g. an eval's
 /// throwaway store, reads the right daemon). The request runs on a side
 /// thread with its own tiny runtime because prompt assembly is sync; on
@@ -137,9 +135,9 @@ fn fetch_core_rows(ling_mem_url: &str, timeout: Duration) -> Option<Vec<CoreRow>
                 .build()
                 .ok()?;
             let value = rt
-                .block_on(crate::engine::tools::memory_tool::call_memory_http(
+                .block_on(crate::engine::tools::memory_http::call_memory_http(
                     &url,
-                    "Memory_query",
+                    "core block",
                     serde_json::json!({"verb": "list", "tier": "core", "limit": CORE_LIMIT}),
                 ))
                 .map_err(|e| tracing::debug!(error = %e, "core list over ling-mem HTTP failed; treating core as empty"))

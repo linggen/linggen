@@ -38,8 +38,8 @@ Rationale: the user is the authority on their own machine. The permission system
 | Mode | What's available |
 |:-----|:-----------------|
 | **chat** | `Skill` only (navigation primitive — always allowed). Any other tool the agent attempts triggers an upgrade prompt offering to switch the folder to the needed tier. The user can Allow once, Switch persistently, or Deny. |
-| **read** | `Skill` + `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `capture_screenshot`, plan tools, `AskUser`, read-class Bash, `Memory_query` |
-| **edit** | Everything in read + `Write`, `Edit`, write-class Bash, `Memory_write` |
+| **read** | `Skill` + `Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `capture_screenshot`, plan tools, `AskUser`, read-class Bash |
+| **edit** | Everything in read + `Write`, `Edit`, write-class Bash |
 | **admin** | Everything in edit + admin-class Bash |
 
 `Skill` always bypasses the path-mode check — without it, a chat-mode session could never invoke a skill via natural language. The activated skill then runs through its own permission flow (its `permission:` block, if declared).
@@ -83,7 +83,7 @@ What "target path" each tool gates on:
 | `WebFetch`, `WebSearch` | cwd | Network ops, but tier-gated on cwd by current design (gate them through chat→read upgrade if you want them to require explicit approval). |
 | `AskUser`, plan tools | cwd | Conversational primitives; cwd-tier check applies. |
 | `Skill` | none — always allowed | Navigation primitive; the activated skill goes through its own permission flow. |
-| `Memory_query`, `Memory_write` | cwd | Routes to a local HTTP daemon; gated by cwd's tier (Read for query, Edit for write per capability registry). |
+| `mcp__memory__memory_*` | none | ling-mem's own tools over MCP. Every MCP tool's static tier is Admin; memory's server declares `gated: false`, so its tools reach a chat-tier session without a prompt. Nothing here touches the workspace, so no path check applies. |
 | `capture_screenshot` | cwd | Network op (URL → image), cwd-tier check applies. |
 
 ### Browser actions

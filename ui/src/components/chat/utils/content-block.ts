@@ -20,12 +20,56 @@ export const truncateDetail = (detail: string, maxLen: number): string => {
   return detail.slice(0, maxLen - 1) + '…';
 };
 
+/**
+ * Memory tools arrive server-qualified from ling-mem (`mcp__memory__memory_add`).
+ * What the retired built-ins carried as a `verb` argument is part of the tool
+ * name now, so the chip reads the operation off the name and renders the
+ * arguments after it — one renderer for the whole family, since it is one
+ * server. Fields show when present; nothing is invented.
+ *
+ * What the chip shows is what the MODEL emitted. ling-mem's MCP layer may strip
+ * hallucinated `type`/`from`/`outcome` before the store sees them, and the
+ * engine fills in `host`/`source_session`/`contexts` on the way out; both are in
+ * the logs, neither is pretended here.
+ */
+const MEMORY_PREFIX = 'mcp__memory__memory_';
+
+const memorySummary = (tool: string, args: Record<string, unknown>): string => {
+  const parts: string[] = [tool.slice(MEMORY_PREFIX.length)];
+  if (typeof args.query === 'string' && args.query) parts.push(`"${args.query}"`);
+  if (typeof args.id === 'string' && args.id) parts.push(args.id);
+  if (typeof args.content === 'string' && args.content) {
+    const snippet = args.content.length > 50 ? args.content.slice(0, 47) + '…' : args.content;
+    parts.push(`"${snippet}"`);
+  }
+  if (typeof args.date === 'string' && args.date) parts.push(args.date);
+  if (typeof args.day === 'string' && args.day) parts.push(args.day);
+  if (typeof args.kind === 'string' && args.kind) parts.push(`kind=${args.kind}`);
+  if (typeof args.tier === 'string' && args.tier) parts.push(`tier=${args.tier}`);
+  if (typeof args.type === 'string' && args.type) parts.push(`type=${args.type}`);
+  if (args.past_ttl === true) parts.push('past_ttl');
+  if (args.dry_run === true) parts.push('dry_run');
+  if (args.derived_only === true) parts.push('derived_only');
+  if (args.undreamed_only === true) parts.push('undreamed_only');
+  if (Array.isArray(args.contexts) && args.contexts.length > 0) {
+    parts.push(`contexts=[${(args.contexts as string[]).join(',')}]`);
+  }
+  if (typeof args.from === 'string' && args.from) parts.push(`from=${args.from}`);
+  if (typeof args.outcome === 'string' && args.outcome) parts.push(`outcome=${args.outcome}`);
+  if (Array.isArray(args.replace_ids) && args.replace_ids.length > 0) {
+    parts.push(`replace_ids=${args.replace_ids.length}`);
+  }
+  if (typeof args.limit === 'number' && args.limit) parts.push(`limit=${args.limit}`);
+  return parts.join(' ');
+};
+
 /** Extract a display summary from ContentBlock args JSON for compact rendering. */
 export const contentBlockSummary = (block: ContentBlock): string => {
   const tool = block.tool || '';
   const raw = block.args || '';
   try {
     const args = JSON.parse(raw);
+    if (tool.startsWith(MEMORY_PREFIX)) return memorySummary(tool, args);
     switch (tool) {
       case 'Read': return args.file_path || args.path || raw;
       case 'Write': return args.file_path || args.path || raw;
@@ -42,45 +86,6 @@ export const contentBlockSummary = (block: ContentBlock): string => {
       case 'WebFetch': return args.url || raw;
       case 'WebSearch': return args.query || raw;
       case 'Skill': return args.skill || raw;
-      case 'Memory_query': {
-        // Render verb + the meaningful args together so the chip reflects
-        // the full call shape — not just one cherry-picked field. The
-        // dispatch boundary may strip hallucinated `type`/`from`/`outcome`
-        // before the daemon sees them (memory_tool.rs), but at the chip
-        // layer we show what the MODEL emitted; the strip output is in
-        // the engine log. Compact, space-joined, key=value pairs.
-        const verb = args.verb || 'list';
-        const parts: string[] = [verb];
-        if (typeof args.query === 'string' && args.query) parts.push(`"${args.query}"`);
-        if (typeof args.id === 'string' && args.id) parts.push(args.id);
-        if (typeof args.tier === 'string' && args.tier) parts.push(`tier=${args.tier}`);
-        if (typeof args.type === 'string' && args.type) parts.push(`type=${args.type}`);
-        if (args.past_ttl === true) parts.push('past_ttl');
-        if (Array.isArray(args.contexts) && args.contexts.length > 0) {
-          parts.push(`contexts=[${(args.contexts as string[]).join(',')}]`);
-        }
-        if (typeof args.from === 'string' && args.from) parts.push(`from=${args.from}`);
-        if (typeof args.outcome === 'string' && args.outcome) parts.push(`outcome=${args.outcome}`);
-        if (typeof args.limit === 'number' && args.limit) parts.push(`limit=${args.limit}`);
-        return parts.join(' ');
-      }
-      case 'Memory_write': {
-        // Same shape as Memory_query: verb + meaningful args. For add/update
-        // the content snippet is the headline; for delete it's the id.
-        const verb = args.verb || 'add';
-        const parts: string[] = [verb];
-        if (typeof args.id === 'string' && args.id) parts.push(args.id);
-        if (typeof args.content === 'string' && args.content) {
-          const snippet = args.content.length > 50 ? args.content.slice(0, 47) + '…' : args.content;
-          parts.push(`"${snippet}"`);
-        }
-        if (typeof args.tier === 'string' && args.tier) parts.push(`tier=${args.tier}`);
-        if (typeof args.type === 'string' && args.type) parts.push(`type=${args.type}`);
-        if (Array.isArray(args.replace_ids) && args.replace_ids.length > 0) {
-          parts.push(`replace_ids=${args.replace_ids.length}`);
-        }
-        return parts.join(' ');
-      }
       default: {
         const first = Object.values(args).find(v => typeof v === 'string' && (v as string).length < 80) as string | undefined;
         return first || raw;

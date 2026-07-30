@@ -176,7 +176,7 @@ export const GeneralTab: React.FC<{
               onChange={(e) => onChange({ ...config, agent: { ...config.agent, ling_mem_url: e.target.value } })}
               placeholder="http://127.0.0.1:9528"
             />
-            <p className="text-[11px] text-slate-400 mt-0.5">Base URL of the local <code>ling-mem</code> HTTP daemon. The engine's built-in <code>Memory_query</code> / <code>Memory_write</code> tools dispatch here, and the <code>dream</code> mission fetches <code>episodic_ttl_days</code> from <code>&lt;url&gt;/api/config</code>. Only change if you ran <code>ling-mem start</code> on a non-default port or pointed it at a remote host.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Base URL of the local <code>ling-mem</code> HTTP daemon. The built-in memory MCP server resolves from it (<code>&lt;url&gt;/mcp</code>, how the agent reaches memory), and the <code>dream</code> mission fetches <code>episodic_ttl_days</code> from <code>&lt;url&gt;/api/config</code>. Only change if you ran <code>ling-mem start</code> on a non-default port or pointed it at a remote host.</p>
           </div>
         </div>
       </section>

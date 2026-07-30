@@ -7,7 +7,8 @@ pub(crate) use builtin::tool_max_duration;
 pub(crate) mod browser_tool;
 mod file_tools;
 pub(crate) mod json_schema;
-pub(crate) mod memory_tool;
+pub(crate) mod memory_http;
+mod memory_mcp;
 mod search_exec;
 mod write_tools;
 mod delegation;
@@ -368,11 +369,11 @@ impl Tools {
         }
         // A tool from a configured MCP server. Discovered at runtime, so it
         // is not in the static registry — it is routed by its qualified
-        // `mcp__<server>__<tool>` name instead.
+        // `mcp__<server>__<tool>` name instead. Memory calls pick up the
+        // session state only the host holds on the way out; see `memory_mcp`.
         if crate::mcp_client::is_mcp_tool(&call.tool) {
-            let out = crate::mcp_client::registry()
-                .call(&call.tool, call.args.clone())
-                .await?;
+            let args = memory_mcp::augment(self, &call.tool, call.args.clone()).await?;
+            let out = crate::mcp_client::registry().call(&call.tool, args).await?;
             return Ok(ToolResult::Success(out));
         }
         anyhow::bail!("unknown tool: {}", call.tool)
