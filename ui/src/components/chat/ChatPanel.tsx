@@ -229,7 +229,9 @@ const ChatMessageList = React.memo<{
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }) => {
   const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef]);
-  // The user's name, as core memory states it — labels their bubbles once known.
+  // The user's name, as core memory states it — labels their bubbles. Until
+  // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
+  // persona explains it and asks for the real one).
   const coreName = useUserStore((s) => s.coreName);
   return (
     <>
@@ -258,7 +260,7 @@ const ChatMessageList = React.memo<{
             isUser={isUser}
             senderTag={
               isUser && (!msg.from || msg.from === 'user')
-                ? coreName
+                ? (coreName ?? 'Hanli')
                 : crossAgentLabel(msg, selectedAgent)
             }
             isExpanded={isExpanded}
