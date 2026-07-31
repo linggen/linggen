@@ -4,7 +4,7 @@ use crate::server::chat::helpers::{
 };
 use crate::server::{AgentStatusKind, QueuedChatItem, ServerEvent, ServerState};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -300,6 +300,7 @@ async fn dequeue_and_emit(
     project_root: &str,
     session_id: &str,
     target_id: &str,
+    from_id: &str,
     clean_msg: &str,
     response_session_id: Option<&str>,
 ) {
@@ -318,7 +319,7 @@ async fn dequeue_and_emit(
         &state.manager.global_sessions,
         events_tx,
         target_id,
-        "user",
+        from_id,
         target_id,
         clean_msg,
         response_session_id,
@@ -447,7 +448,9 @@ async fn promote_mission_session_to_user(
 async fn restore_chat_history_if_empty(
     engine: &mut crate::engine::AgentEngine,
     manager: &Arc<AgentManager>,
+    root: &Path,
     session_id: Option<&str>,
+    current_from: &str,
     current_user_msg: &str,
 ) {
     if !engine.chat_history.is_empty() {
@@ -462,20 +465,36 @@ async fn restore_chat_history_if_empty(
     // once. Only the very last entry can be the current message (the
     // persist write was the most recent op).
     if let Some(last) = msgs.last() {
-        if !last.is_observation && last.from_id == "user" && last.content == current_user_msg {
+        if !last.is_observation && last.from_id == current_from && last.content == current_user_msg
+        {
             msgs.pop();
         }
     }
+    let root_buf = root.to_path_buf();
     for m in &msgs {
         if m.is_observation || m.from_id == "system" {
             continue;
         }
-        // Session owns the conversation — any non-user message is assistant
-        // context regardless of which agent produced it.
-        let role = if m.from_id == "user" { "user" } else { "assistant" };
+        // The session's own agent speaks as assistant. The user — and any
+        // agent relayed in from another surface (Yinyue's ask from the
+        // phone) — is a user turn, the relay labeled so the model knows who
+        // was asking. Pseudo-senders that are context rather than speech
+        // (memory-recall, compaction) are not agents and stay assistant
+        // context, exactly as before.
+        let is_own = m.from_id == m.agent_id;
+        let is_relay = !is_own
+            && m.from_id != "user"
+            && manager.agent_exists(&root_buf, &m.from_id).await;
+        let role = if m.from_id == "user" || is_relay { "user" } else { "assistant" };
+        // Older relay rows carry their label baked into the text already.
+        let content = if is_relay && !m.content.starts_with('[') {
+            format!("[{}]: {}", super::sender_label(&m.from_id), m.content)
+        } else {
+            m.content.clone()
+        };
         engine
             .chat_history
-            .push(crate::message::ChatMessage::new(role, &m.content));
+            .push(crate::message::ChatMessage::new(role, content));
     }
     if !engine.chat_history.is_empty() {
         tracing::info!(
@@ -595,7 +614,15 @@ pub(crate) async fn run_session_turn(
     manager: &Arc<AgentManager>,
     max_live_msgs: Option<usize>,
 ) {
-    restore_chat_history_if_empty(engine, manager, ctx.session_id.as_deref(), &ctx.clean_msg).await;
+    restore_chat_history_if_empty(
+        engine,
+        manager,
+        &ctx.root,
+        ctx.session_id.as_deref(),
+        ctx.from_id(),
+        &ctx.clean_msg,
+    )
+    .await;
     // After restore (and before this turn's user message + fresh recall are
     // pushed), the buffer holds only completed prior turns — safe to trim.
     if let Some(cap) = max_live_msgs {
@@ -629,6 +656,16 @@ pub(crate) async fn chat_handler(
 
     let (target_id, clean_msg) = route_target(&state, &req, &root).await;
 
+    // A relayed message names its speaker (an agent id like "yinyue"); the
+    // user's own messages carry no sender. Persisted as from_id so every chat
+    // surface labels the bubble from the same fact.
+    let sender = req
+        .sender
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "user" && *s != target_id);
+    let from_id = sender.clone().unwrap_or_else(|| "user".to_string());
+
     let agent = match state
         .manager
         .get_or_create_session_agent(&effective_session_id, &root, &target_id)
@@ -651,7 +688,7 @@ pub(crate) async fn chat_handler(
             &state.manager.global_sessions,
             &events_tx,
             &target_id,
-            "user",
+            &from_id,
             &target_id,
             &clean_msg,
             session_id.as_deref(),
@@ -692,6 +729,7 @@ pub(crate) async fn chat_handler(
                 &project_root_for_queue,
                 &session_id_for_queue,
                 &target_id_clone,
+                &from_id,
                 &clean_msg_clone,
                 session_id.as_deref(),
             )
@@ -759,6 +797,7 @@ pub(crate) async fn chat_handler(
             clean_msg: clean_msg_clone.clone(),
             images: req_images,
             policy,
+            sender,
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;

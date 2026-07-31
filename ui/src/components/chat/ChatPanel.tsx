@@ -117,11 +117,31 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   );
 };
 
+/** Senders that are context or plumbing, never a speaker to label. */
+const PSEUDO_SENDERS = new Set(['user', 'system', 'assistant', 'memory', 'memory-recall', 'compaction']);
+
+/**
+ * The bracket label for a message spoken by someone other than this panel's
+ * agent or the local user — "[Yinyue]" on her asks relayed from the phone or
+ * via agent_chat. Derived from the message's from_id (one fact, every
+ * surface); null when there is nothing to label.
+ */
+function crossAgentLabel(msg: ChatMessage, panelAgent: string): string | null {
+  const from = (msg.from || '').toLowerCase();
+  if (!from || PSEUDO_SENDERS.has(from) || from.startsWith('run-')) return null;
+  if (from === panelAgent.toLowerCase()) return null;
+  const label = from.charAt(0).toUpperCase() + from.slice(1);
+  // Rows persisted before the metadata cutover carry the label in the text.
+  if (msg.text.startsWith(`[${label}]`)) return null;
+  return label;
+}
+
 /** Render a single message row. */
 const ChatMessageRow = React.memo<{
   msg: ChatMessage;
   msgKey: string;
   isUser: boolean;
+  senderTag?: string | null;
   isExpanded: boolean;
   onToggle: () => void;
   userMsgIndex?: number;
@@ -134,7 +154,7 @@ const ChatMessageRow = React.memo<{
     onEditPlan?: (text: string) => void;
     inputRef: React.RefObject<HTMLTextAreaElement | null>;
   };
-}>(({ msg, msgKey, isUser, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
+}>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
   const registerRef = useCallback((el: HTMLDivElement | null) => {
     if (userMsgIndex == null || !userMsgRefs?.current) return;
     if (el) userMsgRefs.current.set(userMsgIndex, el);
@@ -168,6 +188,11 @@ const ChatMessageRow = React.memo<{
       className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
     >
       <div className={cn(isUser ? 'max-w-[96%]' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
+        {senderTag && (
+          <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
+            [{senderTag}]
+          </span>
+        )}
         {isUser ? (
           <>
             {msg.text}
@@ -204,6 +229,8 @@ const ChatMessageList = React.memo<{
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }) => {
   const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef]);
+  // The user's name, as core memory states it — labels their bubbles once known.
+  const coreName = useUserStore((s) => s.coreName);
   return (
     <>
       {messages.length === 0 && (
@@ -229,6 +256,11 @@ const ChatMessageList = React.memo<{
             msg={msg}
             msgKey={key}
             isUser={isUser}
+            senderTag={
+              isUser && (!msg.from || msg.from === 'user')
+                ? coreName
+                : crossAgentLabel(msg, selectedAgent)
+            }
             isExpanded={isExpanded}
             onToggle={() => {
               setExpandedMessages((prev) => {
@@ -334,6 +366,12 @@ export const ChatPanel: React.FC<{
 }) => {
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
   const [subagentMessageFilter, setSubagentMessageFilter] = useState('');
+
+  // Every surface that renders chat wants the user's core-memory name for
+  // bubble labels — loaded here so the embed and consumer shells get it too.
+  useEffect(() => {
+    useUserStore.getState().loadCoreName();
+  }, []);
 
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLTextAreaElement | null>(null);

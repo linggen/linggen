@@ -99,6 +99,56 @@ pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
     Some(CoreContent { facts })
 }
 
+/// The user's name, as core memory states it — core is the one authority
+/// for who the user is, so every surface that labels their messages reads
+/// it from here. Deterministic extraction, no model in the loop: a row
+/// saying "…name is X" wins; else the identity row shape "X — …". `None`
+/// until the name is genuinely in core — callers show nothing rather than
+/// a placeholder.
+pub(crate) fn user_name_from_core(ling_mem_url: &str) -> Option<String> {
+    let rows = fetch_core_rows(ling_mem_url, LOAD_CORE_TIMEOUT)?;
+    user_name_from_rows(&rows)
+}
+
+fn user_name_from_rows(rows: &[CoreRow]) -> Option<String> {
+    // Explicit statements first: "the user's name is X", "call them X" —
+    // the shape Yinyue's onboarding writes.
+    for r in rows {
+        let c = r.content.trim();
+        let lower = c.to_lowercase();
+        for pat in ["name is ", "call them ", "call me ", "goes by "] {
+            if let Some(i) = lower.find(pat) {
+                let name: String = c[i + pat.len()..]
+                    .chars()
+                    .take_while(|ch| ch.is_alphanumeric())
+                    .collect();
+                if is_name_shaped(&name) {
+                    return Some(name);
+                }
+            }
+        }
+    }
+    // The identity-dash row: "Liang — sole founder …". Agent names are not
+    // the user, however their rows are phrased.
+    for r in rows {
+        if let Some((head, _)) = r.content.trim().split_once(" — ") {
+            if is_name_shaped(head) && !matches!(head, "Yinyue" | "Ling") {
+                return Some(head.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// One capitalized word, letters and digits only — what a name looks like
+/// at the head of an identity row or after "name is".
+fn is_name_shaped(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().count() <= 24
+        && s.chars().next().is_some_and(|c| c.is_uppercase())
+        && s.chars().all(|c| c.is_alphanumeric())
+}
+
 /// `- (type, host, YYYY-MM-DD, id=<id>): content` — matches the line
 /// shape `recall.sh` prints, so a row reads the same in linggen's core
 /// block and in CC's recall context.
@@ -214,5 +264,49 @@ mod tests {
     #[test]
     fn non_array_payload_returns_none() {
         assert!(parse_rows(&serde_json::json!({"ok": true})).is_none());
+    }
+
+    fn row(content: &str) -> CoreRow {
+        CoreRow {
+            content: content.to_string(),
+            id: None,
+            row_type: None,
+            host: None,
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn name_from_explicit_statement() {
+        let rows = [row("The user's name is Wei; they run a bakery.")];
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Wei"));
+    }
+
+    #[test]
+    fn name_from_identity_dash_row() {
+        let rows = [
+            row("Prefers terse replies over long ones."),
+            row("Liang — sole founder and developer of Linggen; the builder."),
+        ];
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Liang"));
+    }
+
+    #[test]
+    fn agent_identity_rows_are_not_the_user() {
+        let rows = [row("Yinyue — pet and assistant agent on the phone.")];
+        assert_eq!(user_name_from_rows(&rows), None);
+    }
+
+    #[test]
+    fn prose_dash_rows_do_not_look_like_names() {
+        let rows = [row(
+            "Liang is in the ATLANTIC time zone (ADT/AST, UTC-3 in summer) — NOT Eastern.",
+        )];
+        assert_eq!(user_name_from_rows(&rows), None);
+    }
+
+    #[test]
+    fn no_name_row_means_none() {
+        assert_eq!(user_name_from_rows(&[row("Enjoys hiking.")]), None);
     }
 }

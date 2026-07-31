@@ -29,6 +29,12 @@ pub(crate) struct ChatRequest {
     pub(super) user_id: Option<String>,
     #[serde(default)]
     pub(super) images: Vec<String>,
+    /// Who is speaking, when it isn't the user typing at this surface — an
+    /// agent id like "yinyue" relayed from another device. Persisted as the
+    /// message's from_id so every chat surface can label the bubble, and
+    /// handed to the model as "[Yinyue]: …". Absent or "user" = the user.
+    #[serde(default)]
+    pub(super) sender: Option<String>,
 }
 
 #[derive(Deserialize)]

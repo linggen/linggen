@@ -356,17 +356,10 @@ async fn deliver_to_chat_agent(
         .await
         .unwrap_or_else(|_| format!("run-{to}-agentchat"));
 
-    // Show the incoming message in the chat, attributed to the sender. The chat
-    // panel doesn't label cross-agent messages, so make the source explicit in
-    // the text: "[Yinyue]: …".
-    let label = {
-        let mut chars = from.chars();
-        match chars.next() {
-            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-            None => from.clone(),
-        }
-    };
-    let shown = format!("[{label}]: {message}");
+    // Show the incoming message in the chat, attributed to the sender. The
+    // attribution is the message's from_id — the chat surfaces render the
+    // "[Yinyue]" label from that one fact, and the model gets the same label
+    // via ChatRunCtx::labeled_msg. The content itself stays clean.
     crate::server::chat::helpers::persist_and_emit_message(
         &state.manager,
         &state.events_tx,
@@ -374,7 +367,7 @@ async fn deliver_to_chat_agent(
         &to,
         &from,
         &to,
-        &shown,
+        &message,
         Some(&session_id),
         false,
     )
@@ -397,9 +390,10 @@ async fn deliver_to_chat_agent(
             root: root.clone(),
             agent_id: to.clone(),
             session_id: Some(session_id.clone()),
-            clean_msg: shown,
+            clean_msg: message,
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
+            sender: Some(from.clone()),
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
         engine.set_run_id(None);
@@ -637,6 +631,7 @@ pub(crate) async fn run_yinyue_turn(
             clean_msg: task,
             images: Vec::new(),
             policy: crate::engine::session_policy::SessionPolicy::owner(),
+            sender: None,
         };
         crate::server::chat::run_session_turn(
             &ctx,

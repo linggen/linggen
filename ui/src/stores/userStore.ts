@@ -24,9 +24,15 @@ interface UserState {
   /** Name of the proxy room the user joined (consumer role). */
   proxyRoomName: string | null;
 
+  /** The user's name as core memory states it — the one authority every
+   *  chat surface labels the user's bubbles from. Null until core genuinely
+   *  holds a name; the UI shows nothing rather than a placeholder. */
+  coreName: string | null;
+
   setUserType: (userType: 'owner' | 'consumer') => void;
   setUserId: (userId: string) => void;
   setUserProfile: (name: string | null, avatar: string | null) => void;
+  loadCoreName: () => Promise<void>;
   setUserInfo: (permission: string, roomName?: string | null, tokenBudget?: number | null) => void;
   setRoomEnabled: (enabled: boolean) => void;
   setConnectionStatus: (status: 'connected' | 'reconnecting' | 'disconnected') => void;
@@ -48,9 +54,19 @@ export const useUserStore = create<UserState>((set) => ({
   roomRole: null,
   proxyRoomName: null,
 
+  coreName: null,
+
   setUserType: (userType) => set({ userType }),
   setUserId: (userId) => set({ userId }),
   setUserProfile: (name, avatar) => set({ userName: name, avatarUrl: avatar }),
+  loadCoreName: async () => {
+    try {
+      const resp = await fetch('/api/user/name');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      set({ coreName: typeof data?.name === 'string' && data.name ? data.name : null });
+    } catch { /* daemon unreachable — bubbles stay unlabeled */ }
+  },
   setUserInfo: (permission, roomName, tokenBudget) => set({
     userPermission: permission as any,
     userRoomName: roomName ?? null,

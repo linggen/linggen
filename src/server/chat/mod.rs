@@ -55,6 +55,36 @@ pub(super) struct ChatRunCtx {
     pub(super) clean_msg: String,
     pub(super) images: Vec<String>,
     pub(super) policy: crate::engine::session_policy::SessionPolicy,
+    /// Relayed-speaker agent id (e.g. "yinyue") — `None` when the user typed
+    /// this themselves. One fact, two renderings: persisted as the message's
+    /// from_id for the chat surfaces, prefixed as "[Yinyue]: …" for the model.
+    pub(super) sender: Option<String>,
+}
+
+impl ChatRunCtx {
+    /// The from_id this turn's incoming message persists under.
+    pub(super) fn from_id(&self) -> &str {
+        self.sender.as_deref().unwrap_or("user")
+    }
+
+    /// What the model reads for this turn: a relayed message carries its
+    /// speaker inline, so the model knows who is asking.
+    pub(super) fn labeled_msg(&self) -> String {
+        match self.sender.as_deref() {
+            Some(s) => format!("[{}]: {}", sender_label(s), self.clean_msg),
+            None => self.clean_msg.clone(),
+        }
+    }
+}
+
+/// "yinyue" → "Yinyue" — the display form of an agent id, shared by every
+/// place that labels a cross-agent message.
+pub(crate) fn sender_label(id: &str) -> String {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => id.to_string(),
+    }
 }
 
 /// Open a URL in the system's default browser. Used by skill app launchers

@@ -1148,6 +1148,7 @@ async fn prepare_server(
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))
         .route("/api/account", get(get_account))
+        .route("/api/user/name", get(get_user_name))
         .route("/api/account/login", post(post_account_login))
         .route("/api/account/callback", get(get_account_callback))
         .route("/api/account/logout", post(post_account_logout))
@@ -1432,6 +1433,22 @@ async fn capability_dispatch(
             (StatusCode::BAD_GATEWAY, msg).into_response()
         }
     }
+}
+
+/// GET /api/user/name — the user's name as core memory states it. Core is
+/// the one authority for who the user is, so every chat surface labels the
+/// user's bubbles from this answer. `name` is null until core genuinely
+/// holds one — callers show nothing rather than a placeholder.
+async fn get_user_name(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+    // The extractor blocks on its own bounded thread; keep the worker free.
+    let name = tokio::task::spawn_blocking(move || {
+        crate::engine::prompt::core_block::user_name_from_core(&ling_mem_url)
+    })
+    .await
+    .ok()
+    .flatten();
+    axum::Json(serde_json::json!({ "name": name }))
 }
 
 /// Serve static files from an app-enabled skill's directory.

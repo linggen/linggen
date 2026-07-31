@@ -317,6 +317,7 @@ async fn run_approved_plan_task(
         clean_msg: String::new(),
         images: Vec::new(),
         policy: crate::engine::session_policy::SessionPolicy::default(),
+        sender: None,
     };
     run_plan_execution(&ctx, &mut engine).await;
 
