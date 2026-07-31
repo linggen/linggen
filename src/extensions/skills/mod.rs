@@ -84,7 +84,10 @@ fn page_update_tool_def() -> SkillToolDef {
              don't want to change (previous values persist). At least one must be \
              provided and non-empty. **All payload shapes (widgets, patch entries, \
              section keys) are defined by the active skill's SKILL.md — follow that \
-             contract, not a default schema.**"
+             contract, not a default schema.** The page is where results live: \
+             when your tools measure or change anything, surface the outcome here \
+             in the SAME turn — the user watches the page, and a result that only \
+             lands in chat leaves it stale. Never wait to be asked to show it."
                 .to_string(),
         cmd: String::new(),
         endpoint: None,
