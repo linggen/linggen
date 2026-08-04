@@ -70,38 +70,23 @@ fn delete_queue_path() -> PathBuf {
     data_dir().join("phone-delete-queue.json")
 }
 
-/// Announce Mac-side media changes so the phone stops polling for them: the
-/// delete queue (what the Mac is asking the phone to remove) and scan verdicts
-/// (blurry/dark/dupe flags). Watching the directory rather than hooking the
-/// writers means it works whichever surface made the change — the skill's scan,
-/// an API call, or a script.
-pub(crate) fn spawn_media_watchers(state: std::sync::Arc<crate::server::ServerState>) {
-    let dir = data_dir();
-    // A watcher can only be attached to a directory that exists, and on a fresh
-    // Mac this one is created by the first upload — long after startup. Without
-    // this the announcement never fired until the daemon happened to restart,
-    // and the phone silently fell back to learning about deletions only on its
-    // next sync.
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!("[media] cannot create {}: {e}", dir.display());
-    }
-    super::topic::watch_dir(
-        state.clone(),
-        dir.clone(),
-        "media".to_string(),
-        "delete-requested".to_string(),
-        std::time::Duration::from_millis(500),
-        Some(|p| p.file_name().is_some_and(|n| n == "phone-delete-queue.json")),
-    );
-    super::topic::watch_dir(
-        state,
-        dir,
-        "media".to_string(),
-        "verdicts-updated".to_string(),
-        std::time::Duration::from_secs(2),
-        Some(|p| p.file_name().is_some_and(|n| n == "flags.json")),
-    );
-}
+// There were file watchers here announcing `media/delete-requested` and
+// `media/verdicts-updated`. They are gone deliberately.
+//
+// A watcher earns its place when the directory is written by the outside world
+// — `~/Music/DJ` gets files from Finder, a download, or the agent, and nothing
+// else would notice. This directory is written only by our own API, so the
+// watcher was machinery for discovering something we had just done ourselves.
+//
+// The phone gets the queue two ways that already cover every real path: it
+// reads `deleteRequested` off every manifest reply, so tapping Sync delivers
+// it, and it fetches once whenever a route to the Mac appears — app start,
+// resume, reconnect. The watcher only added the case where the phone was
+// foreground *and* connected at the instant of the click, and iOS suspends the
+// app within seconds of backgrounding anyway.
+//
+// `verdicts-updated` was weaker still: the phone's handler only repainted, and
+// verdicts arrive on the manifest reply, so it redrew data it did not yet have.
 
 /// One queued deletion. `device` is the paired-device row the photo came from,
 /// so a household with several phones asks the right one.

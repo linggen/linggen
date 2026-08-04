@@ -889,7 +889,6 @@ async fn prepare_server(
         let sync_state = state.clone();
         tokio::spawn(async move { api::skill_sync::spawn_watchers(sync_state).await });
     }
-    api::media::spawn_media_watchers(state.clone());
 
     // Pre-warm ling-mem when any installed skill uses scoped memory
     // (`memory-context`). Those apps auto-recall every turn, so get the
