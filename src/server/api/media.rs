@@ -77,6 +77,14 @@ fn delete_queue_path() -> PathBuf {
 /// an API call, or a script.
 pub(crate) fn spawn_media_watchers(state: std::sync::Arc<crate::server::ServerState>) {
     let dir = data_dir();
+    // A watcher can only be attached to a directory that exists, and on a fresh
+    // Mac this one is created by the first upload — long after startup. Without
+    // this the announcement never fired until the daemon happened to restart,
+    // and the phone silently fell back to learning about deletions only on its
+    // next sync.
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("[media] cannot create {}: {e}", dir.display());
+    }
     super::topic::watch_dir(
         state.clone(),
         dir.clone(),

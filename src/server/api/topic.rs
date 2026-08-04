@@ -65,6 +65,13 @@ pub(crate) fn watch_dir(
     filter: Option<fn(&std::path::Path) -> bool>,
 ) {
     if !dir.is_dir() {
+        // Say so. Returning in silence here meant a fresh install armed no
+        // watcher at all, and the devices that depend on the announcement had
+        // no way to tell push-is-dead from nothing-has-changed.
+        tracing::warn!(
+            "[topic] not watching {} for {topic}/{op} — directory does not exist",
+            dir.display()
+        );
         return;
     }
     tokio::spawn(async move {
