@@ -468,6 +468,7 @@ async fn run_peer(
                                 let rid = req.request_id.clone();
                                 let cid = req.channel_id;
                                 let ctx_clone = user_ctx.clone();
+                                let who = peer_actor.clone();
                                 let tok = tokens_used.clone();
 
                                 if req.msg_type == "inference" || req.msg_type == "list_models" {
@@ -481,7 +482,7 @@ async fn run_peer(
                                 } else {
                                     tokio::spawn(async move {
                                         let result = process_control_request_async(
-                                            &req, &st, &client, &ctx_clone, &tok,
+                                            &req, &st, &client, &ctx_clone, &who, &tok,
                                         )
                                         .await;
                                         let _ = tx.send((rid, cid, result)).await;

@@ -95,17 +95,76 @@ pub(crate) fn spawn_media_watchers(state: std::sync::Arc<crate::server::ServerSt
     );
 }
 
-fn load_delete_queue() -> Vec<String> {
-    std::fs::read_to_string(delete_queue_path())
+/// One queued deletion. `device` is the paired-device row the photo came from,
+/// so a household with several phones asks the right one.
+///
+/// A localId is a PhotoKit identifier, which means something only on the phone
+/// that minted it — a queue without `device` is ambiguous the moment a second
+/// phone pairs. `None` means "we don't know which phone", which is how rows
+/// queued before this existed, and USB-era rows, still behave: offered to
+/// everyone, exactly as they were.
+#[derive(Clone, Debug)]
+struct DeleteEntry {
+    local_id: String,
+    device: Option<String>,
+}
+
+impl DeleteEntry {
+    /// Is this entry this phone's business?
+    fn concerns(&self, device: Option<&str>) -> bool {
+        match (&self.device, device) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(owner), Some(asking)) => owner == asking,
+        }
+    }
+}
+
+fn load_delete_queue() -> Vec<DeleteEntry> {
+    let Some(v) = std::fs::read_to_string(delete_queue_path())
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v.get("localIds").cloned())
-        .and_then(|v| serde_json::from_value(v).ok())
+    else {
+        return Vec::new();
+    };
+    // The old shape was a bare `{"localIds": [...]}` with no device. Read it as
+    // unscoped entries so an upgrade never drops a pending deletion.
+    if let Some(ids) = v.get("localIds").and_then(Value::as_array) {
+        return ids
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|id| DeleteEntry { local_id: id.to_string(), device: None })
+            .collect();
+    }
+    v.get("queue")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    Some(DeleteEntry {
+                        local_id: r.get("localId")?.as_str()?.to_string(),
+                        device: r.get("device").and_then(Value::as_str).map(String::from),
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
-fn save_delete_queue(ids: &[String]) -> std::io::Result<()> {
-    std::fs::write(delete_queue_path(), json!({ "localIds": ids }).to_string())
+fn save_delete_queue(entries: &[DeleteEntry]) -> std::io::Result<()> {
+    let rows: Vec<Value> = entries
+        .iter()
+        .map(|e| json!({ "localId": e.local_id, "device": e.device }))
+        .collect();
+    std::fs::write(delete_queue_path(), json!({ "queue": rows }).to_string())
+}
+
+/// Which phone holds this photo, per the manifest row written when it arrived.
+fn owner_of(rows: &[Value], local_id: &str) -> Option<String> {
+    let wire_path = format!("{WIRELESS_PREFIX}{local_id}");
+    rows.iter()
+        .find(|r| r.get("path").and_then(Value::as_str) == Some(wire_path.as_str()))
+        .and_then(|r| r.get("by")?.get("device")?.as_str().map(String::from))
 }
 
 /// Apple Shifu's scan verdicts (blurry/dark/…), keyed by content hash. The
@@ -215,7 +274,11 @@ pub(crate) struct ManifestAsset {
 /// needed = not staged, not archived → upload. verified = hash-present in the
 /// archive ledger → safe to delete on the phone. In staging but not archived →
 /// absent from both (a later verify catches it once the archive copy lands).
-pub(crate) async fn manifest_handler(Json(body): Json<ManifestBody>) -> Response {
+pub(crate) async fn manifest_handler(
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ManifestBody>,
+) -> Response {
+    let asking = crate::server::api::pair::caller_device(&headers);
     let loaded = tokio::task::spawn_blocking(|| {
         (
             sha_set(&load_jsonl(&manifest_path())),
@@ -241,8 +304,13 @@ pub(crate) async fn manifest_handler(Json(body): Json<ManifestBody>) -> Response
         }
     }
     // Mac-requested deletions ride every manifest reply; the phone executes
-    // them via PhotoKit (system confirm) and reconcile clears the queue.
-    let delete_requested = load_delete_queue();
+    // them via PhotoKit (system confirm) and reconcile clears the queue. Only
+    // this phone's entries — another phone's localIds mean nothing here.
+    let delete_requested: Vec<String> = load_delete_queue()
+        .into_iter()
+        .filter(|e| e.concerns(asking.as_deref()))
+        .map(|e| e.local_id)
+        .collect();
     Json(json!({
         "needed": needed,
         "verified": verified,
@@ -273,12 +341,17 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
     let _guard = MEDIA_LOCK.lock().await;
     let mut queue = load_delete_queue();
     if body.cancel {
-        queue.retain(|id| !body.local_ids.contains(id));
+        queue.retain(|e| !body.local_ids.contains(&e.local_id));
     } else {
+        // Which phone to ask is a property of the photo, not of whoever is
+        // clicking on the Mac — read it off the row written when it arrived.
+        let rows = load_jsonl(&manifest_path());
         for id in body.local_ids {
-            if !queue.contains(&id) {
-                queue.push(id);
+            if queue.iter().any(|e| e.local_id == id) {
+                continue;
             }
+            let device = owner_of(&rows, &id);
+            queue.push(DeleteEntry { local_id: id, device });
         }
     }
     let n = queue.len();
@@ -291,8 +364,14 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
 
 /// Lightweight poll for the phone's foreground timer — deleting on the Mac
 /// while holding the phone should feel immediate.
-pub(crate) async fn pending_deletes_handler() -> Response {
-    Json(json!({"localIds": load_delete_queue()})).into_response()
+pub(crate) async fn pending_deletes_handler(headers: axum::http::HeaderMap) -> Response {
+    let asking = crate::server::api::pair::caller_device(&headers);
+    let ids: Vec<String> = load_delete_queue()
+        .into_iter()
+        .filter(|e| e.concerns(asking.as_deref()))
+        .map(|e| e.local_id)
+        .collect();
+    Json(json!({ "localIds": ids })).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -346,15 +425,21 @@ pub(crate) struct ReconcileBody {
 /// complete roll; wireless rows whose asset no longer exists on the phone are
 /// pruned, along with staged files no surviving row references. The archive
 /// is never touched — backup copies outlive phone deletions.
-pub(crate) async fn reconcile_handler(Json(body): Json<ReconcileBody>) -> Response {
+pub(crate) async fn reconcile_handler(
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ReconcileBody>,
+) -> Response {
+    let asking = crate::server::api::pair::caller_device(&headers);
     // An empty roll is indistinguishable from a client that failed to index
     // (e.g. Photos permission revoked) — never treat it as "delete everything".
     if body.all_local_ids.is_empty() {
         return Json(json!({"pruned": 0})).into_response();
     }
     let _guard = MEDIA_LOCK.lock().await;
-    let pruned =
-        tokio::task::spawn_blocking(move || reconcile_wireless(&body.all_local_ids)).await;
+    let pruned = tokio::task::spawn_blocking(move || {
+        reconcile_wireless(&body.all_local_ids, asking.as_deref())
+    })
+    .await;
     match pruned {
         Ok(Ok(n)) => {
             if n > 0 {
@@ -368,18 +453,34 @@ pub(crate) async fn reconcile_handler(Json(body): Json<ReconcileBody>) -> Respon
     }
 }
 
-fn reconcile_wireless(all: &[String]) -> anyhow::Result<usize> {
+fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<usize> {
     let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
+    // A roll speaks only for its own phone. With one phone paired nothing is
+    // ambiguous, so a row nobody claims must be that phone's — with two, it
+    // genuinely could be either, and guessing would delete someone's photos.
+    let alone = crate::server::api::pair::paired_device_count() <= 1;
+    let speaks_for = |owner: Option<&str>| match (owner, asking) {
+        (Some(o), Some(me)) => o == me,
+        (Some(_), None) => false,
+        (None, _) => alone,
+    };
+
     // Queue entries whose photo is no longer on the phone are done (executed,
     // or deleted by hand) — the roll report is the ack, no protocol needed.
     let queue = load_delete_queue();
-    let live: Vec<String> =
-        queue.iter().filter(|id| on_phone.contains(id.as_str())).cloned().collect();
+    let live: Vec<DeleteEntry> = queue
+        .iter()
+        .filter(|e| !speaks_for(e.device.as_deref()) || on_phone.contains(e.local_id.as_str()))
+        .cloned()
+        .collect();
     if live.len() != queue.len() {
         let _ = save_delete_queue(&live);
     }
     let rows = load_jsonl(&manifest_path());
     let gone = |r: &Value| {
+        if !speaks_for(r.get("by").and_then(|b| b.get("device")).and_then(Value::as_str)) {
+            return false;
+        }
         r.get("path")
             .and_then(Value::as_str)
             .and_then(|p| p.strip_prefix(WIRELESS_PREFIX))
@@ -720,11 +821,36 @@ fn ensure_archived(
     // Content dedupes by sha, so the first phone to get a copy archived owns
     // the row. There is one file; it came from someone.
     if let Some(a) = by {
+        stamp_xattr(&dest, &a);
         row["by"] = a;
     }
     append_jsonl(&ledger, &row)?;
     Ok(())
 }
+
+/// Mirror the ledger's `by` onto the file itself, so Finder and Spotlight can
+/// answer "whose is this" without Linggen running.
+///
+/// An export, never the record: extended attributes do not survive a zip, a
+/// non-native filesystem, or most upload paths, and the archive already writes
+/// to external disks. The ledger stays the truth; this is a convenience that is
+/// allowed to be missing. Deliberately does not touch the bytes — rewriting the
+/// file would change its sha256, which is the delete gate.
+#[cfg(unix)]
+fn stamp_xattr(dest: &Path, by: &Value) {
+    let out = std::process::Command::new("xattr")
+        .args(["-w", "com.linggen.by", &by.to_string()])
+        .arg(dest)
+        .output();
+    if let Ok(o) = out {
+        if !o.status.success() {
+            tracing::debug!("[media] xattr stamp skipped for {}", dest.display());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn stamp_xattr(_dest: &Path, _by: &Value) {}
 
 /// First free name in the archive dir for this content: reuse an existing file
 /// only when it already holds these exact bytes, else suffix -1, -2, …

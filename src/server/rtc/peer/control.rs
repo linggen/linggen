@@ -212,6 +212,7 @@ pub(super) async fn process_control_request_async(
     state: &Arc<ServerState>,
     client: &reqwest::Client,
     user_ctx: &crate::server::rtc::UserContext,
+    actor: &super::PeerActor,
     tokens_used: &Arc<std::sync::atomic::AtomicI64>,
 ) -> serde_json::Value {
     let port = state.port;
@@ -266,12 +267,21 @@ pub(super) async fn process_control_request_async(
             if url_path == "/api/sessions" && method == "POST" {
                 body_val["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             }
+            // Carry the peer's identity into the loopback request. The phone
+            // speaks only WebRTC, so without this a handler cannot tell which
+            // paired device is asking — which is what per-phone state, like the
+            // delete queue, needs to be correct with more than one phone.
+            let actor_device = actor.lock().unwrap().as_ref().map(|a| a.device.clone());
+            let tag = |b: reqwest::RequestBuilder| match &actor_device {
+                Some(d) => b.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
+                None => b,
+            };
             let resp = match method {
-                "POST" => client.post(&url).json(&body_val).send().await,
-                "PUT" => client.put(&url).json(&body_val).send().await,
-                "PATCH" => client.patch(&url).json(&body_val).send().await,
-                "DELETE" => client.delete(&url).json(&body_val).send().await,
-                _ => client.get(&url).send().await,
+                "POST" => tag(client.post(&url).json(&body_val)).send().await,
+                "PUT" => tag(client.put(&url).json(&body_val)).send().await,
+                "PATCH" => tag(client.patch(&url).json(&body_val)).send().await,
+                "DELETE" => tag(client.delete(&url).json(&body_val)).send().await,
+                _ => tag(client.get(&url)).send().await,
             };
             match resp {
                 Ok(r) => {

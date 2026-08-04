@@ -155,9 +155,37 @@ fn stamp_account(mut a: AccountRef) -> AccountRef {
     a
 }
 
+/// Header the WebRTC tunnel stamps on a request it forwards for an identified
+/// peer. The phone speaks only WebRTC, so its calls reach the router from
+/// loopback with no device token — this is how a handler still knows which
+/// phone is asking.
+///
+/// Trust: only the tunnel writes it, and anything else able to reach loopback
+/// is already the Mac's owner. It routes and attributes; it never authorizes.
+pub const ACTOR_DEVICE_HEADER: &str = "x-linggen-actor-device";
+
 /// Same as [`actor_for_token`] for an HTTP caller carrying the device token.
 pub fn actor_for_headers(headers: &axum::http::HeaderMap) -> Option<Actor> {
-    actor_for_token(&device_token_from_headers(headers)?)
+    if let Some(a) = device_token_from_headers(headers).and_then(|t| actor_for_token(&t)) {
+        return Some(a);
+    }
+    let id = headers.get(ACTOR_DEVICE_HEADER)?.to_str().ok()?;
+    load_devices().into_iter().find(|d| d.id == id).map(|d| Actor {
+        device: d.id,
+        account: d.account.map(|a| a.id),
+    })
+}
+
+/// Which paired device is calling, if any — the id used to scope per-phone
+/// state like the delete queue.
+pub fn caller_device(headers: &axum::http::HeaderMap) -> Option<String> {
+    actor_for_headers(headers).map(|a| a.device)
+}
+
+/// How many phones are paired. One phone means nothing can be ambiguous, which
+/// is what lets records predating per-device attribution still be reconciled.
+pub fn paired_device_count() -> usize {
+    load_devices().len()
 }
 
 /// Resolve a device token into the actor to stamp on records it causes.
