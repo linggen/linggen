@@ -29,6 +29,7 @@ pub(super) fn handle_control_message(
     view_ctx: &mut crate::server::rtc::page_state::ViewContext,
     force_page_state: &mut bool,
     user_ctx: &crate::server::rtc::UserContext,
+    actor: &super::PeerActor,
     peer_id: u64,
 ) -> Option<ControlRequest> {
     let msg: serde_json::Value = match serde_json::from_str(text) {
@@ -55,6 +56,23 @@ pub(super) fn handle_control_message(
                 let resp = serde_json::json!({ "type": "heartbeat", "ts": chrono::Utc::now().timestamp_millis() });
                 let _ = ch.write(false, resp.to_string().as_bytes());
             }
+            None
+        }
+
+        // A peer says who is holding it. The device token is the same secret it
+        // already presents on LAN calls; resolving it here means identity is
+        // bound once per connection and works the same over relay, where no
+        // token rides the handshake at all.
+        "identify" => {
+            let token = msg.get("device_token").and_then(|v| v.as_str()).unwrap_or("");
+            let account = msg
+                .get("account")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let resolved = crate::server::api::pair::set_device_account(token, account);
+            if resolved.is_none() && !token.is_empty() {
+                tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
+            }
+            *actor.lock().unwrap() = resolved;
             None
         }
 

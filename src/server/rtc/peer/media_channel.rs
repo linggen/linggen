@@ -43,6 +43,9 @@ pub(super) struct MediaTransfer {
     declared_sha: String,
     declared_size: u64,
     created_ms: Option<i64>,
+    /// Who sent it — captured at `put_begin` so a peer that identifies late,
+    /// or drops mid-transfer, can't change the answer after the fact.
+    by: Option<crate::server::api::pair::Actor>,
     tmp: PathBuf,
     file: tokio::fs::File,
     hasher: Sha256,
@@ -61,6 +64,7 @@ impl MediaTransfer {
 pub(super) async fn handle_text(
     text: &str,
     current: &mut Option<MediaTransfer>,
+    by: Option<crate::server::api::pair::Actor>,
 ) -> Option<String> {
     let msg: Value = serde_json::from_str(text).ok()?;
     match msg.get("type").and_then(Value::as_str)? {
@@ -70,7 +74,7 @@ pub(super) async fn handle_text(
             if let Some(prev) = current.take() {
                 let _ = tokio::fs::remove_file(&prev.tmp).await;
             }
-            match begin(&msg).await {
+            match begin(&msg, by).await {
                 Ok(t) => {
                     *current = Some(t);
                     None
@@ -221,7 +225,10 @@ pub(super) async fn abandon(current: &mut Option<MediaTransfer>) {
     }
 }
 
-async fn begin(msg: &Value) -> anyhow::Result<MediaTransfer> {
+async fn begin(
+    msg: &Value,
+    by: Option<crate::server::api::pair::Actor>,
+) -> anyhow::Result<MediaTransfer> {
     let field = |k: &str| -> anyhow::Result<String> {
         msg.get(k)
             .and_then(Value::as_str)
@@ -253,6 +260,7 @@ async fn begin(msg: &Value) -> anyhow::Result<MediaTransfer> {
         declared_sha,
         declared_size,
         created_ms: msg.get("created_ms").and_then(Value::as_i64),
+        by,
         tmp,
         file,
         hasher: Sha256::new(),
@@ -286,8 +294,11 @@ async fn finish(mut t: MediaTransfer) -> String {
     let (local_id, name, tmp, size, created_ms) =
         (t.local_id.clone(), t.name.clone(), t.tmp.clone(), t.received, t.created_ms);
     let sha = computed.clone();
+    let by = t.by.clone();
     let placed = tokio::task::spawn_blocking(move || {
-        crate::server::api::media::finalize_ingest(&local_id, &sha, created_ms, &name, &tmp, size)
+        crate::server::api::media::finalize_ingest(
+            &local_id, &sha, created_ms, &name, &tmp, size, by,
+        )
     })
     .await;
 

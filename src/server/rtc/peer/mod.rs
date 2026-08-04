@@ -44,6 +44,11 @@ fn stall_deadline(since: &mut Option<Instant>, now: Instant) -> Option<Instant> 
     (now.duration_since(started) > SPIN_LIMIT).then_some(started)
 }
 
+/// The identity a peer claimed via `identify`, or `None` while it is anonymous
+/// (the web UI, the app shell, a phone that hasn't identified yet). Records
+/// written by an anonymous peer carry no `by` — unattributed beats wrong.
+pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair::Actor>>>;
+
 /// Create a new WebRTC peer connection from a WHIP SDP offer.
 ///
 /// Returns the SDP answer string to send back to the client.
@@ -166,6 +171,10 @@ async fn run_peer(
     // so they never pass through the control channel's text envelope.
     let mut media_channel_id: Option<str0m::channel::ChannelId> = None;
     let mut media_transfer: Option<media_channel::MediaTransfer> = None;
+    // Who this peer says it is, once `identify` lands. Shared because both the
+    // control channel (which sets it) and the media channel (which stamps it
+    // onto uploads) need it, and they run in the same loop.
+    let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(None));
     // Download chunks are produced off-loop and queued here; bounded so a slow
     // peer applies backpressure to the reader instead of growing memory.
     let (media_out_tx, mut media_out_rx) =
@@ -394,7 +403,10 @@ async fn run_peer(
                                 ) {
                                     continue;
                                 }
-                                media_channel::handle_text(&text, &mut media_transfer).await
+                                // Copy the actor out before awaiting — the
+                                // guard is not Send and would poison the task.
+                                let who = peer_actor.lock().unwrap().clone();
+                                media_channel::handle_text(&text, &mut media_transfer, who).await
                             };
                             if let Some(msg) = reply {
                                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
@@ -420,6 +432,7 @@ async fn run_peer(
                                 &mut view_ctx,
                                 &mut force_page_state,
                                 &user_ctx,
+                                &peer_actor,
                                 peer_id,
                             ) {
                                 // Enforce consumer permissions: browser consumers can only chat

@@ -28,6 +28,7 @@ struct PendingPair {
     code: String,
     device_name: String,
     device_id: Option<String>,
+    account: Option<AccountRef>,
     created: Instant,
     attempts: u32,
 }
@@ -35,12 +36,44 @@ struct PendingPair {
 /// One pairing attempt at a time — a second request replaces the first.
 static PENDING: Mutex<Option<PendingPair>> = Mutex::new(None);
 
+/// Who is holding the phone — the linggen.dev account signed in on it.
+///
+/// Phone-asserted: the Mac records what the phone claims rather than verifying
+/// it against linggen.dev. That is enough for a household ledger ("whose photo
+/// is this"), and deliberately not enough to be a security boundary.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AccountRef {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// When the phone last told us this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+}
+
+/// Stamped onto every record a phone causes the Mac to write. `device` is the
+/// Mac-minted row id, which a phone cannot choose; `account` is what the phone
+/// claims and is absent while it is signed out.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Actor {
+    pub device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PairedDevice {
     pub id: String,
     pub name: String,
     pub secret: String,
     pub created_at: i64,
+    /// The account signed in on this phone, last time it said so. A phone can
+    /// sign in and out long after pairing, so this is refreshed on connect —
+    /// never only at pair time.
+    #[serde(default)]
+    pub account: Option<AccountRef>,
     /// Stable per-phone install id. Re-pairing the same phone replaces its row
     /// (matched on this) rather than stacking duplicates. Optional so rows
     /// written before this field, and older apps that don't send one, still load.
@@ -85,7 +118,11 @@ fn default_device_settings() -> serde_json::Map<String, serde_json::Value> {
 /// sends a stable `device_id` replaces its own prior row (re-pairing refreshes
 /// the token/name in place instead of stacking duplicates); without one — older
 /// apps — it appends, as before.
-fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<PairedDevice> {
+fn commit_device(
+    name: String,
+    device_id: Option<String>,
+    account: Option<AccountRef>,
+) -> std::io::Result<PairedDevice> {
     let mut devices = load_devices();
     // Carry the Mac-owned settings across a re-pair so pulling from the Mac
     // doesn't reset to defaults when a phone re-scans.
@@ -98,6 +135,7 @@ fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<Pai
     let device = PairedDevice {
         id: uuid::Uuid::new_v4().to_string(),
         name,
+        account: account.map(stamp_account),
         secret: random_hex(24),
         created_at: chrono::Utc::now().timestamp(),
         device_id: device_id.clone(),
@@ -109,6 +147,50 @@ fn commit_device(name: String, device_id: Option<String>) -> std::io::Result<Pai
     devices.push(device.clone());
     save_devices(&devices)?;
     Ok(device)
+}
+
+/// Stamp "when the phone told us" so a stale claim is visible as stale.
+fn stamp_account(mut a: AccountRef) -> AccountRef {
+    a.at = Some(chrono::Utc::now().to_rfc3339());
+    a
+}
+
+/// Same as [`actor_for_token`] for an HTTP caller carrying the device token.
+pub fn actor_for_headers(headers: &axum::http::HeaderMap) -> Option<Actor> {
+    actor_for_token(&device_token_from_headers(headers)?)
+}
+
+/// Resolve a device token into the actor to stamp on records it causes.
+/// `None` for an unknown token — an unattributed record beats a wrong one.
+pub fn actor_for_token(token: &str) -> Option<Actor> {
+    device_by_token(token).map(|d| Actor {
+        device: d.id,
+        account: d.account.map(|a| a.id),
+    })
+}
+
+/// Refresh the account a phone claims. Sign-in and sign-out both happen long
+/// after pairing, so the connect-time claim wins over the pair-time one —
+/// including `None`, which is how a sign-out is recorded.
+pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Actor> {
+    let mut devices = load_devices();
+    let d = devices.iter_mut().find(|d| d.secret == token)?;
+    let next = account.map(stamp_account);
+    let changed = d.account.as_ref().map(|a| a.id.clone()) != next.as_ref().map(|a| a.id.clone());
+    d.account = next;
+    let actor = Actor {
+        device: d.id.clone(),
+        account: d.account.as_ref().map(|a| a.id.clone()),
+    };
+    if changed {
+        tracing::info!(
+            "[pair] device '{}' is now {}",
+            actor.device,
+            actor.account.as_deref().unwrap_or("signed out")
+        );
+    }
+    let _ = save_devices(&devices);
+    Some(actor)
 }
 
 /// The device that owns a token, if any — lets `/api/pair/me` identify the caller.
@@ -169,6 +251,10 @@ pub(crate) struct PairRequest {
     device_name: String,
     #[serde(default)]
     device_id: Option<String>,
+    /// Who is signed in on the phone right now. Absent = signed out; pairing
+    /// still succeeds, and `identify` fills it in when they sign in later.
+    #[serde(default)]
+    account: Option<AccountRef>,
 }
 
 /// POST /api/pair/request — start a pairing attempt; the code appears on the
@@ -183,6 +269,7 @@ pub(crate) async fn post_pair_request(Json(req): Json<PairRequest>) -> impl Into
         code,
         device_name: name,
         device_id: req.device_id,
+        account: req.account,
         created: Instant::now(),
         attempts: 0,
     });
@@ -221,9 +308,10 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
     }
     let name = p.device_name.clone();
     let device_id = p.device_id.clone();
+    let account = p.account.clone();
     *pending = None;
     drop(pending);
-    let device = match commit_device(name, device_id) {
+    let device = match commit_device(name, device_id, account) {
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
@@ -263,6 +351,7 @@ pub(crate) async fn get_pair_info(
             "name": d.name,
             "created_at": d.created_at,
             "settings": d.settings,
+            "account": d.account,
         }))
         .collect();
     Json(serde_json::json!({
@@ -532,6 +621,8 @@ pub(crate) struct QrConfirm {
     device_name: String,
     #[serde(default)]
     device_id: Option<String>,
+    #[serde(default)]
+    account: Option<AccountRef>,
 }
 
 /// POST /api/pair/qr-confirm — trade a scanned QR secret for a device token.
@@ -555,7 +646,7 @@ pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl Int
         );
     }
     let name: String = req.device_name.chars().take(64).collect();
-    let device = match commit_device(name, req.device_id) {
+    let device = match commit_device(name, req.device_id, req.account) {
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };

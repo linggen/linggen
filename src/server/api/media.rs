@@ -453,7 +453,11 @@ fn backup_wireless() -> anyhow::Result<(usize, usize)> {
             .unwrap_or(staged);
         let created_ms = r.get("mtime").and_then(Value::as_i64).map(|s| s * 1000);
         let size = r.get("size").and_then(Value::as_u64).unwrap_or(0);
-        match ensure_archived(sha, created_ms, filename, staged, size) {
+        // Attribution rides from the manifest row written at upload time —
+        // backup is a Mac-side action, so "who is connected now" is the wrong
+        // answer and may be nobody.
+        let by = r.get("by").cloned();
+        match ensure_archived(sha, created_ms, filename, staged, size, by, &archived_shas) {
             Ok(()) => archived += 1,
             Err(e) => {
                 tracing::warn!("[media] backup failed for {staged}: {e}");
@@ -471,7 +475,13 @@ fn backup_wireless() -> anyhow::Result<(usize, usize)> {
 /// One original per request: stream the `file` part to a staging temp while
 /// hashing, reject on digest mismatch, then stage + archive + ledger it.
 /// Idempotent at every step — a retry after any partial failure converges.
-pub(crate) async fn ingest_handler(mut multipart: Multipart) -> Response {
+pub(crate) async fn ingest_handler(
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    // The channel is the live upload path; this route survives for the USB-era
+    // flow and for curl. Attribute it the only way an HTTP caller can be known.
+    let by = crate::server::api::pair::actor_for_headers(&headers);
     let mut local_id: Option<String> = None;
     let mut declared_sha: Option<String> = None;
     let mut created_ms: Option<i64> = None;
@@ -523,7 +533,7 @@ pub(crate) async fn ingest_handler(mut multipart: Multipart) -> Response {
     let filename = filename.unwrap_or_else(|| format!("{}.bin", &computed_sha[..12]));
     let _guard = MEDIA_LOCK.lock().await;
     let finalized = tokio::task::spawn_blocking(move || {
-        finalize_ingest(&local_id, &computed_sha, created_ms, &filename, &tmp, size)
+        finalize_ingest(&local_id, &computed_sha, created_ms, &filename, &tmp, size, by)
     })
     .await;
     match finalized {
@@ -640,10 +650,11 @@ pub(crate) fn finalize_ingest(
     filename: &str,
     tmp: &Path,
     size: u64,
+    by: Option<crate::server::api::pair::Actor>,
 ) -> anyhow::Result<()> {
     let rows = load_jsonl(&manifest_path());
     let staged_rel = ensure_staged(&rows, sha, filename, tmp)?;
-    ensure_wireless_row(&rows, local_id, sha, created_ms, &staged_rel, size)?;
+    ensure_wireless_row(&rows, local_id, sha, created_ms, &staged_rel, size, by)?;
     Ok(())
 }
 
@@ -668,15 +679,23 @@ fn ensure_staged(rows: &[Value], sha: &str, filename: &str, tmp: &Path) -> anyho
 
 /// Copy the staged file into the archive root with a re-hash verify, then
 /// append the ledger row the Media pipeline's remove leg trusts.
+/// Copy one staged original into the archive and record it.
+///
+/// `known` is the caller's already-loaded set of archived shas. It is required
+/// rather than optional because rebuilding it here re-read and re-parsed the
+/// whole ledger once per file: a 1,000-photo backup against a 3,000-row ledger
+/// did three million redundant line parses.
 fn ensure_archived(
     sha: &str,
     created_ms: Option<i64>,
     filename: &str,
     staged_rel: &str,
     size: u64,
+    by: Option<Value>,
+    known: &HashSet<String>,
 ) -> anyhow::Result<()> {
     let ledger = ledger_path();
-    if sha_set(&load_jsonl(&ledger)).contains(sha) {
+    if known.contains(sha) {
         return Ok(());
     }
     let created = created_ms
@@ -696,10 +715,14 @@ fn ensure_archived(
             anyhow::bail!("archive copy failed hash verify");
         }
     }
-    append_jsonl(
-        &ledger,
-        &json!({"sha256": sha, "dest": dest.to_string_lossy(), "size": size, "at": now_iso()}),
-    )?;
+    let mut row =
+        json!({"sha256": sha, "dest": dest.to_string_lossy(), "size": size, "at": now_iso()});
+    // Content dedupes by sha, so the first phone to get a copy archived owns
+    // the row. There is one file; it came from someone.
+    if let Some(a) = by {
+        row["by"] = a;
+    }
+    append_jsonl(&ledger, &row)?;
     Ok(())
 }
 
@@ -729,6 +752,7 @@ fn ensure_wireless_row(
     created_ms: Option<i64>,
     staged_rel: &str,
     size: u64,
+    by: Option<crate::server::api::pair::Actor>,
 ) -> anyhow::Result<()> {
     let wire_path = format!("{WIRELESS_PREFIX}{local_id}");
     let already = rows.iter().any(|r| {
@@ -739,9 +763,13 @@ fn ensure_wireless_row(
         return Ok(());
     }
     let mtime = created_ms.map(|ms| ms / 1000).unwrap_or_else(|| chrono::Local::now().timestamp());
-    append_jsonl(
-        &manifest_path(),
-        &json!({"path": wire_path, "size": size, "mtime": mtime, "sha256": sha, "staged": staged_rel}),
-    )?;
+    let mut row =
+        json!({"path": wire_path, "size": size, "mtime": mtime, "sha256": sha, "staged": staged_rel});
+    // Whose phone sent it. Absent for an anonymous peer and for the USB pull —
+    // a row with no `by` means "we don't know", never "nobody".
+    if let Some(a) = by {
+        row["by"] = serde_json::to_value(a).unwrap_or(Value::Null);
+    }
+    append_jsonl(&manifest_path(), &row)?;
     Ok(())
 }
