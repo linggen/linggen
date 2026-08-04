@@ -1,6 +1,6 @@
 //! Wireless media sync — Linggen Mobile's paired Photos backup.
 //!
-//! Contract: `linggen-mobile/doc/media-sync-protocol.md`. Three routes:
+//! Contract: `linggen-mobile/doc/sync-protocol.md`. Three routes:
 //! manifest (what does the Mac need / already hold), ingest (one original per
 //! multipart POST), verify (which uploads are now safe to delete on-phone).
 //!
