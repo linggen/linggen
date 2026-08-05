@@ -97,9 +97,9 @@ pub(super) async fn handle_text(
     }
 }
 
-/// Chunk size for downloads — the same 16 KB every SCTP implementation
-/// agrees on.
-const DOWNLOAD_CHUNK: usize = 8 * 1024;
+/// Chunk size for downloads — 16 KiB, the message size every SCTP
+/// implementation accepts.
+const DOWNLOAD_CHUNK: usize = 16 * 1024;
 
 /// Serve a `get`: fetch the path from our own API and stream the bytes back.
 /// Runs off the str0m loop; chunks are handed to the writer as they're ready.

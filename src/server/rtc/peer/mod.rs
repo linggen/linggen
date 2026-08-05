@@ -80,6 +80,16 @@ async fn create_peer_inner(
     // Parse the SDP offer (raw SDP text from WHIP POST body)
     let offer = SdpOffer::from_sdp_string(&offer_sdp).context("Failed to parse SDP offer")?;
 
+    // Off-LAN failures are diagnosed by what the peer offered — every
+    // candidate matters (family, srflx presence), not summarize_sdp's first.
+    if remote {
+        for line in offer_sdp.lines() {
+            if let Some(c) = line.strip_prefix("a=candidate:") {
+                tracing::info!("Remote offer candidate: {c}");
+            }
+        }
+    }
+
     // Bind a UDP socket for this peer connection.
     // Always bind to 0.0.0.0 so WebRTC works when accessing via LAN IP.
     let socket = UdpSocket::bind("0.0.0.0:0")
@@ -265,18 +275,36 @@ async fn run_peer(
     let mut stalled_since: Option<Instant> = None;
 
     loop {
-        // Drain ONE pending write per cycle — writing multiple crashes str0m's SCTP.
+        // Fill the SCTP send buffer each cycle instead of one chunk per wake.
+        // One-write-per-SACK pacing capped relay transfers near 80 KB/s while
+        // str0m happily buffers 128 KiB (MAX_BUFFERED_ACROSS_STREAMS); write()
+        // itself is the gate — it refuses at that cap, and sctp-proto accepts
+        // any message under max_send_message_size in full, so the write()
+        // assert behind the old "multi-drain crashes SCTP" revert cannot fire
+        // on this stack. The cycle cap keeps a fat queue from starving the
+        // socket reads below.
         if !dc_write_paused {
-            if let Some(write) = pending_dc_writes.pop_front() {
+            // Top up from the media producer first — the select arm below
+            // moves only one chunk per wake, which would recreate the old
+            // pacing exactly when a bulk download needs the opposite.
+            while pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
+                match media_out_rx.try_recv() {
+                    Ok(w) => pending_dc_writes.push_back(w),
+                    Err(_) => break,
+                }
+            }
+            for _ in 0..32 {
+                let Some(write) = pending_dc_writes.pop_front() else { break };
                 let written = rtc
                     .channel(write.channel)
                     .map(|mut ch| ch.write(write.binary, &write.data))
                     .unwrap_or(Ok(false));
                 match written {
-                    Ok(true) => { /* accepted */ }
+                    Ok(true) => { /* accepted — keep filling */ }
                     _ => {
                         pending_dc_writes.push_front(write);
                         dc_write_paused = true;
+                        break;
                     }
                 }
             }
