@@ -60,6 +60,10 @@ libc = "0.2"
 rand = "0.10.0"
 cron = "0.16"
 chrono = "0.4"
+# Vendored fork (vendor/str0m + vendor/sctp-proto, wired via [patch.crates-io]):
+# larger SCTP send window, sane RTO floor, gentler fast-retransmit backoff for
+# lossy relay paths. Diffs are marked "LINGGEN PATCH"; re-carry them on upgrade
+# and validate with `cargo test --test rtc_link_bench -- --ignored --nocapture`.
 str0m = "0.21"
 gethostname = "1.1.0"
 open = "5.3.3"
@@ -81,3 +85,7 @@ any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "
 # unusably slow (~47s/utterance vs ~1s).
 [profile.dev.package."*"]
 opt-level = 3
+
+[patch.crates-io]
+str0m = { path = "vendor/str0m" }
+sctp-proto = { path = "vendor/sctp-proto" }
