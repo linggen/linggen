@@ -26,6 +26,7 @@ mod forward;
 mod inference;
 mod response;
 mod session;
+mod stun;
 use control::{handle_control_message, process_control_request_async};
 use forward::{forward_event_to_channels, EventFilter};
 use inference::process_inference_request;
@@ -87,10 +88,16 @@ async fn create_peer_inner(
     let local_addr = socket.local_addr()?;
     tracing::info!("WebRTC peer UDP socket bound to {local_addr} (remote={remote})");
 
-    // Create str0m Rtc instance with ICE-lite.
-    // str0m is Sans-IO — it can't do STUN discovery, so full ICE won't work.
-    // ICE-lite makes us passive; the browser drives connectivity checks.
-    let mut rtc = RtcConfig::new().set_ice_lite(true).build(Instant::now());
+    // LAN peers get ICE-lite: we are passive and the browser/webview drives
+    // connectivity checks. Relay-signaled peers get FULL ICE: the phone sits
+    // behind a carrier NAT and we behind the home router's, so both sides
+    // must actively send checks — a passive lite agent never punches its own
+    // NAT and stays unreachable from outside the LAN.
+    let mut rtc = if remote {
+        RtcConfig::new().build(Instant::now())
+    } else {
+        RtcConfig::new().set_ice_lite(true).build(Instant::now())
+    };
 
     // Advertise both the LAN IP and 127.0.0.1 as host candidates. The LAN
     // IP makes WebRTC work for browser-to-daemon over the local network;
@@ -110,6 +117,28 @@ async fn create_peer_inner(
             .context("Failed to create host candidate")?;
         rtc.add_local_candidate(candidate)
             .context("Failed to add local candidate")?;
+    }
+
+    // A relay-signaled peer is off-LAN, where the host candidates route
+    // nowhere — discover this socket's public address and advertise it too.
+    // Must happen before accept_offer: the relay carries no trickle, so only
+    // candidates already in the answer SDP ever reach the phone.
+    if remote {
+        match stun::discover_public_addr(&socket).await {
+            Some(public) if public != candidate_addr => {
+                let candidate = Candidate::server_reflexive(public, candidate_addr, "udp")
+                    .context("Failed to create srflx candidate")?;
+                rtc.add_local_candidate(candidate)
+                    .context("Failed to add srflx candidate")?;
+                tracing::info!("STUN: public address {public} advertised as srflx candidate");
+            }
+            Some(public) => {
+                tracing::info!("STUN: public address {public} equals the LAN candidate — no NAT");
+            }
+            None => {
+                tracing::warn!("STUN discovery failed — remote peer sees LAN candidates only");
+            }
+        }
     }
 
     // Accept the offer and generate answer
