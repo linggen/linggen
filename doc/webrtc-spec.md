@@ -36,13 +36,15 @@ The signaling overhead is minimal (a few KB of SDP/ICE candidates), cheap to rel
 - One transport for local, LAN, and remote access.
 - Per-session data channels for natural message isolation.
 - Bidirectional — single channel for all communication.
-- Works for 80%+ of network configurations via STUN alone.
+- Works everywhere: LAN peers pair on host candidates; off-LAN peers get
+  full ICE + a STUN-discovered public candidate on the daemon side, and a
+  Cloudflare TURN relayed candidate on the client side (credentials minted
+  by linggen.dev) for the symmetric-CGNAT carriers where STUN alone fails.
 - Future path to real-time media (camera video, audio).
 
 ### Non-goals
 
 - Full mesh or multi-peer topologies — linggen is always one server, one client per connection.
-- Guaranteed 100% connectivity for free users — TURN (relay) is a paid-tier add-on for the ~20% where STUN fails.
 
 ## Architecture overview
 

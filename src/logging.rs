@@ -23,7 +23,8 @@ fn build_filter(level: &str) -> EnvFilter {
     EnvFilter::try_new(format!(
         "ling={level},linggen_agent={level},linggen={level},\
          axum=warn,tower_http=warn,hyper=warn,hyper_util=warn,reqwest=warn,\
-         mio=warn,reqwest_retry=warn"
+         mio=warn,reqwest_retry=warn,\
+         is=debug,str0m=info"
     ))
     .unwrap_or_else(|_| EnvFilter::new("info"))
 }
