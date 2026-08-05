@@ -1221,9 +1221,9 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.6.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef7eed0cf766b110880acdd89a860061dee42ed5f64df0fa43c80203e4f60916"
+checksum = "ba6aa42b0c64c3e5311a2afad224b32db1ee129d21c63daaaf8ea747b846cdbc"
 dependencies = [
  "aes 0.8.4",
  "arrayvec",
@@ -2527,9 +2527,9 @@ checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
 name = "is"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55f1279198aa5aff7fd769ddfacee9f6062fdd028a49c5b7024131c03d770b0b"
+checksum = "5cff4e962dd367e3b1c478f67c24a35e7120ec767090cb61305b855db9a529c4"
 dependencies = [
  "crc",
  "serde",
@@ -4385,9 +4385,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sctp-proto"
-version = "0.9.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fa56c3ed91240d1659d269815d4e181f66c6f52bcfd60f89d3e7e3911aa6085"
+checksum = "801033d212d17c3ad6b523c3fb3a41de323707b10b75cb437d05d5eff3b15204"
 dependencies = [
  "bytes",
  "crc",
@@ -4744,9 +4744,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "str0m"
-version = "0.19.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "431befc786d98bfa860118d96890df038e4db51635494203bbe600b05582f920"
+checksum = "fed3d9290b349b6da18fd640d81a950e4b256dba80e36982be61ae6ef98fb025"
 dependencies = [
  "arrayvec",
  "base64ct",
@@ -4765,9 +4765,9 @@ dependencies = [
 
 [[package]]
 name = "str0m-aws-lc-rs"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "412c16d723baeb6f8047447a8974ffc65987b2df151b53cecc0b55407e2ba4d1"
+checksum = "67e3e6efb440ad95c9370171da8fb033684f8237a4d4d4987887774149547b0d"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
@@ -4777,9 +4777,9 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44f74d680ccaae137daee4e348cabbe7f06b60838fe38e9c82807dfc659d5407"
+checksum = "c99c3d805532aebd04585ba54e97e958c382759fb8f52256e289a49233f7e05b"
 dependencies = [
  "base64ct",
  "dimpl",
