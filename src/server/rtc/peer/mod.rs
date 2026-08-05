@@ -218,6 +218,13 @@ async fn run_peer(
     // peer applies backpressure to the reader instead of growing memory.
     let (media_out_tx, mut media_out_rx) =
         tokio::sync::mpsc::channel::<response::DcWrite>(64);
+    // Bulk chunks wait in their own lane so a 10 MB file can never queue
+    // ahead of heartbeats and RPC responses — control frames stay
+    // interactive while media drains at whatever the path allows. Bounded
+    // so spawn_get's channel stays the real backpressure.
+    let mut media_backlog: std::collections::VecDeque<response::DcWrite> =
+        std::collections::VecDeque::new();
+    const MEDIA_BACKLOG_MAX: usize = 128;
     let mut inference_channel_id: Option<str0m::channel::ChannelId> = None;
     // Per-peer token counter — synced with persistent store for consumers.
     let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
@@ -281,18 +288,10 @@ async fn run_peer(
         // itself is the gate — it refuses at that cap, and sctp-proto accepts
         // any message under max_send_message_size in full, so the write()
         // assert behind the old "multi-drain crashes SCTP" revert cannot fire
-        // on this stack. The cycle cap keeps a fat queue from starving the
-        // socket reads below.
+        // on this stack. Control frames always go first: a bulk download must
+        // never wedge heartbeats or RPC behind megabytes of song bytes. The
+        // per-cycle caps keep the socket reads below from starving.
         if !dc_write_paused {
-            // Top up from the media producer first — the select arm below
-            // moves only one chunk per wake, which would recreate the old
-            // pacing exactly when a bulk download needs the opposite.
-            while pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                match media_out_rx.try_recv() {
-                    Ok(w) => pending_dc_writes.push_back(w),
-                    Err(_) => break,
-                }
-            }
             for _ in 0..32 {
                 let Some(write) = pending_dc_writes.pop_front() else { break };
                 let written = rtc
@@ -303,6 +302,29 @@ async fn run_peer(
                     Ok(true) => { /* accepted — keep filling */ }
                     _ => {
                         pending_dc_writes.push_front(write);
+                        dc_write_paused = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !dc_write_paused {
+            while media_backlog.len() < MEDIA_BACKLOG_MAX {
+                match media_out_rx.try_recv() {
+                    Ok(w) => media_backlog.push_back(w),
+                    Err(_) => break,
+                }
+            }
+            for _ in 0..32 {
+                let Some(write) = media_backlog.pop_front() else { break };
+                let written = rtc
+                    .channel(write.channel)
+                    .map(|mut ch| ch.write(write.binary, &write.data))
+                    .unwrap_or(Ok(false));
+                match written {
+                    Ok(true) => { /* accepted — keep filling */ }
+                    _ => {
+                        media_backlog.push_front(write);
                         dc_write_paused = true;
                         break;
                     }
@@ -759,8 +781,8 @@ async fn run_peer(
             // Leaving the chunks in the bounded channel backpressures the
             // producer instead, which is what we want anyway.
             Some(write) = media_out_rx.recv(),
-                if !dc_write_paused && pending_dc_writes.len() < MAX_DC_WRITE_QUEUE => {
-                pending_dc_writes.push_back(write);
+                if media_backlog.len() < MEDIA_BACKLOG_MAX => {
+                media_backlog.push_back(write);
             }
 
             result = socket.recv_from(&mut buf) => {
