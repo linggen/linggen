@@ -13,6 +13,10 @@ interface PairDevice {
   name: string;
   created_at: number;
   settings?: { models?: string[] };
+  /// Who to call whoever holds this phone. "Guest" when it is signed out —
+  /// pairing never required an account, so a nameless row would read as a
+  /// missing fact rather than as a guest.
+  person?: string;
 }
 
 interface PairInfo {
@@ -281,6 +285,7 @@ export const PhoneTab: React.FC<{
                     </button>
                   )}
                   <p className="text-[11px] text-slate-400">
+                    {d.person ? `${d.person} · ` : ''}
                     Paired {new Date(d.created_at * 1000).toLocaleDateString()}
                   </p>
                 </div>

@@ -194,6 +194,28 @@ pub fn actor_for_headers(headers: &axum::http::HeaderMap) -> Option<Actor> {
     })
 }
 
+/// What to call the person behind a phone, wherever one is named — the paired
+/// device list, and anything the Mac records about who did something.
+///
+/// A phone that is signed out is still somebody: pairing does not require an
+/// account, and requiring one to be *named* would leave every action a guest
+/// takes attributed to nobody, which reads as a bug rather than as a guest.
+/// The stored row keeps the truth — `account` stays absent — and only the
+/// label fills in.
+pub const GUEST_LABEL: &str = "Guest";
+
+pub fn person_label(account: &Option<AccountRef>) -> String {
+    let Some(a) = account else {
+        return GUEST_LABEL.to_string();
+    };
+    a.name
+        .as_deref()
+        .or(a.email.as_deref())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(GUEST_LABEL)
+        .to_string()
+}
+
 /// Which paired device is calling, if any — the id used to scope per-phone
 /// state like the delete queue.
 pub fn caller_device(headers: &axum::http::HeaderMap) -> Option<String> {
@@ -232,7 +254,7 @@ pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Ac
         tracing::info!(
             "[pair] device '{}' is now {}",
             actor.device,
-            actor.account.as_deref().unwrap_or("signed out")
+            person_label(&d.account)
         );
     }
     let _ = save_devices(&devices);
@@ -336,34 +358,43 @@ pub(crate) struct PairConfirm {
 
 /// POST /api/pair/confirm — trade the on-screen code for a device token.
 pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl IntoResponse {
-    let mut pending = PENDING.lock().unwrap();
-    let Some(p) = pending.as_mut() else {
-        return err(StatusCode::NOT_FOUND, "no pairing in progress");
+    // Everything touching the lock happens in here: the guard is not Send, and
+    // minting the relay grant below is an await.
+    let claimed = {
+        let mut pending = PENDING.lock().unwrap();
+        let Some(p) = pending.as_mut() else {
+            return err(StatusCode::NOT_FOUND, "no pairing in progress");
+        };
+        if p.pair_id != req.pair_id || p.created.elapsed() > CODE_TTL {
+            *pending = None;
+            return err(StatusCode::GONE, "pairing expired — start again");
+        }
+        p.attempts += 1;
+        if p.attempts > MAX_ATTEMPTS {
+            *pending = None;
+            return err(StatusCode::TOO_MANY_REQUESTS, "too many tries — start again");
+        }
+        if p.code != req.code.trim() {
+            return err(StatusCode::UNAUTHORIZED, "wrong code");
+        }
+        let claimed = (p.device_name.clone(), p.device_id.clone(), p.account.clone());
+        *pending = None;
+        claimed
     };
-    if p.pair_id != req.pair_id || p.created.elapsed() > CODE_TTL {
-        *pending = None;
-        return err(StatusCode::GONE, "pairing expired — start again");
-    }
-    p.attempts += 1;
-    if p.attempts > MAX_ATTEMPTS {
-        *pending = None;
-        return err(StatusCode::TOO_MANY_REQUESTS, "too many tries — start again");
-    }
-    if p.code != req.code.trim() {
-        return err(StatusCode::UNAUTHORIZED, "wrong code");
-    }
-    let name = p.device_name.clone();
-    let device_id = p.device_id.clone();
-    let account = p.account.clone();
-    *pending = None;
-    drop(pending);
+    let (name, device_id, account) = claimed;
     let device = match commit_device(name, device_id, account) {
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
     tracing::info!("[pair] device '{}' paired ({})", device.name, device.id);
-    Json(serde_json::json!({ "device_token": device.secret, "device_id": device.id }))
-        .into_response()
+    Json(serde_json::json!({
+        "device_token": device.secret,
+        "device_id": device.id,
+        // Same as the QR path: a phone paired here on the LAN still needs a way
+        // back to us once it leaves this network.
+        "relay_grant": mint_relay_grant(&device.name).await,
+    }))
+    .into_response()
 }
 
 fn err(code: StatusCode, msg: impl Into<String>) -> axum::response::Response {
@@ -398,6 +429,9 @@ pub(crate) async fn get_pair_info(
             "created_at": d.created_at,
             "settings": d.settings,
             "account": d.account,
+            // Who to call them on screen. `account` above is the truth and
+            // stays absent for a signed-out phone; this is what to print.
+            "person": person_label(&d.account),
         }))
         .collect();
     Json(serde_json::json!({
@@ -705,6 +739,42 @@ fn sha256_hex(input: &str) -> String {
     hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Ask linggen.dev for a relay credential belonging to a phone we have just
+/// paired, so it can reach us from outside this network without an account.
+///
+/// Pairing deliberately does not require the phone to sign in — whoever stood
+/// at this screen decides who gets in. But the relay authorized account
+/// holders only, so such a phone could pair from a hotel and then never reach
+/// us again. We are signed in by definition (no account, no relay presence,
+/// nothing to pair over), so we vouch, and the credential is scoped to this
+/// Mac alone. `None` when signed out, which is also when there is no relay to
+/// reach us on.
+async fn mint_relay_grant(device_name: &str) -> Option<String> {
+    let instance = relay_instance()?;
+    let (token, _) = crate::account::resolve_token()?;
+    let url = format!(
+        "{}/api/instances/{}/device-grants",
+        crate::account::site_url(),
+        instance
+    );
+    let res = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "device_label": device_name }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    if !res.status().is_success() {
+        tracing::warn!("[pair] relay grant refused: {}", res.status());
+        return None;
+    }
+    let body: serde_json::Value = res.json().await.ok()?;
+    let grant = body.get("grant")?.as_str()?.to_string();
+    tracing::info!("[pair] minted a relay grant for '{device_name}'");
+    Some(grant)
+}
+
 /// The pair surface says it is still on screen. Extends the window; a surface
 /// that goes quiet lets [`pair_window_watch`] shut it.
 pub(crate) async fn post_pair_window_keepalive() -> impl IntoResponse {
@@ -851,6 +921,9 @@ pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl Int
         "device_id": device.id,
         "mac_name": mac_name,
         "account_name": account_name,
+        // How to reach us from outside this network with no account of its
+        // own. Absent when we are signed out — then there is no relay either.
+        "relay_grant": mint_relay_grant(&device.name).await,
     }))
     .into_response()
 }
