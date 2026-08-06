@@ -83,6 +83,19 @@ pub struct PairedDevice {
     /// one-way Mac→phone). E.g. `{"models": [ids]}`. Preserved across re-pair.
     #[serde(default)]
     pub settings: serde_json::Map<String, serde_json::Value>,
+    /// The relay credential we asked linggen.dev to issue for this phone, kept
+    /// so revoking the phone can revoke that too.
+    ///
+    /// Without it, unpairing removed the row here and left the credential live
+    /// on the relay: the phone lost the LAN but kept working from anywhere,
+    /// which is the opposite of what Revoke means.
+    #[serde(default)]
+    pub relay_grant: Option<String>,
+    /// The credential the row this one replaced was carrying, so a re-pair can
+    /// retire it. Never persisted — it exists only between `commit_device` and
+    /// the caller that issues the new one.
+    #[serde(skip)]
+    pub superseded_grant: Option<String>,
 }
 
 fn devices_path() -> PathBuf {
@@ -144,12 +157,11 @@ fn commit_device(
     let mut devices = load_devices();
     // Carry the Mac-owned settings across a re-pair so pulling from the Mac
     // doesn't reset to defaults when a phone re-scans.
-    let carried = device_id.as_deref().and_then(|did| {
-        devices
-            .iter()
-            .find(|d| d.device_id.as_deref() == Some(did))
-            .map(|d| d.settings.clone())
-    });
+    let prior = device_id
+        .as_deref()
+        .and_then(|did| devices.iter().find(|d| d.device_id.as_deref() == Some(did)));
+    let carried = prior.map(|d| d.settings.clone());
+    let superseded_grant = prior.and_then(|d| d.relay_grant.clone());
     let device = PairedDevice {
         id: uuid::Uuid::new_v4().to_string(),
         name,
@@ -158,6 +170,9 @@ fn commit_device(
         created_at: chrono::Utc::now().timestamp(),
         device_id: device_id.clone(),
         settings: carried.unwrap_or_else(default_device_settings),
+        // Filled in by the caller once the relay has issued one.
+        relay_grant: None,
+        superseded_grant,
     };
     if let Some(did) = device_id {
         devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
@@ -392,7 +407,7 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
         "device_id": device.id,
         // Same as the QR path: a phone paired here on the LAN still needs a way
         // back to us once it leaves this network.
-        "relay_grant": mint_relay_grant(&device.name).await,
+        "relay_grant": grant_for(&device).await,
     }))
     .into_response()
 }
@@ -594,12 +609,22 @@ pub(crate) async fn rename_pair_device(
 pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {
     let mut devices = load_devices();
     let before = devices.len();
+    // Take the relay credential with us: dropping the row here only closes the
+    // LAN door, and a revoked phone that kept reaching us from anywhere would
+    // make Revoke a lie.
+    let grant = devices
+        .iter()
+        .find(|d| d.id == id)
+        .and_then(|d| d.relay_grant.clone());
     devices.retain(|d| d.id != id);
     if devices.len() == before {
         return err(StatusCode::NOT_FOUND, "no such device");
     }
     if let Err(e) = save_devices(&devices) {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
+    }
+    if let Some(g) = grant {
+        revoke_relay_grant(&g).await;
     }
     tracing::info!("[pair] device {id} revoked");
     Json(serde_json::json!({ "status": "ok" })).into_response()
@@ -749,6 +774,49 @@ fn sha256_hex(input: &str) -> String {
 /// nothing to pair over), so we vouch, and the credential is scoped to this
 /// Mac alone. `None` when signed out, which is also when there is no relay to
 /// reach us on.
+/// Issue a relay credential for a freshly paired phone and remember it on that
+/// phone's row, so Revoke can take it back.
+async fn grant_for(device: &PairedDevice) -> Option<String> {
+    // A re-pair replaced this phone's row; the credential the old row carried
+    // is now unreachable and would outlive it on the relay.
+    if let Some(stale) = device.superseded_grant.clone() {
+        revoke_relay_grant(&stale).await;
+    }
+    let grant = mint_relay_grant(&device.name).await?;
+    let mut devices = load_devices();
+    if let Some(d) = devices.iter_mut().find(|d| d.id == device.id) {
+        d.relay_grant = Some(grant.clone());
+        let _ = save_devices(&devices);
+    }
+    Some(grant)
+}
+
+/// Ask the relay to forget a phone's credential. Best effort by nature — the
+/// Mac may be offline when the user revokes — so the row is dropped either
+/// way and the credential is re-asserted from `paired-devices.json` on the
+/// next heartbeat rather than trusted to one call.
+async fn revoke_relay_grant(grant: &str) {
+    let Some(instance) = relay_instance() else { return };
+    let Some((token, _)) = crate::account::resolve_token() else { return };
+    let url = format!(
+        "{}/api/instances/{}/device-grants",
+        crate::account::site_url(),
+        instance
+    );
+    match reqwest::Client::new()
+        .delete(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "grant": grant }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => tracing::info!("[pair] relay credential revoked"),
+        Ok(r) => tracing::warn!("[pair] relay revoke failed: {}", r.status()),
+        Err(e) => tracing::warn!("[pair] relay revoke error: {e}"),
+    }
+}
+
 async fn mint_relay_grant(device_name: &str) -> Option<String> {
     let instance = relay_instance()?;
     let (token, _) = crate::account::resolve_token()?;
@@ -923,7 +991,7 @@ pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl Int
         "account_name": account_name,
         // How to reach us from outside this network with no account of its
         // own. Absent when we are signed out — then there is no relay either.
-        "relay_grant": mint_relay_grant(&device.name).await,
+        "relay_grant": grant_for(&device).await,
     }))
     .into_response()
 }
