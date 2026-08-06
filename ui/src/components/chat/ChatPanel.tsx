@@ -117,20 +117,22 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   );
 };
 
-/** Senders that are context or plumbing, never a speaker to label. */
-const PSEUDO_SENDERS = new Set(['user', 'system', 'assistant', 'memory', 'memory-recall', 'compaction']);
+/** Plumbing rows — context, not a speaker, so never labelled. */
+const UNSPOKEN = new Set(['system', 'memory', 'memory-recall', 'compaction']);
 
 /**
- * The bracket label for a message spoken by someone other than this panel's
- * agent or the local user — "[Yinyue]" on her asks relayed from the phone or
+ * The bracket label for an agent's message. Every speaking turn carries its
+ * name: the panel's own agent as well as anyone relayed in from the phone or
  * via agent_chat. Derived from the message's from_id (one fact, every
- * surface); null when there is nothing to label.
+ * surface); null only for rows nobody spoke.
  */
-function crossAgentLabel(msg: ChatMessage, panelAgent: string): string | null {
+function agentLabel(msg: ChatMessage, panelAgent: string): string | null {
   const from = (msg.from || '').toLowerCase();
-  if (!from || PSEUDO_SENDERS.has(from) || from.startsWith('run-')) return null;
-  if (from === panelAgent.toLowerCase()) return null;
-  const label = from.charAt(0).toUpperCase() + from.slice(1);
+  if (from === 'user' || UNSPOKEN.has(from) || from.startsWith('run-')) return null;
+  // Empty or 'assistant' from_id is this panel's agent speaking — the rows
+  // that predate the metadata, and the ones the UI itself synthesizes.
+  const speaker = !from || from === 'assistant' ? panelAgent.toLowerCase() : from;
+  const label = speaker.charAt(0).toUpperCase() + speaker.slice(1);
   // Rows persisted before the metadata cutover carry the label in the text.
   if (msg.text.startsWith(`[${label}]`)) return null;
   return label;
@@ -261,7 +263,7 @@ const ChatMessageList = React.memo<{
             senderTag={
               isUser && (!msg.from || msg.from === 'user')
                 ? (coreName ?? 'Hanli')
-                : crossAgentLabel(msg, selectedAgent)
+                : agentLabel(msg, selectedAgent)
             }
             isExpanded={isExpanded}
             onToggle={() => {
