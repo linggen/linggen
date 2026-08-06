@@ -525,7 +525,20 @@ async fn run_peer(
                                         .get("method")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("GET");
-                                    if !user_ctx.permission.can_access_endpoint(method, url) {
+                                    // A phone mid-pairing reached us on the QR
+                                    // alone, and this tunnel re-issues to
+                                    // loopback, which the LAN gate trusts
+                                    // completely — a channel is by itself full
+                                    // access to this machine. It has proved
+                                    // only that somebody stood at this screen,
+                                    // so it gets the one call that turns a scan
+                                    // into a device token and nothing else.
+                                    let allowed = if user_ctx.pairing_only {
+                                        url == "/api/pair/qr-confirm"
+                                    } else {
+                                        user_ctx.permission.can_access_endpoint(method, url)
+                                    };
+                                    if !allowed {
                                         if let Some(rid) = &req.request_id {
                                             let err = serde_json::json!({
                                                 "request_id": rid,
