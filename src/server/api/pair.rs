@@ -93,7 +93,21 @@ pub fn load_devices() -> Vec<PairedDevice> {
     let Ok(text) = std::fs::read_to_string(devices_path()) else {
         return Vec::new();
     };
-    serde_json::from_str(&text).unwrap_or_default()
+    let mut devices: Vec<PairedDevice> = serde_json::from_str(&text).unwrap_or_default();
+    // Rows written before the models default existed carry no "models" key at
+    // all, and re-pairs preserve that forever — seed those once. An explicit
+    // list (even an emptied one) is the owner's curation and stays untouched.
+    let mut seeded = false;
+    for d in &mut devices {
+        if !d.settings.contains_key("models") {
+            d.settings.append(&mut default_device_settings());
+            seeded = true;
+        }
+    }
+    if seeded {
+        let _ = save_devices(&devices);
+    }
+    devices
 }
 
 fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
@@ -101,15 +115,19 @@ fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
 }
 
 /// What a brand-new phone's allow-list starts with: the zero-setup Linggen
-/// Cloud model. `cloud` kind needs only the account token the phone adopts on
-/// pair, so the Model picker is usable the moment pairing finishes instead of
-/// empty until the Mac owner curates it. Re-pairs carry the prior settings, so
-/// removing it on the Mac sticks.
+/// Cloud model, plus the ChatGPT built-in — `oauth` kind, so the phone offers
+/// it and the user signs in to ChatGPT on the device to use it. `cloud` needs
+/// only the account token the phone adopts on pair, so the Model picker is
+/// usable the moment pairing finishes instead of empty until the Mac owner
+/// curates it. An owner's explicit edit on the Mac sticks across re-pairs.
 fn default_device_settings() -> serde_json::Map<String, serde_json::Value> {
     let mut settings = serde_json::Map::new();
     settings.insert(
         "models".to_string(),
-        serde_json::json!([crate::provider::models::LINGGEN_CLOUD_MODEL_ID]),
+        serde_json::json!([
+            crate::provider::models::LINGGEN_CLOUD_MODEL_ID,
+            crate::provider::models::CHATGPT_BUILTIN_MODEL_ID,
+        ]),
     );
     settings
 }
