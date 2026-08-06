@@ -466,10 +466,21 @@ pub(crate) async fn get_pair_me(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let Some(token) = device_token_from_headers(&headers) else {
-        return err(StatusCode::UNAUTHORIZED, "no device token");
-    };
-    let Some(d) = device_by_token(&token) else {
+    // Two ways to be this phone. The token is the HTTP caller's proof. A
+    // request arriving down the WebRTC tunnel carries no token — the peer was
+    // authenticated when the channel came up, and the tunnel tags what it
+    // proxies with the device it belongs to. Without this second path
+    // `/api/pair/me` is unreachable over the tunnel, and since that response
+    // is where the phone learns the Mac's relay instance id, a phone off the
+    // LAN could never find the relay: it only ever knew the id if it happened
+    // to be told at QR-pair time.
+    let Some(d) = device_token_from_headers(&headers)
+        .and_then(|t| device_by_token(&t))
+        .or_else(|| {
+            let id = headers.get(ACTOR_DEVICE_HEADER)?.to_str().ok()?;
+            load_devices().into_iter().find(|d| d.id == id)
+        })
+    else {
         return err(StatusCode::UNAUTHORIZED, "unknown device");
     };
     let allow: Vec<String> = d
