@@ -293,6 +293,12 @@ async fn enqueue_if_busy(
 
 /// Pop the queued item out of the chat queue (now that the engine lock is
 /// held) and persist+emit the user message that was held back at submit.
+///
+/// The queue map is the authority on whether the message should still run:
+/// a dismiss (`/api/queue/clear`) or a run-cancel drains it while this
+/// message's task is parked on the engine lock. Returns false when the item
+/// is gone by the time the lock is held — the caller must drop the turn,
+/// not run a message the user watched disappear.
 async fn dequeue_and_emit(
     state: &Arc<ServerState>,
     events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
@@ -303,16 +309,25 @@ async fn dequeue_and_emit(
     from_id: &str,
     clean_msg: &str,
     response_session_id: Option<&str>,
-) {
+) -> bool {
     let key = queue_key(project_root, session_id, target_id);
-    {
+    let was_queued = {
         let mut guard = state.queued_chats.lock().await;
-        if let Some(items) = guard.get_mut(&key) {
-            items.retain(|item| item.id != queued_id);
-            if items.is_empty() {
-                guard.remove(&key);
+        match guard.get_mut(&key) {
+            Some(items) => {
+                let before = items.len();
+                items.retain(|item| item.id != queued_id);
+                let found = items.len() < before;
+                if items.is_empty() {
+                    guard.remove(&key);
+                }
+                found
             }
+            None => false,
         }
+    };
+    if !was_queued {
+        return false;
     }
     emit_queue_updated(state, project_root, session_id, target_id).await;
     persist_and_emit_to_store(
@@ -326,6 +341,7 @@ async fn dequeue_and_emit(
         false,
     )
     .await;
+    true
 }
 
 /// Resolve and pin the engine's effective model for this turn.
@@ -722,7 +738,7 @@ pub(crate) async fn chat_handler(
         engine.model_manager = state.manager.models.read().await.clone();
 
         if let Some(queued_id) = queued_item_id.as_deref() {
-            dequeue_and_emit(
+            let still_wanted = dequeue_and_emit(
                 &state_clone,
                 &events_tx_clone,
                 queued_id,
@@ -734,6 +750,9 @@ pub(crate) async fn chat_handler(
                 session_id.as_deref(),
             )
             .await;
+            if !still_wanted {
+                return;
+            }
         }
 
         let is_consumer = req_user_type == "consumer";
