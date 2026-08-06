@@ -81,6 +81,15 @@ pub struct UserContext {
     pub room_name: Option<String>,
     /// Consumer transport type: "browser" or "linggen". None for owner.
     pub consumer_type: Option<String>,
+    /// This peer is a phone that has scanned the QR but is not paired yet.
+    ///
+    /// It exists because a tunnelled request is re-issued to loopback, and the
+    /// LAN gate trusts loopback unconditionally — so a channel is, by itself,
+    /// full access to this machine. A phone mid-pairing has proved only that
+    /// someone stood in front of this screen, which earns exactly one call:
+    /// trading the scanned secret for a device token. Everything else is
+    /// refused until it comes back holding that token.
+    pub pairing_only: bool,
 }
 
 impl UserContext {
@@ -100,6 +109,23 @@ impl UserContext {
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
+            pairing_only: false,
+        }
+    }
+
+    /// Build for a phone that reached us on the strength of the on-screen QR
+    /// and nothing else. See [`UserContext::pairing_only`].
+    pub fn pairing() -> Self {
+        Self {
+            user_id: "__pairing__".to_string(),
+            user_name: None,
+            avatar_url: None,
+            is_consumer: false,
+            permission: UserPermission::Chat,
+            token_budget_daily: None,
+            room_name: None,
+            consumer_type: None,
+            pairing_only: true,
         }
     }
 
@@ -120,6 +146,7 @@ impl UserContext {
             token_budget_daily,
             room_name,
             consumer_type: Some(consumer_type),
+            pairing_only: false,
         }
     }
 

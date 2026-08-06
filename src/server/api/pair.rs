@@ -618,18 +618,145 @@ pub fn advertise(port: u16, lan_bound: bool) {
 
 struct QrPending {
     secret: String,
+    /// Last time the surface showing this QR said it was still on screen.
+    /// The window closes when that stops — see [`pair_window_watch`].
+    seen: std::time::Instant,
 }
 
 static QR_PENDING: Mutex<Option<QrPending>> = Mutex::new(None);
 
-/// Mint a fresh single-use QR secret and render it. Shared by the standalone
-/// /pair page and the Settings → Phone tab.
+/// How long after the pair surface goes quiet we consider it closed. The
+/// surfaces ping every 5s, so this tolerates one missed beat.
+const QR_IDLE_SHUT: Duration = Duration::from_secs(13);
+
+/// This Mac's relay id, when it has one. Signed out there is no relay presence
+/// at all, so the QR is LAN-only and no window can be opened.
+fn relay_instance() -> Option<String> {
+    crate::account::resolve_token()?;
+    crate::account::instance_id().ok()
+}
+
+/// Tell linggen.dev this Mac is showing a pairing QR, so a phone that presents
+/// the matching secret may signal to us.
+///
+/// We register only the SHA-256 of the secret: the relay can then tell a real
+/// scan from a guess without ever holding something that would let it — or
+/// anyone reading its database — pair with this Mac.
+fn open_pair_window(secret: &str) {
+    let Some(instance) = relay_instance() else { return };
+    let hash = sha256_hex(secret);
+    tokio::spawn(async move {
+        post_pair_window(&instance, Some(hash)).await;
+    });
+}
+
+/// Shut the window: the QR is no longer in front of anybody.
+fn close_pair_window() {
+    let Some(instance) = relay_instance() else { return };
+    tokio::spawn(async move {
+        post_pair_window(&instance, None).await;
+    });
+}
+
+async fn post_pair_window(instance: &str, hash: Option<String>) {
+    let Some((token, _)) = crate::account::resolve_token() else { return };
+    let url = format!(
+        "{}/api/instances/{}/pair-window",
+        crate::account::site_url(),
+        instance
+    );
+    let body = serde_json::json!({ "pair_hash": hash });
+    let open = hash_is_some(&body);
+    match reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(token)
+        .json(&body)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            tracing::info!("[pair] relay pairing window {}", if open { "open" } else { "closed" });
+        }
+        Ok(r) => tracing::warn!("[pair] pairing window update failed: {}", r.status()),
+        Err(e) => tracing::warn!("[pair] pairing window update error: {e}"),
+    }
+}
+
+fn hash_is_some(body: &serde_json::Value) -> bool {
+    !body["pair_hash"].is_null()
+}
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The pair surface says it is still on screen. Extends the window; a surface
+/// that goes quiet lets [`pair_window_watch`] shut it.
+pub(crate) async fn post_pair_window_keepalive() -> impl IntoResponse {
+    let mut pending = QR_PENDING.lock().unwrap();
+    match pending.as_mut() {
+        Some(p) => {
+            p.seen = std::time::Instant::now();
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        None => err(StatusCode::GONE, "no QR is being shown"),
+    }
+}
+
+/// Close the pairing window once the surface showing the QR goes away.
+///
+/// This is what keeps "someone was standing at that Mac" literally true. While
+/// the QR only carried a LAN address a photograph of it was nearly harmless —
+/// you would also have to be on the network. Carrying relay coordinates makes
+/// that same photograph work from anywhere, so the code has to stop working
+/// when the screen showing it does.
+pub fn pair_window_watch() {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let expired = {
+                let mut pending = QR_PENDING.lock().unwrap();
+                match pending.as_ref() {
+                    Some(p) if p.seen.elapsed() > QR_IDLE_SHUT => {
+                        *pending = None;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if expired {
+                tracing::info!("[pair] QR surface closed — pairing window shut");
+                close_pair_window();
+            }
+        }
+    });
+}
+
+/// Mint a fresh QR secret and render it. Shared by the standalone /pair page
+/// and the Settings → Phone tab.
+///
+/// The QR carries the relay instance id as well as the LAN address, so a phone
+/// that cannot reach this Mac's network — on a carrier connection, in another
+/// city — can still pair by signalling through linggen.dev. The secret is what
+/// authorizes that, which is why the window it opens is bound to this QR being
+/// on screen: see [`open_pair_window`].
 fn mint_qr(port: u16) -> (String, String, String) {
     let secret = random_hex(16);
-    *QR_PENDING.lock().unwrap() = Some(QrPending { secret: secret.clone() });
+    *QR_PENDING.lock().unwrap() = Some(QrPending {
+        secret: secret.clone(),
+        seen: std::time::Instant::now(),
+    });
     let (mac_name, _) = mac_identity();
     let host = format!("{}.local:{}", mac_name.to_lowercase(), port);
-    let url = format!("linggen://pair?host={host}&secret={secret}");
+    let instance = relay_instance()
+        .map(|id| format!("&instance={id}"))
+        .unwrap_or_default();
+    let url = format!("linggen://pair?host={host}&secret={secret}{instance}");
+    open_pair_window(&secret);
     let svg = qrcode::QrCode::new(url.as_bytes())
         .map(|qr| {
             qr.render::<qrcode::render::svg::Color>()
@@ -641,7 +768,8 @@ fn mint_qr(port: u16) -> (String, String, String) {
     (svg, url, host)
 }
 
-/// GET /pair — the QR page. Each load mints a fresh single-use secret.
+/// GET /pair — the QR page. Each load mints a fresh secret, and the page tells
+/// us it is still open so the pairing window closes when it goes away.
 pub(crate) async fn get_pair_page(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
 ) -> impl IntoResponse {
@@ -657,7 +785,11 @@ pub(crate) async fn get_pair_page(
          <div style=\"background:#fff;padding:14px;border-radius:12px\">{svg}</div>\
          <p style=\"color:#8F94A3;margin-top:18px;font-size:13px\">Can't scan? Type <code>{host}</code> in the app and confirm the on-screen code.</p>\
          <p style=\"color:#5c6170;font-size:11px;word-break:break-all\">{url}</p>\
-         <p style=\"color:#5c6170;font-size:12px\">Scan it from any phone — it stays valid until you reload this page or restart Linggen.</p>"
+         <p style=\"color:#5c6170;font-size:12px\">Scan it from any phone, on any network. The code works while this page is open — close it and it stops.</p>\
+         <script>\
+         const beat = () => fetch('/api/pair/window/keepalive', {{method:'POST'}}).catch(() => {{}});\
+         beat(); setInterval(beat, 5000);\
+         </script>"
     ))
 }
 
@@ -673,12 +805,17 @@ pub(crate) struct QrConfirm {
 
 /// POST /api/pair/qr-confirm — trade a scanned QR secret for a device token.
 ///
-/// The secret is reusable: it stays valid until a new QR is minted (reopening
-/// the pair surface or "New code") or the daemon restarts — no expiry, not
-/// consumed on use. So one code pairs any number of phones, and re-scanning is
-/// idempotent (the same phone's `device_id` replaces its own row via
-/// `commit_device`). The trust boundary is unchanged: the QR is loopback-only
-/// to display, LAN-token-gated to use, and every pairing is a revocable row.
+/// The secret is reusable *while its QR is on screen*: it is not consumed on
+/// use, so one code pairs any number of phones, and re-scanning is idempotent
+/// (the same phone's `device_id` replaces its own row via `commit_device`). It
+/// dies when the surface showing it goes away, a new one is minted, or the
+/// daemon restarts.
+///
+/// This is reachable two ways, and both mean somebody stood at this Mac: over
+/// the LAN, where the QR is loopback-only to display; and over a relay channel
+/// that linggen.dev opened because the same secret matched an open pairing
+/// window. A relay peer can call nothing else until it gets a token back —
+/// see `UserContext::pairing_only`. Every pairing is a revocable row.
 pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl IntoResponse {
     let matches = QR_PENDING
         .lock()

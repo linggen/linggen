@@ -168,7 +168,16 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
 
                         if !nonce.is_empty() && !sdp.is_empty() {
                             // Build UserContext for this peer
-                            let user_ctx = if let Some(ct) = data["consumer_type"].as_str() {
+                            let user_ctx = if data["pairing"].as_bool() == Some(true) {
+                                // A phone that scanned our QR: the relay let it
+                                // through because our pairing window is open and
+                                // its secret hashes to ours. It still has to hand
+                                // that secret over on the channel to become a
+                                // paired device — until then it can call nothing
+                                // else. See UserContext::pairing_only.
+                                info!("Received pairing offer (nonce: {nonce})");
+                                super::UserContext::pairing()
+                            } else if let Some(ct) = data["consumer_type"].as_str() {
                                 // Consumer — check if room is enabled first
                                 let room_cfg = super::room_config::load_room_config();
                                 if !room_cfg.room_enabled {

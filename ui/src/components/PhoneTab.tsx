@@ -71,11 +71,24 @@ export const PhoneTab: React.FC<{
     return () => clearInterval(t);
   }, [fetchInfo]);
 
-  // The QR is single-use — mint one when the tab opens (LAN live only),
-  // fresh again on demand via the New code button.
+  // Mint one when the tab opens (LAN live only), fresh again on demand via
+  // the New code button.
   React.useEffect(() => {
     if (info?.lan_live && !qr) fetchQr();
   }, [info?.lan_live, qr, fetchQr]);
+
+  // Say the QR is still on screen. A phone can now pair through the relay from
+  // any network on the strength of this code, so the code lives exactly as long
+  // as someone is looking at it — leave this tab and it stops working.
+  React.useEffect(() => {
+    if (!qr) return;
+    const beat = () => {
+      fetch('/api/pair/window/keepalive', { method: 'POST' }).catch(() => {});
+    };
+    beat();
+    const t = setInterval(beat, 5000);
+    return () => clearInterval(t);
+  }, [qr]);
 
   // Available models to offer as each phone's allow-list.
   React.useEffect(() => {
@@ -206,7 +219,7 @@ export const PhoneTab: React.FC<{
                 Scan with the phone's Camera app
               </p>
               <p>It opens Linggen on the phone and pairs with <b>{info.mac_name}</b>{info.account_name ? ` · ${info.account_name}` : ''} — nothing to type.</p>
-              <p>Scan it from any number of phones — it stays valid until you tap New code or restart Linggen.</p>
+              <p>Scan it from any number of phones, on any network. The code works while this tab is open — leave it and it stops.</p>
               <p>No camera handy? In the app, pick this Mac under <b>Nearby Macs</b> and type the code that appears on this screen.</p>
               <button
                 onClick={fetchQr}

@@ -1154,6 +1154,10 @@ async fn prepare_server(
         .route("/api/pair/request", post(api::pair::post_pair_request))
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
         .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
+        .route(
+            "/api/pair/window/keepalive",
+            post(api::pair::post_pair_window_keepalive),
+        )
         .route("/api/pair/info", get(api::pair::get_pair_info))
         .route("/api/pair/me", get(api::pair::get_pair_me))
         .route("/api/pair/qr", get(api::pair::get_pair_qr))
@@ -1259,6 +1263,8 @@ async fn prepare_server(
     // of the account credential and drifted; see account::migrate_remote_toml).
     crate::account::migrate_remote_toml();
     rtc::relay::spawn_relay_tasks(state.clone());
+    // A pairing QR is only good while someone is looking at it.
+    api::pair::pair_window_watch();
 
     // Auto-connect to joined proxy rooms (linggen server consumer mode)
     // if auto_connect is enabled in room_config.toml.

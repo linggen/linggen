@@ -254,6 +254,14 @@ pub(super) async fn process_control_request_async(
             {
                 return serde_json::json!({ "error": "Invalid URL path" });
             }
+            // A phone mid-pairing reached us on the strength of the QR alone,
+            // and this tunnel re-issues to loopback, which the LAN gate trusts
+            // completely. So it gets the one call that turns a scan into a
+            // device token, and nothing else until it holds that token.
+            if user_ctx.pairing_only && url_path != "/api/pair/qr-confirm" {
+                tracing::warn!("[pair] unpaired peer asked for {url_path} — refused");
+                return serde_json::json!({ "error": "Not paired yet" });
+            }
             let url = format!("http://127.0.0.1:{port}{url_path}");
             // Per-request chatter → debug (fires on every status poll, session save,
             // etc. and drowns out lifecycle events at info level).
