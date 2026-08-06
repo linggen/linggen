@@ -34,6 +34,9 @@ interface PairQr {
   svg: string;
   url: string;
   host: string;
+  /// Bumped whenever the daemon changes the code — after a phone uses one, or
+  /// on New code. Lets an open tab notice it is showing a spent code.
+  generation?: number;
 }
 
 export const PhoneTab: React.FC<{
@@ -58,9 +61,9 @@ export const PhoneTab: React.FC<{
     }
   }, []);
 
-  const fetchQr = React.useCallback(async () => {
+  const fetchQr = React.useCallback(async (fresh = false) => {
     try {
-      const resp = await fetch('/api/pair/qr');
+      const resp = await fetch(fresh ? '/api/pair/qr?new=true' : '/api/pair/qr');
       if (resp.ok) setQr(await resp.json());
     } catch {
       /* ignore */
@@ -87,7 +90,14 @@ export const PhoneTab: React.FC<{
   React.useEffect(() => {
     if (!qr) return;
     const beat = () => {
-      fetch('/api/pair/window/keepalive', { method: 'POST' }).catch(() => {});
+      fetch('/api/pair/window/keepalive', { method: 'POST' })
+        .then((r) => (r.ok ? r.json() : null))
+        // A phone used this code, so the daemon retired it and put up a new
+        // one. Draw that instead of leaving a spent code on screen.
+        .then((d) => {
+          if (d && qr.generation != null && d.generation !== qr.generation) fetchQr();
+        })
+        .catch(() => {});
     };
     beat();
     const t = setInterval(beat, 5000);
@@ -226,7 +236,7 @@ export const PhoneTab: React.FC<{
               <p>Scan it from any number of phones, on any network. The code works while this tab is open — leave it and it stops.</p>
               <p>No camera handy? In the app, pick this Mac under <b>Nearby Macs</b> and type the code that appears on this screen.</p>
               <button
-                onClick={fetchQr}
+                onClick={() => fetchQr(true)}
                 className="flex items-center gap-1.5 mt-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors"
               >
                 <RefreshCw size={12} /> New code

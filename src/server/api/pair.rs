@@ -558,9 +558,26 @@ pub(crate) async fn get_pair_me(
 /// Mints a fresh single-use secret exactly like the standalone /pair page.
 pub(crate) async fn get_pair_qr(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
+    axum::extract::Query(q): axum::extract::Query<QrQuery>,
 ) -> impl IntoResponse {
-    let (svg, url, host) = mint_qr(state.port);
-    Json(serde_json::json!({ "svg": svg, "url": url, "host": host }))
+    let (svg, url, host) = if q.new.unwrap_or(false) {
+        mint_qr(state.port)
+    } else {
+        current_qr(state.port)
+    };
+    Json(serde_json::json!({
+        "svg": svg,
+        "url": url,
+        "host": host,
+        "generation": qr_generation(),
+    }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QrQuery {
+    /// "New code" — deliberately replace what is showing.
+    #[serde(default)]
+    new: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -846,14 +863,22 @@ async fn mint_relay_grant(device_name: &str) -> Option<String> {
 /// The pair surface says it is still on screen. Extends the window; a surface
 /// that goes quiet lets [`pair_window_watch`] shut it.
 pub(crate) async fn post_pair_window_keepalive() -> impl IntoResponse {
-    let mut pending = QR_PENDING.lock().unwrap();
-    match pending.as_mut() {
-        Some(p) => {
-            p.seen = std::time::Instant::now();
-            Json(serde_json::json!({ "ok": true })).into_response()
+    let alive = {
+        let mut pending = QR_PENDING.lock().unwrap();
+        match pending.as_mut() {
+            Some(p) => {
+                p.seen = std::time::Instant::now();
+                true
+            }
+            None => false,
         }
-        None => err(StatusCode::GONE, "no QR is being shown"),
+    };
+    if !alive {
+        return err(StatusCode::GONE, "no QR is being shown");
     }
+    // The surface compares this with what it drew; a change means the code it
+    // is showing has been spent and a new one is waiting.
+    Json(serde_json::json!({ "ok": true, "generation": qr_generation() })).into_response()
 }
 
 /// Close the pairing window once the surface showing the QR goes away.
@@ -895,17 +920,38 @@ pub fn pair_window_watch() {
 /// on screen: see [`open_pair_window`].
 fn mint_qr(port: u16) -> (String, String, String) {
     let secret = random_hex(16);
-    *QR_PENDING.lock().unwrap() = Some(QrPending {
-        secret: secret.clone(),
-        seen: std::time::Instant::now(),
-    });
+    {
+        let mut pending = QR_PENDING.lock().unwrap();
+        *pending = Some(QrPending {
+            secret: secret.clone(),
+            seen: std::time::Instant::now(),
+        });
+    }
+    QR_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    open_pair_window(&secret);
+    render_qr(port, &secret)
+}
+
+/// Draw whatever code is currently on offer, minting one only if there is
+/// none.
+///
+/// Rendering must not mint, or two open surfaces would rotate each other for
+/// ever: each would see the other's new code, redraw, and mint again.
+fn current_qr(port: u16) -> (String, String, String) {
+    let existing = QR_PENDING.lock().unwrap().as_ref().map(|p| p.secret.clone());
+    match existing {
+        Some(secret) => render_qr(port, &secret),
+        None => mint_qr(port),
+    }
+}
+
+fn render_qr(port: u16, secret: &str) -> (String, String, String) {
     let (mac_name, _) = mac_identity();
     let host = format!("{}.local:{}", mac_name.to_lowercase(), port);
     let instance = relay_instance()
         .map(|id| format!("&instance={id}"))
         .unwrap_or_default();
     let url = format!("linggen://pair?host={host}&secret={secret}{instance}");
-    open_pair_window(&secret);
     let svg = qrcode::QrCode::new(url.as_bytes())
         .map(|qr| {
             qr.render::<qrcode::render::svg::Color>()
@@ -917,12 +963,32 @@ fn mint_qr(port: u16) -> (String, String, String) {
     (svg, url, host)
 }
 
-/// GET /pair — the QR page. Each load mints a fresh secret, and the page tells
-/// us it is still open so the pairing window closes when it goes away.
+/// Bumped whenever the code changes, so a surface showing the old one knows to
+/// redraw without having to compare secrets it should not be handling.
+static QR_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn qr_generation() -> u64 {
+    QR_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Retire the code a phone just used and put a fresh one up.
+///
+/// A spent code has by definition been seen. Rotating means one left on screen
+/// after you have finished pairing cannot quietly pair somebody else's phone —
+/// and only on success, so a failed attempt can still be retried with the code
+/// the user is looking at.
+fn rotate_qr(port: u16) {
+    let _ = mint_qr(port);
+    tracing::info!("[pair] code used — a fresh one is now showing");
+}
+
+/// GET /pair — the QR page. Shows whatever code is currently on offer (a
+/// reload is not a reason to spend one), tells us it is still open so the
+/// window closes when it goes away, and redraws when a phone uses the code.
 pub(crate) async fn get_pair_page(
     State(state): State<std::sync::Arc<crate::server::ServerState>>,
 ) -> impl IntoResponse {
-    let (svg, url, host) = mint_qr(state.port);
+    let (svg, url, host) = current_qr(state.port);
     let (mac_name, account) = mac_identity();
     let who = account.map(|a| format!(" · {a}")).unwrap_or_default();
     Html(format!(
@@ -936,7 +1002,15 @@ pub(crate) async fn get_pair_page(
          <p style=\"color:#5c6170;font-size:11px;word-break:break-all\">{url}</p>\
          <p style=\"color:#5c6170;font-size:12px\">Scan it from any phone, on any network. The code works while this page is open — close it and it stops.</p>\
          <script>\
-         const beat = () => fetch('/api/pair/window/keepalive', {{method:'POST'}}).catch(() => {{}});\
+         let gen = null;\
+         const beat = () => fetch('/api/pair/window/keepalive', {{method:'POST'}})\
+           .then(r => r.ok ? r.json() : null)\
+           .then(d => {{\
+             if (!d) return;\
+             if (gen === null) {{ gen = d.generation; return; }}\
+             if (d.generation !== gen) location.reload();\
+           }})\
+           .catch(() => {{}});\
          beat(); setInterval(beat, 5000);\
          </script>"
     ))
@@ -965,7 +1039,10 @@ pub(crate) struct QrConfirm {
 /// that linggen.dev opened because the same secret matched an open pairing
 /// window. A relay peer can call nothing else until it gets a token back —
 /// see `UserContext::pairing_only`. Every pairing is a revocable row.
-pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl IntoResponse {
+pub(crate) async fn post_pair_qr_confirm(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+    Json(req): Json<QrConfirm>,
+) -> impl IntoResponse {
     let matches = QR_PENDING
         .lock()
         .unwrap()
@@ -983,6 +1060,9 @@ pub(crate) async fn post_pair_qr_confirm(Json(req): Json<QrConfirm>) -> impl Int
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
     tracing::info!("[pair] device '{}' paired via QR ({})", device.name, device.id);
+    // Spent, so retire it. Only here, on the success path: a failed attempt
+    // leaves the code the user is looking at alive to try again.
+    rotate_qr(state.port);
     let (mac_name, account_name) = mac_identity();
     Json(serde_json::json!({
         "device_token": device.secret,
