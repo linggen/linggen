@@ -1026,11 +1026,12 @@ impl Tool for RecentActivityTool {
     fn name(&self) -> &'static str { "recent_activity" }
     fn aliases(&self) -> &'static [&'static str] { &["RecentActivity"] }
     fn description(&self) -> &'static str {
-        "What has changed on this machine lately — deletes, syncs, backups, imports, \
-         devices coming and going — newest first, each with who did it and how long ago. \
-         Call it when the user asks what happened, or when the doorbell in your prompt says \
-         something did and you need more than the headline. Returns plain lines, not JSON. \
-         Last few days only; older days are gone."
+        "What has changed lately — deletes, syncs, backups, imports, devices coming and \
+         going — newest first, each with who did it and how long ago. Covers this machine \
+         AND the user's other one (their phone), listed separately, so it answers \"what \
+         happened\" whichever device they meant. Call it when they ask what has been going \
+         on, or when the doorbell in your prompt says something did and you need more than \
+         the headline. Returns plain lines, not JSON. Last few days only; older days are gone."
     }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
     fn args_schema(&self) -> Value {
@@ -1055,13 +1056,35 @@ impl Tool for RecentActivityTool {
             RecentActivityArgs { limit: None },
         );
         let limit = args.limit.unwrap_or(20).clamp(1, 200);
-        let lines = crate::perception::activity::log().lines(limit);
-        if lines.is_empty() {
+        let here = crate::perception::activity::log().lines(limit);
+        // The merge §6 asks for, at read time. The state block carries one line
+        // of the other machine's history; this is the rest of it. Without this
+        // the agent answers "what happened" from this machine's log alone, and
+        // a song the user deleted on their phone a minute ago reads as nothing
+        // having happened at all.
+        let (peer_host, there) = crate::perception::state::peer_history();
+
+        let mut out = Vec::new();
+        if !here.is_empty() {
+            out.push("On this Mac:".to_string());
+            out.extend(here.iter().map(|l| format!("  {l}")));
+        }
+        if !there.is_empty() {
+            if !out.is_empty() {
+                out.push(String::new());
+            }
+            out.push(format!(
+                "On {}:",
+                peer_host.unwrap_or_else(|| "their other device".into())
+            ));
+            out.extend(there.iter().take(limit).map(|l| format!("  {l}")));
+        }
+        if out.is_empty() {
             return Ok(ToolResult::Success(
                 "Nothing has changed on this machine in the last few days.".to_string(),
             ));
         }
-        Ok(ToolResult::Success(lines.join("\n")))
+        Ok(ToolResult::Success(out.join("\n")))
     }
 }
 

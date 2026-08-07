@@ -99,6 +99,31 @@ pub fn share() -> Vec<String> {
     lines
 }
 
+/// How much of this machine's history travels with its state. Enough to answer
+/// "what happened over there" without a round trip, small enough that the
+/// payload stays a reading rather than a feed.
+const SHARED_HISTORY: usize = 12;
+
+/// The history that rides alongside [`share`], for the other host's
+/// `recent_activity` to merge in.
+///
+/// Only the state lines go in the prompt every turn; this is read when asked.
+/// Without it "what has been happening" is answered from one machine's log
+/// while the user is thinking of both, which reads as the agent having missed
+/// something they just did.
+pub fn share_history() -> Vec<String> {
+    super::activity::log().lines(SHARED_HISTORY)
+}
+
+/// What the other host said has been happening over there, newest first, with
+/// the name to file it under. Empty when no peer has published.
+pub fn peer_history() -> (Option<String>, Vec<String>) {
+    match read_peer() {
+        Some(p) => (Some(p.host), p.recent),
+        None => (None, Vec::new()),
+    }
+}
+
 /// A slope is worth naming only when it is visible at the resolution the line
 /// prints it in. Below this it reads "filling at 0.0 GB a day", which is the
 /// kind of number that teaches a reader to skip the whole block.
@@ -173,6 +198,10 @@ struct Peer {
     host: String,
     age: String,
     lines: Vec<String>,
+    /// What has been happening over there. Never rendered into the block —
+    /// only `recent_activity` asks for it, which is the whole point of history
+    /// being a tool.
+    recent: Vec<String>,
 }
 
 /// The peer's retained perception payload. Anything malformed reads as no
@@ -194,13 +223,23 @@ fn read_peer() -> Option<Peer> {
     if lines.is_empty() {
         return None;
     }
+    let recent: Vec<String> = v
+        .get("recent")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     let age = std::fs::metadata(&path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.elapsed().ok())
         .map(|d| super::activity::ago(d.as_secs() as i64))
         .unwrap_or_else(|| "age unknown".to_string());
-    Some(Peer { host, age, lines })
+    Some(Peer {
+        host,
+        age,
+        lines,
+        recent,
+    })
 }
 
 /// Two lines: whether anything happened, and the newest thing that did.

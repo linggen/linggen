@@ -40,7 +40,16 @@ pub async fn publish_loop(state: Arc<ServerState>) {
         if lines.is_empty() {
             continue;
         }
-        let digest = lines.join("\n");
+        // History rides along but never rides a turn: the other host shows it
+        // only when its `recent_activity` is called. Without it, "what has been
+        // happening" is answered from one machine's log while the user is
+        // thinking of both — which reads as the agent having missed something
+        // they just did on the other one.
+        let recent = super::state::share_history();
+        // Both halves decide freshness. A song deleted here moves the history
+        // and not one state line, and a payload we declined to resend over that
+        // is a delete the other machine never hears about.
+        let digest = format!("{}\n--\n{}", lines.join("\n"), recent.join("\n"));
         if last.as_deref() == Some(digest.as_str()) {
             continue;
         }
@@ -49,6 +58,7 @@ pub async fn publish_loop(state: Arc<ServerState>) {
             "host": super::host_name(),
             "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             "lines": lines,
+            "recent": recent,
         });
         crate::server::api::topic::retain(TOPIC, FROM_MAC, &payload);
         crate::server::api::topic::publish_topic(&state, TOPIC, FROM_MAC, payload);
