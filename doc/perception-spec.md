@@ -7,8 +7,8 @@ What a resident agent knows about the world it lives in, without being told.
 
 Yinyue lives in a phone. Ling lives in a Mac. Each should be able to answer
 "what is true here", "what just changed", and "who did it" — and to speak up
-when something is worth a word. Today neither can: they know only the
-conversation. That gap is not cosmetic. It is why Yinyue offered to sync songs
+when something is worth a word. Before this, neither could: they knew only the
+conversation. That gap was not cosmetic. It is why Yinyue offered to sync songs
 that had already arrived — nothing in her world said they had.
 
 Perception is that world, in three parts that cost three different amounts.
