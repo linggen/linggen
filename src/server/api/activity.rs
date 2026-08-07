@@ -58,6 +58,21 @@ pub(crate) async fn record(headers: HeaderMap, Json(body): Json<RecordBody>) -> 
             })),
         );
     }
+    // `detail` is never rendered into a prompt, so it needs no cleaning — but it
+    // is written to disk verbatim, and the log is a few days of small lines, not
+    // a place to park a payload. Dropped rather than refused: the fact still
+    // belongs in the log, and a caller should not lose an activity over a
+    // structured extra nobody reads.
+    const DETAIL_MAX: usize = 2048;
+    let detail = body.detail.filter(|d| {
+        let ok = serde_json::to_string(d)
+            .map(|s| s.len() <= DETAIL_MAX)
+            .unwrap_or(false);
+        if !ok {
+            tracing::debug!("[perception] dropped an oversized detail from {}", body.app);
+        }
+        ok
+    });
     // A LAN caller carries a device token; loopback does not, and loopback is
     // this Mac.
     let device = crate::server::api::pair::caller_device(&headers)
@@ -68,7 +83,7 @@ pub(crate) async fn record(headers: HeaderMap, Json(body): Json<RecordBody>) -> 
         body.app.trim(),
         body.verb.trim(),
         body.object,
-        body.detail,
+        detail,
     );
     (
         axum::http::StatusCode::OK,
