@@ -59,6 +59,41 @@ impl UserPermission {
     }
 }
 
+/// What a peer is to this machine — the one fact the rest of the label derives
+/// from, so `user_type` can't say one thing here and another there.
+///
+/// This is provenance, not permission. [`PeerKind::Paired`] and
+/// [`PeerKind::Owner`] both hold Admin: a phone that scanned this Mac's QR is
+/// the admin (2026-08-04), and the relay already lets it in on the strength of
+/// the grant this Mac minted. The distinction is that the phone reached us on
+/// its device grant rather than on an account that owns this instance — which
+/// is worth saying out loud rather than filing under "owner".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerKind {
+    /// The account that owns this instance, or a local browser on it.
+    Owner,
+    /// A device this Mac paired — phone, tablet, watch, second Mac. It may be
+    /// signed into a different account, or none at all.
+    Paired,
+    /// A proxy room consumer, borrowing this machine's models.
+    Consumer,
+    /// Mid-pairing: has the QR secret and nothing else. See [`UserContext::pairing_only`].
+    Pairing,
+}
+
+impl PeerKind {
+    /// The wire label. One place, so page state, the chat API and the
+    /// `user_info` greeting can never disagree about what a peer is.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PeerKind::Owner => "owner",
+            PeerKind::Paired => "paired",
+            PeerKind::Consumer => "consumer",
+            PeerKind::Pairing => "pairing",
+        }
+    }
+}
+
 /// Every WebRTC peer connection carries a UserContext — both owner and consumer.
 /// Owner = UserContext { user_id: "abc", permission: Admin, ... }
 /// Consumer = UserContext { user_id: "xyz", permission: Read, ... }
@@ -70,9 +105,9 @@ pub struct UserContext {
     pub user_name: Option<String>,
     /// Avatar URL (from linggen.dev profile or relay signaling).
     pub avatar_url: Option<String>,
-    /// Whether this user is a proxy room consumer (vs owner).
-    /// Set at connection time — not derived from permission level.
-    pub is_consumer: bool,
+    /// What this peer is to us. Set at connection time — not derived from
+    /// permission level, and the source of every `user_type` on the wire.
+    pub kind: PeerKind,
     /// Permission ceiling — max session permission this user can use.
     pub permission: UserPermission,
     /// Optional daily token budget (None = unlimited).
@@ -81,15 +116,6 @@ pub struct UserContext {
     pub room_name: Option<String>,
     /// Consumer transport type: "browser" or "linggen". None for owner.
     pub consumer_type: Option<String>,
-    /// This peer is a phone that has scanned the QR but is not paired yet.
-    ///
-    /// It exists because a tunnelled request is re-issued to loopback, and the
-    /// LAN gate trusts loopback unconditionally — so a channel is, by itself,
-    /// full access to this machine. A phone mid-pairing has proved only that
-    /// someone stood in front of this screen, which earns exactly one call:
-    /// trading the scanned secret for a device token. Everything else is
-    /// refused until it comes back holding that token.
-    pub pairing_only: bool,
 }
 
 impl UserContext {
@@ -104,12 +130,30 @@ impl UserContext {
                 .and_then(|a| a.user_name.clone())
                 .or_else(|| Some(crate::account::instance_name())),
             avatar_url: account.as_ref().and_then(|a| a.avatar_url.clone()),
-            is_consumer: false,
+            kind: PeerKind::Owner,
             permission: UserPermission::Admin,
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
-            pairing_only: false,
+        }
+    }
+
+    /// Build for a device this Mac paired, arriving on the grant it minted.
+    ///
+    /// Admin, like the owner: pairing is physical-presence proof and a paired
+    /// phone is the admin. What differs is the label, and that this peer's real
+    /// identity arrives later as a device token on the channel's `identify` —
+    /// so the user id stays a placeholder rather than borrowing the account's.
+    pub fn paired() -> Self {
+        Self {
+            user_id: "__paired__".to_string(),
+            user_name: None,
+            avatar_url: None,
+            kind: PeerKind::Paired,
+            permission: UserPermission::Admin,
+            token_budget_daily: None,
+            room_name: None,
+            consumer_type: None,
         }
     }
 
@@ -120,12 +164,11 @@ impl UserContext {
             user_id: "__pairing__".to_string(),
             user_name: None,
             avatar_url: None,
-            is_consumer: false,
+            kind: PeerKind::Pairing,
             permission: UserPermission::Chat,
             token_budget_daily: None,
             room_name: None,
             consumer_type: None,
-            pairing_only: true,
         }
     }
 
@@ -141,18 +184,34 @@ impl UserContext {
             user_id,
             user_name: None,
             avatar_url: None,
-            is_consumer: true,
+            kind: PeerKind::Consumer,
             permission,
             token_budget_daily,
             room_name,
             consumer_type: Some(consumer_type),
-            pairing_only: false,
         }
     }
 
     /// User type string for the chat API.
     pub fn user_type(&self) -> &'static str {
-        if self.is_consumer { "consumer" } else { "owner" }
+        self.kind.as_str()
+    }
+
+    /// A proxy room consumer, borrowing this machine's models.
+    pub fn is_consumer(&self) -> bool {
+        self.kind == PeerKind::Consumer
+    }
+
+    /// This peer has scanned the QR but is not paired yet.
+    ///
+    /// It matters because a tunnelled request is re-issued to loopback, and the
+    /// LAN gate trusts loopback unconditionally — so a channel is, by itself,
+    /// full access to this machine. A phone mid-pairing has proved only that
+    /// someone stood in front of this screen, which earns exactly one call:
+    /// trading the scanned secret for a device token. Everything else is
+    /// refused until it comes back holding that token.
+    pub fn pairing_only(&self) -> bool {
+        self.kind == PeerKind::Pairing
     }
 }
 

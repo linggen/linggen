@@ -1,7 +1,7 @@
 import type { UiEvent } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useUiStore } from '../../stores/uiStore';
-import { useUserStore } from '../../stores/userStore';
+import { useUserStore, type UserType } from '../../stores/userStore';
 import { useRoomChatStore } from '../../stores/roomChatStore';
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ export function handleUserInfo(item: UiEvent): void {
   const userType = user.user_type || 'owner';
   if (user.user_id) userStore.setUserId(user.user_id);
   userStore.setUserProfile(user.user_name || null, user.avatar_url || null);
-  userStore.setUserType(userType as 'owner' | 'consumer');
+  userStore.setUserType(userType as UserType);
 
   const perm = userType === 'consumer' ? (room?.permission || 'read') : 'admin';
   const roomName = room?.room_name ?? null;

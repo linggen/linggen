@@ -2,14 +2,19 @@
  * User identity, permission, and connection state.
  *
  * Two independent axes:
- * - userType: "owner" or "consumer" — set at connection time, never changes.
+ * - userType: "owner", "paired" or "consumer" — set at connection time, never
+ *   changes. "paired" is a device this machine paired: owner-class access, but
+ *   reached us on its own device grant rather than on the owning account.
  * - userPermission: "admin"|"edit"|"read"|"chat" — what the agent can do.
  */
 import { create } from 'zustand';
 
+/** What this peer is to the machine it's connected to. */
+export type UserType = 'owner' | 'paired' | 'consumer';
+
 interface UserState {
-  /** "owner" or "consumer" — set at connection time. */
-  userType: 'owner' | 'consumer';
+  /** "owner", "paired" or "consumer" — set at connection time. */
+  userType: UserType;
   userId: string | null;
   userName: string | null;
   avatarUrl: string | null;
@@ -29,7 +34,7 @@ interface UserState {
    *  holds a name; the UI shows nothing rather than a placeholder. */
   coreName: string | null;
 
-  setUserType: (userType: 'owner' | 'consumer') => void;
+  setUserType: (userType: UserType) => void;
   setUserId: (userId: string) => void;
   setUserProfile: (name: string | null, avatar: string | null) => void;
   loadCoreName: () => Promise<void>;

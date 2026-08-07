@@ -229,7 +229,7 @@ async fn run_peer(
     // Per-peer token counter — synced with persistent store for consumers.
     let tokens_used = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
     // Load existing usage from persistent store for this consumer
-    if user_ctx.is_consumer {
+    if user_ctx.is_consumer() {
         let store = state.token_usage.lock().await;
         let (consumer_used, _) = store.get_usage(&user_ctx.user_id);
         tokens_used.store(consumer_used, std::sync::atomic::Ordering::Relaxed);
@@ -368,12 +368,12 @@ async fn run_peer(
                         } else if label == "control" {
                             control_channel_id = Some(id);
                             // Send connection metadata: user info + room info.
-                            let data = if user_ctx.is_consumer {
+                            let data = if user_ctx.is_consumer() {
                                 let room_cfg = super::room_config::load_room_config();
                                 serde_json::json!({
                                     "user": {
                                         "user_id": user_ctx.user_id,
-                                        "user_type": "consumer",
+                                        "user_type": user_ctx.user_type(),
                                         "user_name": user_ctx.user_name,
                                         "avatar_url": user_ctx.avatar_url,
                                     },
@@ -389,7 +389,7 @@ async fn run_peer(
                                 serde_json::json!({
                                     "user": {
                                         "user_id": user_ctx.user_id,
-                                        "user_type": "owner",
+                                        "user_type": user_ctx.user_type(),
                                         "user_name": user_ctx.user_name,
                                         "avatar_url": user_ctx.avatar_url,
                                     },
@@ -403,7 +403,7 @@ async fn run_peer(
                                 pending_dc_writes.push_back(DcWrite::text(id, info_msg.to_string()));
                             }
                             // Privacy warning for consumers
-                            if user_ctx.is_consumer {
+                            if user_ctx.is_consumer() {
                                 let warning = serde_json::json!({
                                     "kind": "notification",
                                     "data": {
@@ -533,7 +533,7 @@ async fn run_peer(
                                     // only that somebody stood at this screen,
                                     // so it gets the one call that turns a scan
                                     // into a device token and nothing else.
-                                    let allowed = if user_ctx.pairing_only {
+                                    let allowed = if user_ctx.pairing_only() {
                                         url == "/api/pair/qr-confirm"
                                     } else {
                                         user_ctx.permission.can_access_endpoint(method, url)
@@ -835,7 +835,7 @@ async fn run_peer(
             // Forward server events to the appropriate session data channel
             result = events_rx.recv() => {
                 match result {
-                    Ok(crate::server::ServerEvent::RoomDisabled) if user_ctx.is_consumer => {
+                    Ok(crate::server::ServerEvent::RoomDisabled) if user_ctx.is_consumer() => {
                         tracing::info!("Room disabled by owner — disconnecting consumer peer");
                         media_channel::abandon(&mut media_transfer).await;
                         return Ok(());

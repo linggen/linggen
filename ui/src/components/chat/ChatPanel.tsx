@@ -699,7 +699,9 @@ export const ChatPanel: React.FC<{
                   <>
                     <span className="font-semibold uppercase tracking-wider text-slate-500">Session</span>
                     <span className="font-mono truncate max-w-[160px]">{sessionId}</span>
-                    {useUserStore.getState().userType === 'owner' && (sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
+                    {/* Paths are hidden from room consumers, not from this
+                        machine's own devices — a paired peer is admin. */}
+                    {useUserStore.getState().userType !== 'consumer' && (sessionMeta?.project_name || sessionMeta?.cwd) && (() => {
                       const fullPath = sessionMeta?.cwd || sessionMeta?.project || '';
                       const displayName = sessionMeta?.project_name || fullPath.split('/').filter(Boolean).pop() || fullPath;
                       return (

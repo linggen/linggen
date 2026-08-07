@@ -150,7 +150,7 @@ pub async fn build_page_state(
         user_type: Some(user.user_type().to_string()),
         permission: Some(user.permission.as_str().to_string()),
         room_name: user.room_name.clone(),
-        room_enabled: if !user.is_consumer { Some(room_cfg.room_enabled) } else { None },
+        room_enabled: if !user.is_consumer() { Some(room_cfg.room_enabled) } else { None },
         all_sessions: None,
         models: None,
         default_models: None,
@@ -184,7 +184,7 @@ pub async fn build_page_state(
         };
 
     // Wrap room config for consumer filtering
-    let room_cfg = if user.is_consumer { Some(room_cfg) } else { None };
+    let room_cfg = if user.is_consumer() { Some(room_cfg) } else { None };
 
     // -- Global data (skip for embed peers — they're pinned to one session
     // and don't render the sidebar/mission list that these fields feed) --

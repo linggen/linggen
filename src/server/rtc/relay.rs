@@ -177,6 +177,13 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                                 // else. See UserContext::pairing_only.
                                 info!("Received pairing offer (nonce: {nonce})");
                                 super::UserContext::pairing()
+                            } else if data["paired"].as_bool() == Some(true) {
+                                // A device we paired, dialling on the grant we
+                                // minted for it. Admin like the owner, but it
+                                // is not the owner — it may hold a different
+                                // account, or none. Say which.
+                                info!("Received paired-device offer (nonce: {nonce})");
+                                super::UserContext::paired()
                             } else if let Some(ct) = data["consumer_type"].as_str() {
                                 // Consumer — check if room is enabled first
                                 let room_cfg = super::room_config::load_room_config();
