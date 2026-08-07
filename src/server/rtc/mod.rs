@@ -62,12 +62,13 @@ impl UserPermission {
 /// What a peer is to this machine — the one fact the rest of the label derives
 /// from, so `user_type` can't say one thing here and another there.
 ///
-/// This is provenance, not permission. [`PeerKind::Paired`] and
-/// [`PeerKind::Owner`] both hold Admin: a phone that scanned this Mac's QR is
-/// the admin (2026-08-04), and the relay already lets it in on the strength of
-/// the grant this Mac minted. The distinction is that the phone reached us on
-/// its device grant rather than on an account that owns this instance — which
-/// is worth saying out loud rather than filing under "owner".
+/// This is provenance, not permission. A paired device carries the owner's
+/// ceiling, and what any peer may actually do is the `(path, mode)` grant on
+/// its session — an ungranted path is `chat`, for owner and phone alike. So
+/// this enum decides no access today. It records how the peer got here: on a
+/// grant this Mac minted, rather than on an account that owns this instance —
+/// worth saying out loud rather than filing under "owner", and the seam if a
+/// device ever needs a ceiling of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerKind {
     /// The account that owns this instance, or a local browser on it.
@@ -140,20 +141,23 @@ impl UserContext {
 
     /// Build for a device this Mac paired, arriving on the grant it minted.
     ///
-    /// Admin, like the owner: pairing is physical-presence proof and a paired
-    /// phone is the admin. What differs is the label, and that this peer's real
-    /// identity arrives later as a device token on the channel's `identify` —
-    /// so the user id stays a placeholder rather than borrowing the account's.
+    /// The ceiling is *the owner's* — taken from [`Self::owner`] rather than
+    /// written out again, so it stays the owner's if that ever moves. This is
+    /// only a ceiling: what a session may actually do is the `(path, mode)`
+    /// grant, and a path nobody granted is `chat` — no tools. The ceiling caps
+    /// that lookup; it never opens anything by itself.
+    ///
+    /// Identity is what differs. This peer's real one arrives later, as a
+    /// device token on the channel's `identify`, so the user id stays a
+    /// placeholder and the name and face are left blank rather than borrowing
+    /// the account's — the phone may be held by someone else entirely.
     pub fn paired() -> Self {
         Self {
             user_id: "__paired__".to_string(),
             user_name: None,
             avatar_url: None,
             kind: PeerKind::Paired,
-            permission: UserPermission::Admin,
-            token_budget_daily: None,
-            room_name: None,
-            consumer_type: None,
+            ..Self::owner(None)
         }
     }
 
@@ -339,12 +343,27 @@ mod tests {
     }
 
     #[test]
-    fn paired_holds_the_owners_ceiling_for_now() {
-        // Pairing is physical-presence proof, so a paired device is admin.
-        // This asserts the CURRENT policy, and is the test to change first if
-        // paired ever gets a ceiling of its own.
-        assert_eq!(UserContext::paired().permission, UserPermission::Admin);
+    fn paired_takes_the_owners_ceiling_whatever_it_is() {
+        // Not "paired is admin" — paired is *the owner's*, so if the owner's
+        // ceiling ever moves this follows it instead of drifting. The ceiling
+        // is only a cap; what a session may do is the (path, mode) grant, and
+        // an ungranted path is chat either way.
+        assert_eq!(
+            UserContext::paired().permission,
+            UserContext::owner(None).permission
+        );
         assert!(!UserContext::paired().is_consumer());
         assert!(!UserContext::paired().pairing_only());
+    }
+
+    /// A paired device wears no one else's face. The Mac's account name and
+    /// avatar belong to the Mac's owner; the phone may be held by someone else,
+    /// and says who on `identify`.
+    #[test]
+    fn paired_borrows_no_identity_from_the_account() {
+        let p = UserContext::paired();
+        assert_eq!(p.user_id, "__paired__");
+        assert!(p.user_name.is_none());
+        assert!(p.avatar_url.is_none());
     }
 }
