@@ -50,6 +50,39 @@ fn stall_deadline(since: &mut Option<Instant>, now: Instant) -> Option<Instant> 
 /// written by an anonymous peer carry no `by` — unattributed beats wrong.
 pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair::Actor>>>;
 
+/// The `user_info` frame: who we think this peer is, and what its room allows.
+///
+/// Built in one place because it is sent twice — once when the control channel
+/// opens, and again if `identify` changes the answer. Two builders would be two
+/// chances to describe the same peer differently.
+pub(super) fn user_info_msg(
+    user_ctx: &super::UserContext,
+    identified: bool,
+) -> serde_json::Value {
+    let user = serde_json::json!({
+        "user_id": user_ctx.user_id,
+        "user_type": user_ctx.user_type_for(identified),
+        "user_name": user_ctx.user_name,
+        "avatar_url": user_ctx.avatar_url,
+    });
+    let data = if user_ctx.is_consumer() {
+        let room_cfg = super::room_config::load_room_config();
+        serde_json::json!({
+            "user": user,
+            "room": {
+                "permission": user_ctx.permission.as_str(),
+                "room_name": user_ctx.room_name,
+                "token_budget_daily": user_ctx.token_budget_daily,
+                "allowed_tools": room_cfg.allowed_tools,
+                "allowed_skills": room_cfg.allowed_skills,
+            },
+        })
+    } else {
+        serde_json::json!({ "user": user })
+    };
+    serde_json::json!({ "kind": "user_info", "data": data })
+}
+
 /// Create a new WebRTC peer connection from a WHIP SDP offer.
 ///
 /// Returns the SDP answer string to send back to the client.
@@ -368,37 +401,11 @@ async fn run_peer(
                         } else if label == "control" {
                             control_channel_id = Some(id);
                             // Send connection metadata: user info + room info.
-                            let data = if user_ctx.is_consumer() {
-                                let room_cfg = super::room_config::load_room_config();
-                                serde_json::json!({
-                                    "user": {
-                                        "user_id": user_ctx.user_id,
-                                        "user_type": user_ctx.user_type(),
-                                        "user_name": user_ctx.user_name,
-                                        "avatar_url": user_ctx.avatar_url,
-                                    },
-                                    "room": {
-                                        "permission": user_ctx.permission.as_str(),
-                                        "room_name": user_ctx.room_name,
-                                        "token_budget_daily": user_ctx.token_budget_daily,
-                                        "allowed_tools": room_cfg.allowed_tools,
-                                        "allowed_skills": room_cfg.allowed_skills,
-                                    },
-                                })
-                            } else {
-                                serde_json::json!({
-                                    "user": {
-                                        "user_id": user_ctx.user_id,
-                                        "user_type": user_ctx.user_type(),
-                                        "user_name": user_ctx.user_name,
-                                        "avatar_url": user_ctx.avatar_url,
-                                    },
-                                })
-                            };
-                            let info_msg = serde_json::json!({
-                                "kind": "user_info",
-                                "data": data,
-                            });
+                            // A LAN peer has not identified yet, so this says
+                            // "owner" for a phone; `identify` corrects it with
+                            // a second one of these rather than leaving the
+                            // greeting to disagree with everything after it.
+                            let info_msg = user_info_msg(&user_ctx, false);
                             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
                                 pending_dc_writes.push_back(DcWrite::text(id, info_msg.to_string()));
                             }
@@ -667,6 +674,10 @@ async fn run_peer(
                             let st = state.clone();
                             let client = http_client.clone();
                             let ctx_clone = user_ctx.clone();
+                            // Read on the loop thread, where identify also
+                            // runs, so the label this message carries is the
+                            // one in force when it arrived.
+                            let identified = peer_actor.lock().unwrap().is_some();
                             tokio::spawn(async move {
                                 handle_session_message(
                                     &text,
@@ -674,6 +685,7 @@ async fn run_peer(
                                     &st,
                                     &client,
                                     &ctx_clone,
+                                    identified,
                                 )
                                 .await;
                             });

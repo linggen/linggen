@@ -72,7 +72,22 @@ pub(super) fn handle_control_message(
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }
+            let was_identified = actor.lock().unwrap().is_some();
+            let now_identified = resolved.is_some();
             *actor.lock().unwrap() = resolved;
+
+            // On the relay the Mac already knew this was a paired device; on
+            // the LAN it could not, and greeted the phone as the owner. Now it
+            // knows, so it says so — the peer is told rather than left holding
+            // a label the rest of this connection contradicts.
+            if now_identified != was_identified
+                && user_ctx.effective_kind(now_identified) != user_ctx.effective_kind(was_identified)
+            {
+                if let Some(mut ch) = rtc.channel(channel_id) {
+                    let msg = super::user_info_msg(user_ctx, now_identified);
+                    let _ = ch.write(false, msg.to_string().as_bytes());
+                }
+            }
             None
         }
 
@@ -307,7 +322,9 @@ pub(super) async fn process_control_request_async(
             };
             // Inject user_type and user_id into the request body
             let mut body = req.body.clone();
-            body["user_type"] = serde_json::Value::String(user_ctx.user_type().to_string());
+            let identified = actor.lock().unwrap().is_some();
+            body["user_type"] =
+                serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
             body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             let url = format!("http://127.0.0.1:{port}{endpoint}");
             match client.post(&url).json(&body).send().await {

@@ -19,6 +19,9 @@ pub(super) async fn handle_session_message(
     state: &Arc<ServerState>,
     client: &reqwest::Client,
     user_ctx: &crate::server::rtc::UserContext,
+    // Whether this peer has identified itself with a device token — a LAN
+    // phone is only distinguishable from the owner's browser after that.
+    identified: bool,
 ) {
     let msg: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -37,7 +40,8 @@ pub(super) async fn handle_session_message(
             let mut body = msg.clone();
             body["session_id"] = serde_json::Value::String(session_id.to_string());
             // Inject user type and user_id
-            body["user_type"] = serde_json::Value::String(user_ctx.user_type().to_string());
+            body["user_type"] =
+                serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
             body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());
             ("/api/chat", body)
         }

@@ -197,6 +197,28 @@ impl UserContext {
         self.kind.as_str()
     }
 
+    /// What this peer is once it has said who it is.
+    ///
+    /// The handshake tells us different amounts on different routes: the relay
+    /// is told a device grant was used, a LAN peer arrives on network trust and
+    /// says nothing. So a phone on the LAN starts out indistinguishable from
+    /// the owner's own browser, and only `identify` — the device token it
+    /// already holds — settles it. Same device, same label, either route.
+    ///
+    /// Owner is the only kind this promotes. A consumer stays a consumer
+    /// whatever it holds, and a peer mid-pairing has not earned the name.
+    pub fn effective_kind(&self, identified: bool) -> PeerKind {
+        match self.kind {
+            PeerKind::Owner if identified => PeerKind::Paired,
+            k => k,
+        }
+    }
+
+    /// [`Self::user_type`], corrected by what `identify` revealed.
+    pub fn user_type_for(&self, identified: bool) -> &'static str {
+        self.effective_kind(identified).as_str()
+    }
+
     /// A proxy room consumer, borrowing this machine's models.
     pub fn is_consumer(&self) -> bool {
         self.kind == PeerKind::Consumer
@@ -274,5 +296,55 @@ pub async fn whip_handler(
             tracing::error!("WHIP error: {e:#}");
             (StatusCode::INTERNAL_SERVER_ERROR, format!("WHIP error: {e}")).into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A phone reaches us two ways and must answer to one name. Over the relay
+    /// the grant says so at handshake; on the LAN nothing does, and `identify`
+    /// is the only moment the Mac can tell the phone from its own browser.
+    #[test]
+    fn a_device_is_paired_on_either_route() {
+        assert_eq!(UserContext::paired().user_type(), "paired");
+        assert_eq!(
+            UserContext::owner(None).user_type_for(true),
+            "paired",
+            "a LAN peer holding a device token is that device, not the owner"
+        );
+    }
+
+    #[test]
+    fn an_unidentified_peer_is_still_the_owner() {
+        // The web UI and the app shell never identify — they have no device
+        // token and are not devices. They must keep owner.
+        assert_eq!(UserContext::owner(None).user_type_for(false), "owner");
+    }
+
+    #[test]
+    fn identifying_never_promotes_the_other_kinds() {
+        // A consumer with a device token is still bounded by its room, and a
+        // peer mid-pairing has not finished earning anything.
+        let room = UserContext::consumer(
+            "u1".into(),
+            "linggen".into(),
+            UserPermission::Read,
+            None,
+            None,
+        );
+        assert_eq!(room.user_type_for(true), "consumer");
+        assert_eq!(UserContext::pairing().user_type_for(true), "pairing");
+    }
+
+    #[test]
+    fn paired_holds_the_owners_ceiling_for_now() {
+        // Pairing is physical-presence proof, so a paired device is admin.
+        // This asserts the CURRENT policy, and is the test to change first if
+        // paired ever gets a ceiling of its own.
+        assert_eq!(UserContext::paired().permission, UserPermission::Admin);
+        assert!(!UserContext::paired().is_consumer());
+        assert!(!UserContext::paired().pairing_only());
     }
 }
