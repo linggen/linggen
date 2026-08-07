@@ -14,7 +14,11 @@ use std::path::PathBuf;
 
 /// A fortnight is long enough to see a slope and short enough that a Mac the
 /// user cleared six weeks ago is not still judged on its old one.
-const MAX_DAYS: usize = 14;
+///
+/// Days, not samples. A Mac used a few days a month accumulates fourteen
+/// samples spanning half a year, and the oldest of them would then anchor a
+/// "filling at" line about this week.
+const MAX_DAYS: i64 = 14;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sample {
@@ -48,9 +52,10 @@ pub fn sample(free: u64, total: u64) {
         total,
     });
     samples.sort_by(|a, b| a.day.cmp(&b.day));
-    while samples.len() > MAX_DAYS {
-        samples.remove(0);
-    }
+    // Retained by age: a sample we cannot date cannot be part of a slope, and a
+    // sample older than the window is the past being asked about the present.
+    let cutoff = chrono::Local::now().date_naive() - chrono::Duration::days(MAX_DAYS - 1);
+    samples.retain(|s| parse_day(&s.day).is_some_and(|d| d >= cutoff));
     let dir = super::activity::activity_dir();
     if std::fs::create_dir_all(&dir).is_err() {
         return;

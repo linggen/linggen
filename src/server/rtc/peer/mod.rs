@@ -229,7 +229,7 @@ async fn create_peer_inner(
             tracing::warn!("WebRTC peer exited: {e:#}");
         }
         if let Some(actor) = departing.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-            crate::perception::devices::left(&actor.device);
+            crate::perception::devices::left(&actor.device, peer_id);
         }
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         // Release the Yinyue presenter lock on disconnect (no-op if this peer

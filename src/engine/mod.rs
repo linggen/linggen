@@ -303,8 +303,11 @@ impl AgentEngine {
             "[{}] Agent loop: model_id={}, native_tools={}, reasoning_effort={:?}",
             log_run, self.model_id, use_native_tools, self.reasoning_effort
         );
-        let (messages, allowed_tools, read_paths) =
-            self.prepare_loop_messages(&task, use_native_tools);
+        let (messages, allowed_tools, read_paths) = self.prepare_loop_messages(
+            &task,
+            use_native_tools,
+            crate::engine::prompt::PromptPurpose::Turn,
+        );
 
         // Initialize accumulated token estimate from current messages.
         self.accumulated_token_estimate = Self::estimate_tokens_for_messages(&messages);

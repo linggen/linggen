@@ -9,7 +9,7 @@
 //! need their device token. Perception is local by law
 //! (`doc/perception-spec.md` §8) — nothing written here leaves the machine.
 
-use axum::{extract::Query, response::IntoResponse, Json};
+use axum::{extract::Query, http::HeaderMap, response::IntoResponse, Json};
 use serde::Deserialize;
 
 use crate::perception::activity;
@@ -32,18 +32,39 @@ pub(crate) struct RecordBody {
 
 /// POST /api/activity — record one change to this machine's world.
 ///
-/// A change, never a glance (§3). The caller decides; the engine cannot know
-/// what a verb meant, and a door that argues with its callers just grows a
+/// A change, never a glance (§3). The caller decides what a verb means; the
+/// engine cannot know, and a door that argues with its callers just grows a
 /// second vocabulary.
-pub(crate) async fn record(Json(body): Json<RecordBody>) -> impl IntoResponse {
+///
+/// Two things the caller does *not* decide, because both end up inside the
+/// resident's prompt: **who** — `by` is a closed set, since it is rendered as
+/// the subject of a sentence — and **where** — the device is read from the
+/// caller's own token, so a phone's record says the phone rather than this Mac.
+/// Length and line breaks are the writer's door's business (`clean`), so every
+/// writer gets the same ceiling and none of them can end a bullet early.
+pub(crate) async fn record(headers: HeaderMap, Json(body): Json<RecordBody>) -> impl IntoResponse {
     if body.app.trim().is_empty() || body.verb.trim().is_empty() {
         return (
             axum::http::StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "app and verb are required" })),
         );
     }
-    activity::record_detail(
-        body.by.as_deref().unwrap_or("user"),
+    let by = body.by.as_deref().unwrap_or("user").trim().to_string();
+    if !activity::is_actor(&by) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("by must be one of {:?}", activity::ACTORS),
+            })),
+        );
+    }
+    // A LAN caller carries a device token; loopback does not, and loopback is
+    // this Mac.
+    let device = crate::server::api::pair::caller_device(&headers)
+        .map(|id| crate::server::api::pair::device_name(&id).unwrap_or(id));
+    activity::record_from(
+        device,
+        &by,
         body.app.trim(),
         body.verb.trim(),
         body.object,

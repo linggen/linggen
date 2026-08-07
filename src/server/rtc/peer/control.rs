@@ -78,7 +78,7 @@ pub(super) fn handle_control_message(
             // on the LAN as over the relay — so it is where perception learns
             // it too. Idempotent, and silent for peers that are not devices.
             if let Some(a) = &resolved {
-                crate::perception::devices::arrived(&a.device);
+                crate::perception::devices::arrived(&a.device, peer_id);
             }
             *actor.lock().unwrap() = resolved;
 

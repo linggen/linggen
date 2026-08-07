@@ -33,7 +33,7 @@ pub async fn publish_loop(state: Arc<ServerState>) {
     let mut last: Option<String> = None;
     loop {
         tokio::time::sleep(TICK).await;
-        if super::devices::present().is_empty() {
+        if super::devices::present_ids().is_empty() {
             continue;
         }
         let lines = super::state::share();

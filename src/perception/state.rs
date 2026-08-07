@@ -89,7 +89,7 @@ fn own_lines() -> Vec<String> {
 /// count, which means nothing to a reader that is not the one who last looked.
 pub fn share() -> Vec<String> {
     let mut lines = own_lines();
-    if let Some(newest) = super::activity::log().recent().first() {
+    if let Some(newest) = super::activity::log().newest() {
         let when = newest
             .age_secs()
             .map(super::activity::ago)
@@ -99,35 +99,61 @@ pub fn share() -> Vec<String> {
     lines
 }
 
+/// A slope is worth naming only when it is visible at the resolution the line
+/// prints it in. Below this it reads "filling at 0.0 GB a day", which is the
+/// kind of number that teaches a reader to skip the whole block.
+const NAMEABLE_BYTES_PER_DAY: u64 = 100_000_000;
+
+/// …and only when the end of it is near enough to be about this machine rather
+/// than about arithmetic. "Full in about 11200000 days" is true and useless.
+const NAMEABLE_HORIZON_DAYS: i64 = 180;
+
 fn disk_lines() -> Vec<String> {
     let Some((free, total)) = disk() else {
         return Vec::new();
     };
     let pct = if total > 0 { free * 100 / total } else { 0 };
-    let mut line = format!("disk: {} free of {} · {pct}%", gb(free), gb(total));
+    // "% free", never a bare "%": half the readers of a disk figure assume the
+    // other one, and the agent says out loud whichever it assumed.
+    let mut line = format!("disk: {} free of {} · {pct}% free", gb(free), gb(total));
     if let Some(f) = super::trend::forecast() {
         // Slope, not level — and only when there is a slope worth naming.
-        line.push_str(&format!(
-            " · filling at {} a day, full in about {} days",
-            gb(f.bytes_per_day),
-            f.days_until_full
-        ));
+        if f.bytes_per_day >= NAMEABLE_BYTES_PER_DAY && f.days_until_full <= NAMEABLE_HORIZON_DAYS {
+            line.push_str(&format!(
+                " · filling at {} a day, full in about {} days",
+                gb(f.bytes_per_day),
+                f.days_until_full
+            ));
+        }
     }
     vec![line]
 }
 
 fn device_lines() -> Vec<String> {
-    let here = super::devices::present();
+    // One read of the paired list, then every name comes out of it. This runs
+    // on every turn, and the shape it replaces re-read and re-parsed the file
+    // once per connected device plus once more for the count.
+    let paired = crate::server::api::pair::load_devices();
+    let here: Vec<String> = super::devices::present_ids()
+        .into_iter()
+        .map(|id| {
+            paired
+                .iter()
+                .find(|d| d.id == id)
+                .map(|d| d.name.clone())
+                .unwrap_or(id)
+        })
+        .collect();
     if !here.is_empty() {
         return vec![format!("connected now: {}", here.join(", "))];
     }
-    let paired = crate::server::api::pair::paired_device_count();
-    if paired == 0 {
+    if paired.is_empty() {
         return vec!["no device paired to this Mac yet".to_string()];
     }
     vec![format!(
-        "{paired} paired device{} — none connected right now, so anything that needs one will fail",
-        if paired == 1 { "" } else { "s" }
+        "{} paired device{} — none connected right now, so anything that needs one will fail",
+        paired.len(),
+        if paired.len() == 1 { "" } else { "s" }
     )]
 }
 
@@ -184,8 +210,7 @@ fn read_peer() -> Option<Peer> {
 /// calls `recent_activity`, which costs nothing until wanted.
 fn doorbell(session_id: Option<&str>, mark: bool) -> Vec<String> {
     let log = super::activity::log();
-    let recent = log.recent();
-    let Some(newest) = recent.first() else {
+    let Some(newest) = log.newest() else {
         return Vec::new();
     };
     let revision = log.revision();
@@ -193,7 +218,7 @@ fn doorbell(session_id: Option<&str>, mark: bool) -> Vec<String> {
     if let (Some(s), true) = (session_id, mark) {
         mark_seen(s, revision);
     }
-    ring(newest, unseen)
+    ring(&newest, unseen)
 }
 
 fn ring(newest: &super::activity::Activity, unseen: u64) -> Vec<String> {

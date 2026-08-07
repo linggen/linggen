@@ -140,7 +140,15 @@ pub(crate) async fn get_system_prompt_api(
         }
     }
 
-    let (messages, allowed_tools, _) = engine.prepare_loop_messages("(export)", true);
+    // Preview, not a turn: this export renders the prompt for a human to read,
+    // and rendering the doorbell is what marks it read. Without this, clicking
+    // "Copy System Prompt" makes the next real turn say "nothing new since you
+    // last looked" about things the agent was never told.
+    let (messages, allowed_tools, _) = engine.prepare_loop_messages(
+        "(export)",
+        true,
+        crate::engine::prompt::PromptPurpose::Preview,
+    );
     let system_prompt = messages.first().map(|m| m.content.clone()).unwrap_or_default();
     // Tool schemas are delivered to the model via the native function-calling
     // `tools` API parameter — not embedded in the system prompt text. Expose

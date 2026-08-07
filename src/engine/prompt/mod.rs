@@ -12,6 +12,22 @@
 pub mod core_block;
 pub mod profile;
 
+/// Why a prompt is being built.
+///
+/// Most of a system prompt is a pure function of the world, but the doorbell
+/// (`doc/perception-spec.md` §4) is not: rendering it is what marks it read, so
+/// whoever builds a prompt decides whether the resident has been told. A turn
+/// tells it. Anything that is merely *looking* at the prompt — the "Copy System
+/// Prompt" export, a token count, a compaction preview — must not, or the user
+/// clicks a debug button and the agent silently forgets six things.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptPurpose {
+    /// This prompt is going to the model as a turn.
+    Turn,
+    /// This prompt is being inspected, not sent.
+    Preview,
+}
+
 use super::types::*;
 use crate::engine::tools;
 use crate::message::ChatMessage;
@@ -393,10 +409,13 @@ impl AgentEngine {
     /// Build the initial message list and read-paths set for the structured agent loop.
     /// When `native_tools` is true, uses the native tool calling response format
     /// (no JSON action format instructions) instead of the legacy format.
+    ///
+    /// Building a prompt is not always having a turn — see [`PromptPurpose`].
     pub(crate) fn prepare_loop_messages(
         &mut self,
         task: &str,
         native_tools: bool,
+        purpose: PromptPurpose,
     ) -> (Vec<ChatMessage>, Option<HashSet<String>>, HashSet<String>) {
         // Build stable system content with caching.
         let (stable_content, hash) = self.build_stable_system_content();
@@ -473,7 +492,7 @@ impl AgentEngine {
             if let Some(now) = tools::RightNow::gather(&self.tools.builtins) {
                 let world = crate::perception::state::block(
                     self.tools.builtins.session_id.as_deref(),
-                    true,
+                    purpose == PromptPurpose::Turn,
                 )
                 .unwrap_or_default();
                 system.push_str(&self.prompt_store.render_or_fallback(
