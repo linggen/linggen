@@ -20,7 +20,7 @@ Perception is that world, in three parts that cost three different amounts.
 | | Answers | Costs | Lives |
 |---|---|---|---|
 | **State** | What is true now | Every turn | Recomputed, never stored |
-| **The doorbell** | Has anything happened | Every turn, two lines | Derived from the log |
+| **The doorbell** | Has anything happened | Every turn, three lines | Derived from the log |
 | **The log** | What changed, and who did it | Only when read | A file on the device |
 
 The separation is the design. State is small and always current, so it can ride
@@ -52,10 +52,15 @@ photos      2,914 in the roll · 12 not backed up
 Mac, the same idea about its own body: disks, the paired phones, what each app
 holds.
 
-**Source.** The device lines come from the readout Shifu already measures
-(`ReadoutPublisher` on the phone, `data/readout.json` on the Mac). App lines come
-from the app's own controller. No new measurement subsystem: perception reads
-what the app already knows, so the agent and the screen can never disagree.
+**Source.** App lines come from the app's own controller. No new measurement
+subsystem: perception reads what the app already knows, so the agent and the
+screen can never disagree.
+
+The one exception is the disk figure on the Mac, and it is the rule's own
+doing: Shifu's readout (`data/readout.json`) is a *scan*, and a scan can be
+days old. A line that stale is what §2 forbids, so perception takes its own
+`statvfs` at the moment it is asked — the same number the Finder is showing.
+The phone's `ReadoutPublisher` is live, so it is read as it stands.
 
 **Consequence.** With state in hand, an agent stops asserting conditions it has
 not checked. "Your Mac is asleep" becomes a reading rather than a guess.
@@ -141,19 +146,25 @@ One writer, two readers — not one file two owners.
 
 ## 4. The doorbell
 
-Two lines in the state block, derived from the log at build time:
+Three lines in the state block, derived from the log at build time:
 
 ```
 since      6 things happened since you last looked
 latest     you deleted 三天三夜 · 3 minutes ago
+door       call recent_activity to see more
 ```
 
 That is the whole always-on cost of history. It gives the agent the hook to
 remark and, most of the time, the answer as well. When it needs more it calls
 `recent_activity` — a tool, so it costs nothing until wanted, never enters the
-window uninvited, and never renders in the thread.
+window uninvited, and never renders in the thread. The third line names that
+door, because a doorbell that does not say where the door is cost one live run
+its answer: she had the hook, delegated to Ling to go looking, and stalled.
 
-"Since you last looked" is per-agent, stamped when that agent last read.
+"Since you last looked" is per-agent, stamped when that agent last read. With
+no session there is no reader, so the first line is omitted rather than
+guessed — a claim about a reader we cannot identify has no place in the one
+block whose instruction is to assert only what it read.
 
 ---
 
@@ -178,6 +189,11 @@ Three rules, each earned:
 2. **A "not now" holds.** The resident already declines per topic
    (`_declinedRecently`); a dismissed condition stays quiet until the situation
    materially changes, not until the next tick.
+
+   The hold starts when the resident **speaks**, never when it is asked. A
+   companion may answer SILENT, and a week of quiet bought by a sentence nobody
+   heard is how a machine two days from full says nothing at all. Retrying
+   costs nothing: the glance a notice rides was going to run a turn anyway.
 3. **Every noticing ends in a verb the agent owns.** "Your storage is filling"
    with no next step is worse than silence. If there is nothing to offer, the
    condition does not qualify.
@@ -215,6 +231,20 @@ count means nothing to a reader who is not the one who last looked.
 A host that cannot be reached simply contributes nothing. Its absence is itself
 a state line, and its departure is a log entry.
 
+**A newly arrived device has heard nothing.** A publisher that skips an
+unchanged reading is measuring "unchanged" against a reader that may have just
+connected, so the set of present devices changing is itself a change: the next
+tick republishes. The arriving side does not wait for it either — the value is
+retained, so it is fetched on connect, exactly as every other retained topic is.
+
+**What crosses is cleaned by the reader.** Each host caps what its own writers
+put in a record, because a bullet in the prompt is a line and a line is a
+claim. That door governs one machine's writers. Lines arriving from the other
+host were written by a door this one does not control and travelled a wire any
+peer can hold, so the reader bounds them again — count, length, and control
+characters, the host name included. A song title with a newline does not have
+to be hostile to end a bullet early and start reading as an instruction.
+
 ---
 
 ## 7. Rotation and lifecycle
@@ -233,6 +263,13 @@ The log rotates daily. Rotation is one moment that produces two things:
    avoid. The phone's dream lives on the Mac, so a digest it could not hand
    over is held and offered again on the next connection: a day ages out only
    once.
+
+**Sweeping is not a side effect of reading.** A day is dropped by the rotation
+pass and only once its digest has been taken; until then it is offered again.
+Rotation cannot be the thing that reads the log first — reading the log is what
+starts it — so a log that swept on read handed every day to whoever happened to
+open it, which was never the pass that had somewhere to put it. A failed handoff
+and a day that never existed must not look the same an hour later.
 
 Nothing is uploaded (§8).
 

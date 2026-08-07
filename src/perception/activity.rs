@@ -42,7 +42,10 @@ const OBJECT_MAX: usize = 64;
 /// become spaces because a newline in `object` ends the bullet the block put it
 /// in and starts whatever the text says next — which is how a song title turns
 /// into an instruction (§8).
-fn clean(s: &str, max: usize) -> String {
+///
+/// Shared with the reader's door in [`super::state`]: a door is a door, and the
+/// other machine's writer is not one this one controls.
+pub(crate) fn clean(s: &str, max: usize) -> String {
     let flat: String = s
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -78,19 +81,57 @@ pub struct Activity {
     pub detail: Option<serde_json::Value>,
 }
 
+/// English for the verbs §3 names. Anything else passes through as the caller
+/// wrote it: the door takes an app's word for what it did, and conjugating a
+/// verb we do not know would be putting a word in its mouth.
+fn past(verb: &str) -> &str {
+    match verb {
+        "delete" => "deleted",
+        "add" => "added",
+        "edit" => "edited",
+        "sync" => "synced",
+        "backup" => "backed up",
+        "clean" => "cleaned",
+        "import" => "imported",
+        "pair" => "paired",
+        "connect" => "connected",
+        "disconnect" => "disconnected",
+        "restart" => "restarted",
+        other => other,
+    }
+}
+
 impl Activity {
     /// One line, as a person would read it. What the doorbell shows and what
     /// `recent_activity` returns — the agent never sees the JSON.
     pub fn line(&self) -> String {
+        self.line_on(&super::host_name())
+    }
+
+    /// The same line for a reader that already knows which machine it is
+    /// reading on — a list would otherwise ask the OS for the hostname once per
+    /// row, and `recent_activity` returns up to two hundred of them.
+    pub fn line_on(&self, host: &str) -> String {
         let who = match self.by.as_str() {
             "user" => "you",
             "system" => "the Mac",
             other => other,
         };
-        match &self.object {
-            Some(o) => format!("{who} {} {o}", self.verb),
-            None => format!("{who} {}", self.verb),
+        let did = past(&self.verb);
+        let mut line = match &self.object {
+            Some(o) => format!("{who} {did} {o}"),
+            None => format!("{who} {did}"),
+        };
+        // Name the machine only when it is not the one being read on. This is
+        // what `device` is for: a phone posting through `/api/activity` lands
+        // in the Mac's file, and a row that reads the same as the Mac's own is
+        // attribution thrown away at the last step.
+        if let Some(d) = &self.device {
+            if d != host {
+                line.push_str(&format!(" (on {d})"));
+            }
         }
+        line
     }
 
     /// Seconds since this happened, or `None` when the stamp is unreadable.
@@ -129,6 +170,20 @@ fn day_key(t: chrono::DateTime<chrono::Local>) -> String {
     t.format("%Y-%m-%d").to_string()
 }
 
+/// A day key back into a date. This module names the files, so it is the one
+/// that knows what a name means — the trend series reads its samples with it
+/// too.
+pub(crate) fn parse_day(day: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
+}
+
+/// The days still inside the window, today first.
+fn kept_days() -> std::collections::HashSet<String> {
+    (0..KEEP_DAYS)
+        .map(|i| day_key(chrono::Local::now() - chrono::Duration::days(i)))
+        .collect()
+}
+
 /// The machine's log. One per process; every writer goes through it so the
 /// in-memory window and the file can never disagree.
 pub struct ActivityLog {
@@ -147,7 +202,7 @@ static LOG: std::sync::OnceLock<ActivityLog> = std::sync::OnceLock::new();
 pub fn log() -> &'static ActivityLog {
     LOG.get_or_init(|| {
         let l = ActivityLog::new(activity_dir());
-        l.load();
+        l.restore();
         l
     })
 }
@@ -181,12 +236,13 @@ impl ActivityLog {
 
     /// The newest `limit` entries as lines a person could read.
     pub fn lines(&self, limit: usize) -> Vec<String> {
+        let host = super::host_name();
         self.recent()
             .into_iter()
             .take(limit)
             .map(|a| match a.age_secs() {
-                Some(s) => format!("{} · {}", ago(s), a.line()),
-                None => a.line(),
+                Some(s) => format!("{} · {}", ago(s), a.line_on(&host)),
+                None => a.line_on(&host),
             })
             .collect()
     }
@@ -231,44 +287,43 @@ impl ActivityLog {
         f.write_all(body.as_bytes())
     }
 
-    /// Read the retained window, dropping the days that fell out of it.
+    /// The day files this log owns, oldest first.
     ///
-    /// Rotation is a side effect of reading: a day outside the window is swept
-    /// the first time anyone looks, so nothing has to run on a schedule. The
-    /// days swept are returned, newest first, so a caller can hand them
-    /// somewhere before they go (§7).
-    pub fn load(&self) -> Vec<(String, Vec<Activity>)> {
-        let keep: std::collections::HashSet<String> = (0..KEEP_DAYS)
-            .map(|i| day_key(chrono::Local::now() - chrono::Duration::days(i)))
-            .collect();
-
-        let mut fresh: Vec<Activity> = Vec::new();
-        let mut swept: Vec<(String, Vec<Activity>)> = Vec::new();
-
+    /// A `.jsonl` whose name is not a day is not one of ours: it is neither
+    /// read nor swept. Deleting a file we cannot date would not be rotation,
+    /// it would be tidying someone else's directory.
+    fn day_files(&self) -> Vec<(String, PathBuf)> {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return swept;
+            return Vec::new();
         };
-        let mut files: Vec<PathBuf> = entries
+        let mut files: Vec<(String, PathBuf)> = entries
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .filter_map(|p| {
+                let day = p.file_stem()?.to_string_lossy().to_string();
+                parse_day(&day)?;
+                Some((day, p))
+            })
             .collect();
         files.sort();
+        files
+    }
 
-        for path in files {
-            let day = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let rows = read_day(&path);
+    /// Read the retained window into memory. **Never deletes.**
+    ///
+    /// Sweeping is not a side effect of reading (§7). It was once, and the day
+    /// went to whoever touched the log first — which is never the rotation
+    /// loop, because reading the log is what starts it. A day handed to nobody
+    /// is a day the dream pass never judged.
+    pub fn restore(&self) {
+        let keep = kept_days();
+        let mut fresh: Vec<Activity> = Vec::new();
+        for (day, path) in self.day_files() {
             if keep.contains(&day) {
-                fresh.extend(rows);
-                continue;
+                fresh.extend(read_day(&path));
             }
-            let _ = std::fs::remove_file(&path);
-            swept.push((day, rows));
         }
-
         fresh.sort_by(|a, b| a.at.cmp(&b.at));
         // Rows restored from disk are things that happened, so they count as
         // things a reader has not seen — without this a daemon restarted at
@@ -280,9 +335,39 @@ impl ActivityLog {
             .fetch_max(fresh.len() as u64, Ordering::Relaxed);
         let mut guard = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         *guard = fresh;
-        swept.sort_by(|a, b| b.0.cmp(&a.0));
-        swept
     }
+
+    /// The days that have fallen out of the window, newest first — still on
+    /// disk, because a day is handed over *before* it is dropped (§7). The
+    /// caller drops it with [`forget`](Self::forget) once it is accounted for.
+    pub fn aged(&self) -> Vec<AgedDay> {
+        let keep = kept_days();
+        let mut out: Vec<AgedDay> = self
+            .day_files()
+            .into_iter()
+            .filter(|(day, _)| !keep.contains(day))
+            .map(|(day, path)| AgedDay {
+                rows: read_day(&path),
+                day,
+                path,
+            })
+            .collect();
+        out.sort_by(|a, b| b.day.cmp(&a.day));
+        out
+    }
+
+    /// This day has been accounted for. Until it is, it stays: a handoff that
+    /// failed and a day that never existed must not look the same next hour.
+    pub fn forget(&self, aged: &AgedDay) {
+        let _ = std::fs::remove_file(&aged.path);
+    }
+}
+
+/// A day on its way out: read, not yet dropped.
+pub struct AgedDay {
+    pub day: String,
+    pub rows: Vec<Activity>,
+    path: PathBuf,
 }
 
 /// A torn line is one lost entry, not a lost day.
@@ -369,15 +454,15 @@ mod tests {
         assert_eq!(log.revision(), 1);
 
         let reread = ActivityLog::new(dir.clone());
-        reread.load();
+        reread.restore();
         let lines = reread.lines(10);
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("you delete 三天三夜"), "{lines:?}");
+        assert!(lines[0].contains("you deleted 三天三夜"), "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn load_sweeps_days_outside_the_window_and_hands_them_back() {
+    fn an_aged_day_is_handed_over_before_it_is_dropped() {
         let dir = std::env::temp_dir().join(format!("ling-act-old-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -385,19 +470,69 @@ mod tests {
         let old_day = (chrono::Local::now() - chrono::Duration::days(9))
             .format("%Y-%m-%d")
             .to_string();
+        let old_file = dir.join(format!("{old_day}.jsonl"));
         let row = serde_json::to_string(&activity(at(9), "backup", "200 photos")).unwrap();
-        std::fs::write(dir.join(format!("{old_day}.jsonl")), format!("{row}\n")).unwrap();
+        std::fs::write(&old_file, format!("{row}\n")).unwrap();
 
         let log = ActivityLog::new(dir.clone());
         log.add(activity(at(0), "sync", "12 songs"));
-        let swept = log.load();
 
-        assert_eq!(swept.len(), 1, "the aged-out day is handed back once");
-        assert_eq!(swept[0].0, old_day);
-        assert_eq!(swept[0].1.len(), 1);
-        assert!(!dir.join(format!("{old_day}.jsonl")).exists(), "and deleted");
+        // Reading the log must not sweep it: the day belongs to rotation, and
+        // rotation is never the first to read.
+        log.restore();
+        assert!(old_file.exists(), "reading is not sweeping");
         assert_eq!(log.recent().len(), 1, "the window holds only today");
+
+        let aged = log.aged();
+        assert_eq!(aged.len(), 1, "the aged-out day is offered");
+        assert_eq!(aged[0].day, old_day);
+        assert_eq!(aged[0].rows.len(), 1);
+        assert!(old_file.exists(), "and still held — nobody has taken it yet");
+
+        // A handoff that failed and a day that never existed must not look the
+        // same next hour: the day is offered again until someone takes it.
+        assert_eq!(log.aged().len(), 1);
+        log.forget(&aged[0]);
+        assert!(!old_file.exists());
+        assert!(log.aged().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_we_cannot_date_is_left_alone() {
+        // The directory is the user's. A `.jsonl` that is not one of our days
+        // is neither read into the window nor swept out of it.
+        let dir = std::env::temp_dir().join(format!("ling-act-stray-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stray = dir.join("backup-log.jsonl");
+        let row = serde_json::to_string(&activity(at(0), "clean", "40 GB")).unwrap();
+        std::fs::write(&stray, format!("{row}\n")).unwrap();
+
+        let log = ActivityLog::new(dir.clone());
+        log.restore();
+        assert!(log.recent().is_empty(), "not read");
+        assert!(log.aged().is_empty(), "not swept");
+        assert!(stray.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_row_from_the_other_machine_says_so() {
+        // `device` is why the field exists: a phone posting through
+        // `/api/activity` lands in this Mac's file, and a line that reads the
+        // same as the Mac's own throws the attribution away at the last step.
+        let mut a = activity(at(0), "import", "42 transactions");
+        a.device = Some("Liang's iPhone".into());
+        assert_eq!(
+            a.line_on("test-mac"),
+            "you imported 42 transactions (on Liang's iPhone)"
+        );
+        assert_eq!(
+            a.line_on("Liang's iPhone"),
+            "you imported 42 transactions",
+            "never on the machine doing the reading"
+        );
     }
 
     #[test]
@@ -414,7 +549,7 @@ mod tests {
         .unwrap();
 
         let log = ActivityLog::new(dir.clone());
-        log.load();
+        log.restore();
         assert_eq!(log.recent().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -454,12 +589,12 @@ mod tests {
 
         let restarted = ActivityLog::new(dir.clone());
         assert_eq!(restarted.revision(), 0, "a fresh process has looked at nothing");
-        restarted.load();
+        restarted.restore();
         assert_eq!(restarted.revision(), 2, "both rows count as unseen");
 
-        // And never backwards: a later load with a smaller window would
+        // And never backwards: a later restore with a smaller window would
         // otherwise hide everything a reader had not caught up on.
-        restarted.load();
+        restarted.restore();
         assert_eq!(restarted.revision(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }

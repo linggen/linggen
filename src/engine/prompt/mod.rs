@@ -488,6 +488,11 @@ impl AgentEngine {
         // opening (`doc/perception-spec.md` §2, §4). One block, because the
         // room and the machine are one perception — and because a second
         // heading would invite the model to read one and skip the other.
+        //
+        // So the machine's lines ride on the room's: no manager, no block at
+        // all. Perception is additive within the block — an unreadable source
+        // costs one line — but it does not get a heading of its own when there
+        // is no session behind it to read one.
         if allowed_tools.as_ref().is_some_and(|s| s.contains("sense")) {
             if let Some(now) = tools::RightNow::gather(&self.tools.builtins) {
                 let world = crate::perception::state::block(

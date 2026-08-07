@@ -44,17 +44,28 @@ fn conditions() -> Vec<(&'static str, fn() -> Option<Notice>)> {
 ///
 /// One per sweep by construction: two notices in one breath is a report, and a
 /// resident that reports is one the user stops listening to.
+///
+/// Finding a notice does **not** start its re-arm — [`spoken`] does. The
+/// resident may answer SILENT, or its run may fail, and a week of quiet bought
+/// by a sentence nobody heard is how a machine two days from full says nothing
+/// at all. The retry costs nothing: the glance it rides was going to run a turn
+/// either way.
 pub fn sweep() -> Option<Notice> {
     for (topic, check) in conditions() {
         if holding(topic) {
             continue;
         }
         if let Some(notice) = check() {
-            arm(topic);
             return Some(notice);
         }
     }
     None
+}
+
+/// The resident said it out loud. Now the topic holds its re-arm — rule 1 is
+/// about what the user heard, not about what was noticed.
+pub fn spoken(topic: &str) {
+    arm(topic);
 }
 
 fn storage_filling() -> Option<Notice> {
@@ -138,7 +149,7 @@ mod tests {
         let _ = std::fs::write(armed_path(), serde_json::to_vec_pretty(&map).unwrap());
 
         assert!(!holding(topic));
-        arm(topic);
-        assert!(holding(topic), "a topic just fired must not fire again");
+        spoken(topic);
+        assert!(holding(topic), "a topic just said must not be said again");
     }
 }

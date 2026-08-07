@@ -125,11 +125,18 @@ fn remember_present() {
 /// explains nothing, and this daemon restarts often enough that logging every
 /// one would bury the entries a person actually wants to read.
 pub fn note_restart() {
-    let ids: Vec<String> = std::fs::read_to_string(present_path())
+    note_restart_at(&present_path());
+}
+
+/// The body, against a named file. Split out for the tests: they share one
+/// process with the tests that arrive and leave, and a departure rewrites the
+/// real `present.json` out from under them.
+fn note_restart_at(path: &std::path::Path) {
+    let ids: Vec<String> = std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
         .unwrap_or_default();
-    let _ = std::fs::remove_file(present_path());
+    let _ = std::fs::remove_file(path);
     if ids.is_empty() {
         return;
     }
@@ -161,8 +168,10 @@ mod tests {
     fn a_restart_is_recorded_only_when_it_explains_something() {
         // Matched by name rather than by position: these tests share one
         // process-wide log and run in parallel, so "the newest row" belongs to
-        // whichever test wrote last.
+        // whichever test wrote last. The presence file is this test's own for
+        // the same reason — a sibling's `left()` rewrites the shared one.
         const ORPHAN: &str = "orphaned-phone-fixture";
+        let path = super::super::activity::activity_dir().join("present-restart-test.json");
         let restarts_naming_it = || {
             super::super::activity::log()
                 .recent()
@@ -176,20 +185,20 @@ mod tests {
 
         // Nobody was connected: nothing to explain, and this daemon restarts
         // often enough that saying so every time would bury the real entries.
-        let _ = std::fs::remove_file(present_path());
-        note_restart();
+        let _ = std::fs::remove_file(&path);
+        note_restart_at(&path);
         assert_eq!(restarts_naming_it(), 0);
 
         // A device was connected when the last daemon died — the departure it
         // could not write is exactly the gap this row accounts for.
         std::fs::create_dir_all(super::super::activity::activity_dir()).unwrap();
-        std::fs::write(present_path(), format!(r#"["{ORPHAN}"]"#)).unwrap();
-        note_restart();
+        std::fs::write(&path, format!(r#"["{ORPHAN}"]"#)).unwrap();
+        note_restart_at(&path);
         assert_eq!(restarts_naming_it(), 1);
 
         // And claimed exactly once — the next start has nothing left to say.
-        assert!(!present_path().exists());
-        note_restart();
+        assert!(!path.exists());
+        note_restart_at(&path);
         assert_eq!(restarts_naming_it(), 1);
     }
 

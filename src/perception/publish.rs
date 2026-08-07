@@ -31,9 +31,19 @@ const TICK: Duration = Duration::from_secs(60);
 pub async fn publish_loop(state: Arc<ServerState>) {
     tracing::info!("[perception] publishing this Mac's state to connected devices");
     let mut last: Option<String> = None;
+    let mut known: Vec<String> = Vec::new();
     loop {
         tokio::time::sleep(TICK).await;
-        if super::devices::present_ids().is_empty() {
+        // A device that just arrived has heard nothing, whatever we said to the
+        // one before it. Without this, "unchanged" is measured against a reader
+        // that is no longer there, and a phone can stay connected for an hour
+        // with no account of the Mac at all.
+        let present = super::devices::present_ids();
+        if present != known {
+            known = present.clone();
+            last = None;
+        }
+        if present.is_empty() {
             continue;
         }
         let lines = super::state::share();

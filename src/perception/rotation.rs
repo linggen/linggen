@@ -35,19 +35,33 @@ async fn rotate(ling_mem_url: &str) {
         super::trend::sample(free, total);
     }
 
-    // Loading is what sweeps: any day outside the keep window comes back here
-    // once, on its way out.
-    for (day, rows) in super::activity::log().load() {
-        let Some(digest) = digest(&day, &rows) else {
+    // This loop is the only sweeper. Reading the log does not rotate it — that
+    // shape gave the day to whoever touched the log first, which is never this
+    // loop, because touching the log is how it starts.
+    let log = super::activity::log();
+    for aged in log.aged() {
+        let Some(digest) = digest(&aged.day, &aged.rows) else {
+            log.forget(&aged); // an empty day is not a memory, and not a debt
             continue;
         };
         match hand_to_dream(ling_mem_url, &digest).await {
-            Ok(()) => tracing::info!("[perception] {day} handed to the dream pass"),
-            // The rows are already gone — saying so is all that is left, and a
-            // failed handoff must not cost the daemon anything else.
-            Err(e) => tracing::warn!("[perception] {day} could not be handed over: {e}"),
+            Ok(()) => {
+                log.forget(&aged);
+                tracing::info!("[perception] {} handed to the dream pass", aged.day);
+            }
+            // Held, not dropped: a day ages out once (§7), and ling-mem being
+            // down for an hour must not be how a day stops existing. The next
+            // pass offers it again.
+            Err(e) => tracing::warn!(
+                "[perception] {} could not be handed over, holding it: {e}",
+                aged.day
+            ),
         }
     }
+    // What is left is the window, and the window may have moved since the last
+    // pass — a daemon up across midnight is still holding yesterday-minus-three
+    // in memory until someone reads the days again.
+    log.restore();
 }
 
 /// One day, in the words a reader would use. `None` for a day with nothing in
@@ -56,7 +70,8 @@ fn digest(day: &str, rows: &[super::activity::Activity]) -> Option<String> {
     if rows.is_empty() {
         return None;
     }
-    let mut lines: Vec<String> = rows.iter().map(|a| a.line()).collect();
+    let host = super::host_name();
+    let mut lines: Vec<String> = rows.iter().map(|a| a.line_on(&host)).collect();
     // A day of one app repeating itself is one fact, not forty; keep the shape
     // of the day rather than every beat of it.
     lines.dedup();
@@ -124,8 +139,8 @@ mod tests {
     fn a_day_reads_as_lines_a_person_wrote() {
         let d = digest("2026-08-06", &[row("delete", "三天三夜"), row("sync", "12 songs")]).unwrap();
         assert!(d.contains("on 2026-08-06 (2 things)"), "{d}");
-        assert!(d.contains("you delete 三天三夜"), "{d}");
-        assert!(d.contains("you sync 12 songs"), "{d}");
+        assert!(d.contains("you deleted 三天三夜"), "{d}");
+        assert!(d.contains("you synced 12 songs"), "{d}");
     }
 
     #[test]

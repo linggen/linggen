@@ -12,6 +12,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// The day key is the activity log's format — one definition, because a sample
+// and a day file are the same day.
+use super::activity::parse_day;
+
 /// A fortnight is long enough to see a slope and short enough that a Mac the
 /// user cleared six weeks ago is not still judged on its old one.
 ///
@@ -99,10 +103,6 @@ fn slope(samples: &[Sample]) -> Option<Forecast> {
         days_until_full: (last.free as f64 / per_day).round() as i64,
         span_days: span,
     })
-}
-
-fn parse_day(day: &str) -> Option<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
 }
 
 #[cfg(test)]

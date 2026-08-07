@@ -304,16 +304,19 @@ async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool 
 /// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
 /// blocked on the user. She reads the room (the Right now block) and decides whether it's
 /// worth a word; `SILENT` means say nothing (the never-nag discipline).
-async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) {
+/// True when she actually spoke — a caller that bought silence with a notice
+/// needs to know whether anyone heard it.
+async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
     let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
-        return; // run failed or she produced nothing
+        return false; // run failed or she produced nothing
     };
     if line.eq_ignore_ascii_case("silent") {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
-        return;
+        return false;
     }
     tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, {emotion})", line.len());
     crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
+    true
 }
 
 /// Deliver an `agent_chat` message to a CHAT agent (Ling, …): show it in that
@@ -517,7 +520,12 @@ async fn ambient_glance(state: &Arc<ServerState>) {
              If this truly isn't the moment, reply with exactly SILENT.",
             notice.situation, notice.verbs
         );
-        wake_herald(state.clone(), kickoff, "neutral").await;
+        // The re-arm starts only if she actually said it. A SILENT reply is
+        // her judging the moment, not the user being told — and this condition
+        // fires two days before the disk is full.
+        if wake_herald(state.clone(), kickoff, "neutral").await {
+            crate::perception::conditions::spoken(notice.topic);
+        }
         return;
     }
     let kickoff = "A quiet moment — no event, just you. Right now tells you how things are; \
