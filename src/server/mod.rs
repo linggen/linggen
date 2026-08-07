@@ -1407,10 +1407,32 @@ async fn capability_dispatch(
         .map(|axum::Json(v)| v)
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
-    if tool_name != "Memory_query" && tool_name != "Memory_write" {
+    let writes_allowed = match tool_name.as_str() {
+        "Memory_query" => false,
+        "Memory_write" => true,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("Unknown built-in tool '{}' on /apps/*/capability/*", tool_name),
+            )
+                .into_response();
+        }
+    };
+
+    // The tool name is only half the request: dispatch is by the `verb` in the
+    // body, so until this check the split above was decorative — a page could
+    // POST Memory_query with `verb: "delete"` and delete. And the verb is
+    // concatenated into a URL, so an unknown one must not be forwarded at all.
+    let verb = args.get("verb").and_then(|v| v.as_str()).unwrap_or_default();
+    let Some(mutates) = crate::server::api::memory::verb_mutates(verb)
+        .filter(|_| crate::server::api::memory::is_safe_verb(verb))
+    else {
+        return (StatusCode::BAD_REQUEST, format!("Unknown memory verb '{verb}'")).into_response();
+    };
+    if mutates && !writes_allowed {
         return (
-            StatusCode::NOT_FOUND,
-            format!("Unknown built-in tool '{}' on /apps/*/capability/*", tool_name),
+            StatusCode::FORBIDDEN,
+            format!("'{verb}' changes the store — use Memory_write"),
         )
             .into_response();
     }

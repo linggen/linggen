@@ -137,6 +137,7 @@ pub async fn build_page_state(
     ctx: &ViewContext,
     dirty: u64,
     user: &super::UserContext,
+    identified: bool,
 ) -> PageState {
     let include_global = (dirty & DIRTY_GLOBAL) != 0;
     let include_scoped = (dirty & DIRTY_SCOPED) != 0;
@@ -147,7 +148,10 @@ pub async fn build_page_state(
     let room_cfg = super::room_config::load_room_config();
 
     let mut ps = PageState {
-        user_type: Some(user.user_type().to_string()),
+        // Corrected by what `identify` revealed, like every other surface that
+        // names this peer. Reading the raw kind here made page state the one
+        // place a paired phone still answered to the owner's name.
+        user_type: Some(user.user_type_for(identified).to_string()),
         permission: Some(user.permission.as_str().to_string()),
         room_name: user.room_name.clone(),
         room_enabled: if !user.is_consumer() { Some(room_cfg.room_enabled) } else { None },

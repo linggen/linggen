@@ -111,8 +111,28 @@ fn unreachable_envelope(status: StatusCode, message: String, code: &str) -> Resp
 /// being the point: `%2F` arrives as a real slash, and a check on the raw path
 /// would never see it. Every verb ling-mem serves is `[a-z_]`, so anything else
 /// is refused here rather than concatenated into a URL and sent.
-fn is_safe_verb(verb: &str) -> bool {
+pub(crate) fn is_safe_verb(verb: &str) -> bool {
     !verb.is_empty() && verb.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Does this verb change the store?
+///
+/// `None` for a verb we do not know, which callers must refuse rather than
+/// guess about — a verb that is neither provably a read nor provably a write
+/// is exactly the one not to forward on a promise.
+///
+/// This exists because the capability door names its tools `Memory_query` and
+/// `Memory_write`, which reads as a read/write split — and nothing checked it.
+/// Dispatch is by the `verb` in the body, so a page could POST `Memory_query`
+/// with `verb: "delete"` and delete. A promise nothing enforces is worse than
+/// no promise: it is a knob that reads as a fence.
+pub(crate) fn verb_mutates(verb: &str) -> Option<bool> {
+    match verb {
+        "search" | "list" | "get" | "count" | "days" | "chains" | "issues" | "stats" => Some(false),
+        "add" | "add_batch" | "update" | "delete" | "forget" | "sweep" | "remember_day"
+        | "harvest_day" | "issue_add" | "issue_resolve" => Some(true),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -128,6 +148,36 @@ mod tests {
         ] {
             assert!(is_safe_verb(verb), "{verb} should be forwardable");
         }
+    }
+
+    /// Every verb the daemon serves must be classified, or the capability door
+    /// refuses it: `verb_mutates` returning `None` is a closed door, not an
+    /// open one. This is the pairing that keeps a new ling-mem verb from
+    /// silently becoming unreachable from a skill page.
+    #[test]
+    fn every_forwardable_verb_is_classified_as_read_or_write() {
+        for verb in [
+            "search", "list", "get", "count", "days", "chains", "issues", "stats", "add",
+            "add_batch", "update", "delete", "forget", "sweep", "remember_day", "harvest_day",
+            "issue_add", "issue_resolve",
+        ] {
+            assert!(is_safe_verb(verb), "{verb} should be forwardable");
+            assert!(verb_mutates(verb).is_some(), "{verb} should be classified");
+        }
+    }
+
+    /// The split the capability door's two tool names promise. `Memory_query`
+    /// dispatching a delete is the bug this encodes.
+    #[test]
+    fn reads_and_writes_are_told_apart() {
+        for verb in ["search", "list", "get", "count", "days", "chains", "issues", "stats"] {
+            assert_eq!(verb_mutates(verb), Some(false), "{verb} does not mutate");
+        }
+        for verb in ["add", "update", "delete", "forget", "sweep", "issue_resolve"] {
+            assert_eq!(verb_mutates(verb), Some(true), "{verb} mutates");
+        }
+        assert_eq!(verb_mutates("wat"), None);
+        assert_eq!(verb_mutates(""), None);
     }
 
     /// A percent-encoded traversal is decoded before it reaches us, so these

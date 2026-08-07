@@ -743,9 +743,12 @@ async fn run_peer(
                 let tx = ctrl_resp_tx.clone();
                 let user_ctx_clone = user_ctx.clone();
                 let ctx = view_ctx.clone();
+                let identified = peer_actor.lock().unwrap().is_some();
                 tokio::spawn(async move {
-                    let ps = super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone)
-                        .await;
+                    let ps = super::page_state::build_page_state(
+                        &st, &ctx, flags, &user_ctx_clone, identified,
+                    )
+                    .await;
                     if let Ok(data) = serde_json::to_value(&ps) {
                         let size = data.to_string().len();
                         tracing::info!(
@@ -914,8 +917,12 @@ async fn run_peer(
                         let tx = ctrl_resp_tx.clone();
                         let user_ctx_clone = user_ctx.clone();
                         let ctx = view_ctx.clone();
+                        let identified = peer_actor.lock().unwrap().is_some();
                         tokio::spawn(async move {
-                            let ps = super::page_state::build_page_state(&st, &ctx, flags, &user_ctx_clone).await;
+                            let ps = super::page_state::build_page_state(
+                                &st, &ctx, flags, &user_ctx_clone, identified,
+                            )
+                            .await;
                             if let Ok(data) = serde_json::to_value(&ps) {
                                 let msg = serde_json::json!({ "kind": "page_state", "data": data });
                                 let _ = tx.send((None, cid, msg)).await;
