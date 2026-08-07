@@ -1234,6 +1234,10 @@ async fn prepare_server(
     // other rotates the day — a trend sample, the day's activities handed to
     // the dream pass, then the sweep (§7).
     {
+        // First, account for the last run: a daemon that died holding a device
+        // could not write that device's departure, and an unexplained gap in
+        // the log is worse than the restart it hides.
+        crate::perception::devices::note_restart();
         tokio::spawn(crate::perception::publish::publish_loop(state.clone()));
         tokio::spawn(crate::perception::rotation::rotation_loop(state.clone()));
     }

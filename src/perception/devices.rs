@@ -8,6 +8,7 @@
 //! Both come from here, so they can never disagree.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Device id → the peers currently holding it open.
@@ -41,6 +42,7 @@ pub fn arrived(device: &str, peer: u64) {
     };
     if first {
         super::activity::record("system", "system", "connect", Some(label(device)));
+        remember_present();
     }
 }
 
@@ -65,6 +67,7 @@ pub fn left(device: &str, peer: u64) {
     };
     if last {
         super::activity::record("system", "system", "disconnect", Some(label(device)));
+        remember_present();
     }
 }
 
@@ -84,6 +87,61 @@ fn label(id: &str) -> String {
     crate::server::api::pair::device_name(id).unwrap_or_else(|| id.to_string())
 }
 
+// --- surviving a restart ----------------------------------------------------
+//
+// Presence lives in memory, so a daemon that dies holding a device cannot write
+// that device's departure — the log is left with two `connect` rows and nothing
+// between them, which reads as a bug in the very record meant to explain things.
+//
+// The fix is not to invent the missing row: nobody knows when the connection
+// actually ended. It is to say the one thing that IS known, at the moment it
+// becomes known — this daemon started, and something was connected to the last
+// one. That turns an unexplained gap into an explained one.
+
+fn present_path() -> PathBuf {
+    super::activity::activity_dir().join("present.json")
+}
+
+/// Keep the current presence on disk, so the next daemon can tell whether the
+/// previous one died mid-connection. Best-effort: an unwritable file costs an
+/// explanation, never a connection.
+fn remember_present() {
+    let ids = present_ids();
+    let dir = super::activity::activity_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if ids.is_empty() {
+        let _ = std::fs::remove_file(present_path());
+        return;
+    }
+    if let Ok(body) = serde_json::to_vec(&ids) {
+        let _ = std::fs::write(present_path(), body);
+    }
+}
+
+/// Called once at startup. Records that this Mac restarted **only** when the
+/// previous run left a device connected — a restart nobody was connected to
+/// explains nothing, and this daemon restarts often enough that logging every
+/// one would bury the entries a person actually wants to read.
+pub fn note_restart() {
+    let ids: Vec<String> = std::fs::read_to_string(present_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default();
+    let _ = std::fs::remove_file(present_path());
+    if ids.is_empty() {
+        return;
+    }
+    let names: Vec<String> = ids.iter().map(|id| label(id)).collect();
+    super::activity::record(
+        "system",
+        "system",
+        "restart",
+        Some(format!("Linggen — {} had to reconnect", names.join(", "))),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +155,42 @@ mod tests {
         assert!(present_ids().contains(&"test-phone".to_string()));
         left("test-phone", 1);
         assert!(!present_ids().contains(&"test-phone".to_string()));
+    }
+
+    #[test]
+    fn a_restart_is_recorded_only_when_it_explains_something() {
+        // Matched by name rather than by position: these tests share one
+        // process-wide log and run in parallel, so "the newest row" belongs to
+        // whichever test wrote last.
+        const ORPHAN: &str = "orphaned-phone-fixture";
+        let restarts_naming_it = || {
+            super::super::activity::log()
+                .recent()
+                .into_iter()
+                .filter(|a| {
+                    a.verb == "restart"
+                        && a.object.as_deref().is_some_and(|o| o.contains(ORPHAN))
+                })
+                .count()
+        };
+
+        // Nobody was connected: nothing to explain, and this daemon restarts
+        // often enough that saying so every time would bury the real entries.
+        let _ = std::fs::remove_file(present_path());
+        note_restart();
+        assert_eq!(restarts_naming_it(), 0);
+
+        // A device was connected when the last daemon died — the departure it
+        // could not write is exactly the gap this row accounts for.
+        std::fs::create_dir_all(super::super::activity::activity_dir()).unwrap();
+        std::fs::write(present_path(), format!(r#"["{ORPHAN}"]"#)).unwrap();
+        note_restart();
+        assert_eq!(restarts_naming_it(), 1);
+
+        // And claimed exactly once — the next start has nothing left to say.
+        assert!(!present_path().exists());
+        note_restart();
+        assert_eq!(restarts_naming_it(), 1);
     }
 
     #[test]

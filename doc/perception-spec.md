@@ -80,7 +80,7 @@ because two schemas for one idea fork on contact.
   host whose file it is.
 - `app` — `dj`, `photos`, `cfo`, `shifu`, `system`.
 - `verb` — a short closed-set slug: `delete`, `add`, `edit`, `sync`, `backup`,
-  `clean`, `import`, `play`, `pair`, `connect`, `disconnect`.
+  `clean`, `import`, `pair`, `connect`, `disconnect`, `restart`.
 - `object` — what it happened to, in the user's terms. A song title, not a path.
 - `detail` — optional, small, structured.
 
@@ -95,6 +95,21 @@ An entry records **a change to the world**. Not a glance at it.
 
 The test: would anyone ever want it explained to them? If not, it is noise, and
 noise is what teaches a user to stop reading.
+
+### When the recorder itself stops
+
+Presence is held in memory, so a host that dies while a device is connected
+cannot write that device's departure — the log is left with two `connect` rows
+and nothing between them, which reads as a fault in the very record meant to
+explain faults.
+
+The answer is not to invent the missing row; nobody knows when the connection
+actually ended. It is to say the one thing that *is* known, at the moment it
+becomes known: this host started, and something was connected to the last one.
+So a `restart` is recorded at startup **only when the previous run left a device
+connected**. A restart nobody was attached to explains nothing, and a host may
+restart many times a day — logging every one would bury the entries a person
+actually wants to read.
 
 ### Conditions vs. transitions
 
