@@ -214,30 +214,37 @@ fn doorbell(session_id: Option<&str>, mark: bool) -> Vec<String> {
         return Vec::new();
     };
     let revision = log.revision();
-    let unseen = session_id.map_or(0, |s| revision.saturating_sub(seen_revision(s)));
+    // No session is no reader, and "since you last looked" is a fact about a
+    // reader. Observed in the prompt export, which builds without one: it said
+    // "nothing new since you last looked" over a log four entries deep — a
+    // claim, in the block whose own instruction is to never assert a condition
+    // that is not here.
+    let unseen = session_id.map(|s| revision.saturating_sub(seen_revision(s)));
     if let (Some(s), true) = (session_id, mark) {
         mark_seen(s, revision);
     }
     ring(&newest, unseen)
 }
 
-fn ring(newest: &super::activity::Activity, unseen: u64) -> Vec<String> {
+fn ring(newest: &super::activity::Activity, unseen: Option<u64>) -> Vec<String> {
     let when = newest
         .age_secs()
         .map(super::activity::ago)
         .unwrap_or_default();
-    vec![
-        if unseen > 0 {
-            format!(
-                "{unseen} thing{} happened since you last looked",
-                if unseen == 1 { "" } else { "s" }
-            )
-        } else {
-            "nothing new since you last looked".to_string()
-        },
-        format!("most recent: {} · {when}", newest.line()),
-        "call recent_activity to see more".to_string(),
-    ]
+    let mut lines = Vec::new();
+    match unseen {
+        Some(n) if n > 0 => lines.push(format!(
+            "{n} thing{} happened since you last looked",
+            if n == 1 { "" } else { "s" }
+        )),
+        Some(_) => lines.push("nothing new since you last looked".to_string()),
+        // Unknown reader: say nothing about them. The two lines below are true
+        // for anyone.
+        None => {}
+    }
+    lines.push(format!("most recent: {} · {when}", newest.line()));
+    lines.push("call recent_activity to see more".to_string());
+    lines
 }
 
 /// Per-agent, because "since you last looked" is a fact about a reader, not
@@ -279,7 +286,7 @@ mod tests {
 
     #[test]
     fn the_doorbell_is_three_lines_and_never_the_log_itself() {
-        let lines = ring(&thing(), 6);
+        let lines = ring(&thing(), Some(6));
         assert_eq!(lines.len(), 3, "the always-on cost stays fixed: {lines:?}");
         assert_eq!(lines[0], "6 things happened since you last looked");
         assert!(lines[1].starts_with("most recent: you delete 三天三夜 · "));
@@ -288,8 +295,25 @@ mod tests {
 
     #[test]
     fn one_thing_is_singular_and_none_is_said_plainly() {
-        assert_eq!(ring(&thing(), 1)[0], "1 thing happened since you last looked");
-        assert_eq!(ring(&thing(), 0)[0], "nothing new since you last looked");
+        assert_eq!(
+            ring(&thing(), Some(1))[0],
+            "1 thing happened since you last looked"
+        );
+        assert_eq!(ring(&thing(), Some(0))[0], "nothing new since you last looked");
+    }
+
+    #[test]
+    fn with_no_reader_it_claims_nothing_about_one() {
+        // The prompt export builds without a session. Saying "nothing new since
+        // you last looked" there is a claim about a reader we cannot identify,
+        // in the one block whose instruction is to assert only what it read.
+        let lines = ring(&thing(), None);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("most recent: "), "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("since you last looked")),
+            "{lines:?}"
+        );
     }
 
     #[test]
