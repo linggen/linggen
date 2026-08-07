@@ -208,11 +208,28 @@ async fn create_peer_inner(
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let counter = state.active_peer_count.clone();
     let cleanup_state = state.clone();
+    // Who this peer turns out to be, once `identify` lands. Owned out here so
+    // the teardown below still knows which device just went away — a departure
+    // is a transition, and transitions belong in the activity log.
+    let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(None));
+    let departing = peer_actor.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            run_peer(rtc, socket, candidate_addr, state, events_rx, user_ctx, peer_id).await
+        if let Err(e) = run_peer(
+            rtc,
+            socket,
+            candidate_addr,
+            state,
+            events_rx,
+            user_ctx,
+            peer_id,
+            peer_actor,
+        )
+        .await
         {
             tracing::warn!("WebRTC peer exited: {e:#}");
+        }
+        if let Some(actor) = departing.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            crate::perception::devices::left(&actor.device);
         }
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         // Release the Yinyue presenter lock on disconnect (no-op if this peer
@@ -236,6 +253,7 @@ async fn run_peer(
     mut events_rx: tokio::sync::broadcast::Receiver<crate::server::ServerEvent>,
     user_ctx: super::UserContext,
     peer_id: u64,
+    peer_actor: PeerActor,
 ) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut control_channel_id = None;
@@ -243,10 +261,9 @@ async fn run_peer(
     // so they never pass through the control channel's text envelope.
     let mut media_channel_id: Option<str0m::channel::ChannelId> = None;
     let mut media_transfer: Option<media_channel::MediaTransfer> = None;
-    // Who this peer says it is, once `identify` lands. Shared because both the
-    // control channel (which sets it) and the media channel (which stamps it
-    // onto uploads) need it, and they run in the same loop.
-    let peer_actor: PeerActor = Arc::new(std::sync::Mutex::new(None));
+    // Who this peer says it is, once `identify` lands. Shared because the
+    // control channel (which sets it), the media channel (which stamps it onto
+    // uploads) and the teardown that records the departure all need it.
     // Download chunks are produced off-loop and queued here; bounded so a slow
     // peer applies backpressure to the reader instead of growing memory.
     let (media_out_tx, mut media_out_rx) =

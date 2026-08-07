@@ -179,6 +179,9 @@ fn commit_device(
     }
     devices.push(device.clone());
     save_devices(&devices)?;
+    // A new device on this Mac is a change to the world, and the kind a user
+    // asks about later ("when did I pair this?").
+    crate::perception::activity::record("user", "system", "pair", Some(device.name.clone()));
     Ok(device)
 }
 
@@ -281,6 +284,18 @@ fn device_by_token(token: &str) -> Option<PairedDevice> {
     (!token.is_empty())
         .then(|| load_devices().into_iter().find(|d| d.secret == token))
         .flatten()
+}
+
+/// What the user calls this device. `None` when the id belongs to nothing —
+/// a device unpaired mid-connection, say.
+///
+/// Ids are for matching; a person hears "Liang's iPhone", so anything the
+/// agent says out loud resolves through here first.
+pub fn device_name(id: &str) -> Option<String> {
+    load_devices()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map(|d| d.name)
 }
 
 /// The LAN gate's check: does any paired device own this token?

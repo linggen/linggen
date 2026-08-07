@@ -109,6 +109,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(WebFetchTool),
             Arc::new(ExpressTool),
             Arc::new(SenseTool),
+            Arc::new(RecentActivityTool),
             Arc::new(AnswerPromptTool),
             Arc::new(AgentChatTool),
             Arc::new(AskUserTool),
@@ -943,8 +944,11 @@ impl RightNow {
     }
 
     /// The `sense` tool's wire shape. Unchanged from when the tool built it
-    /// inline — an agent that still calls `sense` sees exactly what it always did.
-    pub(crate) fn to_json(&self) -> Value {
+    /// inline — an agent that still calls `sense` sees exactly what it always
+    /// did, plus the world block's own readings under `world`, so a companion
+    /// reading the block and one calling the tool can never disagree about the
+    /// machine either.
+    pub(crate) fn to_json(&self, session_id: Option<&str>) -> Value {
         json!({
             "presence": {
                 "state": self.state,
@@ -959,6 +963,9 @@ impl RightNow {
                 "hour": self.hour,
                 "part_of_day": self.part_of_day,
             },
+            // A glance does not consume the doorbell — the turn that follows
+            // still deserves to be told what happened.
+            "world": crate::perception::state::read_lines(session_id, false),
         })
     }
 }
@@ -992,7 +999,69 @@ impl Tool for SenseTool {
                 json!({ "error": "no environment to sense" }).to_string(),
             ));
         };
-        Ok(ToolResult::Success(now.to_json().to_string()))
+        Ok(ToolResult::Success(
+            now.to_json(tools.session_id.as_deref()).to_string(),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// recent_activity — what changed on this machine, and who did it
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct RecentActivityArgs {
+    /// How many entries, newest first. Default 20.
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// History as a tool, deliberately (`doc/perception-spec.md` §3): the log grows,
+/// and an agent whose context fills with its own event stream remembers the
+/// user's clicks and forgets the user. The doorbell in the prompt says whether
+/// this is worth calling; this is what it costs when it is.
+pub struct RecentActivityTool;
+#[async_trait]
+impl Tool for RecentActivityTool {
+    fn name(&self) -> &'static str { "recent_activity" }
+    fn aliases(&self) -> &'static [&'static str] { &["RecentActivity"] }
+    fn description(&self) -> &'static str {
+        "What has changed on this machine lately — deletes, syncs, backups, imports, \
+         devices coming and going — newest first, each with who did it and how long ago. \
+         Call it when the user asks what happened, or when the doorbell in your prompt says \
+         something did and you need more than the headline. Returns plain lines, not JSON. \
+         Last few days only; older days are gone."
+    }
+    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "integer", "description": "How many entries, newest first. Default 20." }
+            }
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "recent_activity",
+            "args": { "limit": "number?" },
+            "returns": "recent changes to this machine, newest first, as plain lines",
+            "notes": "What changed here lately and who did it. The doorbell in your prompt \
+                      says whether it is worth calling."
+        })
+    }
+    async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        let args: RecentActivityArgs = serde_json::from_value(call.args).unwrap_or(
+            RecentActivityArgs { limit: None },
+        );
+        let limit = args.limit.unwrap_or(20).clamp(1, 200);
+        let lines = crate::perception::activity::log().lines(limit);
+        if lines.is_empty() {
+            return Ok(ToolResult::Success(
+                "Nothing has changed on this machine in the last few days.".to_string(),
+            ));
+        }
+        Ok(ToolResult::Success(lines.join("\n")))
     }
 }
 

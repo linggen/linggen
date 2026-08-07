@@ -463,8 +463,19 @@ impl AgentEngine {
         // Gated on the session EXPLICITLY declaring `sense`, never on an agent's
         // name: an unrestricted tool set (`None` = everything allowed) must not
         // pull presence data into every coding session.
+        //
+        // The same block carries the world this machine is: what is true here
+        // now, and the doorbell saying whether the activity log is worth
+        // opening (`doc/perception-spec.md` §2, §4). One block, because the
+        // room and the machine are one perception — and because a second
+        // heading would invite the model to read one and skip the other.
         if allowed_tools.as_ref().is_some_and(|s| s.contains("sense")) {
             if let Some(now) = tools::RightNow::gather(&self.tools.builtins) {
+                let world = crate::perception::state::block(
+                    self.tools.builtins.session_id.as_deref(),
+                    true,
+                )
+                .unwrap_or_default();
                 system.push_str(&self.prompt_store.render_or_fallback(
                     crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
                     &[
@@ -474,6 +485,7 @@ impl AgentEngine {
                         ("runs_today", &now.runs_today.to_string()),
                         ("local_time", &now.local_time),
                         ("part_of_day", now.part_of_day),
+                        ("world", &world),
                     ],
                 ));
             }

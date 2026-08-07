@@ -74,6 +74,12 @@ pub(super) fn handle_control_message(
             }
             let was_identified = actor.lock().unwrap().is_some();
             let now_identified = resolved.is_some();
+            // This is the moment the Mac learns a device is on the other end,
+            // on the LAN as over the relay — so it is where perception learns
+            // it too. Idempotent, and silent for peers that are not devices.
+            if let Some(a) = &resolved {
+                crate::perception::devices::arrived(&a.device);
+            }
             *actor.lock().unwrap() = resolved;
 
             // On the relay the Mac already knew this was a paired device; on

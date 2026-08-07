@@ -9,6 +9,7 @@ mod logging;
 mod mcp_client;
 mod message;
 mod paths;
+mod perception;
 mod prompts;
 mod provider;
 mod server;

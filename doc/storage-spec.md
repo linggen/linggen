@@ -55,6 +55,10 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       └── messages.jsonl            # Chat messages, append-only (JSONL)
 ├── memory/                           # Global memory
 │   └── ...
+├── activity/                         # Perception's record of what changed here
+│   ├── {YYYY-MM-DD}.jsonl            # One day of activities (JSONL, last few days)
+│   ├── trend.json                    # Daily free-space samples (a fortnight)
+│   └── conditions.json               # When each condition last fired (re-arm)
 ├── credentials.json                  # API keys for model providers (JSON)
 ├── permissions.json                  # (legacy, ignored — see permission-spec.md)
 ├── missions/

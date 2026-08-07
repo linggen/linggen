@@ -46,6 +46,8 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
 | `AskUser` | `questions` | Ask user structured questions mid-execution |
+| `sense` | — | The room: presence, how busy the day is, the hour, and this machine's world block |
+| `recent_activity` | `limit?` | What changed on this machine lately, and who did it (perception-spec.md §3) |
 | `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
 | `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |

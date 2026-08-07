@@ -1,6 +1,7 @@
 # Perception Spec
 
-**Status: designed, not built.**
+**Status: built on both hosts** — engine (`src/perception/`) and phone
+(`lib/services/perception/`). One condition ships enabled: storage filling.
 
 What a resident agent knows about the world it lives in, without being told.
 
@@ -75,7 +76,8 @@ because two schemas for one idea fork on contact.
 - `by` — `user`, `yinyue`, `ling`, or `system`. The actor, not the device.
 - `device` — which machine this happened on. With `by`, this is the attribution
   the family/multi-user design already calls for; it is the same field, not a
-  second one.
+  second one. Optional: a file is one host's, so an absent `device` means the
+  host whose file it is.
 - `app` — `dj`, `photos`, `cfo`, `shifu`, `system`.
 - `verb` — a short closed-set slug: `delete`, `add`, `edit`, `sync`, `backup`,
   `clean`, `import`, `play`, `pair`, `connect`, `disconnect`.
@@ -106,9 +108,19 @@ failed while the user was away. Both are needed and they are not the same fact.
 - Phone: the app's documents directory, beside the app data it describes.
 - Mac: `~/.linggen/activity/`, one file per day.
 
-The Mac's `backup-log.jsonl` — already JSONL, already rendered as "Activities"
-in Shifu's Media pane — is the same idea in one lane. It folds into this rather
-than sitting alongside it.
+### Who writes it
+
+The engine records what it owns: a device paired, a route lost or regained.
+Everything else is the app's own act, so the app says so — the phone's services
+call the log directly, and anything on the Mac with no way into the engine's
+memory (skills, app pages, scripts) posts to `POST /api/activity`. The engine
+names no app there; it takes the caller's word for what it is, exactly as
+`/api/topic/publish` does.
+
+That settles the Mac's `backup-log.jsonl`, which is the same idea in one lane:
+it is neither migrated nor read in place. It stays the Media pane's detailed
+history, and the one writer that appends it also posts the one-line fact here.
+One writer, two readers — not one file two owners.
 
 ---
 
@@ -174,10 +186,16 @@ which is the kind of line that makes an assistant feel dumb.
 Each host writes its own log and computes its own state. Neither file is synced;
 merging happens **at read time**, so there is no shared file to reconcile.
 
-An agent reads the other machine's perception the way it reaches anything over
-there — the peer request path, by the capability-symmetry rule: the tool lives
-where the action lives, and the peer gets a request tool. Yinyue asks the Mac,
-Ling asks the phone.
+Each host publishes what it measured **about itself** on a retained
+`perception` topic — the Mac under `mac`, a phone under `phone` — and each
+renders the other's with its age. Published rather than requested, by the rule
+app actions already settled: reads are published, actions are queued. The
+phone is the reason it must be this way round — iOS suspends the app within
+seconds of backgrounding, so a Mac that *asked* would be answered only when the
+phone happened to be awake, which is exactly when it is least needed.
+
+A host never republishes the other's lines, and never its own doorbell count: a
+count means nothing to a reader who is not the one who last looked.
 
 A host that cannot be reached simply contributes nothing. Its absence is itself
 a state line, and its departure is a log entry.
@@ -194,6 +212,12 @@ The log rotates daily. Rotation is one moment that produces two things:
    semantic. The dream judges the day, promotes what is durable about the person
    to `ling-mem`, and the raw rows are swept afterwards. Activities do not get a
    second lifecycle of their own.
+
+   One digest per day per host, never one row per activity — a memory store
+   filling with "you deleted a song" is the failure this design exists to
+   avoid. The phone's dream lives on the Mac, so a digest it could not hand
+   over is held and offered again on the next connection: a day ages out only
+   once.
 
 Nothing is uploaded (§8).
 
@@ -218,16 +242,23 @@ dream pass, and swept.
 
 ---
 
-## 9. Open
+## 9. Settled, and open
 
-- **Which conditions ship enabled.** The mechanism is general; the starting list
-  is a product choice, because each enabled condition is a licence to interrupt.
-  Recommendation: exactly one — storage filling — and add the next only after
-  living with it.
-- Whether `play` deserves to be an activity after all, for "what did I listen to
-  this week".
-- Whether the Mac's existing `backup-log.jsonl` is migrated or simply read in
-  place during the transition.
+Settled at build time:
+
+- **One condition ships enabled** on each host — storage filling. The mechanism
+  is general; each enabled condition is a licence to interrupt, so the next is
+  added only after living with this one.
+- **`play` stays out.** What is playing is state; what was played is a listening
+  history, which is a different feature and belongs to DJ if it is ever wanted.
+- **`backup-log.jsonl` is neither migrated nor read** — see §3.
+
+Open:
+
+- The Mac sweeps its conditions on Yinyue's ambient glance and the phone on
+  resume, because both are moments she could speak anyway. Neither host notices
+  a crossing while nobody is there to be told — right for a companion, wrong the
+  day a condition needs to act rather than speak.
 
 ---
 

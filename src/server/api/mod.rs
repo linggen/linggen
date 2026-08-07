@@ -2,12 +2,16 @@
 //! `/api/*` endpoints; `server::mod` wires them into the Axum router.
 
 pub(super) mod account;
+pub(super) mod activity;
 pub(super) mod agents;
 pub(super) mod config;
 pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod memory;
-pub(super) mod pair;
+/// `pub(crate)` rather than `pub(super)`: this module owns the paired-device
+/// store, not just its handlers, and perception reads it to say whether a
+/// device exists at all.
+pub(crate) mod pair;
 pub(super) mod missions;
 pub(super) mod permissions;
 pub(super) mod rooms;
@@ -16,7 +20,10 @@ pub(super) mod skill_sync;
 pub(super) mod skills;
 pub(super) mod status;
 pub(super) mod storage;
-pub(super) mod topic;
+/// `pub(crate)` rather than `pub(super)`: retained topics are how any reading
+/// reaches the user's other devices, and perception publishes this Mac's own
+/// state on one.
+pub(crate) mod topic;
 pub(super) mod tts;
 pub(super) mod workspace;
 pub(super) mod yinyue;

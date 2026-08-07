@@ -499,9 +499,26 @@ pub async fn yinyue_ambient_loop(state: Arc<ServerState>) {
 
 /// One ambient glance. She reads the room and decides whether a small remark
 /// fits — most of the time, nothing. Never narrates the user's work.
+///
+/// This is also when the machine's conditions are swept
+/// (`doc/perception-spec.md` §5). Deliberately here rather than on a timer of
+/// its own: a notice is only worth raising at a moment she could speak anyway,
+/// and a condition firing into a silent house is work nobody can hear.
 async fn ambient_glance(state: &Arc<ServerState>) {
     if !state.manager.get_config_snapshot().await.pet.enabled {
         return; // pet off → no ambient life
+    }
+    if let Some(notice) = crate::perception::conditions::sweep() {
+        tracing::info!("[yinyue-ambient] condition crossed: {}", notice.topic);
+        let kickoff = format!(
+            "Something about this machine crossed a line worth one sentence: {}. \
+             You noticed it — say so in your own voice, one short line, spoken aloud, \
+             plain prose, and offer the next step: {}. Never start anything yourself. \
+             If this truly isn't the moment, reply with exactly SILENT.",
+            notice.situation, notice.verbs
+        );
+        wake_herald(state.clone(), kickoff, "neutral").await;
+        return;
     }
     let kickoff = "A quiet moment — no event, just you. Right now tells you how things are; \
         read it and decide. Most of the time there's nothing worth saying — reply with exactly SILENT. \

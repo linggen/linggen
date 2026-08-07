@@ -1,4 +1,4 @@
-mod api;
+pub(crate) mod api;
 pub(crate) mod bridge;
 mod chat;
 mod mcp;
@@ -1169,6 +1169,10 @@ async fn prepare_server(
         .route("/api/topic/publish", post(api::topic::publish))
         .route("/api/topic/latest", get(api::topic::latest))
         .route(
+            "/api/activity",
+            post(api::activity::record).get(api::activity::recent),
+        )
+        .route(
             "/api/skill-sync/{skill}/items",
             get(api::skill_sync::get_items),
         )
@@ -1223,6 +1227,15 @@ async fn prepare_server(
         // now and then, makes one small unprompted remark in her own voice
         // (mostly she stays quiet). Sibling to the watch loop, not a mission.
         tokio::spawn(yinyue_watch::yinyue_ambient_loop(state.clone()));
+    }
+
+    // Perception. Two loops: one tells the user's connected devices what is
+    // true on this Mac (§6, and only when a device is there to hear it), the
+    // other rotates the day — a trend sample, the day's activities handed to
+    // the dream pass, then the sweep (§7).
+    {
+        tokio::spawn(crate::perception::publish::publish_loop(state.clone()));
+        tokio::spawn(crate::perception::rotation::rotation_loop(state.clone()));
     }
 
     // Spawn the agent_run sweeper. Reaps `Running` rows older than the
