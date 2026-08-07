@@ -752,8 +752,8 @@ async fn post_pair_window(instance: &str, hash: Option<String>) {
         crate::account::site_url(),
         instance
     );
+    let open = hash.is_some();
     let body = serde_json::json!({ "pair_hash": hash });
-    let open = hash_is_some(&body);
     match reqwest::Client::new()
         .post(&url)
         .bearer_auth(token)
@@ -768,10 +768,6 @@ async fn post_pair_window(instance: &str, hash: Option<String>) {
         Ok(r) => tracing::warn!("[pair] pairing window update failed: {}", r.status()),
         Err(e) => tracing::warn!("[pair] pairing window update error: {e}"),
     }
-}
-
-fn hash_is_some(body: &serde_json::Value) -> bool {
-    !body["pair_hash"].is_null()
 }
 
 fn sha256_hex(input: &str) -> String {

@@ -31,7 +31,7 @@
 //! belong, and this file follows them.
 
 use super::Tools;
-use crate::mcp_client::{qualify, registry, BUILTIN_MEMORY};
+use crate::mcp_client::{qualify, registry, AdvertisedTool, BUILTIN_MEMORY};
 use anyhow::Result;
 use serde_json::Value;
 use std::time::Duration;
@@ -52,10 +52,15 @@ const HOST: &str = "linggen";
 /// have this engine's session state filled into it. A user entry named
 /// `memory` wins over the built-in one (see `mcp_client::config`), and it is
 /// still the memory server, so it is still scoped.
-fn is_memory_tool(qualified: &str) -> bool {
+/// The advertised tool, if this is one of the memory server's.
+///
+/// Returns the row rather than a bool because every caller wants it: asking
+/// twice meant two lock-and-scan passes and two deep clones of a schema, per
+/// memory call the model makes.
+fn memory_tool(qualified: &str) -> Option<AdvertisedTool> {
     registry()
         .advertised_tool(qualified)
-        .is_some_and(|t| t.server == BUILTIN_MEMORY)
+        .filter(|t| t.server == BUILTIN_MEMORY)
 }
 
 /// Fill in what the model could not know, and refuse what it may not do.
@@ -64,10 +69,7 @@ fn is_memory_tool(qualified: &str) -> bool {
 /// untouched — this is the only place the engine treats one server specially,
 /// and it does so for the session state it alone holds.
 pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> Result<Value> {
-    if !is_memory_tool(qualified) {
-        return Ok(args);
-    }
-    let Some(tool) = registry().advertised_tool(qualified) else {
+    let Some(tool) = memory_tool(qualified) else {
         return Ok(args);
     };
 

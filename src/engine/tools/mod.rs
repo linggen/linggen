@@ -372,7 +372,7 @@ impl Tools {
         // `mcp__<server>__<tool>` name instead. Memory calls pick up the
         // session state only the host holds on the way out; see `memory_mcp`.
         if crate::mcp_client::is_mcp_tool(&call.tool) {
-            let args = memory_mcp::augment(self, &call.tool, call.args.clone()).await?;
+            let args = memory_mcp::augment(self, &call.tool, std::mem::take(&mut call.args)).await?;
             let out = crate::mcp_client::registry().call(&call.tool, args).await?;
             return Ok(ToolResult::Success(out));
         }

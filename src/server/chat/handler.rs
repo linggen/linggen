@@ -487,6 +487,12 @@ async fn restore_chat_history_if_empty(
         }
     }
     let root_buf = root.to_path_buf();
+    // Asked once for the whole restore, not once per message. `agent_exists`
+    // re-reads and YAML-parses every agents/*.md on each call, and a
+    // memory-enabled session persists a `memory-recall` row per recalled turn —
+    // so the question was being asked of roughly half the history, one full
+    // directory scan at a time, before the first token.
+    let mut is_agent: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
     for m in &msgs {
         if m.is_observation || m.from_id == "system" {
             continue;
@@ -498,9 +504,16 @@ async fn restore_chat_history_if_empty(
         // (memory-recall, compaction) are not agents and stay assistant
         // context, exactly as before.
         let is_own = m.from_id == m.agent_id;
-        let is_relay = !is_own
-            && m.from_id != "user"
-            && manager.agent_exists(&root_buf, &m.from_id).await;
+        let is_relay = !is_own && m.from_id != "user" && {
+            match is_agent.get(m.from_id.as_str()) {
+                Some(known) => *known,
+                None => {
+                    let known = manager.agent_exists(&root_buf, &m.from_id).await;
+                    is_agent.insert(m.from_id.as_str(), known);
+                    known
+                }
+            }
+        };
         let role = if m.from_id == "user" || is_relay { "user" } else { "assistant" };
         // Older relay rows carry their label baked into the text already.
         let content = if is_relay && !m.content.starts_with('[') {

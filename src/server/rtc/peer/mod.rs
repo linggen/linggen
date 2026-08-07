@@ -765,7 +765,13 @@ async fn run_peer(
 
         // Keep spinning without blocking if: timeout elapsed OR we have writes ready to send.
         // But do NOT spin when paused — we need to enter select! to receive UDP (SCTP ACKs).
-        let draining = !dc_write_paused && !pending_dc_writes.is_empty();
+        // Both write lanes count. The media backlog was left out when it was
+        // added, so once spawn_get had drained its channel into the backlog
+        // nothing on the producer side woke the loop any more: the tail of a
+        // transfer paced on unrelated wakes instead of filling until the
+        // buffer refused.
+        let draining =
+            !dc_write_paused && !(pending_dc_writes.is_empty() && media_backlog.is_empty());
         if wait.is_zero() || draining {
             if draining {
                 // Emptying the write queue is progress, however long it takes.
