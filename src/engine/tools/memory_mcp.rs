@@ -96,6 +96,23 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
         set(&mut args, "host", Value::String(HOST.to_string()));
     }
 
+    // Where the work is happening — stamped on the way in (`cwd`) and asked
+    // for on the way out (`cwd_scope`), so a row can only be found from the
+    // project it was written in, or from a parent of it.
+    //
+    // The model is never asked for either. It is a fact about the session, not
+    // a judgment, and a field the model has to copy by hand is a field that
+    // ends up empty — which is the whole store bleeding into every question.
+    for field in ["cwd", "cwd_scope"] {
+        if declares(&tool.input_schema, field) && !has(&args, field) {
+            set(
+                &mut args,
+                field,
+                Value::String(tools.cwd().to_string_lossy().to_string()),
+            );
+        }
+    }
+
     guard_user_voice(tools, &tool.server, &mut args).await?;
     Ok(args)
 }
