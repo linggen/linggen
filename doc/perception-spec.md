@@ -186,7 +186,7 @@ a state line, and its departure is a log entry.
 
 ## 7. Rotation and lifecycle
 
-The log rotates daily. Rotation is one moment that produces three things:
+The log rotates daily. Rotation is one moment that produces two things:
 
 1. **A state sample** — the day's numbers appended to the trend series (§5).
 2. **The day's activities handed to the dream pass.** This is the same shape
@@ -194,46 +194,36 @@ The log rotates daily. Rotation is one moment that produces three things:
    semantic. The dream judges the day, promotes what is durable about the person
    to `ling-mem`, and the raw rows are swept afterwards. Activities do not get a
    second lifecycle of their own.
-3. **A content-free aggregate**, for product analytics (§8).
+
+Nothing is uploaded (§8).
 
 Local retention is a few days, not one — perception wants "recent", and at 11pm
 a one-day window holds almost nothing.
 
 ---
 
-## 8. What leaves the device, and what does not
+## 8. Nothing leaves the device
 
-**The log never leaves the device.** It carries song titles, filenames, photo
-counts, statement imports. It is not analytics and must not be routed through
-the analytics pipe, whose validator caps `screen` and `control` at 64 characters
-precisely so content cannot travel.
+**The log is local, always.** It carries song titles, filenames, photo counts,
+statement imports — and it exists so an agent can perceive the machine it lives
+in, which is a question that never needs answering anywhere else.
 
-What may leave, on rotation, is a derived aggregate with no objects in it:
+Product analytics is a separate system and already does its own job: `/api/track`
+records `screen_view` and `tap` with names only, capped at 64 characters and
+validated server-side so content cannot travel. Perception adds nothing to it and
+takes nothing from it. The two never meet.
 
-```json
-{"day":"2026-08-07","product":"linggen-mobile",
- "counts":{"dj.delete":3,"dj.sync":12,"photos.backup":1,"cfo.import":1}}
-```
-
-Verbs and counts answer the product questions — is this feature used, do people
-come back next month — and none of the private ones. It rides the existing
-`/api/track` shape as a new event type.
-
-Consent still governs it: nothing is sent while analytics consent is unanswered
-or withdrawn, and the local log is unaffected by that setting either way, since
-it was never going anywhere.
+So rotation (§7) has no upload step. A day is sampled for trends, handed to the
+dream pass, and swept.
 
 ---
 
 ## 9. Open
 
-- **Whether the day's detail leaves the device at all.** The requirement is that
-  rotation feed analytics; §8 proposes the content-free aggregate as the way to
-  do it without loosening the guardrail that keeps content out of the events
-  table. Not settled.
 - **Which conditions ship enabled.** The mechanism is general; the starting list
-  is a product choice. Recommendation: exactly one — storage filling — and add
-  the next only after living with it.
+  is a product choice, because each enabled condition is a licence to interrupt.
+  Recommendation: exactly one — storage filling — and add the next only after
+  living with it.
 - Whether `play` deserves to be an activity after all, for "what did I listen to
   this week".
 - Whether the Mac's existing `backup-log.jsonl` is migrated or simply read in
