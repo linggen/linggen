@@ -44,7 +44,7 @@ async fn rotate(ling_mem_url: &str) {
             log.forget(&aged); // an empty day is not a memory, and not a debt
             continue;
         };
-        match hand_to_dream(ling_mem_url, &digest).await {
+        match hand_to_dream(ling_mem_url, &aged.day, &digest).await {
             Ok(()) => {
                 log.forget(&aged);
                 tracing::info!("[perception] {} handed to the dream pass", aged.day);
@@ -96,21 +96,46 @@ fn digest(day: &str, rows: &[super::activity::Activity]) -> Option<String> {
 /// the ordinary TTL. One row per day per host, not one per activity — a
 /// memory store filling with "you deleted a song" is the failure this design
 /// exists to avoid.
-async fn hand_to_dream(ling_mem_url: &str, digest: &str) -> anyhow::Result<()> {
+async fn hand_to_dream(ling_mem_url: &str, day: &str, digest: &str) -> anyhow::Result<()> {
     crate::engine::tools::memory_http::call_memory_http(
         ling_mem_url,
         "perception rotation",
-        serde_json::json!({
-            "verb": "add",
-            "tier": "episodic",
-            "type": "fact",
-            "content": digest,
-            "contexts": ["perception"],
-            "host": "linggen",
-        }),
+        dream_row(day, digest),
     )
     .await
     .map(|_| ())
+}
+
+/// The row the dream will judge. Two absences and one stamp, all deliberate:
+/// no `contexts` — a tag here named the subsystem that wrote the row, not the
+/// row's subject, and nothing ever filtered on it (the phone's digest never
+/// carried one); no `cwd` — a machine's day is not project work, so the row
+/// stays visible from everywhere; and `occurred_at` = the end of the day the
+/// digest DESCRIBES, because the row is written days later when the day ages
+/// out — without the stamp it lands on the handover date, where the dream
+/// judges it late and recall sorts it under the wrong day.
+fn dream_row(day: &str, digest: &str) -> serde_json::Value {
+    let mut row = serde_json::json!({
+        "verb": "add",
+        "tier": "episodic",
+        "type": "fact",
+        "content": digest,
+        "host": "linggen",
+    });
+    if let Some(end) = day_end(day) {
+        row["occurred_at"] = serde_json::Value::String(end);
+    }
+    row
+}
+
+/// 23:59:59 local on `day`, RFC-3339 — inside the day under the store's
+/// local-day bucketing. `earliest()` so a DST fold still yields a stamp.
+fn day_end(day: &str) -> Option<String> {
+    super::activity::parse_day(day)?
+        .and_hms_opt(23, 59, 59)?
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .map(|dt| dt.to_rfc3339())
 }
 
 #[cfg(test)]
@@ -137,15 +162,35 @@ mod tests {
 
     #[test]
     fn a_day_reads_as_lines_a_person_wrote() {
-        let d = digest("2026-08-06", &[row("delete", "三天三夜"), row("sync", "12 songs")]).unwrap();
+        let d = digest(
+            "2026-08-06",
+            &[row("delete", "三天三夜"), row("sync", "12 songs")],
+        )
+        .unwrap();
         assert!(d.contains("on 2026-08-06 (2 things)"), "{d}");
         assert!(d.contains("you deleted 三天三夜"), "{d}");
         assert!(d.contains("you synced 12 songs"), "{d}");
     }
 
     #[test]
+    fn the_dream_row_carries_the_day_it_describes_and_no_tags() {
+        let row = dream_row("2026-08-06", "What happened…");
+        assert!(
+            row.get("contexts").is_none(),
+            "a subsystem naming itself is not a subject tag"
+        );
+        let occurred = row["occurred_at"].as_str().unwrap();
+        assert!(occurred.starts_with("2026-08-06T23:59:59"), "{occurred}");
+        assert_eq!(row["tier"], "episodic");
+        assert_eq!(row["host"], "linggen");
+        assert_eq!(row["verb"], "add");
+    }
+
+    #[test]
     fn a_long_day_keeps_its_shape_not_its_every_beat() {
-        let rows: Vec<Activity> = (0..60).map(|i| row("delete", &format!("song {i}"))).collect();
+        let rows: Vec<Activity> = (0..60)
+            .map(|i| row("delete", &format!("song {i}")))
+            .collect();
         let d = digest("2026-08-06", &rows).unwrap();
         assert!(d.contains("(60 things)"), "the count stays honest: {d}");
         assert!(d.contains("…and 20 more"), "{d}");
