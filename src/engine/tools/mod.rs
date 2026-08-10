@@ -9,6 +9,7 @@ mod file_tools;
 pub(crate) mod json_schema;
 pub(crate) mod memory_http;
 mod memory_mcp;
+pub(crate) use memory_mcp::is_project_dir;
 mod search_exec;
 mod write_tools;
 mod delegation;

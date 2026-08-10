@@ -83,10 +83,14 @@ request):
 4. **Judge each cluster** — exactly one of:
    - **Promote** (durable: user biography, cross-project preference,
      decision-with-reasoning, re-hit gotcha, state change like a
-     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","contexts":<row.contexts>,"occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>"}`.
-     Carry `occurred_at` forward — recall sorting relies on it. Do NOT
-     pass `id`. Omit `tier` (defaults to semantic); pass
-     `"tier":"core"` only for a narrow universal about the person.
+     shipped milestone, run learning): `memory_add {"content":"<verbatim row content>","type":"<row.type>","from":"<row.from>","contexts":<row.contexts>,"occurred_at":"<row.occurred_at, else row.created_at>","source_session":"<row.source_session, if present>","cwd":"<row.cwd, if present>"}`.
+     Carry `occurred_at` forward — recall sorting relies on it. Carry
+     `cwd` forward too, and only from the row: it is WHERE the memory
+     came from, and it is what keeps the promoted row findable from
+     that project. A row with no `cwd` gets none — never this
+     session's own directory. Do NOT pass `id`. Omit `tier` (defaults
+     to semantic); pass `"tier":"core"` only for a narrow universal
+     about the person.
      **The promote bar — state + lessons, never events.** Test: strip
      the date and the commit hash — still useful in three months?
      Per-event rows ("committed X", "pushed Y", "closed the session")
@@ -178,7 +182,9 @@ atomically. Drafting rules:
 - Fields: `type` = the most current member's type; `from` stays
   `derived`; omit `tier` (semantic); `contexts` = union of the
   members'; `occurred_at` = the newest member's (else its
-  `created_at`).
+  `created_at`); `cwd` = the members' shared value when they agree
+  (omit when they differ or none carries one — never this session's
+  own directory).
 - **`replace_ids` may list only rows that are `from=derived,
   tier=semantic`.** Never a user-voice row, never a core row, never an
   episodic id — if one appears in a cluster, skip the whole cluster

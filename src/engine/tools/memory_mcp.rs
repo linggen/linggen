@@ -103,18 +103,60 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     // The model is never asked for either. It is a fact about the session, not
     // a judgment, and a field the model has to copy by hand is a field that
     // ends up empty — which is the whole store bleeding into every question.
-    for field in ["cwd", "cwd_scope"] {
-        if declares(&tool.input_schema, field) && !has(&args, field) {
-            set(
-                &mut args,
-                field,
-                Value::String(tools.cwd().to_string_lossy().to_string()),
-            );
+    //
+    // Two refusals guard the stamp. A call that names ANOTHER session's row
+    // (`source_session` ≠ this session — checked after the fill above, which
+    // only ever inserts our own id) is the dream's promote or the scan's
+    // backfill carrying the original row's origin: its cwd, when it had one,
+    // rides in the same call, and this session's cwd stamped over the gap
+    // would rescope someone else's memory to wherever the dream happened to
+    // run. And a cwd that is not a project (see [`project_cwd`]) must never
+    // become one — the dream mission runs at `~/.linggen`, and a row stamped
+    // there is hidden from every project-scoped search.
+    let foreign_row = args
+        .get("source_session")
+        .and_then(Value::as_str)
+        .is_some_and(|s| tools.session_id.as_deref() != Some(s));
+    if !foreign_row {
+        if let Some(project) = project_cwd(tools) {
+            for field in ["cwd", "cwd_scope"] {
+                if declares(&tool.input_schema, field) && !has(&args, field) {
+                    set(&mut args, field, Value::String(project.clone()));
+                }
+            }
         }
     }
 
     guard_user_voice(tools, &tool.server, &mut args).await?;
     Ok(args)
+}
+
+/// This session's cwd, if it is a place recall scoping should know about.
+///
+/// `None` for the dirs a session sits in when it is not in any project: the
+/// home dir ("no particular work" — a scope there would claim every repo
+/// underneath), the engine's own `~/.linggen` (where every mission runs),
+/// and temp dirs. Stamping one of those onto a write hides the row from
+/// every project search, and scoping a read to one hides every project row
+/// from the reader — a scope that is not a project is worse than no scope.
+/// Same rule the plugin's stamp-cwd.sh / recall.sh apply for Claude Code.
+pub(crate) fn project_cwd(tools: &Tools) -> Option<String> {
+    let cwd = tools.cwd();
+    is_project_dir(&cwd).then(|| cwd.to_string_lossy().to_string())
+}
+
+/// Is this path a project, as far as memory scoping is concerned?
+/// Also used by the chat runtime's per-turn auto-recall on the session's
+/// own cwd — one predicate, both directions.
+pub(crate) fn is_project_dir(cwd: &std::path::Path) -> bool {
+    if let Some(home) = dirs::home_dir() {
+        if cwd == home || cwd.starts_with(home.join(".linggen")) {
+            return false;
+        }
+    }
+    !(cwd.starts_with(std::env::temp_dir())
+        || cwd.starts_with("/tmp")
+        || cwd.starts_with("/private/tmp"))
 }
 
 /// Does the server accept this field for this tool?
@@ -283,6 +325,29 @@ mod tests {
             retier.get("user_directed").is_none(),
             "an unguarded write must not carry the flag onto the wire"
         );
+    }
+
+    /// The dirs a session sits in when it is not in any project must never
+    /// become a scope — a row stamped with one is hidden from every
+    /// project-scoped search (the dream mission runs at `~/.linggen`).
+    #[test]
+    fn a_cwd_that_is_not_a_project_never_becomes_a_scope() {
+        for non_project in [
+            std::env::temp_dir(),
+            dirs::home_dir().unwrap(),
+            dirs::home_dir().unwrap().join(".linggen"),
+            dirs::home_dir().unwrap().join(".linggen/missions"),
+        ] {
+            let tools = Tools::new(non_project.clone()).unwrap();
+            assert!(
+                project_cwd(&tools).is_none(),
+                "{non_project:?} is not a project"
+            );
+        }
+
+        // A real repo checkout is one.
+        let tools = Tools::new(std::env::current_dir().unwrap()).unwrap();
+        assert!(project_cwd(&tools).is_some());
     }
 
     /// The model's own assertion never reaches the daemon unexamined.

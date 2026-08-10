@@ -56,6 +56,14 @@ never writes to project files.
 - **Recall** — relevant memories surface at the start of each turn;
   facts used in a reply are cited ("From memory: …"). The identity
   set is always present.
+- **Scope** — every row records the project directory it came from,
+  and recall is scoped to the project the question is asked in (plus
+  every row that belongs to no project — identity, preferences,
+  cross-project gotchas are about the person). The host stamps both
+  sides mechanically; the model is never asked to copy either. A
+  directory that is not a project (home, the engine's own state dir,
+  temp) never becomes a scope, and rows carried forward by the dream
+  or a backfill keep the scope they were born with.
 - **Dedup** — exact duplicates collapse automatically at write time.
   Anything fuzzier is judgment, not mechanics.
 - **Reconcile** — authority follows voice: the agent freely merges
@@ -114,9 +122,12 @@ a real engine against a throwaway store and judges the end state.
 
 ## Open / next
 
-Nothing open — the promote/merge review widget shipped as the
-attended dream's AskUser batch; snapshots + the run report cover
-inspection and recovery.
+- Scope on Codex is read-side only: its hook runner cannot rewrite
+  tool input yet, so recall is scoped but the model's own writes go
+  unstamped there.
+- Rows from before scoping whose session logs are gone still carry no
+  project and surface everywhere; stamping them by content is
+  inference on the user's memory — their call, not the agent's.
 
 ## Future
 

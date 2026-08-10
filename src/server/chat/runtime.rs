@@ -236,8 +236,9 @@ async fn auto_recall_memory(
 ) -> Option<Vec<RecallRow>> {
     use std::time::Duration;
     const RECALL_BUDGET: Duration = Duration::from_secs(3);
-    // Fetch wide so the project-scope filter has headroom before the
-    // top-K cap (Settings → General → Recall Count) kicks in.
+    // Fetch wide so the client-side min-score cut has headroom before the
+    // top-K cap (Settings → General → Recall Count) kicks in. Project
+    // scoping is NOT the reason: that's applied in the daemon, pre-ranking.
     const FETCH_LIMIT: usize = 30;
     const MIN_PROMPT_CHARS: usize = 8;
 
@@ -252,9 +253,16 @@ async fn auto_recall_memory(
     // `--idle-shutdown-secs`, so an absent daemon is an ordinary condition
     // and not an exception.
 
-    let project_name: Option<String> = session_id
+    // The session's working directory, when it is a real project — sent to
+    // the daemon as `cwd_scope` so the scope shapes the RANKING (rows from
+    // other projects can't crowd the wanted ones out of the top N; a filter
+    // applied to the returned list can only shrink an already-wrong N).
+    // Unscoped rows — identity, preferences, cross-project gotchas — always
+    // pass; the same contract as the plugin's recall.sh on Claude Code.
+    let cwd_scope: Option<String> = session_id
         .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
-        .and_then(|m| m.project_name);
+        .and_then(|m| m.cwd.or(m.project))
+        .filter(|p| crate::engine::tools::is_project_dir(std::path::Path::new(p)));
 
     // `min_score` is the per-row relevance floor (Settings → General → Memory
     // Inject Score), applied by the daemon to the HYBRID score — cosine plus
@@ -276,13 +284,20 @@ async fn auto_recall_memory(
     }
     // Scoped per-app recall: restrict the search to this namespace on the
     // daemon side, so a focused app (CFO ↔ "cfo") only ever pulls its own rows.
+    // The project scope stays out of this branch — an app's namespace is its
+    // isolation, and its rows are written from wherever the app happens to run.
     if let Some(ctx) = &contexts {
         args["contexts"] = serde_json::json!(ctx);
+    } else if let Some(scope) = &cwd_scope {
+        args["cwd_scope"] = serde_json::json!(scope);
     }
 
     tracing::debug!(
-        "auto-recall: min_score={:?} top_k={} contexts={:?}",
-        min_score, top_k, contexts
+        "auto-recall: min_score={:?} top_k={} contexts={:?} cwd_scope={:?}",
+        min_score,
+        top_k,
+        contexts,
+        cwd_scope
     );
     // Over the engine's own MCP client, the same way an agent's tool call
     // reaches it. A model is needed to CHOOSE a tool, not to CALL one — so
@@ -313,38 +328,10 @@ async fn auto_recall_memory(
         return None;
     }
 
-    let want_proj_ctx = project_name.as_deref().map(|p| format!("project/{p}"));
-
     let mut hits: Vec<RecallRow> = Vec::new();
     for row in rows {
         if hits.len() >= top_k {
             break;
-        }
-
-        // Project-scope filter applies only to the full (unscoped) recall.
-        // In scoped per-app mode the daemon already constrained to the app's
-        // `contexts`, so don't second-guess it with the project heuristic.
-        if contexts.is_none() {
-            // Drop rows scoped to a different project; rows with no project/*
-            // context (cross-project, no-context, domain-scoped) always pass.
-            let project_scoped: Vec<&str> = row
-                .get("contexts")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str())
-                        .filter(|s| s.starts_with("project/"))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let project_ok = project_scoped.is_empty()
-                || want_proj_ctx
-                    .as_deref()
-                    .map(|w| project_scoped.iter().any(|s| *s == w))
-                    .unwrap_or(false);
-            if !project_ok {
-                continue;
-            }
         }
 
         let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
