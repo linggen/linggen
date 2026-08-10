@@ -322,6 +322,12 @@ pub(crate) async fn get_devices(
         Err(r) => return r,
     };
     let ledger = load_ledger(&s.skill);
+    // Whether the device is here RIGHT NOW, which the ledger cannot say — it
+    // records what was last fetched, not who is holding a channel. A page that
+    // pushes work at a device has to tell the difference to describe what it
+    // just did: something a connected device starts on immediately reads very
+    // differently from something waiting for one to wake up.
+    let present = crate::perception::devices::present_ids();
     let devices: Vec<serde_json::Value> = super::pair::load_devices()
         .iter()
         .map(|d| {
@@ -331,6 +337,7 @@ pub(crate) async fn get_devices(
                 "name": d.name,
                 "files": row.files,
                 "last_fetch": (row.last_fetch > 0).then_some(row.last_fetch),
+                "present": present.contains(&d.id),
             })
         })
         .collect();

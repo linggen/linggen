@@ -1,8 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-
 ## Doc and Spec
 
 Read files under `doc/` and follow them. If you find wrong content in any doc file, confirm with the user.
@@ -37,75 +34,32 @@ Read files under `doc/` and follow them. If you find wrong content in any doc fi
 
 ## Build, Test, Run
 
-### Rust Backend
+Standard `cargo` and `npm` invocations throughout. The non-obvious pairs:
 
 ```bash
-cargo build                        # Build
-cargo test                         # Run all tests
-cargo test check::tests            # Run tests in a specific module
-cargo test test_name               # Run a single test by name
 cargo run                          # Start background daemon + open browser (default)
-cargo run -- --web --dev           # Dev mode (proxy static assets to Vite)
+cargo run -- --web --dev           # Dev mode: API only, proxies static assets to Vite
 cargo run -- --root /path/to/proj  # Custom workspace root
 ```
 
-### Web UI (React 19 + Vite + Tailwind v4)
-
-```bash
-cd ui
-npm install                        # Install dependencies
-npm run dev                        # Dev server (HMR, proxies /api to backend)
-npm run build                      # Production build → ui/dist/ (embedded by Rust)
-npm run lint                       # ESLint check
-npm run lint:fix                   # Auto-fix
-```
-
-### Full-Stack Dev
-
-Run both in parallel:
-1. `cargo run -- --web --dev` (backend API only)
-2. `cd ui && npm run dev` (Vite dev server with HMR)
-
-For production: `cd ui && npm run build`, then `cargo run` (embeds `ui/dist/` via rust-embed).
+Full-stack dev = `cargo run -- --web --dev` alongside `cd ui && npm run dev`
+(HMR, proxies /api). Production: `cd ui && npm run build`, then `cargo run`
+(embeds `ui/dist/` via rust-embed — a release binary serves stale UI until
+you rebuild dist).
 
 ## Architecture
 
-Linggen is a local-first, multi-agent coding assistant. The binary is `ling`. Default mode starts a background daemon + opens browser.
+Linggen is a local-first, multi-agent coding assistant. The binary is
+`ling`. Default mode starts a background daemon + opens browser. Explore
+`src/` and `ui/src/` directly for layout; the non-derivable anchors:
 
-### Rust Backend (`src/`)
-
-- **`main.rs`** — CLI entry point (clap). Subcommands: `stop`, `status`, `doctor`, `eval`, `init`, `install`, `update`, `skills`. No subcommand → daemon + open browser.
-- **`config.rs`** — Config loading from `linggen.toml` (TOML). Defines `Config`, `ModelConfig`, `AgentSpecRef` (linggen.toml binding for an agent markdown file).
-- **`engine/`** — Core agent execution engine. `mod.rs` is the main loop. Three extension types share one `record.rs` + `registry.rs` shape:
-  - `skill/record.rs` (`Skill`) + `skill/registry.rs` (`SkillRegistry` trait)
-  - `agent/record.rs` (`AgentSpec`/`AgentSpecFile`) + `agent/registry.rs` (`AgentRegistry` trait); `agent/mod.rs` owns `AgentManager` (lifecycle, run records, cancellation); `agent/runs.rs` is the in-memory `RunStore`.
-  - `mission/record.rs` (`Mission`/`MissionRunEntry`) + `mission/registry.rs` (`MissionRegistry`) + `mission/runs.rs` (`MissionRunStore` trait, disk-persistent).
-  Disk loaders all live under `extensions/` and implement the corresponding trait: `SkillLoader` / `AgentLoader` / `MissionLoader`. `tools.rs` implements all model-facing tools (Read, Write, Edit, Bash, Glob, Grep, capture_screenshot, lock_paths, unlock_paths, Task, WebSearch, WebFetch, Skill, AskUser). `actions.rs` parses JSON actions from model output. `streaming.rs` handles streaming responses. `context.rs` manages token counting and compaction. `permission.rs` enforces tool permissions. `plan.rs` manages plan mode.
-- **`provider/`** — Wire-format clients (`ollama.rs`, `openai.rs`, `anthropic.rs`), `models.rs` for multi-provider dispatch + streaming + fallback error classification, and `routing.rs` for model selection policies with fallback chains. `proxy_provider.rs` dispatches to a room-shared backend.
-- **`server/`** — Axum HTTP server. `chat/` handles chat/run requests (`handler.rs`, `runtime.rs`). `api/` holds the REST endpoints (`sessions.rs`, `missions.rs`, `config.rs`, `workspace.rs`, `agents.rs`, …). `rtc/` handles WebRTC transport. Mission cron scheduling lives in `extensions/missions/scheduler.rs`.
-- **`extensions/`** — Markdown-frontmatter artifacts the engine loads. `agents/` (disk loader for `agents/*.md`, `AgentRegistry` impl), `skills/` (interactive runtime), `missions/` (scheduled headless runtime), and shared helpers (`frontmatter.rs`, `script.rs`, `scope.rs`, `marketplace.rs`).
-- **`state_fs/`** — Filesystem-backed session state (`.linggen/sessions/`).
-- **`eval/`** — Evaluation framework: task runner, grader, report generation.
-- **`cli/`** — Standalone CLI commands: `daemon.rs`, `doctor.rs`, `self_update.rs`, `init.rs`, `skills_cmd.rs`.
-
-### Web UI (`ui/src/`)
-
-React 19 + TypeScript + Tailwind CSS v4 + Vite.
-
-- **`apps/MainApp.tsx`** — Root app shell. Project/session management, event handling, page routing. (Other shells: `ConsumerApp.tsx`, `EmbedApp.tsx`, `LauncherApp.tsx`, `PetApp.tsx`.)
-- **`components/chat/ChatPanel.tsx`** — Chat interface, message rendering, tool activity display.
-- **`components/MissionPage.tsx`** — Mission management (editor, agent config, history, activity tabs).
-- **`pages/Settings/SettingsHome.tsx`** — Settings shell; per-section tabs live in `components/` (`GeneralTab.tsx`, `ModelsTab.tsx`, `AgentsTab.tsx`, `SkillsTab.tsx`, `RoomTab.tsx`, `ToolsTab.tsx`, `StoragePage.tsx`).
-- **`stores/`** — Zustand stores for session/chat/UI state (`sessionStore.ts`, `chatStore.ts`, `serverStore.ts`, `uiStore.ts`, `userStore.ts`, `interactionStore.ts`, `roomChatStore.ts`). This is the primary state pattern; some Settings tabs still use local `useState` + direct `fetch` instead.
-- **`types.ts`** — Shared TypeScript type definitions.
-
-### Agent Definitions (`agents/`)
-
-Agent specs are markdown files with YAML frontmatter. Adding a `.md` file registers a new agent at startup.
-
-Frontmatter fields: `name`, `description`, `tools`, `model`, `personality`.
-
-Current agents: `ling` (the only agent — adapts to any context via skills).
+- The three extension types (skills / agents / missions) share one
+  `record.rs` + `registry.rs` shape under `engine/`; their disk loaders all
+  live under `extensions/`, not beside their types.
+- `ui/src/stores/` (Zustand) is the primary UI state pattern; some Settings
+  tabs still use local `useState` + direct `fetch` instead.
+- Mission cron scheduling lives in `extensions/missions/scheduler.rs`, not
+  under `engine/mission/`.
 
 ### Configuration
 
