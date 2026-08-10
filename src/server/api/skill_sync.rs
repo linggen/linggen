@@ -240,10 +240,23 @@ fn save_ledger(skill: &str, ledger: &HashMap<String, DeviceSync>) -> bool {
         .unwrap_or(false)
 }
 
-/// The same token sources the LAN gate accepts (header / bearer / cookie),
-/// resolved to the paired device that owns the token. Loopback callers — the
-/// Mac's own UI and skills — carry no token and resolve to None.
+/// Which paired device is asking. Loopback callers — the Mac's own UI and
+/// skills — are nobody's device and resolve to None.
+///
+/// Two ways in, because there are two ways a phone reaches this daemon. Over
+/// HTTP it carries its own token (header / bearer / cookie), the same sources
+/// the LAN gate accepts. Over the WebRTC tunnel it carries no token at all:
+/// the peer already authenticated the channel and tags each request with
+/// `x-linggen-actor-device`, an id rather than a secret.
+///
+/// Only the token half authorizes. The tunnel header attributes — it names who
+/// is already inside, and anything able to write it can reach loopback and is
+/// the Mac's owner anyway. Reading it here is the difference between a ledger
+/// that knows what a phone carries and one frozen at the day the transport
+/// became WebRTC-only: every `/have` a phone has posted since then was
+/// answered 401 and dropped.
 fn device_from_headers(headers: &HeaderMap) -> Option<super::pair::PairedDevice> {
+    let devices = super::pair::load_devices();
     let token = headers
         .get("x-linggen-device")
         .and_then(|v| v.to_str().ok())
@@ -262,8 +275,14 @@ fn device_from_headers(headers: &HeaderMap) -> Option<super::pair::PairedDevice>
                         .map(str::trim)
                         .find_map(|kv| kv.strip_prefix("linggen_device="))
                 })
-        })?;
-    super::pair::load_devices().into_iter().find(|d| d.secret == token)
+        });
+    if let Some(token) = token {
+        return devices.into_iter().find(|d| d.secret == token);
+    }
+    let id = headers
+        .get(super::pair::ACTOR_DEVICE_HEADER)
+        .and_then(|v| v.to_str().ok())?;
+    devices.into_iter().find(|d| d.id == id)
 }
 
 fn record_fetch(skill: &str, device_id: &str, name: &str) {
