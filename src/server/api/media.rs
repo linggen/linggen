@@ -1,8 +1,10 @@
 //! Wireless media sync — Linggen Mobile's paired Photos backup.
 //!
-//! Contract: `linggen-mobile/doc/sync-protocol.md`. Three routes:
-//! manifest (what does the Mac need / already hold), ingest (one original per
-//! multipart POST), verify (which uploads are now safe to delete on-phone).
+//! Contract: `linggen-mobile/doc/shifu.md`. The load-bearing ones are manifest
+//! (what does the Mac need / already hold), reconcile (the phone's whole roll,
+//! which prunes what it deleted), backup, and verify (which uploads are now
+//! safe to delete on-phone). Bytes arrive on the media channel; `ingest`, the
+//! multipart route, predates that and currently has no caller.
 //!
 //! Files land in the apple-shifu Media pipeline's own staging + archive, so the
 //! Mac review UI and the phone share one source of truth:
