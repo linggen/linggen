@@ -48,7 +48,10 @@ const SCAN_QUIESCE: std::time::Duration = std::time::Duration::from_secs(20);
 const WIRELESS_PREFIX: &str = "wireless/";
 
 fn data_dir() -> PathBuf {
-    crate::paths::global_skills_dir().join("apple-shifu").join("data").join("media")
+    crate::paths::global_skills_dir()
+        .join("apple-shifu")
+        .join("data")
+        .join("media")
 }
 
 pub(crate) fn staging_dir() -> PathBuf {
@@ -97,7 +100,8 @@ fn delete_queue_path() -> PathBuf {
 /// that minted it — a queue without `device` is ambiguous the moment a second
 /// phone pairs. `None` means "we don't know which phone", which is how rows
 /// queued before this existed, and USB-era rows, still behave: offered to
-/// everyone, exactly as they were.
+/// everyone, exactly as they were — until a reconcile finds the photo on some
+/// phone's roll and adopts the entry for it (presence is proof of ownership).
 #[derive(Clone, Debug)]
 struct DeleteEntry {
     local_id: String,
@@ -128,7 +132,10 @@ fn load_delete_queue() -> Vec<DeleteEntry> {
         return ids
             .iter()
             .filter_map(Value::as_str)
-            .map(|id| DeleteEntry { local_id: id.to_string(), device: None })
+            .map(|id| DeleteEntry {
+                local_id: id.to_string(),
+                device: None,
+            })
             .collect();
     }
     v.get("queue")
@@ -154,6 +161,36 @@ fn save_delete_queue(entries: &[DeleteEntry]) -> std::io::Result<()> {
     std::fs::write(delete_queue_path(), json!({ "queue": rows }).to_string())
 }
 
+/// Stamp `by.device` on unclaimed wireless rows whose localId this roll
+/// contains. Only the device is asserted — the account stays absent, which
+/// every reader already treats as "unknown", never "nobody".
+fn adopt_unclaimed_rows(rows: &mut [Value], on_phone: &HashSet<&str>, me: &str) -> bool {
+    let mut adopted = false;
+    for r in rows.iter_mut() {
+        let unclaimed = r
+            .get("by")
+            .and_then(|b| b.get("device"))
+            .and_then(Value::as_str)
+            .is_none();
+        let mine = r
+            .get("path")
+            .and_then(Value::as_str)
+            .and_then(|p| p.strip_prefix(WIRELESS_PREFIX))
+            .is_some_and(|local_id| on_phone.contains(local_id));
+        if !unclaimed || !mine {
+            continue;
+        }
+        match r.get_mut("by") {
+            Some(Value::Object(by)) => {
+                by.insert("device".to_string(), json!(me));
+            }
+            _ => r["by"] = json!({ "device": me }),
+        }
+        adopted = true;
+    }
+    adopted
+}
+
 /// Which phone holds this photo, per the manifest row written when it arrived.
 fn owner_of(rows: &[Value], local_id: &str) -> Option<String> {
     let wire_path = format!("{WIRELESS_PREFIX}{local_id}");
@@ -173,7 +210,12 @@ fn load_verdicts() -> HashMap<String, Vec<String>> {
         return HashMap::new();
     };
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
-    for item in doc.get("items").and_then(|i| i.as_array()).into_iter().flatten() {
+    for item in doc
+        .get("items")
+        .and_then(|i| i.as_array())
+        .into_iter()
+        .flatten()
+    {
         let Some(sha) = item.get("sha256").and_then(|s| s.as_str()) else {
             continue;
         };
@@ -197,7 +239,10 @@ fn load_verdicts() -> HashMap<String, Vec<String>> {
 }
 
 fn backup_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join("Pictures").join("iPhone Backup")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join("Pictures")
+        .join("iPhone Backup")
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +253,9 @@ fn load_jsonl(path: &Path) -> Vec<Value> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+    text.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
 }
 
 fn sha_set(rows: &[Value]) -> HashSet<String> {
@@ -227,7 +274,10 @@ fn rewrite_jsonl(path: &Path, rows: &[&Value]) -> std::io::Result<()> {
 }
 
 fn append_jsonl(path: &Path, row: &Value) -> std::io::Result<()> {
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(f, "{row}")
 }
 
@@ -346,24 +396,33 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
                 continue;
             }
             let device = owner_of(&rows, &id);
-            queue.push(DeleteEntry { local_id: id, device });
+            queue.push(DeleteEntry {
+                local_id: id,
+                device,
+            });
         }
     }
     let n = queue.len();
     if let Err(e) = save_delete_queue(&queue) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("queue write: {e}"));
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue write: {e}"),
+        );
     }
     tracing::info!("[media] phone-delete queue now {n} ids");
     Json(json!({"queued": n})).into_response()
 }
 
-/// Lightweight poll for the phone's foreground timer — deleting on the Mac
-/// while holding the phone should feel immediate.
+/// The queue as the caller may see it. A phone reads it whenever a route to
+/// the Mac appears — app start, resume, reconnect — and gets its own entries
+/// plus unclaimed ones. A caller with no device identity is the Mac's own
+/// Media page (loopback, no tunnel stamp): it owns the queue and sees all of
+/// it — scoping it like a phone made every queued badge vanish on reload.
 pub(crate) async fn pending_deletes_handler(headers: axum::http::HeaderMap) -> Response {
     let asking = crate::server::api::pair::caller_device(&headers);
     let ids: Vec<String> = load_delete_queue()
         .into_iter()
-        .filter(|e| e.concerns(asking.as_deref()))
+        .filter(|e| asking.is_none() || e.concerns(asking.as_deref()))
         .map(|e| e.local_id)
         .collect();
     Json(json!({ "localIds": ids })).into_response()
@@ -381,7 +440,10 @@ pub(crate) struct VerifyBody {
 
 pub(crate) async fn verify_handler(Json(body): Json<VerifyBody>) -> Response {
     let loaded = tokio::task::spawn_blocking(|| {
-        (load_jsonl(&manifest_path()), sha_set(&load_jsonl(&ledger_path())))
+        (
+            load_jsonl(&manifest_path()),
+            sha_set(&load_jsonl(&ledger_path())),
+        )
     })
     .await;
     let Ok((rows, archived)) = loaded else {
@@ -391,7 +453,10 @@ pub(crate) async fn verify_handler(Json(body): Json<VerifyBody>) -> Response {
     // pipeline's own by-path compaction).
     let mut sha_by_local_id: HashMap<&str, &str> = HashMap::new();
     for r in &rows {
-        let (Some(path), Some(sha)) = (r.get("path").and_then(Value::as_str), r.get("sha256").and_then(Value::as_str)) else {
+        let (Some(path), Some(sha)) = (
+            r.get("path").and_then(Value::as_str),
+            r.get("sha256").and_then(Value::as_str),
+        ) else {
             continue;
         };
         if let Some(local_id) = path.strip_prefix(WIRELESS_PREFIX) {
@@ -401,7 +466,11 @@ pub(crate) async fn verify_handler(Json(body): Json<VerifyBody>) -> Response {
     let verified: Vec<&String> = body
         .local_ids
         .iter()
-        .filter(|id| sha_by_local_id.get(id.as_str()).is_some_and(|sha| archived.contains(*sha)))
+        .filter(|id| {
+            sha_by_local_id
+                .get(id.as_str())
+                .is_some_and(|sha| archived.contains(*sha))
+        })
         .collect();
     Json(json!({"verified": verified})).into_response()
 }
@@ -444,15 +513,19 @@ pub(crate) async fn reconcile_handler(
             Json(json!({"pruned": n})).into_response()
         }
         Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("reconcile task: {e}")),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("reconcile task: {e}"),
+        ),
     }
 }
 
 fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<usize> {
     let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
-    // A roll speaks only for its own phone. With one phone paired nothing is
-    // ambiguous, so a row nobody claims must be that phone's — with two, it
-    // genuinely could be either, and guessing would delete someone's photos.
+    // A roll speaks only for its own phone. With one device row paired nothing
+    // is ambiguous, so a row nobody claims must be that phone's — with two
+    // (and a long-kept sim row counts), it genuinely could be either, and
+    // guessing would delete someone's photos.
     let alone = crate::server::api::pair::paired_device_count() <= 1;
     let speaks_for = |owner: Option<&str>| match (owner, asking) {
         (Some(o), Some(me)) => o == me,
@@ -460,20 +533,43 @@ fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<us
         (None, _) => alone,
     };
 
+    // ADOPTION, before any pruning: an unclaimed row whose localId appears in
+    // this roll is this phone's — localIds are phone-minted, so presence is
+    // proof of ownership where absence stays ambiguous. Claiming on evidence
+    // is what lets pre-attribution rows drain even on a Mac whose device list
+    // never gets down to one (a kept sim row pins `alone` false forever).
+    let mut queue = load_delete_queue();
+    let mut adopted = false;
+    if let Some(me) = asking {
+        for e in queue.iter_mut() {
+            if e.device.is_none() && on_phone.contains(e.local_id.as_str()) {
+                e.device = Some(me.to_string());
+                adopted = true;
+            }
+        }
+    }
+
     // Queue entries whose photo is no longer on the phone are done (executed,
     // or deleted by hand) — the roll report is the ack, no protocol needed.
-    let queue = load_delete_queue();
     let live: Vec<DeleteEntry> = queue
         .iter()
         .filter(|e| !speaks_for(e.device.as_deref()) || on_phone.contains(e.local_id.as_str()))
         .cloned()
         .collect();
-    if live.len() != queue.len() {
+    if adopted || live.len() != queue.len() {
         let _ = save_delete_queue(&live);
     }
-    let rows = load_jsonl(&manifest_path());
+    let mut rows = load_jsonl(&manifest_path());
+    let rows_adopted = match asking {
+        Some(me) => adopt_unclaimed_rows(&mut rows, &on_phone, me),
+        None => false,
+    };
     let gone = |r: &Value| {
-        if !speaks_for(r.get("by").and_then(|b| b.get("device")).and_then(Value::as_str)) {
+        if !speaks_for(
+            r.get("by")
+                .and_then(|b| b.get("device"))
+                .and_then(Value::as_str),
+        ) {
             return false;
         }
         r.get("path")
@@ -483,10 +579,15 @@ fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<us
     };
     let (pruned, kept): (Vec<&Value>, Vec<&Value>) = rows.iter().partition(|r| gone(r));
     if pruned.is_empty() {
+        if rows_adopted {
+            rewrite_jsonl(&manifest_path(), &kept)?;
+        }
         return Ok(0);
     }
-    let referenced: HashSet<&str> =
-        kept.iter().filter_map(|r| r.get("staged").and_then(Value::as_str)).collect();
+    let referenced: HashSet<&str> = kept
+        .iter()
+        .filter_map(|r| r.get("staged").and_then(Value::as_str))
+        .collect();
     for r in &pruned {
         if let Some(staged) = r.get("staged").and_then(Value::as_str) {
             if !referenced.contains(staged) {
@@ -516,7 +617,10 @@ pub(crate) async fn backup_handler() -> Response {
             Json(json!({"archived": archived, "failed": failed})).into_response()
         }
         Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("backup task: {e}")),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("backup task: {e}"),
+        ),
     }
 }
 
@@ -586,7 +690,10 @@ pub(crate) async fn ingest_handler(
 
     let staging = staging_dir();
     if let Err(e) = tokio::fs::create_dir_all(&staging).await {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("staging dir: {e}"));
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("staging dir: {e}"),
+        );
     }
     loop {
         let field = match multipart.next_field().await {
@@ -605,7 +712,9 @@ pub(crate) async fn ingest_handler(
                 filename = field.file_name().map(sanitize_filename);
                 match stream_to_tmp(field, &staging).await {
                     Ok(r) => received = Some(r),
-                    Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("receive: {e}")),
+                    Err(e) => {
+                        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("receive: {e}"))
+                    }
                 }
             }
             _ => {}
@@ -616,7 +725,10 @@ pub(crate) async fn ingest_handler(
         (local_id, declared_sha, received)
     else {
         discard(&None);
-        return err(StatusCode::BAD_REQUEST, "need localId, sha256 and file parts");
+        return err(
+            StatusCode::BAD_REQUEST,
+            "need localId, sha256 and file parts",
+        );
     };
     if computed_sha != declared_sha {
         let _ = std::fs::remove_file(&tmp);
@@ -629,7 +741,15 @@ pub(crate) async fn ingest_handler(
     let filename = filename.unwrap_or_else(|| format!("{}.bin", &computed_sha[..12]));
     let _guard = MEDIA_LOCK.lock().await;
     let finalized = tokio::task::spawn_blocking(move || {
-        finalize_ingest(&local_id, &computed_sha, created_ms, &filename, &tmp, size, by)
+        finalize_ingest(
+            &local_id,
+            &computed_sha,
+            created_ms,
+            &filename,
+            &tmp,
+            size,
+            by,
+        )
     })
     .await;
     match finalized {
@@ -638,7 +758,10 @@ pub(crate) async fn ingest_handler(
             Json(json!({"ok": true})).into_response()
         }
         Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("ingest task: {e}")),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("ingest task: {e}"),
+        ),
     }
 }
 
@@ -676,7 +799,12 @@ async fn run_media_scan() {
         return;
     }
     tracing::info!("[media] wireless sync quiesced — running pipeline scan");
-    match tokio::process::Command::new(&py).arg(&pipeline).arg("scan").output().await {
+    match tokio::process::Command::new(&py)
+        .arg(&pipeline)
+        .arg("scan")
+        .output()
+        .await
+    {
         Ok(out) if out.status.success() => {
             tracing::info!("[media] post-sync scan done");
         }
@@ -697,10 +825,20 @@ fn discard(received: &Option<(PathBuf, String, u64)>) {
 pub(crate) fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim_matches('.').to_string();
-    if trimmed.is_empty() { "asset".to_string() } else { trimmed }
+    if trimmed.is_empty() {
+        "asset".to_string()
+    } else {
+        trimmed
+    }
 }
 
 async fn stream_to_tmp(
@@ -855,7 +993,11 @@ fn unique_dest(dir: &Path, filename: &str, sha: &str) -> anyhow::Result<PathBuf>
         _ => (filename.to_string(), String::new()),
     };
     for n in 0..1000 {
-        let name = if n == 0 { format!("{stem}{ext}") } else { format!("{stem}-{n}{ext}") };
+        let name = if n == 0 {
+            format!("{stem}{ext}")
+        } else {
+            format!("{stem}-{n}{ext}")
+        };
         let candidate = dir.join(name);
         if !candidate.exists() || sha256_file(&candidate)? == sha {
             return Ok(candidate);
@@ -883,9 +1025,10 @@ fn ensure_wireless_row(
     if already {
         return Ok(());
     }
-    let mtime = created_ms.map(|ms| ms / 1000).unwrap_or_else(|| chrono::Local::now().timestamp());
-    let mut row =
-        json!({"path": wire_path, "size": size, "mtime": mtime, "sha256": sha, "staged": staged_rel});
+    let mtime = created_ms
+        .map(|ms| ms / 1000)
+        .unwrap_or_else(|| chrono::Local::now().timestamp());
+    let mut row = json!({"path": wire_path, "size": size, "mtime": mtime, "sha256": sha, "staged": staged_rel});
     // Whose phone sent it. Absent for an anonymous peer and for the USB pull —
     // a row with no `by` means "we don't know", never "nobody".
     if let Some(a) = by {
