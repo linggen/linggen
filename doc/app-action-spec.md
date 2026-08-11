@@ -16,7 +16,7 @@ Every user-visible app action is a declared tool. Both agents can reach every ac
 - `tool-spec.md`: built-in tools, dispatch, permission gate.
 - `skill-spec.md`: skill format, custom tool declarations.
 - `yinyue-companion-spec.md`: Yinyue's agent surface.
-- `../../linggen-mobile/doc/architecture.md`: phone app structure.
+- `../../linggen-mobile/doc/tech-spec.md`: phone app structure, and one doc per lane beside it.
 
 ## The symmetry rule
 
