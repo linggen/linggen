@@ -110,13 +110,119 @@ struct DeleteEntry {
 
 impl DeleteEntry {
     /// Is this entry this phone's business?
-    fn concerns(&self, device: Option<&str>) -> bool {
-        match (&self.device, device) {
-            (None, _) => true,
-            (Some(_), None) => false,
-            (Some(owner), Some(asking)) => owner == asking,
+    fn concerns(&self, own: &Ownership) -> bool {
+        match own.owner(self.device.as_deref()) {
+            None => true, // unclaimed, or claimed by a phone that is gone
+            Some(owner) => Some(owner) == own.asking.as_deref(),
         }
     }
+}
+
+/// Who may speak for a row or a queue entry, resolved once per request.
+///
+/// Two things it fixes that "compare the `by.device` string" could not:
+///
+/// - An owner that is **no longer paired** is a phone that was unpaired or
+///   reset. Its rows used to be unreachable forever — no live device matched
+///   the id, so nothing could prune them and adoption skipped them because
+///   they looked claimed. They read as unowned now, which puts them back in
+///   reach of the same adopt-then-prune path everything else uses.
+/// - `alone` is a property of the MANIFEST, not of the pairing list. That list
+///   keeps every simulator and retired phone ever paired, so counting it
+///   pinned "ambiguous" true forever on a Mac that has only ever had one real
+///   phone — and an unclaimed row absent from the roll could then never be
+///   pruned by anyone. What actually makes a row ambiguous is another LIVE
+///   device owning wireless rows here.
+struct Ownership {
+    asking: Option<String>,
+    live: HashSet<String>,
+    alone: bool,
+}
+
+fn row_owner(row: &Value) -> Option<&str> {
+    row.get("by")?.get("device")?.as_str()
+}
+
+fn is_wireless(row: &Value) -> bool {
+    row.get("path")
+        .and_then(Value::as_str)
+        .is_some_and(|p| p.starts_with(WIRELESS_PREFIX))
+}
+
+impl Ownership {
+    fn new(rows: &[Value], asking: Option<&str>) -> Self {
+        Self::from_parts(rows, asking, paired_device_ids())
+    }
+
+    fn from_parts(rows: &[Value], asking: Option<&str>, live: HashSet<String>) -> Self {
+        let alone = !rows.iter().any(|r| {
+            let Some(owner) = row_owner(r) else {
+                return false;
+            };
+            is_wireless(r) && live.contains(owner) && Some(owner) != asking
+        });
+        Self {
+            asking: asking.map(str::to_string),
+            live,
+            alone,
+        }
+    }
+
+    /// The owner as far as this Mac is concerned — `None` for a row nobody
+    /// claimed AND for one claimed by a device that is no longer paired.
+    fn owner<'a>(&self, raw: Option<&'a str>) -> Option<&'a str> {
+        raw.filter(|id| self.live.contains(*id))
+    }
+
+    /// May the asking phone act on a row with this recorded owner?
+    fn speaks_for(&self, raw: Option<&str>) -> bool {
+        match (self.owner(raw), self.asking.as_deref()) {
+            (Some(owner), Some(me)) => owner == me,
+            (Some(_), None) => false,
+            (None, _) => self.alone,
+        }
+    }
+}
+
+fn paired_device_ids() -> HashSet<String> {
+    crate::server::api::pair::load_devices()
+        .into_iter()
+        .map(|d| d.id)
+        .collect()
+}
+
+/// LocalIds whose bytes this Mac could put back: a `wireless/` manifest row
+/// whose sha is in the archive ledger.
+///
+/// This is the same test `verified` already means everywhere else, and the
+/// delete queue has to mean it too. A queued deletion is an instruction to
+/// destroy the phone's copy; the Mac's copy of a synced-but-not-yet-archived
+/// photo lives only in `staging/`, and reconcile removes exactly that the
+/// moment the photo leaves the roll — so offering one spends both copies at
+/// once. The daemon is the only place that knows the ledger, so the gate lives
+/// here rather than in either UI.
+fn restorable_local_ids<'a>(rows: &'a [Value], archived: &HashSet<String>) -> HashSet<&'a str> {
+    rows.iter()
+        .filter_map(|r| {
+            let sha = r.get("sha256")?.as_str()?;
+            let id = r.get("path")?.as_str()?.strip_prefix(WIRELESS_PREFIX)?;
+            archived.contains(sha).then_some(id)
+        })
+        .collect()
+}
+
+/// The queue as one phone may see it: its own entries (plus unclaimed ones),
+/// minus everything this Mac could not put back.
+fn queue_for_device(asking: Option<&str>) -> Vec<String> {
+    let rows = load_jsonl(&manifest_path());
+    let archived = sha_set(&load_jsonl(&ledger_path()));
+    let own = Ownership::new(&rows, asking);
+    let restorable = restorable_local_ids(&rows, &archived);
+    load_delete_queue()
+        .into_iter()
+        .filter(|e| e.concerns(&own) && restorable.contains(e.local_id.as_str()))
+        .map(|e| e.local_id)
+        .collect()
 }
 
 fn load_delete_queue() -> Vec<DeleteEntry> {
@@ -164,14 +270,19 @@ fn save_delete_queue(entries: &[DeleteEntry]) -> std::io::Result<()> {
 /// Stamp `by.device` on unclaimed wireless rows whose localId this roll
 /// contains. Only the device is asserted — the account stays absent, which
 /// every reader already treats as "unknown", never "nobody".
-fn adopt_unclaimed_rows(rows: &mut [Value], on_phone: &HashSet<&str>, me: &str) -> bool {
+fn adopt_unclaimed_rows(
+    rows: &mut [Value],
+    on_phone: &HashSet<&str>,
+    me: &str,
+    own: &Ownership,
+) -> bool {
     let mut adopted = false;
     for r in rows.iter_mut() {
-        let unclaimed = r
-            .get("by")
-            .and_then(|b| b.get("device"))
-            .and_then(Value::as_str)
-            .is_none();
+        // A row whose owner is no longer a paired device counts as unclaimed:
+        // that phone is gone, and the roll in front of us is proof of who holds
+        // the photo now. Without this those rows are stranded — no live device
+        // matches the id, so nothing can prune them and nothing can claim them.
+        let unclaimed = own.owner(row_owner(r)).is_none();
         let mine = r
             .get("path")
             .and_then(Value::as_str)
@@ -351,11 +462,7 @@ pub(crate) async fn manifest_handler(
     // Mac-requested deletions ride every manifest reply; the phone executes
     // them via PhotoKit (system confirm) and reconcile clears the queue. Only
     // this phone's entries — another phone's localIds mean nothing here.
-    let delete_requested: Vec<String> = load_delete_queue()
-        .into_iter()
-        .filter(|e| e.concerns(asking.as_deref()))
-        .map(|e| e.local_id)
-        .collect();
+    let delete_requested = queue_for_device(asking.as_deref());
     Json(json!({
         "needed": needed,
         "verified": verified,
@@ -409,8 +516,20 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
             format!("queue write: {e}"),
         );
     }
-    tracing::info!("[media] phone-delete queue now {n} ids");
-    Json(json!({"queued": n})).into_response()
+    // Queued is not offered. A photo the Mac holds only in staging cannot be
+    // handed to a phone to delete — reconcile would then remove the staged copy
+    // and both would be gone — so it waits here until a backup archives it.
+    // Saying how many are waiting is the difference between "queued" and
+    // "queued, and one of them will not happen until you back up".
+    let rows = load_jsonl(&manifest_path());
+    let archived = sha_set(&load_jsonl(&ledger_path()));
+    let restorable = restorable_local_ids(&rows, &archived);
+    let blocked = queue
+        .iter()
+        .filter(|e| !restorable.contains(e.local_id.as_str()))
+        .count();
+    tracing::info!("[media] phone-delete queue now {n} ids ({blocked} awaiting backup)");
+    Json(json!({"queued": n, "blocked": blocked})).into_response()
 }
 
 /// The queue as the caller may see it. A phone reads it whenever a route to
@@ -420,11 +539,14 @@ pub(crate) async fn request_delete_handler(Json(body): Json<RequestDeleteBody>) 
 /// it — scoping it like a phone made every queued badge vanish on reload.
 pub(crate) async fn pending_deletes_handler(headers: axum::http::HeaderMap) -> Response {
     let asking = crate::server::api::pair::caller_device(&headers);
-    let ids: Vec<String> = load_delete_queue()
-        .into_iter()
-        .filter(|e| asking.is_none() || e.concerns(asking.as_deref()))
-        .map(|e| e.local_id)
-        .collect();
+    let ids: Vec<String> = match asking {
+        Some(dev) => queue_for_device(Some(&dev)),
+        // No device identity is the Mac's own Media page (loopback, no tunnel
+        // stamp): it owns the queue and sees all of it, including the entries
+        // waiting on a backup — scoping it like a phone made every queued badge
+        // vanish on reload, and hiding the blocked ones would hide the reason.
+        None => load_delete_queue().into_iter().map(|e| e.local_id).collect(),
+    };
     Json(json!({ "localIds": ids })).into_response()
 }
 
@@ -522,27 +644,24 @@ pub(crate) async fn reconcile_handler(
 
 fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<usize> {
     let on_phone: HashSet<&str> = all.iter().map(String::as_str).collect();
-    // A roll speaks only for its own phone. With one device row paired nothing
-    // is ambiguous, so a row nobody claims must be that phone's — with two
-    // (and a long-kept sim row counts), it genuinely could be either, and
-    // guessing would delete someone's photos.
-    let alone = crate::server::api::pair::paired_device_count() <= 1;
-    let speaks_for = |owner: Option<&str>| match (owner, asking) {
-        (Some(o), Some(me)) => o == me,
-        (Some(_), None) => false,
-        (None, _) => alone,
-    };
+    let mut rows = load_jsonl(&manifest_path());
+    // A roll speaks only for its own phone. What makes a row nobody claims
+    // ambiguous is another LIVE device owning wireless rows here — see
+    // [`Ownership`], which is also what lets a row left behind by an unpaired
+    // phone be reached again.
+    let own = Ownership::new(&rows, asking);
+    let speaks_for = |owner: Option<&str>| own.speaks_for(owner);
 
     // ADOPTION, before any pruning: an unclaimed row whose localId appears in
     // this roll is this phone's — localIds are phone-minted, so presence is
-    // proof of ownership where absence stays ambiguous. Claiming on evidence
-    // is what lets pre-attribution rows drain even on a Mac whose device list
-    // never gets down to one (a kept sim row pins `alone` false forever).
+    // proof of ownership where absence stays ambiguous.
     let mut queue = load_delete_queue();
     let mut adopted = false;
     if let Some(me) = asking {
         for e in queue.iter_mut() {
-            if e.device.is_none() && on_phone.contains(e.local_id.as_str()) {
+            if own.owner(e.device.as_deref()).is_none()
+                && on_phone.contains(e.local_id.as_str())
+            {
                 e.device = Some(me.to_string());
                 adopted = true;
             }
@@ -559,17 +678,12 @@ fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<us
     if adopted || live.len() != queue.len() {
         let _ = save_delete_queue(&live);
     }
-    let mut rows = load_jsonl(&manifest_path());
     let rows_adopted = match asking {
-        Some(me) => adopt_unclaimed_rows(&mut rows, &on_phone, me),
+        Some(me) => adopt_unclaimed_rows(&mut rows, &on_phone, me, &own),
         None => false,
     };
     let gone = |r: &Value| {
-        if !speaks_for(
-            r.get("by")
-                .and_then(|b| b.get("device"))
-                .and_then(Value::as_str),
-        ) {
+        if !speaks_for(row_owner(r)) {
             return false;
         }
         r.get("path")
@@ -627,6 +741,11 @@ pub(crate) async fn backup_handler() -> Response {
 fn backup_wireless() -> anyhow::Result<(usize, usize)> {
     let rows = load_jsonl(&manifest_path());
     let archived_shas = sha_set(&load_jsonl(&ledger_path()));
+    // One stamp for the whole run. Reading the clock per file split a long
+    // backup across two `<run>` directories when it crossed midnight — the same
+    // run, filed under two dates, which is exactly what `<run>` is meant to
+    // deny.
+    let run = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut done = HashSet::new();
     let (mut archived, mut failed) = (0usize, 0usize);
     for r in &rows {
@@ -657,7 +776,7 @@ fn backup_wireless() -> anyhow::Result<(usize, usize)> {
         // backup is a Mac-side action, so "who is connected now" is the wrong
         // answer and may be nobody.
         let by = r.get("by").cloned();
-        match ensure_archived(sha, created_ms, filename, staged, size, by, &archived_shas) {
+        match ensure_archived(sha, created_ms, filename, staged, size, by, &archived_shas, &run) {
             Ok(()) => archived += 1,
             Err(e) => {
                 tracing::warn!("[media] backup failed for {staged}: {e}");
@@ -919,6 +1038,7 @@ fn ensure_staged(rows: &[Value], sha: &str, filename: &str, tmp: &Path) -> anyho
 /// rather than optional because rebuilding it here re-read and re-parsed the
 /// whole ledger once per file: a 1,000-photo backup against a 3,000-row ledger
 /// did three million redundant line parses.
+#[allow(clippy::too_many_arguments)]
 fn ensure_archived(
     sha: &str,
     created_ms: Option<i64>,
@@ -927,6 +1047,7 @@ fn ensure_archived(
     size: u64,
     by: Option<Value>,
     known: &HashSet<String>,
+    run: &str,
 ) -> anyhow::Result<()> {
     let ledger = ledger_path();
     if known.contains(sha) {
@@ -937,7 +1058,7 @@ fn ensure_archived(
         .map(|dt| dt.with_timezone(&chrono::Local))
         .unwrap_or_else(chrono::Local::now);
     let dest_dir = backup_root()
-        .join(chrono::Local::now().format("%Y-%m-%d").to_string())
+        .join(run)
         .join(created.format("%Y").to_string())
         .join(created.format("%m").to_string());
     std::fs::create_dir_all(&dest_dir)?;
@@ -1036,4 +1157,132 @@ fn ensure_wireless_row(
     }
     append_jsonl(&manifest_path(), &row)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+
+/// The scoping rules — who may prune, adopt, or be asked to delete what.
+///
+/// These are the branches most likely to delete the wrong person's photos, and
+/// they had no tests at all. Everything here is pure over parsed rows, so the
+/// pairing list and the two ledgers are arguments rather than files.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &str = "phone-a";
+    const B: &str = "phone-b";
+    const GONE: &str = "phone-unpaired";
+
+    fn row(local_id: &str, sha: &str, owner: Option<&str>) -> Value {
+        let mut r = json!({
+            "path": format!("{WIRELESS_PREFIX}{local_id}"),
+            "sha256": sha,
+            "staged": format!("{WIRELESS_PREFIX}{}-x.heic", &sha[..12.min(sha.len())]),
+        });
+        if let Some(o) = owner {
+            r["by"] = json!({"device": o});
+        }
+        r
+    }
+
+    fn live(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn own(rows: &[Value], asking: Option<&str>, paired: &[&str]) -> Ownership {
+        Ownership::from_parts(rows, asking, live(paired))
+    }
+
+    #[test]
+    fn a_phone_speaks_for_its_own_rows_and_no_others() {
+        let rows = vec![row("a1", "aaa", Some(A)), row("b1", "bbb", Some(B))];
+        let o = own(&rows, Some(A), &[A, B]);
+        assert!(o.speaks_for(Some(A)));
+        assert!(!o.speaks_for(Some(B)));
+    }
+
+    #[test]
+    fn ambiguity_is_a_property_of_the_manifest_not_the_pairing_list() {
+        // Four paired rows, three of them simulators that never uploaded. The
+        // old count-the-list test read this as ambiguous forever, so an
+        // unclaimed row could never be pruned by anyone.
+        let rows = vec![row("a1", "aaa", Some(A)), row("u1", "uuu", None)];
+        let o = own(&rows, Some(A), &[A, "sim-1", "sim-2", "sim-3"]);
+        assert!(o.alone, "no other live device owns anything here");
+        assert!(o.speaks_for(None), "so the unclaimed row is this phone's");
+    }
+
+    #[test]
+    fn a_second_live_owner_makes_unclaimed_rows_untouchable() {
+        let rows = vec![row("a1", "aaa", Some(A)), row("b1", "bbb", Some(B))];
+        let o = own(&rows, Some(A), &[A, B]);
+        assert!(!o.alone);
+        assert!(!o.speaks_for(None), "guessing would delete someone's photos");
+    }
+
+    #[test]
+    fn a_row_left_by_an_unpaired_phone_is_reachable_again() {
+        // It used to be stranded: no live device matched the id, so nothing
+        // could prune it, and adoption skipped it because it looked claimed.
+        let rows = vec![row("g1", "ggg", Some(GONE))];
+        let o = own(&rows, Some(A), &[A]);
+        assert!(o.owner(Some(GONE)).is_none(), "that phone is gone");
+        assert!(o.alone, "a dead owner is not another live owner");
+        assert!(o.speaks_for(Some(GONE)));
+    }
+
+    #[test]
+    fn adoption_claims_unclaimed_and_orphaned_rows_that_are_on_the_roll() {
+        let mut rows = vec![
+            row("u1", "uuu", None),
+            row("g1", "ggg", Some(GONE)),
+            row("b1", "bbb", Some(B)),
+            row("u2", "vvv", None),
+        ];
+        let o = own(&rows, Some(A), &[A, B]);
+        let on_phone: HashSet<&str> = ["u1", "g1", "b1"].into_iter().collect();
+
+        assert!(adopt_unclaimed_rows(&mut rows, &on_phone, A, &o));
+
+        assert_eq!(row_owner(&rows[0]), Some(A), "presence is proof of ownership");
+        assert_eq!(row_owner(&rows[1]), Some(A), "the dead owner's row too");
+        assert_eq!(row_owner(&rows[2]), Some(B), "never another live phone's");
+        assert_eq!(row_owner(&rows[3]), None, "absence stays ambiguous");
+    }
+
+    #[test]
+    fn only_archived_photos_may_be_offered_for_deletion() {
+        // The whole point: a photo the Mac holds only in staging would have its
+        // one Mac copy pruned by the very reconcile that reports the delete.
+        let rows = vec![row("a1", "aaa", Some(A)), row("a2", "bbb", Some(A))];
+        let archived: HashSet<String> = ["aaa".to_string()].into_iter().collect();
+        let restorable = restorable_local_ids(&rows, &archived);
+        assert!(restorable.contains("a1"));
+        assert!(!restorable.contains("a2"), "staged is not backed up");
+    }
+
+    #[test]
+    fn a_queue_entry_reaches_its_own_phone_and_unclaimed_ones_reach_everybody() {
+        let rows = vec![row("a1", "aaa", Some(A)), row("b1", "bbb", Some(B))];
+        let o = own(&rows, Some(A), &[A, B]);
+        let mine = DeleteEntry { local_id: "a1".into(), device: Some(A.into()) };
+        let theirs = DeleteEntry { local_id: "b1".into(), device: Some(B.into()) };
+        let nobodys = DeleteEntry { local_id: "u1".into(), device: None };
+        let orphan = DeleteEntry { local_id: "g1".into(), device: Some(GONE.into()) };
+        assert!(mine.concerns(&o));
+        assert!(!theirs.concerns(&o));
+        assert!(nobodys.concerns(&o));
+        assert!(orphan.concerns(&o), "its phone is gone; anyone may answer");
+    }
+
+    #[test]
+    fn a_caller_with_no_device_identity_gets_only_unclaimed_entries() {
+        let rows = vec![row("a1", "aaa", Some(A))];
+        let o = own(&rows, None, &[A]);
+        let mine = DeleteEntry { local_id: "a1".into(), device: Some(A.into()) };
+        let nobodys = DeleteEntry { local_id: "u1".into(), device: None };
+        assert!(!mine.concerns(&o));
+        assert!(nobodys.concerns(&o));
+    }
 }

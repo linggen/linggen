@@ -240,12 +240,6 @@ pub fn caller_device(headers: &axum::http::HeaderMap) -> Option<String> {
     actor_for_headers(headers).map(|a| a.device)
 }
 
-/// How many phones are paired. One phone means nothing can be ambiguous, which
-/// is what lets records predating per-device attribution still be reconciled.
-pub fn paired_device_count() -> usize {
-    load_devices().len()
-}
-
 /// Resolve a device token into the actor to stamp on records it causes.
 /// `None` for an unknown token — an unattributed record beats a wrong one.
 pub fn actor_for_token(token: &str) -> Option<Actor> {
