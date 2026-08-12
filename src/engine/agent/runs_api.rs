@@ -72,6 +72,16 @@ impl AgentManager {
         status: AgentRunStatus,
         detail: Option<String>,
     ) -> Result<()> {
+        // Invariant: a run the user cancelled can never finish "Completed".
+        // Some loop exits surface a cancel as a normal outcome (a checkpoint
+        // returning AgentOutcome::None); the flag is the ground truth.
+        let status = if status == AgentRunStatus::Completed
+            && self.cancelled_runs.lock().await.contains(run_id)
+        {
+            AgentRunStatus::Cancelled
+        } else {
+            status
+        };
         let ended_at = Some(crate::util::now_ts_secs());
         self.run_store.update_run(run_id, status, detail.clone(), ended_at);
         self.clear_working_place_for_run(run_id).await;

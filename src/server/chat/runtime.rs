@@ -27,17 +27,24 @@ pub(super) async fn run_loop_with_tracking(
     if let Some(run_id) = run_id {
         match &result {
             Ok(_) => {
+                // A cancel can surface as a normal outcome (checkpoint exits).
+                // finish_agent_run coerces the stored status; mirror it here so
+                // a stopped run isn't heralded as a completion.
+                let was_cancelled = manager.is_run_cancelled(&run_id).await;
                 let _ = manager
                     .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
                     .await;
-                // Let Yinyue's watch decide whether to herald it (she presence-
-                // gates: fires on every reply, only worth a word when away).
-                let _ = events_tx.send(ServerEvent::Notification(
-                    crate::server::events::NotificationPayload::RunCompleted {
-                        agent_id: agent_id.to_string(),
-                        session_id: session_id.map(|s| s.to_string()),
-                    },
-                ));
+                if !was_cancelled {
+                    // Let Yinyue's watch decide whether to herald it (she
+                    // presence-gates: fires on every reply, only worth a word
+                    // when away).
+                    let _ = events_tx.send(ServerEvent::Notification(
+                        crate::server::events::NotificationPayload::RunCompleted {
+                            agent_id: agent_id.to_string(),
+                            session_id: session_id.map(|s| s.to_string()),
+                        },
+                    ));
+                }
             }
             Err(err) => {
                 let msg = err.to_string();

@@ -182,10 +182,25 @@ impl AgentEngine {
         let mut token_usage = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
 
-        loop {
-            let chunk_result = match TokioStreamExt::next(&mut stream).await {
-                Some(result) => result,
-                None => break, // stream ended
+        'stream: loop {
+            // A user cancel must not wait out the rest of the stream — a long
+            // silent thinking phase is exactly when the stop button gets
+            // pressed, so poll the flag between chunks rather than only when
+            // one happens to arrive.
+            let chunk_result = loop {
+                if self.is_cancelled().await {
+                    anyhow::bail!("run cancelled");
+                }
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(250),
+                    TokioStreamExt::next(&mut stream),
+                )
+                .await
+                {
+                    Ok(Some(result)) => break result,
+                    Ok(None) => break 'stream, // stream ended
+                    Err(_) => continue,        // no chunk yet — re-check cancel
+                }
             };
             let chunk = chunk_result?;
             match chunk {
@@ -269,10 +284,23 @@ impl AgentEngine {
         // (models like DeepSeek/Gemini output plan as text AND tool arg).
         let mut had_content_tokens = false;
 
-        loop {
-            let chunk_result = match TokioStreamExt::next(&mut stream).await {
-                Some(result) => result,
-                None => break,
+        'stream: loop {
+            // Same cancel-poll as stream_with_thinking_model: a stop must not
+            // wait for the next chunk of a long silent thinking phase.
+            let chunk_result = loop {
+                if self.is_cancelled().await {
+                    anyhow::bail!("run cancelled");
+                }
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(250),
+                    TokioStreamExt::next(&mut stream),
+                )
+                .await
+                {
+                    Ok(Some(result)) => break result,
+                    Ok(None) => break 'stream, // stream ended
+                    Err(_) => continue,        // no chunk yet — re-check cancel
+                }
             };
             let chunk = chunk_result?;
             match chunk {

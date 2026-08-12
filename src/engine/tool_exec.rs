@@ -1006,6 +1006,18 @@ impl AgentEngine {
                         res = &mut exec_fut => break res,
                         _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
                             self.drain_tool_progress(progress_rx).await;
+                            // A user cancel aborts the in-flight call the same
+                            // way a timeout does: drop the future, hand back an
+                            // error. The post-loop cancel check ends the run;
+                            // post_execute settles the tool's UI block first.
+                            if self.is_cancelled().await {
+                                warn!(
+                                    "[{}] Tool {} interrupted by user cancel",
+                                    self.run_id.as_deref().unwrap_or("root"),
+                                    exec.canonical_tool
+                                );
+                                break Err(anyhow::anyhow!("run cancelled"));
+                            }
                             let Some(limit) = ceiling else { continue };
                             if started.elapsed() < limit {
                                 continue;
@@ -1033,14 +1045,20 @@ impl AgentEngine {
                 };
                 self.drain_tool_progress(progress_rx).await;
 
+                // Settle the tool's UI block (done/failed status line) BEFORE
+                // honoring a cancel — the old early return here left the
+                // chip spinning forever after a stop.
+                let control = self
+                    .post_execute_tool(exec, result, messages, tool_cache, empty_search_streak, session_id)
+                    .await;
+
                 // Check cancellation after tool execution before feeding
-                // the result back into context (spec: agentic-loop.md).
+                // the result into the next step (spec: agentic-loop.md).
                 if self.is_cancelled().await {
                     return LoopControl::Return(AgentOutcome::None);
                 }
 
-                self.post_execute_tool(exec, result, messages, tool_cache, empty_search_streak, session_id)
-                    .await
+                control
             }
         }
     }

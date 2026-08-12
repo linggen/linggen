@@ -244,16 +244,14 @@ pub(crate) async fn cancel_agent_run(
                     )
                     .await;
 
-                // Drain queued messages for this agent so they don't get stuck.
-                // Without this, queued messages survive cancellation and block
-                // new messages (the UI shows "agent is busy" permanently).
-                let key = queue_key(&run.repo_path, &run.session_id, &run.agent_id);
-                {
-                    let mut guard = state.queued_chats.lock().await;
-                    guard.remove(&key);
-                }
-                emit_queue_updated(&state, &run.repo_path, &run.session_id, &run.agent_id)
-                    .await;
+                // Queued messages deliberately SURVIVE a cancel (CC-style
+                // interrupt): each queued send has a task parked on the engine
+                // lock, and cancellation now terminates the run promptly, so
+                // the parked task acquires the lock and delivers its message
+                // as the next turn. The old drain here was a symptom patch for
+                // cancels that never actually ended the run. Dropping the
+                // queue remains a separate, explicit verb: the queue banner's
+                // dismiss (`/api/queue/clear`).
             }
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(CancelRunResponse {
