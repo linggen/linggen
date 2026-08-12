@@ -182,10 +182,22 @@ impl AgentManager {
 
         // 3. First model in routing.default_models. Checked against the
         // ModelManager (not just config.models) so built-in models like
-        // Linggen Cloud can be the default too.
+        // Linggen Cloud can be the default too. An entry whose credentials
+        // are absent (signed-out cloud/ChatGPT) is passed over rather than
+        // returned — a default that can only bail AUTH_REQUIRED must not
+        // shadow a working model further down the chain. It is remembered,
+        // though: if nothing else resolves, failing on it keeps the clear
+        // sign-in message instead of "No models configured".
+        let mut auth_dead_default: Option<String> = None;
         for dm in &config.routing.default_models {
             if model_ids.contains(dm.as_str()) || models.has_model(dm) {
-                return Ok(dm.clone());
+                if models.model_auth_ok(dm) {
+                    return Ok(dm.clone());
+                }
+                if auth_dead_default.is_none() {
+                    auth_dead_default = Some(dm.clone());
+                }
+                warn!("Default model '{}' has no usable credentials right now; falling through", dm);
             }
         }
 
@@ -204,11 +216,13 @@ impl AgentManager {
         }
 
         // 5. First configured model
-        config
-            .models
-            .first()
-            .map(|m| m.id.clone())
-            .ok_or_else(|| anyhow::anyhow!("No models configured"))
+        if let Some(m) = config.models.first() {
+            return Ok(m.id.clone());
+        }
+
+        // Nothing else exists: hand back the auth-dead default so the turn
+        // fails with its AUTH_REQUIRED sign-in message, not a config error.
+        auth_dead_default.ok_or_else(|| anyhow::anyhow!("No models configured"))
     }
 
     fn make_run_id(&self, agent_id: &str) -> String {

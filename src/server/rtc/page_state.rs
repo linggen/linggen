@@ -220,16 +220,25 @@ pub async fn build_page_state(
     if include_global {
         // Models — admin sees all, others see shared_models only
         let models_guard = state.manager.models.read().await;
-        let all_models: Vec<_> = models_guard.list_models().into_iter().cloned().collect();
+        let all_models: Vec<(_, bool)> = models_guard
+            .list_models()
+            .into_iter()
+            .map(|m| {
+                let auth_ok = models_guard.model_auth_ok(&m.id);
+                (m.clone(), auth_ok)
+            })
+            .collect();
         drop(models_guard);
         let models = if let Some(ref cfg) = room_cfg {
             let shared: std::collections::HashSet<&str> = cfg.shared_models.iter().map(|s| s.as_str()).collect();
-            all_models.into_iter().filter(|m| shared.contains(m.id.as_str())).collect::<Vec<_>>()
+            all_models.into_iter().filter(|(m, _)| shared.contains(m.id.as_str())).collect::<Vec<_>>()
         } else {
             all_models
         };
-        ps.models = Some(models.into_iter().map(|m| {
-            // Only send metadata — strip sensitive fields (api_key, url)
+        ps.models = Some(models.into_iter().map(|(m, auth_ok)| {
+            // Only send metadata — strip sensitive fields (api_key, url).
+            // auth_ok is a runtime reading (credentials present now) so the
+            // pickers can mark a model that would only bail AUTH_REQUIRED.
             serde_json::json!({
                 "id": m.id,
                 "provider": m.provider,
@@ -237,6 +246,7 @@ pub async fn build_page_state(
                 "tags": m.tags,
                 "supports_tools": m.supports_tools,
                 "provided_by": m.provided_by,
+                "auth_ok": auth_ok,
             })
         }).collect());
 

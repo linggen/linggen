@@ -26,21 +26,26 @@ export const GeneralTab: React.FC<{
   // gpt-5.6 family, Linggen Cloud) plus the user's actually-configured
   // models, so we never offer an id that isn't wired up (an unconfigured
   // pick fails to resolve). "auto" is added directly in the <select>.
-  const [builtinIds, setBuiltinIds] = React.useState<string[]>([]);
+  const [builtins, setBuiltins] = React.useState<{ id: string; authOk: boolean }[]>([]);
   React.useEffect(() => {
     fetch('/api/models')
       .then((r) => r.json())
       .then((ms) => {
         if (Array.isArray(ms)) {
-          setBuiltinIds(ms.filter((m) => m?.is_builtin && m.id).map((m) => m.id));
+          setBuiltins(
+            ms.filter((m) => m?.is_builtin && m.id).map((m) => ({ id: m.id, authOk: m.auth_ok !== false })),
+          );
         }
       })
       .catch(() => {});
   }, []);
+  // Built-ins that lack their sign-in stay listed but say so — a bare id
+  // here reads as a working brain, and picking it silences her entirely.
   const petModelOptions = React.useMemo(() => {
-    const configured = (config.models ?? []).map((m) => m.id);
-    return [...builtinIds, ...configured.filter((id) => !builtinIds.includes(id))];
-  }, [config.models, builtinIds]);
+    const builtinIds = builtins.map((b) => b.id);
+    const configured = (config.models ?? []).map((m) => ({ id: m.id, authOk: true }));
+    return [...builtins, ...configured.filter((m) => !builtinIds.includes(m.id))];
+  }, [config.models, builtins]);
 
   return (
     <div className="space-y-6">
@@ -216,8 +221,8 @@ export const GeneralTab: React.FC<{
               onChange={(e) => onChange({ ...config, pet: { ...config.pet, model: e.target.value } })}
             >
               <option value="auto">Auto (cloud default / your model)</option>
-              {petModelOptions.map((id) => (
-                <option key={id} value={id}>{id}</option>
+              {petModelOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.id}{m.authOk ? '' : ' — sign in required'}</option>
               ))}
             </select>
             <p className="text-[11px] text-slate-400 mt-0.5">Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast configured model for snappier replies. Applied per turn.</p>

@@ -61,10 +61,13 @@ pub enum NotificationPayload {
     },
     /// An interactive/agent run failed (the agent loop errored out). Yinyue's
     /// watch loop turns this into a brief in-character apology to the user.
-    /// Carries the failing agent so she can skip her own failures (no self-loop).
+    /// Carries the failing agent so she can skip her own failures (no self-loop),
+    /// and whether the failure was a missing sign-in — an auth failure has a fix
+    /// the user can act on, so her line points at it instead of apologizing vaguely.
     RunFailed {
         agent_id: String,
         session_id: Option<String>,
+        auth_required: bool,
     },
     /// A top-level interactive run completed successfully. Yinyue may herald it,
     /// but it fires on every reply — her watch presence-gates it (only worth a

@@ -88,7 +88,7 @@ export const SessionModelSelector: React.FC = () => {
           switch off it (the only escape is an explicit, non-"Default" pin). */}
       {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels.includes(m.id) ? ' — default' : ''}
+          {m.id}{m.provided_by ? ` (${m.provided_by})` : ''}{defaultModels.includes(m.id) ? ' — default' : ''}{m.auth_ok === false ? ' — sign in required' : ''}
         </option>
       ))}
     </select>

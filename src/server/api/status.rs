@@ -12,7 +12,21 @@ use std::sync::Arc;
 
 pub(crate) async fn list_models_api(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let models_guard = state.manager.models.read().await;
-    let models: Vec<_> = models_guard.list_models().into_iter().cloned().collect();
+    // `auth_ok` rides beside the config rather than on ModelConfig itself:
+    // it is a runtime reading (are this model's credentials present NOW),
+    // and the config round-trip must never persist it.
+    let models: Vec<serde_json::Value> = models_guard
+        .list_models()
+        .into_iter()
+        .map(|m| {
+            let auth_ok = models_guard.model_auth_ok(&m.id);
+            let mut v = serde_json::to_value(m).unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("auth_ok".into(), auth_ok.into());
+            }
+            v
+        })
+        .collect();
     drop(models_guard);
     Json(models).into_response()
 }

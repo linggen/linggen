@@ -34,13 +34,18 @@ Linggen supports multiple model providers. Each has a dedicated `provider` value
 
 All cloud providers (except ChatGPT) use the OpenAI-compatible chat completions API. You can also use `provider = "openai"` with any OpenAI-compatible endpoint (vLLM, LM Studio, etc.).
 
-### Default: ChatGPT via subscription
+### Default: Linggen Cloud
 
-New installs default to GPT-5.4 via ChatGPT subscription. No API key needed — just sign in:
+New installs default to `deepseek-v4-flash` via Linggen Cloud (the built-in
+proxy model, metered against the linggen.dev account). No API key needed —
+just sign in:
 
 ```bash
-ling auth login     # Opens browser → sign in with OpenAI account
+ling account login  # Opens browser → sign in to linggen.dev
 ```
+
+The ChatGPT built-ins (`gpt-5.6-*`) are also present in every install and
+need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
 
 The model is auto-configured. Tokens are stored in `~/.linggen/codex_auth.json` and auto-refresh. To sign out: `ling auth logout`.
 

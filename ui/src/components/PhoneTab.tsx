@@ -234,6 +234,9 @@ export const PhoneTab: React.FC<{
               </p>
               <p>It opens Linggen on the phone and pairs with <b>{info.mac_name}</b>{info.account_name ? ` · ${info.account_name}` : ''} — nothing to type.</p>
               <p>Scan it from any number of phones, on any network. The code works while this tab is open — leave it and it stops.</p>
+              {!info.account_name && (
+                <p>Paired phones reach this Mac on your network. For anywhere access, sign in to linggen.dev on this Mac.</p>
+              )}
               <p>No camera handy? In the app, pick this Mac under <b>Nearby Macs</b> and type the code that appears on this screen.</p>
               <button
                 onClick={() => fetchQr(true)}

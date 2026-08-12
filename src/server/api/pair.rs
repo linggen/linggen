@@ -840,7 +840,15 @@ async fn revoke_relay_grant(grant: &str) {
 }
 
 async fn mint_relay_grant(device_name: &str) -> Option<String> {
-    let instance = relay_instance()?;
+    let Some(instance) = relay_instance() else {
+        // Pairing still succeeds — but say why the device will be LAN-only,
+        // or "works on Wi-Fi, dies off it" reads as a mystery, not a state.
+        tracing::info!(
+            "[pair] no relay grant for '{device_name}': this Mac is not signed in \
+             to linggen.dev, so the device can reach it on the local network only"
+        );
+        return None;
+    };
     let (token, _) = crate::account::resolve_token()?;
     let url = format!(
         "{}/api/instances/{}/device-grants",

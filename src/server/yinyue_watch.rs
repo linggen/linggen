@@ -202,7 +202,7 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
         // the announce is a fixed TTS line, not a new run, so it can't loop, and a
         // silent failure is exactly what leaves the user wondering what's wrong.
         // Rate-limited so an error storm doesn't make her chant.
-        NotificationPayload::RunFailed { agent_id, .. } => {
+        NotificationPayload::RunFailed { agent_id, auth_required, .. } => {
             if !error_announce_allowed() {
                 return; // an error storm shouldn't make her repeat herself
             }
@@ -213,7 +213,14 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
                     return;
                 }
                 tracing::info!("[yinyue-watch] run by '{agent_id}' failed; Yinyue surfaces it");
-                crate::server::api::yinyue::emit_speak(&state, error_line(), Some("sad".to_string()));
+                // An auth failure has a fix the user can act on — say the fix,
+                // not a vague apology a signed-out install would repeat forever.
+                let line = if auth_required {
+                    "I can't reach my mind right now — it needs a sign-in over in Settings.".to_string()
+                } else {
+                    error_line()
+                };
+                crate::server::api::yinyue::emit_speak(&state, line, Some("sad".to_string()));
             });
         }
         // A run finished cleanly. This fires on every reply, so only herald when

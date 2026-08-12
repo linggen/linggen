@@ -173,6 +173,9 @@ export interface ModelInfo {
   url: string;
   reasoning_effort?: string | null;
   provided_by?: string | null;
+  /** Runtime reading from /api/models: credentials present right now.
+   *  Absent on older payloads — treat undefined as usable. */
+  auth_ok?: boolean;
 }
 
 export interface OllamaPsModel {

@@ -447,14 +447,21 @@ impl AgentEngine {
     }
 
     /// Next untried, registered fallback candidate: the routing chain in
-    /// order, then the always-injected Linggen Cloud model.
+    /// order, then the always-injected Linggen Cloud model. Candidates whose
+    /// credentials are absent are skipped — falling back to a model that can
+    /// only bail AUTH_REQUIRED would replace the real error (a BYOK rate
+    /// limit, say) with a sign-in demand for a model the user never chose.
     fn next_fallback_model(&self, tried: &[String]) -> Option<String> {
         let cloud = crate::provider::models::LINGGEN_CLOUD_MODEL_ID.to_string();
         self.default_models
             .iter()
             .cloned()
             .chain(std::iter::once(cloud))
-            .find(|m| !tried.contains(m) && self.model_manager.has_model(m))
+            .find(|m| {
+                !tried.contains(m)
+                    && self.model_manager.has_model(m)
+                    && self.model_manager.model_auth_ok(m)
+            })
     }
 
     /// Emit a ModelFallback event via the agent manager.

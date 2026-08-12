@@ -652,9 +652,15 @@ impl Tool for WebSearchTool {
     fn name(&self) -> &'static str { "WebSearch" }
     fn aliases(&self) -> &'static [&'static str] { &["web_search"] }
     fn description(&self) -> &'static str {
-        "Search the web via DuckDuckGo. Returns titles, URLs, and snippets."
+        "Search the web (Linggen Cloud; requires linggen.dev sign-in, metered \
+         against the account's monthly pool). Returns titles, URLs, and \
+         snippets. If it reports a sign-in or quota error, do not retry — \
+         tell the user instead."
     }
     fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    // Results are time-sensitive and a sign-in error must not outlive the
+    // sign-in that fixes it, so nothing here is worth caching for a run.
+    fn cacheable(&self) -> bool { false }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",

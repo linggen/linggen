@@ -95,13 +95,46 @@ export const ModelsTab: React.FC<{
   // Runtime model list — includes built-ins the engine injects (Linggen
   // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
   // below so they can be starred as default.
-  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null; is_builtin?: boolean }[]>([]);
-  useEffect(() => {
+  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null; is_builtin?: boolean; auth_ok?: boolean }[]>([]);
+  const refetchRuntimeModels = () => {
     fetch('/api/models')
       .then((r) => (r.ok ? r.json() : []))
       .then((ms) => setRuntimeModels(Array.isArray(ms) ? ms : []))
       .catch(() => {});
-  }, []);
+  };
+  useEffect(refetchRuntimeModels, []);
+
+  // linggen.dev sign-in for the cloud built-in — same browser-login + poll
+  // flow the chat's inline CTA uses. On success the model list is refetched
+  // so auth_ok flips and the row swaps its button for the usage meter.
+  const [linggenLoginBusy, setLinggenLoginBusy] = useState(false);
+  const handleLinggenLogin = async () => {
+    setLinggenLoginBusy(true);
+    try {
+      const resp = await fetch('/api/account/login', { method: 'POST' });
+      const out = await resp.json().catch(() => ({}));
+      if (out && out.opened === false && out.url) window.open(out.url, '_blank', 'noopener');
+    } catch {
+      setLinggenLoginBusy(false);
+      return;
+    }
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      if (Date.now() - started > 120_000) {
+        clearInterval(poll);
+        setLinggenLoginBusy(false);
+        return;
+      }
+      try {
+        const d = await (await fetch('/api/account')).json();
+        if (d && d.signed_in) {
+          clearInterval(poll);
+          setLinggenLoginBusy(false);
+          refetchRuntimeModels();
+        }
+      } catch { /* keep polling */ }
+    }, 1500);
+  };
   const builtinModels = runtimeModels.filter((m) => m.id && m.is_builtin);
   // A model always renders as its built-in card, never as a raw editable
   // entry below — even if the user's config file happens to still list the
@@ -401,9 +434,23 @@ export const ModelsTab: React.FC<{
                       </button>
                     )
                   ) : m.provided_by === 'Linggen Cloud' ? (
-                    // The account's cloud allowance ("19.2M left") is spent only
-                    // by Linggen Cloud models, so the meter lives on this row.
-                    <UsageMeter />
+                    m.auth_ok === false ? (
+                      // Signed out, the meter renders nothing and the default
+                      // model would look healthy while every turn fails —
+                      // this row states it and offers the door.
+                      <button
+                        onClick={handleLinggenLogin}
+                        disabled={linggenLoginBusy}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                      >
+                        <LogIn size={12} />
+                        {linggenLoginBusy ? 'Waiting for browser login...' : 'Sign in to linggen.dev'}
+                      </button>
+                    ) : (
+                      // The account's cloud allowance ("19.2M left") is spent only
+                      // by Linggen Cloud models, so the meter lives on this row.
+                      <UsageMeter />
+                    )
                   ) : (
                     <HealthDot health={healthMap[m.id]} ollamaStatus="na" />
                   )}

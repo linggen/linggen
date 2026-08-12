@@ -79,6 +79,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::server::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
+                            auth_required: msg.contains("AUTH_REQUIRED"),
                         },
                     ));
                 }

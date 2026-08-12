@@ -828,6 +828,16 @@ impl ModelManager {
         self.models.contains_key(model_id)
     }
 
+    /// Whether [model_id]'s credentials are present right now — the same
+    /// pre-flight the stream runs, surfaced so the selection layers (default
+    /// chain, fallback, pickers) can pass over a model that cannot answer
+    /// instead of learning it from a failed turn.
+    pub fn model_auth_ok(&self, model_id: &str) -> bool {
+        self.models
+            .get(model_id)
+            .is_some_and(|m| Self::check_provider_auth(&m.config).is_ok())
+    }
+
     /// Return the provider name (`"chatgpt"`, `"openai"`, `"anthropic"`,
     /// `"ollama"`, `"gemini"`, `"deepseek"`, etc.) for a model id. Used by
     /// debug/export surfaces to render tool-defs in the wire shape that
