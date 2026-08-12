@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.7.0] - 2026-08-12
+
+### The phone can find you anywhere
+
+The release the iOS app expects. 1.6.0 taught the engine to pair on the
+LAN; 1.7.0 makes the phone a full peer from anywhere.
+
+- **Pair from anywhere** — the QR reaches past the LAN (it carries the
+  relay), and the pairing window exists only while you're showing it. A
+  code retires the moment a phone uses it, Revoke takes the relay
+  credential back too, a guest gets a name, and `/api/pair/me` answers
+  over the tunnel so a phone can relearn the relay. A new phone starts
+  with two models, not one, and unpaired peers are confined where peers
+  are actually judged.
+- **A device is itself** — a paired phone answers with its own name (the
+  same name on the LAN as over the relay) and takes the owner's
+  permission ceiling, rather than being handed Admin.
+- **Perception** — a resident agent can see the machine it lives in: a
+  device-local activity log (`~/.linggen/activity/`, `POST /api/activity`,
+  capped and attributed), a doorbell that claims nothing without a reader,
+  readings that cross to the other machine, and "what happened" meaning
+  both machines, not this one.
+- **Relay speed** — vendored str0m + sctp-proto forks; relay transfers
+  were SACK-paced and now batch-fill the SCTP send buffer; bulk media gets
+  its own write lane so control frames never queue behind it; relay peers
+  do full ICE and advertise a STUN-discovered public candidate.
+- **Memory is scoped to the project** — a row keeps the cwd it was born
+  in, recall asks for scope, a promote keeps its origin, and the phone's
+  memory comes back over the tunnel.
+- **MCP both ways** — ling consumes MCP servers, not only serves them;
+  ling-mem ships as the built-in one, so memory has one surface (the
+  engine's `memory_*` proxies are deprecated); a Settings tab shows the
+  servers as they actually are.
+- **Media, safely** — every synced file records which phone and account
+  sent it; a phone's roll speaks only for that phone; the Mac never offers
+  a phone a deletion it cannot put back; the delete queue shows itself to
+  its owner and unclaimed rows drain; the file watchers are gone — the
+  queue is pulled.
+- **Honest model selection** — the selection layer consults auth state
+  everywhere it chooses: defaults, the fallback chain, `/api/models`, and
+  pickers say "sign in required" instead of offering models that cannot
+  answer.
+
+### Also
+
+- App actions are tools: one writer per mutation, a phone tool registry,
+  typed cross-device calls.
+- A topic can keep its last value, for surfaces that were not listening —
+  the `tasks` topic carries long-run progress both surfaces read.
+- Every speaking turn wears its name — the sender rides the request, and
+  every surface labels from it.
+- Skills declare their own renames and keep their paths;
+  `/api/skills?brief` drops the SKILL.md bodies; a phone on the tunnel is
+  still a phone, and devices say whether they are here right now.
+- Yinyue answers app questions from the canonical guide, and can open the
+  door her own prompt points at.
+
+### Fixed
+
+- A dismissed queued message stays dismissed — the queue map is the
+  authority.
+- A missing directory silently disarmed every media watcher (before the
+  watchers left entirely).
+- The same question is no longer asked once per message, and two promises
+  the code was not keeping are kept.
+
 ## [1.6.0] - 2026-07-27
 
 ### The engine grew a phone
