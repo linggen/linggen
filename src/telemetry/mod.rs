@@ -22,12 +22,15 @@
 //! Code / Codex session-start hook), `app` (a .app bundle, which runs no
 //! installer and writes the marker itself, plus `app_id`), `upgrade` (not a
 //! channel — a version change on an existing install), and `unknown` (no
-//! marker present; pre-marker installs stay here forever). Hookless
-//! marketplace installs (ClawHub, skills.sh) run the same unlabeled
-//! bootstrap and therefore land in `website` — deliberately: a static
-//! SKILL.md cannot know its channel, and a wrong label is worse than a
-//! generic one. Every other key in the marker file is forwarded verbatim
-//! (`installer_version`, `installed_at`, `app_id`).
+//! marker present; pre-marker installs stay here forever). Marketplace
+//! installs (`clawhub`, `skills-sh`) are labeled by the skill's
+//! `scripts/bootstrap.sh`, which derives the channel from its own on-disk
+//! path at run time — measured, never asserted; an unrecognized path labels
+//! nothing and falls into `website`. `agent` (optional) names the host that
+//! ran the install (`cc`, `codex`, `openclaw`, `linggen`, `vscode`), same
+//! rule: observed from the environment or omitted. Every other key in the
+//! marker file is forwarded verbatim (`installer_version`, `installed_at`,
+//! `app_id`). Full design: linggensite/doc/analytics-spec.md.
 //!
 //! On every meaningful action (wired separately):
 //! - `command` event with payload.verb = "skill.<name>.open" / "session.start"

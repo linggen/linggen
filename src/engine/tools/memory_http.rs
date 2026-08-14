@@ -52,6 +52,10 @@ const LING_MEM_PIN: &str = "^1";
 const INSTALL_BIN_URL: &str =
     "https://raw.githubusercontent.com/linggen/linggen-memory/main/plugins/linggen/scripts/install-bin.sh";
 
+/// Same file through linggen.dev's `/dl` GitHub mirror — raw.githubusercontent
+/// is blocked in some regions (notably China); Cloudflare is reachable.
+const INSTALL_BIN_MIRROR_URL: &str = "https://linggen.dev/dl/install-bin.sh";
+
 /// POST `args` to `<ling_mem_url>/api/memory/<verb>` (verb taken from
 /// `args["verb"]` and stripped) and return the daemon's `data` payload.
 /// Handles soft-empty cleanup, the `tier=episodic` → `episodic=true` wire
@@ -342,6 +346,20 @@ fn resolve_ling_mem() -> Option<std::path::PathBuf> {
         .map(|(_, p)| p)
 }
 
+/// GET `url` and return the body as text, erroring on non-2xx.
+async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {
+    client
+        .get(url)
+        .send()
+        .await
+        .context("sending request")?
+        .error_for_status()
+        .context("non-success status")?
+        .text()
+        .await
+        .context("reading body")
+}
+
 /// Fetch the canonical binary-only installer and run it (`bash -s`), pinned to
 /// [`LING_MEM_PIN`]. The engine owns the dependency — a fresh marketplace
 /// install ships skill files but no binary, and nothing else would install it
@@ -350,19 +368,19 @@ async fn install_ling_mem() -> Result<()> {
     let pin = std::env::var("LING_MEM_VERSION").unwrap_or_else(|_| LING_MEM_PIN.to_string());
     tracing::info!("ling-mem binary not found — installing {pin} via install-bin.sh");
 
-    let script = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|e| anyhow!(e))?
-        .get(INSTALL_BIN_URL)
-        .send()
-        .await
-        .context("fetching install-bin.sh")?
-        .error_for_status()
-        .context("install-bin.sh fetch returned non-success")?
-        .text()
-        .await
-        .context("reading install-bin.sh body")?;
+        .map_err(|e| anyhow!(e))?;
+    let script = match fetch_text(&client, INSTALL_BIN_URL).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::info!("install-bin.sh fetch from GitHub failed ({e:#}); trying mirror");
+            fetch_text(&client, INSTALL_BIN_MIRROR_URL)
+                .await
+                .context("fetching install-bin.sh (GitHub and mirror)")?
+        }
+    };
 
     let mut child = tokio::process::Command::new("bash")
         .arg("-s")
@@ -370,6 +388,10 @@ async fn install_ling_mem() -> Result<()> {
         .arg("--version")
         .arg(&pin)
         .arg("--quiet")
+        // Install-source labels for ling-mem's telemetry marker: the engine
+        // IS this channel, so it may declare itself (analytics-spec.md).
+        .env("LING_MEM_SOURCE", "linggen")
+        .env("LING_MEM_AGENT", "linggen")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
