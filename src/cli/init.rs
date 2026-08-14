@@ -85,6 +85,9 @@ pub fn install_default_agents() -> Result<()> {
     for filename in AgentAssets::iter() {
         if let Some(file) = AgentAssets::get(&filename) {
             let dest = agents_dir.join(filename.as_ref());
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(&dest, file.data.as_ref())?;
             count += 1;
         }

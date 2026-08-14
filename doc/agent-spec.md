@@ -36,6 +36,16 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 
+### Shared body includes
+
+A body line of exactly `{{#include path.md}}` (mdBook syntax) is replaced at
+load with that file's content, resolved relative to the including file.
+Includes nest, cycles are errors, and a missing file fails the spec loudly.
+Shared fragments live in `agents/shared/` — subdirectories are not scanned
+for agents, and the installer re-syncs them on every daemon start.
+`agents/shared/voice.md` is the platform voice layer every built-in agent
+includes; user agents in `~/.linggen/agents/` can include it too.
+
 ### Ling: the general-purpose agent
 
 Ling is the primary agent — like Jarvis, one agent that adapts to any context. Skills shape ling's behavior:

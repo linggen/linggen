@@ -35,12 +35,17 @@ pub fn parse_agent_markdown(content: &str) -> Result<(AgentSpec, String)> {
     Ok((spec, system_prompt))
 }
 
-/// Same as `parse_agent_markdown`, but reads the file at `path` and
-/// annotates parse errors with the offending path.
+/// Same as `parse_agent_markdown`, but reads the file at `path`,
+/// resolves `{{#include ...}}` directives in the body relative to the
+/// file's directory, and annotates errors with the offending path.
 pub fn parse_agent_file(path: &Path) -> Result<(AgentSpec, String)> {
     let content = fs::read_to_string(path)?;
-    parse_agent_markdown(&content)
-        .map_err(|e| anyhow::anyhow!("Agent spec at {:?} is invalid: {}", path, e))
+    let (spec, body) = parse_agent_markdown(&content)
+        .map_err(|e| anyhow::anyhow!("Agent spec at {:?} is invalid: {}", path, e))?;
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let body = crate::extensions::includes::resolve_md_includes(&body, base_dir)
+        .map_err(|e| anyhow::anyhow!("Agent spec at {:?} is invalid: {}", path, e))?;
+    Ok((spec, body.trim().to_string()))
 }
 
 fn normalize_agent_id(agent_id: &str) -> String {
@@ -290,6 +295,25 @@ idle_interval_secs: 60
 You are the lead."#;
         let (spec, _) = parse_agent_markdown(md).unwrap();
         assert_eq!(spec.name, "ling");
+    }
+
+    #[test]
+    fn parse_agent_file_resolves_shared_include() {
+        let root = temp_root("agent-include");
+        let agents_dir = root.join("agents");
+        fs::create_dir_all(agents_dir.join("shared")).expect("create shared dir");
+        fs::write(agents_dir.join("shared/voice.md"), "# Voice\nplain prose\n")
+            .expect("write voice");
+        let md = "---\nname: alpha\ndescription: test\ntools: [Read]\n---\n\nYou are alpha.\n\n{{#include shared/voice.md}}\n\nBe kind.\n";
+        let spec_path = agents_dir.join("alpha.md");
+        fs::write(&spec_path, md).expect("write agent");
+
+        let (_, prompt) = parse_agent_file(&spec_path).expect("parse with include");
+        assert!(prompt.contains("plain prose"), "include content missing: {prompt}");
+        assert!(!prompt.contains("{{#include"), "directive left behind: {prompt}");
+        assert!(prompt.ends_with("Be kind."));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

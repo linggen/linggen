@@ -10,6 +10,7 @@
 
 pub mod agents;
 pub mod frontmatter;
+pub mod includes;
 pub mod marketplace;
 pub mod missions;
 pub mod scope;
