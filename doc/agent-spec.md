@@ -45,6 +45,12 @@ sessions all carry it regardless of what any agent spec says. It rides
 between the identity block and the agent body in `AgentEngine::system_prompt`.
 Editing it takes a rebuild, like any embedded spec.
 
+`agents/shared/humanize.md` is the long-form companion: the full catalog of
+AI-writing tells with before/after fixes. Not injected — skills that draft
+outward-facing text read it at drafting time from
+`~/.linggen/agents/shared/humanize.md`, where the installer guarantees it
+on every daemon start.
+
 ### Shared body includes
 
 A body line of exactly `{{#include path.md}}` (mdBook syntax) is replaced at
