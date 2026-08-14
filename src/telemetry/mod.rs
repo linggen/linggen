@@ -15,15 +15,19 @@
 //!
 //! `payload.via` names the distribution channel this machine came through,
 //! and nothing more — it is read from `~/.linggen/.linggen-install-source`,
-//! a plain `key=value` file written by whichever installer ran. Known
-//! values: `website` (the linggen.dev one-liner, the default when nothing
-//! overrides it), `clawhub` (the marketplace skill's bootstrap), `plugin`
-//! (the Claude Code / Codex session-start hook), `vscode-extension`, `app`
-//! (a .app bundle, which runs no installer and writes the marker itself),
-//! `upgrade` (not a channel — a version change on an existing install), and
-//! `unknown` (no marker present). Every other key in the marker file is
-//! forwarded verbatim, so an installer can add its own (`app_id`,
-//! `installer_version`, `installed_at`).
+//! a plain `key=value` file written by whichever installer ran. A label is
+//! only ever set by a caller that genuinely IS that channel; nothing guesses.
+//! Known values: `website` (install.sh ran with no channel label — the
+//! linggen.dev one-liner and anywhere it is pasted), `plugin` (the Claude
+//! Code / Codex session-start hook), `app` (a .app bundle, which runs no
+//! installer and writes the marker itself, plus `app_id`), `upgrade` (not a
+//! channel — a version change on an existing install), and `unknown` (no
+//! marker present; pre-marker installs stay here forever). Hookless
+//! marketplace installs (ClawHub, skills.sh) run the same unlabeled
+//! bootstrap and therefore land in `website` — deliberately: a static
+//! SKILL.md cannot know its channel, and a wrong label is worse than a
+//! generic one. Every other key in the marker file is forwarded verbatim
+//! (`installer_version`, `installed_at`, `app_id`).
 //!
 //! On every meaningful action (wired separately):
 //! - `command` event with payload.verb = "skill.<name>.open" / "session.start"
