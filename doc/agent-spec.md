@@ -36,15 +36,25 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 
+### Platform voice layer
+
+`agents/shared/voice.md` defines how every agent writes — plain, human, no
+robot tells. It is **injected by the engine into every system prompt**
+(embedded at compile time via `include_str!`), so user, skill, and mission
+sessions all carry it regardless of what any agent spec says. It rides
+between the identity block and the agent body in `AgentEngine::system_prompt`.
+Editing it takes a rebuild, like any embedded spec.
+
 ### Shared body includes
 
 A body line of exactly `{{#include path.md}}` (mdBook syntax) is replaced at
 load with that file's content, resolved relative to the including file.
 Includes nest, cycles are errors, and a missing file fails the spec loudly.
 Shared fragments live in `agents/shared/` — subdirectories are not scanned
-for agents, and the installer re-syncs them on every daemon start.
-`agents/shared/voice.md` is the platform voice layer every built-in agent
-includes; user agents in `~/.linggen/agents/` can include it too.
+for agents, and the installer re-syncs them on every daemon start. This is a
+general facility; the built-in agents do **not** include `voice.md` this way
+(the engine already injects it universally), but a user agent could include
+any shared fragment.
 
 ### Ling: the general-purpose agent
 

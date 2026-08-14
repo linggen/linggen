@@ -34,6 +34,19 @@ use crate::message::ChatMessage;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+/// The platform voice layer: how every agent writes, on every surface.
+/// Embedded at compile time so it is present in *every* system prompt —
+/// user, skill, and mission sessions alike — independent of what a given
+/// agent spec does or doesn't include. Source of truth is
+/// `agents/shared/voice.md`; agent bodies may also `{{#include}}` it, but
+/// this injection is what makes it universal.
+const VOICE_LAYER: &str = include_str!("../../../agents/shared/voice.md");
+
+/// The voice section, trimmed, ready to slot into the persona prompt.
+fn voice_section() -> String {
+    VOICE_LAYER.trim().to_string()
+}
+
 fn get_os_version() -> String {
     static OS_VERSION: OnceLock<String> = OnceLock::new();
     OS_VERSION
@@ -178,10 +191,11 @@ impl AgentEngine {
             } else {
                 mission.body.clone()
             };
-            let parts: Vec<String> = [identity_block, body_rest.to_string(), resolved]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect();
+            let parts: Vec<String> =
+                [identity_block, voice_section(), body_rest.to_string(), resolved]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
             return parts.join("\n\n");
         }
 
@@ -199,12 +213,13 @@ impl AgentEngine {
             body_rest.to_string()
         };
 
-        let mut prompt = match (identity_block.is_empty(), body.is_empty()) {
-            (true, true) => String::new(),
-            (false, true) => identity_block,
-            (true, false) => body,
-            (false, false) => format!("{}\n\n{}", identity_block, body),
-        };
+        // Voice always rides between identity and body, in every branch —
+        // an app-skill or consumer session with an empty body still gets it.
+        let mut prompt = [identity_block, voice_section(), body]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
 
         // Don't list available skills for app skill sessions — the model
         // should focus entirely on the active skill.
@@ -890,5 +905,18 @@ mod right_now_tests {
         assert_eq!(humanize_secs(740), "12m");
         assert_eq!(humanize_secs(3600), "1h");
         assert_eq!(humanize_secs(7380), "2h 3m");
+    }
+
+    #[test]
+    fn voice_layer_is_embedded_and_nonempty() {
+        // include_str! fails the build if the file is missing; this guards
+        // against it becoming empty and against the header drifting.
+        let v = voice_section();
+        assert!(!v.is_empty(), "voice layer must not be empty");
+        assert!(v.contains("Voice"), "voice layer lost its header: {v}");
+        assert!(
+            v.to_lowercase().contains("plain prose") || v.contains("like a person"),
+            "voice layer lost its core directive"
+        );
     }
 }
