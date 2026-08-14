@@ -1,298 +1,158 @@
-# Humanize — catalog of AI-writing tells, with fixes
+<!-- From the "humanize" skill by @artur-zhdan (clawhub.ai/artur-zhdan/skills/humanize),
+     based on Wikipedia's "Signs of AI writing" (CC BY-SA). -->
 
-Shared reference for any skill that writes outward-facing text (posts,
-articles, replies, copy). Not a skill itself. Load it at drafting time;
-apply as a final pass over anything a reader outside Linggen will see.
 
-Short conversational lanes (a reply, a chat message) have stricter,
-register-specific rules in their own skill files; this catalog is the
-general layer beneath them. Patterns follow Wikipedia's "Signs of AI
-writing" plus our own flagged-text post-mortems; examples are ours.
+# Humanize Text
 
-## The stance (fix this first — it's the actual tell)
+Remove signs of AI-generated writing. Based on Wikipedia's "Signs of AI writing" guide.
 
-AI text reads AI because of its stance, not its words: it covers every
-branch, hedges every claim, and owes the reader a complete service.
-People write from one point of view, under time pressure, about the one
-thing they care about.
+## Process
 
-- Say the one thing that matters. Don't answer parts nobody asked about.
-- Commit. One hedge maximum, then state it plainly.
-- Take a position. Neutral pro/con reporting with no opinion is a tell.
-- Be specific or be silent: a named tool, a number, a moment it broke.
-- Stop early. No summary of what you just said, no upbeat outlook line.
+1. Scan for patterns below
+2. Rewrite problematic sections with natural alternatives
+3. Preserve meaning and intended tone
+4. Add personality - don't just remove bad patterns
 
-**Before:**
-> There are several factors to consider when choosing a sync strategy,
-> each with its own trade-offs. Ultimately, the best choice depends on
-> your specific use case.
+## Add Soul
 
-**After:**
-> We went with last-write-wins everywhere except media, where delete
-> wins. One conflict rule per data type, decided once.
+Sterile writing is as obvious as slop. Good writing has voice:
 
-## Content patterns
+- **Have opinions** - react to facts, don't just report
+- **Vary rhythm** - mix short punchy with longer flowing sentences
+- **Acknowledge complexity** - "impressive but unsettling" beats just "impressive"
+- **Use "I" when appropriate** - first person signals a real person
+- **Be specific about feelings** - not "concerning" but what specifically bothers you
 
-### 1. Significance inflation
 
-**Watch for:** plays a vital/crucial/pivotal role, is a testament to,
-marks a shift, reflects broader trends, setting the stage for
+## Content Patterns
 
-**Before:**
-> The 1.7 release marks a pivotal moment in the project's evolution,
-> reflecting a broader shift toward local-first architecture.
+### 1. Inflated Significance
+**Watch for:** pivotal, testament, vital, crucial, underscores importance, broader movement, enduring legacy, setting the stage, indelible mark
 
-**After:**
-> 1.7 moves sync fully off the cloud relay. Both devices talk directly
-> now; the relay only carries the handshake.
+**Fix:** Remove puffery. State facts simply.
 
-### 2. Promotional language
+### 2. Media Name-Dropping
+**Watch for:** featured in NYT/BBC/Wired, active social media presence, leading expert
 
-**Watch for:** seamless, robust, powerful, stunning, cutting-edge,
-boasts, rich, comprehensive
+**Fix:** Replace with specific claims from specific sources.
 
-**Before:**
-> The app boasts a seamless pairing experience and a comprehensive suite
-> of powerful media tools.
+### 3. Superficial -ing Analyses
+**Watch for:** highlighting..., ensuring..., reflecting..., symbolizing..., showcasing..., fostering...
 
-**After:**
-> Pairing is one QR scan. After that your music and photos sync on their
-> own.
+**Fix:** Remove or replace with concrete statements.
 
-### 3. -ing padding
+### 4. Promotional Language
+**Watch for:** boasts, vibrant, rich, profound, nestled, breathtaking, groundbreaking, renowned, stunning
 
-**Watch for:** trailing "…, highlighting/showcasing/ensuring/reflecting…"
-clauses that add fake depth
+**Fix:** Use neutral descriptive language.
 
-**Before:**
-> The daemon restarts automatically, ensuring reliability and
-> highlighting the system's self-healing design.
+### 5. Vague Attributions
+**Watch for:** Experts believe, Industry reports, Some critics argue, Observers note
 
-**After:**
-> The daemon restarts itself. If it's down more than a second or two,
-> something else is wrong.
+**Fix:** Cite specific sources or remove.
 
-### 4. Vague authority
 
-**Watch for:** experts believe, industry reports, many users say, studies
-show — with no source
+## Language Patterns
 
-**Before:**
-> Many developers agree that local-first architectures are the future of
-> personal software.
+### 6. AI Vocabulary
+High-frequency words: Additionally, crucial, delve, emphasizing, enhance, fostering, garner, highlight, interplay, intricate, landscape (abstract), pivotal, showcase, tapestry (abstract), testament, underscore, vibrant
 
-**After:**
-> Our sync bug reports dropped to zero after the move — there's no server
-> state left to disagree with the device.
+**Fix:** Use simpler alternatives.
 
-## Language patterns
+### 7. Copula Avoidance
+**Watch for:** serves as, stands as, marks, represents, boasts, features, offers
 
-### 5. AI vocabulary
+**Fix:** Use "is", "are", "has".
 
-**Watch for:** delve, tapestry, landscape (abstract), interplay,
-underscore, foster, leverage, utilize, facilitate, streamline,
-multifaceted, myriad, embark → use the plain word (use, help, many, start)
+### 8. Negative Parallelisms
+**Watch for:** Not only...but..., It's not just about..., it's...
 
-**Before:**
-> We leverage embeddings to facilitate seamless retrieval across the
-> memory landscape.
+**Fix:** State the point directly.
 
-**After:**
-> Memories are embedded once and searched by meaning, so "the stripe bug"
-> finds the row even if you never wrote the word stripe.
+### 9. Rule of Three
+**Watch for:** Forced groups of three (innovation, inspiration, insights)
 
-### 6. Copula avoidance
+**Fix:** Keep what's needed, cut padding.
 
-**Watch for:** serves as, stands as, represents, functions as, features,
-offers → "is", "has"
+### 10. Synonym Cycling
+**Watch for:** protagonist → main character → central figure → hero
 
-**Before:**
-> The engine serves as the core runtime and features a skill system that
-> functions as its extension mechanism.
+**Fix:** Pick one term, stick with it.
 
-**After:**
-> The engine is the runtime. Skills extend it.
 
-### 7. Negative parallelism
+## Style Patterns
 
-**Watch for:** not just X, but Y · it's not about X, it's about Y
+### 11. Em Dash Overuse
+**Fix:** Replace with commas, periods, or restructure.
 
-**Before:**
-> It's not just a music player — it's a whole way of owning your library.
+### 12. Excessive Boldface
+**Fix:** Remove unless genuinely needed for emphasis.
 
-**After:**
-> Your library lives in a folder on your Mac. The phone mirrors it,
-> offline included.
+### 13. Inline-Header Lists
+**Watch for:** - **Category:** Description pattern
 
-### 8. Rule of three
+**Fix:** Convert to prose or simple lists.
 
-**Watch for:** exactly three adjectives, examples, or clauses, repeatedly
+### 14. Emojis in Professional Text
+**Fix:** Remove unless contextually appropriate.
 
-**Before:**
-> Fast, private, and reliable — sync that just works across your phone,
-> your Mac, and your life.
+### 15. Curly Quotes
+**Watch for:** "..." instead of "..."
 
-**After:**
-> Sync finishes in the background before you'd think to check on it.
+**Fix:** Use straight quotes.
 
-### 9. Synonym cycling
 
-**Watch for:** the app → the tool → the platform → the solution
+## Communication Artifacts
 
-**Before:**
-> The app syncs your music. The tool also handles photos. The platform
-> keeps both offline.
+### 16. Chatbot Artifacts
+**Watch for:** I hope this helps!, Certainly!, Would you like me to..., Let me know if...
 
-**After:**
-> The app syncs music and photos, and keeps both offline.
+**Fix:** Remove entirely.
 
-### 10. False ranges
+### 17. Knowledge-Cutoff Disclaimers
+**Watch for:** as of [date], While specific details are limited..., based on available information...
 
-**Watch for:** "from X to Y" where X and Y aren't on a scale
+**Fix:** Either find the info or acknowledge uncertainty naturally.
 
-**Before:**
-> From karaoke lyrics to budget tracking, from photo cleanup to CarPlay,
-> the app covers everything.
+### 18. Sycophantic Tone
+**Watch for:** Great question!, You're absolutely right!, That's an excellent point!
 
-**After:**
-> Four things live in it: music, budgets, photo cleanup, and the Mac
-> agent.
+**Fix:** Remove. Get to the substance.
 
-## Style patterns
 
-### 11. Em-dash chains
+## Filler and Hedging
 
-**Before:**
-> The scan runs locally — no cloud involved — and finishes fast — usually
-> under a minute.
+### 19. Filler Phrases
+- "In order to" → "To"
+- "Due to the fact that" → "Because"
+- "At this point in time" → "Now"
+- "Has the ability to" → "Can"
+- "It is important to note that" → (delete)
 
-**After:**
-> The scan runs locally, no cloud involved. It usually finishes in under
-> a minute.
+### 20. Excessive Hedging
+**Watch for:** could potentially possibly be argued that... might have some effect
 
-### 12. Format tells
+**Fix:** State it plainly or acknowledge uncertainty once.
 
-**Watch for:** bold-label bullets ("**Speed:** it's fast"), Title Case In
-Headings, emoji decoration (🚀✅💡), "Key takeaways" blocks, wrap-up
-conclusions
+### 21. Generic Positive Conclusions
+**Watch for:** The future looks bright, Exciting times lie ahead, major step forward
 
-**Before:**
-> - **Privacy:** Your data stays local.
-> - **Speed:** Sync is instant.
-> - **Reliability:** It just works.
+**Fix:** Replace with specific facts about what's actually next.
 
-**After:**
-> Your data stays on your devices, and sync is fast enough that you
-> won't catch it running.
 
-## Communication patterns
+## Quick Reference: Words to Avoid
 
-### 13. Assistant artifacts
+| Category | Words |
+|----------|-------|
+| Puffery | pivotal, crucial, vital, testament, groundbreaking, renowned |
+| Promo | vibrant, stunning, breathtaking, nestled, boasts |
+| AI vocab | delve, tapestry, landscape, interplay, underscore, foster |
+| Hedging | potentially, arguably, somewhat, various |
+| Filler | Additionally, Furthermore, In order to, It should be noted |
 
-**Watch for:** Great question, I hope this helps, Certainly!, Let me know
-if…, Would you like me to…, You're absolutely right, as of my last update
 
-**Before:**
-> Great question! Here's an overview of how pairing works. I hope this
-> helps — let me know if you'd like more detail!
+## Output
 
-**After:**
-> Pairing is a QR scan on the LAN, or a code if you're remote. The
-> window only exists while the QR is on screen.
+Provide the rewritten text. Optionally summarize key changes made.
 
-### 14. Excessive hedging
-
-**Watch for:** could potentially, might arguably, it could be argued,
-somewhat, to some extent
-
-**Before:**
-> This approach could potentially reduce sync conflicts to some extent
-> in certain scenarios.
-
-**After:**
-> This kills the double-delete conflict. The clock-skew one is still
-> open.
-
-### 15. Generic upbeat conclusions
-
-**Watch for:** the future looks bright, exciting times ahead, a major
-step forward, journey toward excellence
-
-**Before:**
-> This release represents a major step forward, and we're excited about
-> the journey ahead.
-
-**After:**
-> Next up: the karaoke view drops its last HTTP call.
-
-### 16. Uniform rhythm
-
-Every sentence medium-length and balanced is itself a tell — vary hard.
-
-**Before:**
-> The update improves the pairing flow. The update also fixes the sync
-> bug. The update includes minor performance work.
-
-**After:**
-> Pairing got a rework. The sync bug from 1.6 is gone. Assorted small
-> speedups too.
-
-## Document scale
-
-### 17. Full-piece transformation
-
-Sentence fixes aren't enough if the whole piece has the AI shape:
-grand opening, three balanced body paragraphs, upbeat close. A human
-piece is built from one real observation and its evidence.
-
-**Before:**
-> Local-first software marks a pivotal shift in today's rapidly evolving
-> technological landscape. By keeping data on-device, these groundbreaking
-> tools enhance privacy, foster user trust, and streamline the experience.
->
-> At its core, the value proposition is clear: it's not just about
-> storage — it's about ownership. Industry observers note that adoption
-> is accelerating across the ecosystem.
->
-> In conclusion, the future of local-first computing looks bright, and
-> exciting times lie ahead.
-
-**After:**
-> I moved my music library off streaming and into a folder my phone
-> syncs from my Mac. The surprise wasn't privacy — it's that everything
-> got faster. Search is instant because it's a local index. Nothing
-> buffers.
->
-> The catch is sync conflicts. Two devices editing one playlist forced
-> us to actually pick a rule (last write wins, except deletes on media).
-> Streaming services solve this by just owning your data.
->
-> Worth it? For music, clearly. For photos I'm still not sure — my
-> library is 200 GB and the first sync took a night.
-
-### 18. Soulless vs alive
-
-Removing every tell can still leave dead text — technically clean,
-nobody home. The fix isn't more cleanup; it's an opinion, a reaction,
-a first person with something at stake.
-
-**Before (clean but dead):**
-> The test suite was migrated to the new runner. Execution time
-> decreased from 40 to 12 minutes. Some flaky tests were identified
-> during the migration. The team will address them in a future sprint.
-
-**After (someone's home):**
-> Migrating the suite to the new runner cut CI from 40 minutes to 12.
-> The migration also outed six tests that only ever passed because the
-> old runner ran them in a lucky order — honestly the more valuable
-> result. Those are quarantined for now, which is a nicer word for
-> "we'll deal with it later."
-
-## Final checklist
-
-1. Would a busy person with a stake write this sentence? If it could
-   only come from a neutral advisor with unlimited time, rewrite it.
-2. Scan for the watch-for lists above; fix every hit.
-3. Read it aloud. Uniform rhythm means it needs one short sentence and
-   one cut.
-4. Delete the last sentence if it summarizes, moralizes, or cheers.
+For detailed examples, see [humanize-examples.md](humanize-examples.md).
