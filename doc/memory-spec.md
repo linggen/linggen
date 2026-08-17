@@ -102,13 +102,17 @@ never writes to project files.
   hard-deleted: staging is disposable. The stats surface reports the
   archive count — archived state is visible state.
 
-  The third condense lane, **subject digests**, is attended-only: the
-  `subject` scan (cosine star clusters, 3–12 members) serves only
-  QUIET clusters (newest member >30 days — a live subject keeps its
-  detail) and skips rows a `subject`-kind ruling covers, so a
-  keep-separate answer — recorded on ALL member ids as a dismissed
-  subject issue — never re-serves. One digest row per cluster, tagged
-  `digest`, capped at 5 per run.
+  The third confident lane, **subject digests**, runs in the dream
+  too: the `subject` detector (cosine star clusters, 3–12 members)
+  serves only QUIET clusters (newest member >30 days — a live
+  subject keeps its detail) and skips rows a `subject`-kind ruling
+  covers. The judge digests clusters it is confident share one
+  subject (one digest row, tagged `digest`, ≤5 per night) and queues
+  doubtful ones as open `subject` review items — listing ALL member
+  ids, so a ruled cluster can never re-form. In solve, the user's
+  keep-separate answer becomes the permanent (dismissed) ruling.
+  Digesting unattended is safe because merges archive: a wrong
+  digest is an unpack, not a loss.
 - **Solve** (attended) — a host agent drains the review queue with
   the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a

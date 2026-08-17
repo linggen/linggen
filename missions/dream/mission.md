@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — merging what it can prove (cited chains, completion-bar markers) and queueing what needs the user as review items. Built-in.
+description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — merging what it can prove (cited chains, completion-bar markers), digesting quiet subjects, and queueing what needs the user as review items. Built-in.
 schedule: "0 3 * * *"
 # If the 3am cron is missed (machine off/asleep), the post-turn
 # catch-up re-triggers this mission the next time Linggen is used,
@@ -40,7 +40,10 @@ kickoff:
     → no lines) — then the audit pass per your system prompt
     (`memory_chains({"kind":"marker","limit":5})` → merge each
     candidate clearing the completion bar, queue the rest via
-    `memory_issue_add({...})`, a `MERGE`/`QUEUE` line each), and
+    `memory_issue_add({...})`; then
+    `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
+    → digest each cluster you are confident is one subject, queue
+    the doubtful ones; a `MERGE`/`QUEUE` line each), and
     reply exactly: DONE. Otherwise remember
     the OLDEST undreamed day per your system prompt (worklist → cluster
     → promote → stamp), then stop and wait.
@@ -122,7 +125,8 @@ kickoff:
     count, then call `memory_sweep()`. From the fresh
     result only: no undreamed days → report `SWEEP removed=<n>`, run
     the cited-chains condense per your system prompt (`MERGE` lines)
-    and the audit pass (`MERGE`/`QUEUE` lines), and reply exactly:
+    and the audit pass — markers then quiet-subject digests
+    (`MERGE`/`QUEUE` lines) — and reply exactly:
     DONE. Days remain → reply exactly:
     `PARTIAL <n> days remain` with n from the fresh response (they
     continue tomorrow — oldest-first keeps progress monotone; the
@@ -184,9 +188,10 @@ permission:
     deletions are the daemon's forget sweep over already-judged,
     past-TTL episodic rows. Atomic replace_ids merges of the agent's
     own derived long-term rows (high-confidence cited chains ≤10 per
-    night, plus ≤5 marker candidates whose completion is already
-    asserted by a newer note) ARCHIVE their losers — expired +
-    superseded_by, recoverable — never delete them; the engine also
+    night, ≤5 marker candidates whose completion is already asserted
+    by a newer note, and ≤5 subject digests over clusters quiet for
+    30+ days) ARCHIVE their losers — expired + superseded_by,
+    recoverable — never delete them; the engine also
     snapshots the store before each run. What it cannot solve with
     confidence it queues as review items (a JSON sidecar entry, no
     row changes) for the user to solve later. Touches no files
@@ -218,10 +223,15 @@ agent). This mission adds only the nightly run protocol:
   MERGE when the completion bar is met (a strictly newer same-subject
   derived neighbor asserts the marked work done — a `MERGE` line), and
   `issue_add` (a `QUEUE` line) for what you cannot solve with
-  confidence. The capped fetches are the nightly budget; leftovers
-  wait for tomorrow. Unattended merges are ONLY `cited` chains and
-  completion-bar marker candidates; `subject` clusters aren't touched
-  at all (deep attended passes only).
+  confidence. Then ONE
+  `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
+  fetch — the digest stage: collapse each quiet cluster you are
+  confident shares one subject into a single digest row per your
+  system prompt (a `MERGE` line each); queue doubtful clusters as
+  `subject` issues listing ALL member ids (a `QUEUE` line each). The
+  capped fetches are the nightly budget; leftovers wait for
+  tomorrow. Every audit merge archives its losers (recoverable) —
+  nothing in the audit deletes.
 - **Failure = tool_error only.** A failed HTTP call / unreachable
   daemon → say `Consolidation failed: <short reason>` and stop.
   Everything else — merged adds, vanished episodic twins, empty

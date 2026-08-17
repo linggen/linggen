@@ -139,12 +139,13 @@ come from `memory_chains {...}` (always with
 
 **Confidence gates what each kind may DO.** Unattended runs (the
 dream mission's finish-up) **merge** `cited` chains — pre-confirmed,
-one capped fetch (`"limit":10`) per night — and the **provable
-subset** of `marker` candidates (the completion bar in the audit pass
-below: a strictly newer same-subject derived neighbor asserts the
-marked work is done). Everything else needs judgment a sleeping user
-can't check, so unattended runs **queue** it instead; `subject`
-clusters are never merged unattended at all. Three kinds:
+one capped fetch (`"limit":10`) per night — the **provable subset**
+of `marker` candidates (the completion bar in the audit pass below),
+and **quiet `subject` clusters** the judge is confident share one
+subject (the digest stage below — the daemon only serves clusters
+untouched for 30+ days, and every merge is reversible: losers are
+archived with lineage, never deleted). Anything the judge doubts is
+**queued** for the user's solve flow instead. Three kinds:
 
 - **`cited`** — rows citing another row's id verbatim. Pre-confirmed:
   an id citation is proof of reference; collapse without
@@ -154,15 +155,15 @@ clusters are never merged unattended at all. Three kinds:
   same subject AND one row completes or obsoletes the other; otherwise
   `SKIP <id> unrelated`. (Unattended, only the completion bar in the
   audit pass clears a marker merge.)
-- **`subject`** (v2 digests) — same-subject vector clusters, 3+ rows.
-  These are parallel notes on one subject, not a newest-wins chain:
-  write one focused per-subject **digest** row. Vector neighbors
-  include boundary noise — find the largest subset that genuinely
-  shares one subject, digest that subset (`replace_ids` only its
-  ids), and leave outliers untouched. No coherent 3+ subset →
-  `SKIP <seed_id> unrelated`. Never one mega state row: if a cluster
-  spans a whole project, digest the one concrete subject the seed
-  names, not the project.
+- **`subject`** (digests) — same-subject vector clusters, 3+ rows,
+  served only when QUIET (newest member >30 days old — a live subject
+  keeps its detail). These are parallel notes on one subject, not a
+  newest-wins chain: write one focused per-subject **digest** row,
+  tagged `digest`. Vector neighbors include boundary noise — find the
+  largest subset that genuinely shares one subject, digest that
+  subset (`replace_ids` only its ids), and leave outliers untouched.
+  Never one mega state row: if a cluster spans a whole project,
+  digest the one concrete subject the seed names, not the project.
 
 **Collapse = ONE current-truth row replacing the cluster**, via a
 single `memory_add {..., "replace_ids":[<every member
@@ -193,7 +194,7 @@ than deleting it — every merge is reversible. Drafting rules:
   episodic id — if one appears in a cluster, skip the whole cluster
   (the merge law: the user's voice changes only with the user).
 
-## Audit — merge the provable, queue the rest
+## Audit — merge the provable, digest the quiet, queue the rest
 
 After the sweep and the cited condense (a clean-worklist finish-up
 only), run ONE capped pass:
@@ -231,6 +232,26 @@ candidate you see is fresh. Take each through the lanes IN ORDER:
 - **Queue a user-voice conflict** (any candidate whose rows include
   `from=user` and the rows disagree): `"kind":"contradiction"` — the
   user picks; never resolve it yourself.
+
+Then the **digest stage** — ONE
+`memory_chains {"kind":"subject","limit":5,"derived_only":true}`
+fetch. The daemon pre-filters: only quiet clusters (newest member
+>30 days), only your own notes, never rows a prior subject ruling
+covers. Per cluster, exactly one of:
+
+- **DIGEST** — you are confident the members (or a coherent 3+
+  subset) genuinely share ONE subject: collapse per the condense
+  drafting rules into a single digest row — `memory_add` with
+  `"tags":["digest"]` and `replace_ids` listing the coherent
+  subset's ids only; outliers stay untouched. One `MERGE` line. The
+  members are archived, not deleted — a wrong digest is
+  recoverable, which is why this runs unattended.
+- **QUEUE** — subject coherence is doubtful (two intertwined
+  subjects, a member that reads like a different story):
+  `memory_issue_add {"kind":"subject","row_ids":[<ALL member ids>],"note":"<subject?>: <gist per member> — one subject or several?"}`.
+  Listing every member id is what stops the cluster re-forming
+  around a neighboring seed. One `QUEUE` line. The user rules on it
+  in solve; keep-separate becomes a permanent exclusion.
 
 `issue_add` is idempotent per `(kind, row_ids)` — a `"deduped":true`
 response means the item was already queued; that is success. One
