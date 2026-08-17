@@ -167,7 +167,9 @@ clusters are never merged unattended at all. Three kinds:
 **Collapse = ONE current-truth row replacing the cluster**, via a
 single `memory_add {..., "replace_ids":[<every member
 id>]}` — the daemon inserts the survivor and retires the members
-atomically. Drafting rules:
+atomically. Retiring ARCHIVES a semantic member (`expired_at` +
+`superseded_by`, invisible to recall and scans, recoverable) rather
+than deleting it — every merge is reversible. Drafting rules:
 
 - **Lead with the current state** (the newest member's claim); carry
   the history as a short dated narrative span ("shipped 2026-07-07;
@@ -177,9 +179,9 @@ atomically. Drafting rules:
 - **Never invent** — every claim in the survivor must come from a
   member row. When members conflict, keep the newest claim and note
   the change, don't average.
-- **Never cite raw row ids in the new content** — the members are
-  being deleted; a dangling id re-chains the survivor on the next
-  scan.
+- **Never cite raw row ids in the new content** — the members leave
+  live memory (archived with `superseded_by` lineage, not deleted), so
+  an id in prose adds nothing and confuses the next reader.
 - Fields: `type` = the most current member's type; `from` stays
   `derived`; omit `tier` (semantic); `contexts` = union of the
   members'; `occurred_at` = the newest member's (else its

@@ -182,13 +182,15 @@ permission:
     Talks to the local ling-mem daemon on 127.0.0.1 only. Promotes
     rows and stamps per-day dream state via /api/memory/* ; the only
     deletions are the daemon's forget sweep over already-judged,
-    past-TTL episodic rows and atomic replace_ids merges of the
-    agent's own derived long-term rows (high-confidence cited chains
-    ≤10 per night, plus ≤5 marker candidates whose completion is
-    already asserted by a newer note; the engine snapshots the store
-    before each run). What it cannot solve with confidence it queues
-    as review items (a JSON sidecar entry, no row changes) for the
-    user to solve later. Touches no files directly.
+    past-TTL episodic rows. Atomic replace_ids merges of the agent's
+    own derived long-term rows (high-confidence cited chains ≤10 per
+    night, plus ≤5 marker candidates whose completion is already
+    asserted by a newer note) ARCHIVE their losers — expired +
+    superseded_by, recoverable — never delete them; the engine also
+    snapshots the store before each run. What it cannot solve with
+    confidence it queues as review items (a JSON sidecar entry, no
+    row changes) for the user to solve later. Touches no files
+    directly.
 ---
 
 # Memory dream — nightly run protocol

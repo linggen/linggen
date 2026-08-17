@@ -93,6 +93,22 @@ never writes to project files.
   marker scan excludes rows a review item already names: queueing
   consumes nothing, so without that exclusion the capped page would
   re-serve the same candidates forever.
+
+  Merges ARCHIVE, never delete (2026-08-17): a `replace_ids` loser in
+  the semantic table gets `expired_at` + `superseded_by = <survivor>`
+  — invisible to search, list, scans, and counts, kept on disk, so
+  every merge and digest can be unpacked (`list --superseded-by
+  <id>`; `--include-expired` widens any read). Episodic losers stay
+  hard-deleted: staging is disposable. The stats surface reports the
+  archive count — archived state is visible state.
+
+  The third condense lane, **subject digests**, is attended-only: the
+  `subject` scan (cosine star clusters, 3–12 members) serves only
+  QUIET clusters (newest member >30 days — a live subject keeps its
+  detail) and skips rows a `subject`-kind ruling covers, so a
+  keep-separate answer — recorded on ALL member ids as a dismissed
+  subject issue — never re-serves. One digest row per cluster, tagged
+  `digest`, capped at 5 per run.
 - **Solve** (attended) — a host agent drains the review queue with
   the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a
