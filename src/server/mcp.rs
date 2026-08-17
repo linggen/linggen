@@ -379,10 +379,12 @@ fn initialize_result() -> Value {
             user (open_issues). When days await a dream, offer to run it — /linggen:dream uses YOUR \
             model, memory_dream_run offloads to the Linggen engine; if a run failed, \
             show last_run_error to the user. When open_issues > 0, offer \
-            /linggen:solve: read memory_issues, verify each item against the world \
-            (git, files), fix via memory_add + replace_ids, close via \
-            memory_issue_resolve — ask the user one item at a time when their call \
-            is needed."
+            /linggen:solve: read memory_issues, solve each item yourself first — \
+            verify it against the world (rows, git, code, docs) — fix via \
+            memory_add + replace_ids, close via memory_issue_resolve. Ask the \
+            user only when evidence cannot settle it or a user-voice row is \
+            involved: one simple fact question at a time, plain words, with a \
+            recommendation."
     })
 }
 
