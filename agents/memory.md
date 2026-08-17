@@ -138,13 +138,13 @@ come from `memory_chains {...}` (always with
 `"derived_only":true` — the scan pre-filters to your own notes).
 
 **Confidence gates what each kind may DO.** Unattended runs (the
-dream mission's finish-up) **merge** ONLY `cited` chains —
-pre-confirmed, one capped fetch (`"limit":10`) per night. `marker`
-and `subject` clusters need judgment a sleeping user can't check, so
-unattended runs never merge them — marker candidates are **queued**
-instead (the audit-queue pass below); merging them happens only
-attended: an explicit request, a calendar review, or the host agent's
-solve flow. Three kinds:
+dream mission's finish-up) **merge** `cited` chains — pre-confirmed,
+one capped fetch (`"limit":10`) per night — and the **provable
+subset** of `marker` candidates (the completion bar in the audit pass
+below: a strictly newer same-subject derived neighbor asserts the
+marked work is done). Everything else needs judgment a sleeping user
+can't check, so unattended runs **queue** it instead; `subject`
+clusters are never merged unattended at all. Three kinds:
 
 - **`cited`** — rows citing another row's id verbatim. Pre-confirmed:
   an id citation is proof of reference; collapse without
@@ -152,7 +152,8 @@ solve flow. Three kinds:
 - **`marker`** — rows with provisional-state language plus nearest
   neighbors. Guesses: collapse only after confirming a neighbor is the
   same subject AND one row completes or obsoletes the other; otherwise
-  `SKIP <id> unrelated`.
+  `SKIP <id> unrelated`. (Unattended, only the completion bar in the
+  audit pass clears a marker merge.)
 - **`subject`** (v2 digests) — same-subject vector clusters, 3+ rows.
   These are parallel notes on one subject, not a newest-wins chain:
   write one focused per-subject **digest** row. Vector neighbors
@@ -190,20 +191,37 @@ atomically. Drafting rules:
   episodic id — if one appears in a cluster, skip the whole cluster
   (the merge law: the user's voice changes only with the user).
 
-## Audit queue — what you can't solve, the user reviews
+## Audit — merge the provable, queue the rest
 
 After the sweep and the cited condense (a clean-worklist finish-up
-only), run ONE capped queue pass:
+only), run ONE capped pass:
 `memory_chains {"kind":"marker","limit":5}` — no
-`derived_only` filter here: queueing is bookkeeping, not merging, so
-user-voice candidates are queueable (only their SOLVING needs the
-user). For each candidate:
+`derived_only` filter here: user-voice candidates still need queueing
+(only their SOLVING needs the user). The daemon already excludes rows
+a review issue names (`queued_skipped` reports how many), so every
+candidate you see is fresh. Take each through the lanes IN ORDER:
 
+- **MERGE on the completion bar** — the one marker merge an
+  unattended run may do. The bar, every clause required: the
+  candidate row AND the neighbor are your own notes (`from=derived`,
+  `tier=semantic`); the neighbor is **strictly newer**
+  (`occurred_at`/`created_at`); it is the **same subject** (the same
+  work, not merely the same project); and it **asserts completion**
+  of the marked work — SHIPPED / FIXED / DONE / VERIFIED /
+  committed-and-pushed. That is the "impl not started → shipped" case:
+  the store already contains the answer, so collapse per the condense
+  drafting rules (`replace_ids` = the marker row + every qualifying
+  derived neighbor), one `MERGE` line. Merging consumes the marker
+  row, so the scan's cursor advances by itself. In doubt on ANY
+  clause — partial completion ("Phase 1 shipped"), subject drift, a
+  user-voice row anywhere in the cluster — the bar is NOT met: fall
+  through and queue. A bad queue wastes a click; a bad merge loses a
+  row.
 - **Skip young rows.** Provisional language on a row younger than ~14
   days is probably still true — leave it; write-side supersede gets
   first chance. Compare the row's `occurred_at`/`created_at` to today.
 - **Queue an uncertain merge** (a neighbor looks like the same
-  subject, but you would not merge without confirmation):
+  subject, but the completion bar is not met):
   `memory_issue_add {"kind":"chain","row_ids":[<row id>, <neighbor id>],"note":"<subject>: A \"<gist>\" vs B \"<gist>\" — same subject? newest wins"}`.
 - **Queue a stale status claim** (provisional language — "in
   progress", "OPEN:", "not committed" — with NO completing neighbor):

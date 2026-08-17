@@ -81,12 +81,18 @@ never writes to project files.
   already contributed are skipped.
 - **Audit** (dream's last stage) — cures stale long-term memory by
   confidence: what the agent can solve it solves, the rest is queued
-  for the user. The confident lane is condense — high-confidence
-  cited chains of its own notes collapse into one current-truth row
-  each, capped per night, store snapshot before every run. Everything
-  else (uncertain merges, status claims likely overtaken by the
-  world, user-voice conflicts) becomes a **review item** in the
-  daemon's issues queue — bookkeeping only, no row changes.
+  for the user. Two confident lanes, both capped per night, store
+  snapshot before every run: condense — high-confidence cited chains
+  of its own notes collapse into one current-truth row each — and
+  completion-bar marker merges — a provisional-state note whose
+  strictly newer same-subject derived neighbor asserts the work done
+  collapses the same way (the store already holds the answer).
+  Everything else (uncertain merges, status claims likely overtaken
+  by the world, user-voice conflicts) becomes a **review item** in
+  the daemon's issues queue — bookkeeping only, no row changes. The
+  marker scan excludes rows a review item already names: queueing
+  consumes nothing, so without that exclusion the capped page would
+  re-serve the same candidates forever.
 - **Solve** (attended) — a host agent drains the review queue with
   the user present: gathers evidence at solve time (git history,
   files), fixes what the evidence proves, asks the user one item at a

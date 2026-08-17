@@ -258,8 +258,9 @@ and write the new status with `replace_ids` listing the prior status
 row(s) on that same subject: kill the stale claim the moment its
 successor is born, never leave *"in progress"* sitting beside its own
 outcome. (Own-notes only — a user-voice predecessor follows the merge
-law above.) What slips through is caught later by the dream audit's
-review queue, but write-time supersede is the real fix; the queue is
+law above.) What slips through is caught later by the dream audit —
+merged when a newer note already proves completion, queued for review
+otherwise — but write-time supersede is the real fix; the audit is
 the backstop.
 
 ## Tier selection — by confidence

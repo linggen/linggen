@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — condensing high-confidence stale chains and queueing what needs the user as review items. Built-in.
+description: Nightly memory dream. Remembers each undreamed day's episodic staging into long-term memory, runs the forget sweep, then audits long-term memory — merging what it can prove (cited chains, completion-bar markers) and queueing what needs the user as review items. Built-in.
 schedule: "0 3 * * *"
 # If the 3am cron is missed (machine off/asleep), the post-turn
 # catch-up re-triggers this mission the next time Linggen is used,
@@ -37,10 +37,11 @@ kickoff:
     condense — call
     `memory_chains({"kind":"cited","limit":10,"derived_only":true})`,
     collapse each returned chain (a `MERGE` line per chain; empty scan
-    → no lines) — then the audit queue pass per your system prompt
-    (`memory_chains({"kind":"marker","limit":5})` →
-    `memory_issue_add({...})` per stale candidate, a
-    `QUEUE` line each), and reply exactly: DONE. Otherwise remember
+    → no lines) — then the audit pass per your system prompt
+    (`memory_chains({"kind":"marker","limit":5})` → merge each
+    candidate clearing the completion bar, queue the rest via
+    `memory_issue_add({...})`, a `MERGE`/`QUEUE` line each), and
+    reply exactly: DONE. Otherwise remember
     the OLDEST undreamed day per your system prompt (worklist → cluster
     → promote → stamp), then stop and wait.
   - >-
@@ -50,7 +51,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -62,7 +63,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -74,7 +75,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -86,7 +87,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -98,7 +99,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -110,7 +111,7 @@ kickoff:
     Then decide from ONLY that fresh result: empty list → finish up
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit queue pass with its `QUEUE` lines), reply
+    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
     exactly: DONE. Oldest listed day is one you ALREADY
     STAMPED this run with an undropped `unjudged` → reply exactly:
     STALLED. Otherwise → remember the oldest listed day per your
@@ -121,7 +122,7 @@ kickoff:
     count, then call `memory_sweep()`. From the fresh
     result only: no undreamed days → report `SWEEP removed=<n>`, run
     the cited-chains condense per your system prompt (`MERGE` lines)
-    and the audit queue pass (`QUEUE` lines), and reply exactly:
+    and the audit pass (`MERGE`/`QUEUE` lines), and reply exactly:
     DONE. Days remain → reply exactly:
     `PARTIAL <n> days remain` with n from the fresh response (they
     continue tomorrow — oldest-first keeps progress monotone; the
@@ -142,7 +143,7 @@ kickoff-day:
     Last turn for this run: call `memory_sweep()`,
     report `SWEEP removed=<n>`, run the cited-chains condense per
     your system prompt (`MERGE` lines; empty scan → no lines) and the
-    audit queue pass (`QUEUE` lines), then reply exactly: DONE.
+    audit pass (`MERGE`/`QUEUE` lines), then reply exactly: DONE.
 # Attended day-scoped variant: the calendar day-click sends
 # `attended: true` — the user just clicked and is watching, so the
 # engine puts AskUser in scope and this kickoff ends with the
@@ -182,11 +183,12 @@ permission:
     rows and stamps per-day dream state via /api/memory/* ; the only
     deletions are the daemon's forget sweep over already-judged,
     past-TTL episodic rows and atomic replace_ids merges of the
-    agent's own derived long-term rows (high-confidence cited chains,
-    ≤10 per night; the engine snapshots the store before each run).
-    What it cannot solve with confidence it queues as review items
-    (a JSON sidecar entry, no row changes) for the user to solve
-    later. Touches no files directly.
+    agent's own derived long-term rows (high-confidence cited chains
+    ≤10 per night, plus ≤5 marker candidates whose completion is
+    already asserted by a newer note; the engine snapshots the store
+    before each run). What it cannot solve with confidence it queues
+    as review items (a JSON sidecar entry, no row changes) for the
+    user to solve later. Touches no files directly.
 ---
 
 # Memory dream — nightly run protocol
@@ -204,19 +206,20 @@ agent). This mission adds only the nightly run protocol:
   `unjudged` count → reply `STALLED` (something is wrong — a human
   will look; do not loop). Out of nudges with days remaining → sweep,
   reply `PARTIAL <n> days remain` (no condense on PARTIAL nights).
-- **Finish-up = sweep → condense → queue.** On the empty-worklist
+- **Finish-up = sweep → condense → audit.** On the empty-worklist
   turn, after the sweep, fetch
   `memory_chains({"kind":"cited","limit":10,"derived_only":true})`
   ONCE and collapse each returned chain per your condense doctrine —
   one current-truth row via `replace_ids`, a `MERGE` line each. Then
-  the audit queue pass per your system prompt: ONE
-  `memory_chains({"kind":"marker","limit":5})` fetch,
-  and `issue_add` (a `QUEUE` line each) for stale candidates you
-  cannot solve with confidence. The capped fetches are the nightly
-  budget; leftovers wait for tomorrow. **Only `cited` chains MERGE
-  unattended** — `marker` candidates are queued, never merged, in a
-  mission; `subject` clusters aren't touched at all (deep attended
-  passes only).
+  the audit pass per your system prompt: ONE
+  `memory_chains({"kind":"marker","limit":5})` fetch; per candidate,
+  MERGE when the completion bar is met (a strictly newer same-subject
+  derived neighbor asserts the marked work done — a `MERGE` line), and
+  `issue_add` (a `QUEUE` line) for what you cannot solve with
+  confidence. The capped fetches are the nightly budget; leftovers
+  wait for tomorrow. Unattended merges are ONLY `cited` chains and
+  completion-bar marker candidates; `subject` clusters aren't touched
+  at all (deep attended passes only).
 - **Failure = tool_error only.** A failed HTTP call / unreachable
   daemon → say `Consolidation failed: <short reason>` and stop.
   Everything else — merged adds, vanished episodic twins, empty
