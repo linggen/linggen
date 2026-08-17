@@ -183,6 +183,7 @@ async fn update_binary(
 
     match current_version {
         Some(cv) => {
+            crate::telemetry::global().bump("update.ok");
             println!("[{}] Updated v{} -> v{}", binary_name, cv, manifest.version);
             println!("\n  Tip: run `ling init` to update agents and skills to match the new version.");
         }

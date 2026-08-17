@@ -35,6 +35,7 @@ pub(super) async fn run_loop_with_tracking(
                     .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
                     .await;
                 if !was_cancelled {
+                    crate::telemetry::global().bump("chat.turn_ok");
                     // Let Yinyue's watch decide whether to herald it (she
                     // presence-gates: fires on every reply, only worth a word
                     // when away).
@@ -82,6 +83,8 @@ pub(super) async fn run_loop_with_tracking(
                 // Let Yinyue surface it in her own voice (her watch loop reacts).
                 // Only genuine failures — a user cancel isn't something to apologize for.
                 if matches!(status, crate::engine::agent::AgentRunStatus::Failed) {
+                    crate::telemetry::global()
+                        .error("model", crate::server::chat::helpers::model_error_code(&msg));
                     let _ = events_tx.send(ServerEvent::Notification(
                         crate::server::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),

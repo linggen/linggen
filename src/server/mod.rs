@@ -1306,14 +1306,14 @@ async fn prepare_server(
     // and opt-out paths. Fired here (after listener binds, before serve loop)
     // so a launch is only counted when the daemon is actually up.
     {
-        let data_dir = crate::paths::linggen_home().clone();
-        let telemetry = crate::telemetry::Telemetry::new("linggen", &data_dir);
+        let telemetry = crate::telemetry::global();
         telemetry.launch();
-        let system_state = crate::telemetry::read_system_state(&data_dir);
+        let system_state = crate::telemetry::read_system_state(crate::paths::linggen_home());
         telemetry.command_with_payload(
             "engine.start",
             serde_json::json!({ "system_state": system_state }),
         );
+        telemetry.bump("engine.start");
     }
 
     let task = tokio::spawn(async move {

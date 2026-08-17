@@ -683,7 +683,21 @@ impl Tool for WebSearchTool {
         let args: WebSearchArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for WebSearch: {}", e))?;
         let max = args.max_results.unwrap_or(5).min(10);
-        let results = crate::engine::web_search::web_search(&args.query, max).await?;
+        let results = match crate::engine::web_search::web_search(&args.query, max).await {
+            Ok(results) => results,
+            Err(err) => {
+                let msg = err.to_string();
+                let code = if msg.contains("AUTH_REQUIRED") {
+                    "auth_required"
+                } else if msg.contains("failed to reach") {
+                    "network"
+                } else {
+                    "provider_http"
+                };
+                crate::telemetry::global().error("search", code);
+                return Err(err);
+            }
+        };
         Ok(ToolResult::WebSearchResults {
             query: args.query,
             results,

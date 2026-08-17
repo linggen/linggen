@@ -26,6 +26,35 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
     format!("Error: {}", msg)
 }
 
+/// Coarse telemetry bucket for a failed model turn. Buckets only — the
+/// message text itself never leaves the machine (see telemetry/mod.rs).
+pub(crate) fn model_error_code(msg: &str) -> &'static str {
+    let lower = msg.to_lowercase();
+    if msg.contains("AUTH_REQUIRED") {
+        "auth_required"
+    } else if lower.contains("model") && lower.contains("not found") {
+        "model_not_found"
+    } else if lower.contains("(429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("usage_limit_reached")
+    {
+        "quota"
+    } else if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection")
+        || lower.contains("dns")
+        || lower.contains("(502")
+        || lower.contains("(503")
+    {
+        "network"
+    } else if lower.contains("(4") || lower.contains("(5") || lower.contains("http") {
+        "provider_http"
+    } else {
+        "other"
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Message persistence
 // ---------------------------------------------------------------------------

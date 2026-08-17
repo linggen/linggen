@@ -36,6 +36,21 @@
 //! - `command` event with payload.verb = "skill.<name>.open" / "session.start"
 //!   / etc. Verbs are stable strings; the server stores them verbatim.
 //!
+//! Daily digest (one `digest` event per completed UTC day, sent on the first
+//! activity of a later day; up to 14 days of offline backlog):
+//! - payload.day = "YYYY-MM-DD", payload.counts = {key: n}. High-frequency
+//!   signal accumulates in a local counter file
+//!   (`~/.linggen/telemetry/linggen-digest.json`) and never leaves the
+//!   machine row-by-row. Every count key is from this closed list:
+//!   - `engine.start` — daemon starts that day
+//!   - `chat.turn_ok` — model turns that completed successfully
+//!   - `update.ok` — self-update applied
+//!   - `error.<stage>.<code>` — failure buckets; stage ∈ {start, model,
+//!     search}, code is a coarse cause (`auth_required`, `model_not_found`,
+//!     `provider_http`, `network`, `quota`, `config`, `other`). Never an
+//!     error message, model name the user typed, URL, or any free text —
+//!     codes are normalized to `[a-z0-9_-]` and capped at 32 chars.
+//!
 //! No dedicated heartbeat — DAU is derived server-side from any event row
 //! (`COUNT(DISTINCT installation_id) WHERE date(created_at) = today`). The
 //! engine.start event guarantees at least one row per active day.
@@ -61,10 +76,19 @@
 //! `linggensite/functions/api/_lib/analytics.ts`. No third-party analytics.
 
 #[cfg(feature = "telemetry")]
+mod digest;
+#[cfg(feature = "telemetry")]
 mod imp;
 
 #[cfg(feature = "telemetry")]
 pub use imp::{read_system_state, Telemetry};
+
+/// Process-wide telemetry handle. One installation_id read, one HTTP client,
+/// one digest file — shared by the server, the engine loop, and the CLI.
+pub fn global() -> &'static Telemetry {
+    static GLOBAL: std::sync::OnceLock<Telemetry> = std::sync::OnceLock::new();
+    GLOBAL.get_or_init(|| Telemetry::new("linggen", crate::paths::linggen_home()))
+}
 
 #[cfg(not(feature = "telemetry"))]
 pub fn read_system_state(_data_dir: &std::path::Path) -> serde_json::Value {
@@ -85,4 +109,6 @@ impl Telemetry {
     pub fn launch(&self) {}
     pub fn command(&self, _verb: &str) {}
     pub fn command_with_payload(&self, _verb: &str, _extra: serde_json::Value) {}
+    pub fn bump(&self, _key: &str) {}
+    pub fn error(&self, _stage: &str, _code: &str) {}
 }
