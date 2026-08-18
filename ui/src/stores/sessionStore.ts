@@ -2,9 +2,10 @@
  * Session and workspace selection state.
  */
 import { create } from 'zustand';
-import type { SessionInfo } from '../types';
+import type { AskUserQuestion, SessionInfo } from '../types';
 import { sessions as sessionsApi } from '../lib/api';
 import { confirmDialog } from '../lib/confirmDialog';
+import { useInteractionStore } from './interactionStore';
 
 const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
@@ -44,15 +45,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     : '',
   sessions: [],
   allSessions: [],
-  // Session ID is validated against the fetched sessions list in fetchSessions().
-  // Only compact/embed mode sets it immediately (from URL params).
+  // Deep link: `/?session=<id>` opens that session directly — skill pages
+  // link into mission runs this way (the memory calendar's "dreaming in
+  // mission" chip). Compact/embed mode has always relied on this param;
+  // with no param the page-state push auto-picks (last used, else first).
   activeSessionId: (() => {
     if (typeof window === 'undefined') return null;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'compact' && params.get('session')) {
-      return params.get('session');
-    }
-    return null;
+    return new URLSearchParams(window.location.search).get('session');
   })(),
   isMissionSession: false,
   activeMissionId: null,
@@ -68,6 +67,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (id) window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
     else window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
     set({ activeSessionId: id });
+    void refreshPendingAskFor(id);
   },
   setIsMissionSession: (val) => set({ isMissionSession: val }),
   setActiveMissionId: (id) => set({ activeMissionId: id }),
@@ -171,3 +171,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
 }));
+
+// An AskUser raised while its session wasn't on screen is dropped by the
+// live event filter (eventHandlers/interactive.ts) — so entering a session
+// must pull the server's pending list, or the ask stays invisible until it
+// times out (observed on an attended dream-mission run, 2026-08-18). The
+// stale slot from the previous session is cleared either way.
+async function refreshPendingAskFor(sessionId: string | null): Promise<void> {
+  useInteractionStore.getState().setPendingAskUser(null);
+  if (!sessionId) return;
+  try {
+    const res = await fetch('/api/pending-ask-user');
+    const items = (await res.json()) as Array<{
+      question_id: string;
+      agent_id?: string;
+      questions?: unknown[];
+      session_id?: string | null;
+    }>;
+    const mine = items.find((it) => !it.session_id || it.session_id === sessionId);
+    // The user may have switched again while the fetch ran.
+    if (useSessionStore.getState().activeSessionId !== sessionId) return;
+    if (!mine) return;
+    useInteractionStore.getState().setPendingAskUser({
+      questionId: mine.question_id,
+      agentId: String(mine.agent_id || ''),
+      questions: (mine.questions || []) as AskUserQuestion[],
+    });
+  } catch {
+    // Daemon unreachable — the live event path still covers new asks.
+  }
+}
