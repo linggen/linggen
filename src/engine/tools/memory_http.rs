@@ -316,14 +316,28 @@ fn ling_mem_version(path: &std::path::Path) -> Option<(u32, u32, u32)> {
 }
 
 /// Resolve the `ling-mem` binary to the **highest-version** copy among the
-/// `$PATH` hit and the two installer dirs (`~/.local/bin`, `/usr/local/bin`).
-/// Picking by version — not first-on-PATH — avoids starting a stale copy when
-/// a default PATH happens to shadow a newer one with an older `/usr/local/bin`
-/// (a real multi-host skew: different installers drop different versions).
+/// canonical location (`~/.local/bin/ling-mem`) and whatever `$PATH` turns up.
+///
+/// `~/.local/bin/ling-mem` is the singleton: one real file shared by every
+/// host and channel, written only by `install-bin.sh`, which resolves a
+/// semver range and refuses to downgrade. `/usr/local/bin` is deliberately
+/// NOT probed — nothing installs there any more, and probing it is how a
+/// stale copy left by a retired installer got a vote. A machine still
+/// carrying one is reachable through the `$PATH` hit below.
+///
+/// Picking by version — not first-on-PATH — is the last line of defence:
+/// if two copies do exist, the newer one wins whatever PATH order says.
 /// `None` if no usable binary is found.
 fn resolve_ling_mem() -> Option<std::path::PathBuf> {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(out) = std::process::Command::new("which").arg("ling-mem").output() {
+    // The daemon may carry launchd's minimal PATH, which omits ~/.local/bin;
+    // hand `which` the same augmented PATH shell children get, so a PATH hit
+    // means what it says.
+    if let Ok(out) = std::process::Command::new("which")
+        .arg("ling-mem")
+        .env("PATH", crate::util::shell_path())
+        .output()
+    {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !s.is_empty() {
@@ -334,7 +348,6 @@ fn resolve_ling_mem() -> Option<std::path::PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         candidates.push(std::path::PathBuf::from(home).join(".local/bin/ling-mem"));
     }
-    candidates.push(std::path::PathBuf::from("/usr/local/bin/ling-mem"));
 
     candidates.retain(|p| p.is_file());
     candidates.sort();
