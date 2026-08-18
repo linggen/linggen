@@ -171,6 +171,7 @@ impl Tools {
                 .arg("-c")
                 .arg(&wrapped_cmd)
                 .current_dir(&cwd)
+                .env("PATH", crate::util::shell_path())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .process_group(0)

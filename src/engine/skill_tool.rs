@@ -216,6 +216,7 @@ impl SkillToolDef {
             .arg("-c")
             .arg(&rendered)
             .current_dir(workspace_root)
+            .env("PATH", crate::util::shell_path())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;

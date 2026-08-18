@@ -163,6 +163,7 @@ impl Tools {
                             }
                         }
                         cmd.current_dir(&self.root);
+                        cmd.env("PATH", crate::util::shell_path());
                         let output = cmd.output()
                             .map_err(|e| anyhow::anyhow!("Failed to run app script: {}", e))?;
                         Ok(ToolResult::CommandOutput {

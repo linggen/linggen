@@ -382,6 +382,7 @@ pub(crate) async fn run_bash_api(
         .arg("-c")
         .arg(&wrapped_cmd)
         .current_dir(&base_cwd)
+        .env("PATH", crate::util::shell_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
