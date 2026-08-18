@@ -23,11 +23,13 @@ use crate::server::ServerState;
 mod control;
 mod media_channel;
 mod forward;
+mod inbound;
 mod inference;
 mod response;
 mod session;
 mod stun;
 use control::{handle_control_message, process_control_request_async};
+use inbound::{Inbound, InboundReassembly};
 use forward::{forward_event_to_channels, EventFilter};
 use inference::process_inference_request;
 use response::{enqueue_push, enqueue_response, DcWrite, MAX_DC_WRITE_QUEUE};
@@ -286,6 +288,9 @@ async fn run_peer(
     }
     let mut session_channels: HashMap<String, str0m::channel::ChannelId> = HashMap::new();
     let mut channel_sessions: HashMap<str0m::channel::ChannelId, String> = HashMap::new();
+    // Reassembly for control messages the client had to split — a chat with
+    // an image does not fit in one SCTP message. Per-peer, dropped with it.
+    let mut inbound = InboundReassembly::default();
     // Buffer events for sessions whose data channels aren't open yet.
     // When a session channel opens, flush the buffer.
     // Entries expire after 60s to prevent unbounded growth from dead sessions.
@@ -525,6 +530,30 @@ async fn run_peer(
                             text.len()
                         );
                         if Some(data.id) == control_channel_id {
+                            // A control message too big for one SCTP message
+                            // arrives gzipped and split; hold the pieces until
+                            // the tail, then handle the whole thing as if it
+                            // had come in one go. Anything else falls straight
+                            // through untouched.
+                            let text = match serde_json::from_str::<serde_json::Value>(&text) {
+                                Ok(v) => match inbound.accept(&v) {
+                                    Inbound::NotChunked => text,
+                                    Inbound::Buffered => continue,
+                                    Inbound::Complete(full) => {
+                                        tracing::debug!(
+                                            "Reassembled inbound control message: {}KB",
+                                            full.len() / 1024
+                                        );
+                                        full
+                                    }
+                                    Inbound::Failed(why) => {
+                                        tracing::warn!("Inbound transfer failed: {why}");
+                                        continue;
+                                    }
+                                },
+                                // Not valid JSON — let the normal path log it.
+                                Err(_) => text,
+                            };
                             if let Some(req) = handle_control_message(
                                 &mut rtc,
                                 data.id,
@@ -721,6 +750,9 @@ async fn run_peer(
                         if Some(id) == control_channel_id {
                             control_channel_id = None;
                             tracing::info!("Control channel closed");
+                            // A half-sent transfer must not outlive the
+                            // channel that started it.
+                            inbound.clear();
                         }
                     }
 

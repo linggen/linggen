@@ -26,6 +26,38 @@ export interface RtcTransportConfig {
   iceServers?: RTCIceServer[];
 }
 
+/**
+ * Raw bytes per outbound chunk before base64. Mirrors MAX_CHUNK_RAW in
+ * src/server/rtc/peer/response.rs — one SCTP message is capped (str0m
+ * advertises 256 KB), and a browser answers an oversized send() by tearing
+ * the channel down, which reads as a dropped connection rather than as
+ * "too big". 48 KB raw → ~64 KB base64, comfortably under.
+ */
+const MAX_CHUNK_RAW = 48_000;
+
+/** Send anything larger than this as a chunked transfer. */
+const CHUNK_THRESHOLD = MAX_CHUNK_RAW;
+
+/** gzip a UTF-8 string. Pairs with GzDecoder on the server. */
+async function gzip(text: string): Promise<Uint8Array> {
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('This browser cannot compress large messages (no CompressionStream)');
+  }
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** Base64, in slices — String.fromCharCode(...bytes) overflows the stack on
+ *  an image-sized array. */
+function toBase64(bytes: Uint8Array): string {
+  const SLICE = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += SLICE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + SLICE));
+  }
+  return btoa(binary);
+}
+
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
@@ -59,6 +91,7 @@ export class RtcTransport implements Transport {
     timer: ReturnType<typeof setTimeout>;
   }>();
   private requestIdCounter = 0;
+  private transferIdCounter = 0;
   // In-progress gzip chunked transfers (keyed by request_id)
   private gzipTransfers = new Map<string, { chunks: string[]; status: number; expectedChunks: number }>();
   // In-flight reassembly for an unsolicited chunked push (e.g. large page_state).
@@ -459,8 +492,47 @@ export class RtcTransport implements Transport {
         timer,
       });
 
-      this.controlChannel.send(JSON.stringify({ ...msg, request_id: requestId }));
+      const payload = JSON.stringify({ ...msg, request_id: requestId });
+      this.sendControlPayload(payload).catch((e) => {
+        if (this.pendingRequests.has(requestId)) {
+          this.pendingRequests.delete(requestId);
+          clearTimeout(timer);
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      });
     });
+  }
+
+  /**
+   * Write one control message, splitting it when it exceeds what a single
+   * SCTP message can carry. The server reassembles (see
+   * src/server/rtc/peer/inbound.rs); the reply still comes back on
+   * request_id, so callers never see the difference.
+   */
+  private async sendControlPayload(payload: string): Promise<void> {
+    const send = (data: string) => {
+      const channel = this.controlChannel;
+      if (!channel || channel.readyState !== 'open') {
+        throw new Error('Control channel not open');
+      }
+      channel.send(data);
+    };
+
+    if (payload.length <= CHUNK_THRESHOLD) {
+      send(payload);
+      return;
+    }
+
+    const compressed = await gzip(payload);
+    const transferId = `tx-${++this.transferIdCounter}`;
+    const total = Math.ceil(compressed.length / MAX_CHUNK_RAW);
+
+    send(JSON.stringify({ transfer_id: transferId, req_gzip_start: { chunks: total } }));
+    for (let i = 0; i < total; i++) {
+      const slice = compressed.subarray(i * MAX_CHUNK_RAW, (i + 1) * MAX_CHUNK_RAW);
+      send(JSON.stringify({ transfer_id: transferId, req_gzip_chunk: toBase64(slice) }));
+    }
+    send(JSON.stringify({ transfer_id: transferId, req_gzip_end: true }));
   }
 
   // --- Internal: heartbeat ---

@@ -287,9 +287,17 @@ export function useChatActions(
       // Hidden boot prompts fail silently; user-typed messages get told.
       if (!trimmed.startsWith('[HIDDEN]')) {
         const ts = new Date();
+        // Say which failure this was. "Connection interrupted" used to be
+        // printed for every cause, including an attachment the transport
+        // could not carry — which sent people looking at their network
+        // instead of at the image.
+        const reason = String((e as Error)?.message ?? '');
+        const text = reason.includes('CompressionStream')
+          ? 'Message failed to send — this browser cannot send attachments that large.'
+          : 'Message failed to send — the connection to the server was interrupted. Try again.';
         useChatStore.getState().addMessage({
           role: 'agent', from: 'system', to: 'user',
-          text: 'Message failed to send — the connection to the server was interrupted. Try again.', isError: true,
+          text, isError: true,
           timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
         });
       }

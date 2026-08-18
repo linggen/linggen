@@ -116,7 +116,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     window.setTimeout(resizeInput, 0);
   };
 
-  const readFileAsBase64 = (file: File): Promise<string> => {
+  const readFileAsBase64 = (file: File | Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -129,6 +129,63 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     });
   };
 
+  /**
+   * Read an image for sending, downscaled.
+   *
+   * Vision models resample anything larger than ~1568px on the long edge
+   * anyway, so the extra pixels buy no accuracy — they only cost upload
+   * size and tokens. A phone photo drops from megabytes to a couple of
+   * hundred KB here.
+   *
+   * PNG screenshots re-encode to JPEG; an image that is already small
+   * enough is passed through untouched, so a deliberately-attached small
+   * PNG keeps its exact bytes and its alpha.
+   */
+  const readImageForSend = async (file: File): Promise<string> => {
+    const MAX_EDGE = 1568;
+    const PASSTHROUGH_BYTES = 256 * 1024;
+
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      // Not decodable here (exotic format, or createImageBitmap missing) —
+      // send the original rather than dropping the user's attachment.
+      return readFileAsBase64(file);
+    }
+
+    const longEdge = Math.max(bitmap.width, bitmap.height);
+    if (longEdge <= MAX_EDGE && file.size <= PASSTHROUGH_BYTES) {
+      bitmap.close();
+      return readFileAsBase64(file);
+    }
+
+    const scale = Math.min(1, MAX_EDGE / longEdge);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return readFileAsBase64(file);
+    }
+    // JPEG has no alpha; paint white so transparent PNGs don't come out black.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((res) =>
+      canvas.toBlob(res, 'image/jpeg', 0.85)
+    );
+    if (!blob) return readFileAsBase64(file);
+    // Keep whichever is actually smaller — re-encoding a small graphic can
+    // grow it.
+    if (blob.size >= file.size) return readFileAsBase64(file);
+    return readFileAsBase64(blob);
+  };
+
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -137,7 +194,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          const base64 = await readFileAsBase64(file);
+          const base64 = await readImageForSend(file);
           setPendingImages(prev => [...prev, base64]);
         }
       }
@@ -150,7 +207,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     for (const file of Array.from(files)) {
       if (file.type.startsWith('image/')) {
         e.preventDefault();
-        const base64 = await readFileAsBase64(file);
+        const base64 = await readImageForSend(file);
         setPendingImages(prev => [...prev, base64]);
       }
     }
