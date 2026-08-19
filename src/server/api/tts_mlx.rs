@@ -117,9 +117,19 @@ impl MlxTtsProvider {
     /// One round-trip against the (spawned-if-needed) sidecar. Any error
     /// leaves the slot empty so the next call respawns from scratch.
     async fn request(&self, text: &str, voice: &str) -> anyhow::Result<Vec<u8>> {
-        let mut guard = self.sidecar.lock().await;
+        // Bounded waits on the way in: if the sidecar is mid-spawn (boot
+        // prewarm holds the lock for up to READY_TIMEOUT) or another clip
+        // is hogging it, give up fast — warm Kokoro beats a silent queue.
+        let mut guard =
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.sidecar.lock())
+                .await
+                .map_err(|_| anyhow::anyhow!("sidecar busy (spawning or mid-clip)"))?;
         if guard.is_none() {
-            *guard = Some(Self::spawn().await?);
+            *guard = Some(
+                tokio::time::timeout(std::time::Duration::from_secs(15), Self::spawn())
+                    .await
+                    .map_err(|_| anyhow::anyhow!("sidecar spawn too slow"))??,
+            );
         }
         let sidecar = guard.as_mut().expect("just spawned");
 

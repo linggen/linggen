@@ -107,7 +107,14 @@ fn write_stamp(dir: &Path, value: &str) -> Result<()> {
 /// checks, nothing else). Progress rides the retained `tasks` topic so the
 /// task widget on any surface can show it; telemetry must never break the
 /// prewarm, so publish failures are swallowed inside [`publish_progress`].
-pub async fn prewarm() {
+pub type Progress = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
+
+/// `with_tts` gates the voice stages (venv + model, ~2.1 GB): the caller
+/// passes whether anything on this machine actually speaks (pet enabled),
+/// so a machine with the pet off never pulls the model. `progress`
+/// receives each stage payload; the server wires it to the live topic
+/// bus + retained store.
+pub async fn prewarm(with_tts: bool, progress: Progress) {
     // One prewarm at a time; a second boot-time spawn or an on-demand
     // ensure_* call waits instead of racing the unpack.
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -117,10 +124,17 @@ pub async fn prewarm() {
         tracing::info!("[runtime] prewarm skipped: unsupported platform");
         return;
     }
+    export_python_env();
 
     for attempt in 0..3u32 {
-        match prewarm_stages().await {
+        match prewarm_stages(with_tts, &progress).await {
             Ok(()) => return,
+            Err(e) if format!("{e:#}").contains("low disk") => {
+                // Not retryable on a timer — the disk won't free itself.
+                // Next boot re-checks; no 10/20/40-minute wedge.
+                tracing::warn!("[runtime] prewarm stopped: {e:#}");
+                return;
+            }
             Err(e) => {
                 tracing::warn!("[runtime] prewarm attempt {} failed: {e:#}", attempt + 1);
                 tokio::time::sleep(std::time::Duration::from_secs(600 << attempt)).await;
@@ -130,14 +144,25 @@ pub async fn prewarm() {
     tracing::warn!("[runtime] prewarm giving up until next boot");
 }
 
-async fn prewarm_stages() -> Result<()> {
+/// Publish the managed interpreter to every child lane at once: skill
+/// scripts on any spawn path read `${LINGGEN_PY:-python3}`. Only set when
+/// the interpreter is actually there — a dangling value would defeat the
+/// `:-python3` fallback on machines that still need it.
+fn export_python_env() {
+    if python_ready() {
+        std::env::set_var("LINGGEN_PY", python_bin());
+    }
+}
+
+async fn prewarm_stages(with_tts: bool, progress: &Progress) -> Result<()> {
+    // MLX is Apple-Silicon-only; Intel Macs keep the runtime + tools and
+    // simply never grow a TTS lane.
+    let tts_on = with_tts && cfg!(target_arch = "aarch64");
     let stages: &[(&str, bool)] = &[
         ("python", true),
         ("tools", true),
-        // MLX is Apple-Silicon-only; Intel Macs keep the runtime + tools
-        // and simply never grow a TTS lane.
-        ("tts", cfg!(target_arch = "aarch64")),
-        ("tts-model", cfg!(target_arch = "aarch64")),
+        ("tts", tts_on),
+        ("tts-model", tts_on),
     ];
     let total = stages.iter().filter(|(_, on)| *on).count();
     let mut done = 0;
@@ -146,26 +171,26 @@ async fn prewarm_stages() -> Result<()> {
         if !enabled {
             continue;
         }
-        publish_progress(done, total, stage, false);
+        publish_progress(progress, done, total, stage, false);
         match *stage {
-            "python" => ensure_python().await.map(|_| ())?,
+            "python" => {
+                ensure_python().await.map(|_| ())?;
+                export_python_env();
+            }
             "tools" => ensure_venv("tools").await.map(|_| ())?,
             "tts" => ensure_venv("tts").await.map(|_| ())?,
             "tts-model" => ensure_tts_model().await?,
             _ => unreachable!(),
         }
         done += 1;
-        publish_progress(done, total, stage, done == total);
+        publish_progress(progress, done, total, stage, done == total);
     }
     tracing::info!("[runtime] prewarm complete");
     Ok(())
 }
 
-fn publish_progress(done: usize, total: usize, current: &str, finished: bool) {
-    crate::server::api::topic::retain(
-        "tasks",
-        "runtime",
-        &serde_json::json!({
+fn publish_progress(progress: &Progress, done: usize, total: usize, current: &str, finished: bool) {
+    progress(&serde_json::json!({
             "app": "runtime",
             "task_id": "runtime-prewarm",
             "label": "Preparing runtime",
@@ -175,8 +200,7 @@ fn publish_progress(done: usize, total: usize, current: &str, finished: bool) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
-        }),
-    );
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +350,12 @@ async fn download_verified(asset: &str, sha256: &str, dest: &Path) -> Result<()>
             Ok(()) => {
                 let got = file_sha256(&part)?;
                 if got != sha256 {
+                    // A corrupt body from one source is exactly what the
+                    // other source is for — clear the .part and move on.
                     let _ = std::fs::remove_file(&part);
-                    bail!("sha256 mismatch for {asset}: got {got}");
+                    tracing::warn!("[runtime] sha256 mismatch for {asset} from {url}");
+                    last = Some(anyhow::anyhow!("sha256 mismatch for {asset}: got {got}"));
+                    continue;
                 }
                 std::fs::rename(&part, dest)?;
                 return Ok(());

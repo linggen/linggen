@@ -389,10 +389,6 @@ async fn main() -> Result<()> {
 
             let _ = skills.load_all(Some(&ws_root)).await;
 
-            // Managed Python runtime: fetch/repair in the background so no
-            // skill or TTS request ever waits on a download.
-            tokio::spawn(runtime::prewarm());
-
             // Auto-install built-in skills if none found
             if skills.list_skills().await.is_empty() {
                 let sm = skills.clone();

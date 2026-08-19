@@ -383,13 +383,6 @@ pub(crate) async fn run_bash_api(
         .arg(&wrapped_cmd)
         .current_dir(&base_cwd)
         .env("PATH", crate::util::shell_path())
-        // Deterministic handle on the managed interpreter for skill
-        // scripts (`${LINGGEN_PY:-python3}`); PATH keeps system python3
-        // first when one exists.
-        .env(
-            "LINGGEN_PY",
-            crate::runtime::python_bin().to_string_lossy().to_string(),
-        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();

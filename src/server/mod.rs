@@ -1,16 +1,16 @@
 pub(crate) mod api;
 pub(crate) mod bridge;
 mod chat;
+mod events;
 mod mcp;
 mod mcp_agent;
-mod events;
 pub(crate) mod rtc;
 mod state;
 mod yinyue_watch;
 
 pub use events::{AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent};
-pub use state::ServerState;
 pub(crate) use state::ActiveStatusRecord;
+pub use state::ServerState;
 
 use events::*;
 
@@ -33,16 +33,14 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use api::agents::{
-    cancel_agent_run, cancel_tool_execution, clear_queued_messages,
-    delete_agent_file_api, get_agent_file_api,
-    list_agent_files_api, list_agent_runs_api, list_agents_api,
-    reload_agents, run_agent, set_task,
-    upsert_agent_file_api,
-};
 use api::account::{
     get_account, get_account_callback, post_account_checkout, post_account_login,
     post_account_logout,
+};
+use api::agents::{
+    cancel_agent_run, cancel_tool_execution, clear_queued_messages, delete_agent_file_api,
+    get_agent_file_api, list_agent_files_api, list_agent_runs_api, list_agents_api, reload_agents,
+    run_agent, set_task, upsert_agent_file_api,
 };
 use api::config::{
     codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
@@ -54,9 +52,8 @@ use api::marketplace::{
     marketplace_install, marketplace_move_to_global, marketplace_uninstall,
 };
 use api::missions::{
-    create_mission, delete_mission, get_mission_file,
-    get_mission_session_state, list_mission_runs, list_missions, trigger_mission,
-    update_mission, upsert_mission_file,
+    create_mission, delete_mission, get_mission_file, get_mission_session_state, list_mission_runs,
+    list_missions, trigger_mission, update_mission, upsert_mission_file,
 };
 use api::permissions::{get_session_permission, update_session_permission};
 use api::rooms::{
@@ -69,8 +66,8 @@ use api::sessions::{
     rename_session_api, resolve_session_api,
 };
 use api::skills::{
-    delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills,
-    reload_skills, upsert_skill_file_api,
+    delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills, reload_skills,
+    upsert_skill_file_api,
 };
 use api::status::{get_status_api, list_models_api};
 use api::storage::{
@@ -87,12 +84,6 @@ use chat::{
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
-
-
-
-
-
-
 
 // ---------------------------------------------------------------------------
 // UI event kind/phase constants
@@ -162,7 +153,14 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         // Per-peer — handled directly in forward.rs (the present flag depends on
         // the receiving peer's id), so it never goes through this shared mapping.
         ServerEvent::YinyuePresenterChanged => None,
-        ServerEvent::Message { from, to, content, session_id, run_id, parent_agent_id } => {
+        ServerEvent::Message {
+            from,
+            to,
+            content,
+            session_id,
+            run_id,
+            parent_agent_id,
+        } => {
             let cleaned = crate::engine::tool_render::sanitize_message_for_ui(&from, &content)?;
             Some(UiEvent {
                 id: format!("msg-{seq}"),
@@ -292,7 +290,11 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             project_root: None,
             data: None,
         }),
-        ServerEvent::Outcome { agent_id, outcome, session_id } => Some(UiEvent {
+        ServerEvent::Outcome {
+            agent_id,
+            outcome,
+            session_id,
+        } => Some(UiEvent {
             id: format!("run-outcome-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -349,8 +351,10 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             subagent_run_id,
             parent_run_id,
         } => Some(UiEvent {
-            id: format!("run-subagent-spawned-{}-{seq}",
-                subagent_run_id.as_deref().unwrap_or(&subagent_id)),
+            id: format!(
+                "run-subagent-spawned-{}-{seq}",
+                subagent_run_id.as_deref().unwrap_or(&subagent_id)
+            ),
             seq,
             rev: seq,
             ts_ms,
@@ -375,8 +379,10 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             subagent_run_id,
             parent_run_id,
         } => Some(UiEvent {
-            id: format!("run-subagent-result-{}-{seq}",
-                subagent_run_id.as_deref().unwrap_or(&subagent_id)),
+            id: format!(
+                "run-subagent-result-{}-{seq}",
+                subagent_run_id.as_deref().unwrap_or(&subagent_id)
+            ),
             seq,
             rev: seq,
             ts_ms,
@@ -405,14 +411,26 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             rev: seq,
             ts_ms,
             kind: UI_KIND_TOKEN.to_string(),
-            phase: if done { Some(UI_PHASE_DONE.to_string()) } else { None },
+            phase: if done {
+                Some(UI_PHASE_DONE.to_string())
+            } else {
+                None
+            },
             text: Some(token),
             agent_id: Some(agent_id),
             session_id,
             project_root: None,
-            data: if thinking { Some(json!({ "thinking": true })) } else { None },
+            data: if thinking {
+                Some(json!({ "thinking": true }))
+            } else {
+                None
+            },
         }),
-        ServerEvent::PlanUpdate { agent_id, plan, session_id } => Some(UiEvent {
+        ServerEvent::PlanUpdate {
+            agent_id,
+            plan,
+            session_id,
+        } => Some(UiEvent {
             id: format!("run-plan-{agent_id}-{seq}"),
             seq,
             rev: seq,
@@ -648,7 +666,11 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             run_id,
             parent_run_id,
         } => {
-            let phase = if block_type == "tool_use" { "start" } else { "start" };
+            let phase = if block_type == "tool_use" {
+                "start"
+            } else {
+                "start"
+            };
             Some(UiEvent {
                 id: format!("cb-start-{block_id}"),
                 seq,
@@ -815,7 +837,6 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
     }
 }
 
-
 struct ServerHandle {
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
     port: u16,
@@ -828,16 +849,19 @@ async fn prepare_server(
     port: u16,
     dev_mode: bool,
     idle_shutdown_secs: Option<u64>,
-    mut agent_events_rx: mpsc::UnboundedReceiver<(crate::engine::agent::AgentEvent, Option<String>)>,
+    mut agent_events_rx: mpsc::UnboundedReceiver<(
+        crate::engine::agent::AgentEvent,
+        Option<String>,
+    )>,
 ) -> anyhow::Result<ServerHandle> {
     info!("linggen server starting on {}:{}...", host, port);
 
     // Events can be bursty (tool/status steps). Use a larger buffer to reduce lag drops.
     let (events_tx, _) = broadcast::channel(4096);
 
-    let prompt_store = Arc::new(crate::prompts::PromptStore::load(
-        Some(&crate::prompts::PromptStore::default_override_dir()),
-    ));
+    let prompt_store = Arc::new(crate::prompts::PromptStore::load(Some(
+        &crate::prompts::PromptStore::default_override_dir(),
+    )));
 
     // Pet/voice settings drive the TTS engine choice + whether to pre-warm it.
     let pet_cfg = manager.get_config_snapshot().await.pet;
@@ -863,7 +887,9 @@ async fn prepare_server(
         whip_token: uuid::Uuid::new_v4().to_string(),
         user_bash_cwd: Arc::new(Mutex::new(HashMap::new())),
         proxy_connections: Arc::new(rtc::proxy_room::ProxyRoomConnections::new()),
-        token_usage: Arc::new(tokio::sync::Mutex::new(rtc::token_store::TokenUsageStore::load())),
+        token_usage: Arc::new(tokio::sync::Mutex::new(
+            rtc::token_store::TokenUsageStore::load(),
+        )),
         codex_login_task: Arc::new(tokio::sync::Mutex::new(None)),
         tts: api::tts::default_provider(),
         bridge: Arc::new(bridge::BridgeHub::new()),
@@ -915,11 +941,24 @@ async fn prepare_server(
         });
     }
 
-    // Pre-warm the voice model (Yinyue's TTS) off the hot path — but ONLY when
-    // the pet is enabled AND the chosen engine is light enough to prefetch
-    // (Kokoro). A heavy engine (Qwen3, ~2 GB) stays lazy: its model downloads on
-    // her first actual speak, so a fresh install or a disabled pet never pulls
-    // it. The lazy `OnceCell` in the provider handles the on-demand load.
+    // Managed Python runtime: fetch/repair in the background so no skill or
+    // TTS request ever waits on a download. The voice stages (venv + model,
+    // ~2.1 GB) run only when the pet is enabled — a disabled pet never pulls
+    // them. Progress goes out live on the `tasks` topic and is retained for
+    // surfaces that attach later.
+    {
+        let state = state.clone();
+        let with_tts = pet_cfg.enabled;
+        let progress: crate::runtime::Progress = std::sync::Arc::new(move |payload| {
+            crate::server::api::topic::publish_topic(&state, "tasks", "runtime", payload.clone());
+            crate::server::api::topic::retain("tasks", "runtime", payload);
+        });
+        tokio::spawn(crate::runtime::prewarm(with_tts, progress));
+    }
+
+    // Pre-warm the voice providers off the hot path when the pet is enabled:
+    // Kokoro's weights (~300 MB, the fallback voice) and the TTS sidecar if
+    // the runtime prewarm above has already delivered its venv + model.
     if pet_cfg.enabled && state.tts.prewarm_on_boot() {
         let tts = state.tts.clone();
         tokio::spawn(async move { tts.prewarm().await });
@@ -942,7 +981,8 @@ async fn prepare_server(
             // mechanism for every tool. Never empty as a result, so the
             // early return is gone.
             let cfg = manager.get_config_snapshot().await;
-            let servers = crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
+            let servers =
+                crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
             crate::mcp_client::registry().connect_all(&servers).await;
         });
     }
@@ -987,12 +1027,22 @@ async fn prepare_server(
                 match event {
                     // Special cases that need extra logic beyond a 1:1 mapping.
                     crate::engine::agent::AgentEvent::AgentStatus {
-                        agent_id, status, detail, parent_id, run_id, parent_run_id,
+                        agent_id,
+                        status,
+                        detail,
+                        parent_id,
+                        run_id,
+                        parent_run_id,
                     } => {
                         state_clone
                             .send_agent_status_with_ids(
-                                agent_id, AgentStatusKind::from_str_loose(&status), detail,
-                                parent_id, session_id, run_id, parent_run_id,
+                                agent_id,
+                                AgentStatusKind::from_str_loose(&status),
+                                detail,
+                                parent_id,
+                                session_id,
+                                run_id,
+                                parent_run_id,
                             )
                             .await;
                     }
@@ -1003,29 +1053,51 @@ async fn prepare_server(
                     other => {
                         // Intercept __cwd_changed__ progress events → WorkingFolderChanged
                         if let crate::engine::agent::AgentEvent::ToolProgress {
-                            ref tool, ref line, ..
-                        } = &other {
+                            ref tool,
+                            ref line,
+                            ..
+                        } = &other
+                        {
                             if tool == "__cwd_changed__" {
                                 // line = cwd, stream = "project|project_name"
                                 let cwd = line.clone();
-                                if let crate::engine::agent::AgentEvent::ToolProgress { stream, .. } = &other {
+                                if let crate::engine::agent::AgentEvent::ToolProgress {
+                                    stream,
+                                    ..
+                                } = &other
+                                {
                                     let parts: Vec<&str> = stream.splitn(2, '|').collect();
-                                    let project = parts.first().filter(|s| !s.is_empty()).map(|s| s.to_string());
-                                    let project_name = parts.get(1).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                                    let project = parts
+                                        .first()
+                                        .filter(|s| !s.is_empty())
+                                        .map(|s| s.to_string());
+                                    let project_name = parts
+                                        .get(1)
+                                        .filter(|s| !s.is_empty())
+                                        .map(|s| s.to_string());
                                     if let Some(ref sid) = session_id {
                                         // Update session metadata
-                                        if let Ok(Some(mut meta)) = state_clone.manager.global_sessions.get_session_meta(sid) {
+                                        if let Ok(Some(mut meta)) = state_clone
+                                            .manager
+                                            .global_sessions
+                                            .get_session_meta(sid)
+                                        {
                                             meta.cwd = Some(cwd.clone());
                                             meta.project = project.clone();
                                             meta.project_name = project_name.clone();
-                                            let _ = state_clone.manager.global_sessions.update_session_meta(&meta);
+                                            let _ = state_clone
+                                                .manager
+                                                .global_sessions
+                                                .update_session_meta(&meta);
                                         }
-                                        let _ = state_clone.events_tx.send(ServerEvent::WorkingFolderChanged {
-                                            session_id: sid.clone(),
-                                            cwd,
-                                            project,
-                                            project_name,
-                                        });
+                                        let _ = state_clone.events_tx.send(
+                                            ServerEvent::WorkingFolderChanged {
+                                                session_id: sid.clone(),
+                                                cwd,
+                                                project,
+                                                project_name,
+                                            },
+                                        );
                                     }
                                 }
                                 continue; // Don't forward as ToolProgress
@@ -1036,7 +1108,8 @@ async fn prepare_server(
                             actual_prompt_tokens: Some(prompt),
                             actual_completion_tokens: Some(completion),
                             ..
-                        } = &other {
+                        } = &other
+                        {
                             let sid = session_id.clone().unwrap_or_else(|| "current".to_string());
                             let mut tokens = state_clone.session_tokens.lock().await;
                             let entry = tokens.entry(sid).or_insert((0, 0));
@@ -1068,7 +1141,10 @@ async fn prepare_server(
         .route("/api/skills", get(list_skills))
         .route("/api/models/health", get(get_models_health))
         .route("/api/config", get(get_config_api).post(update_config_api))
-        .route("/api/credentials", get(get_credentials_api).put(update_credentials_api))
+        .route(
+            "/api/credentials",
+            get(get_credentials_api).put(update_credentials_api),
+        )
         .route("/api/auth/codex/status", get(get_codex_auth_status))
         .route("/api/auth/codex/login", post(start_codex_auth_login))
         .route("/api/auth/codex/logout", post(codex_auth_logout))
@@ -1078,7 +1154,10 @@ async fn prepare_server(
         .route("/api/community-skills/search", get(community_search))
         .route("/api/marketplace/install", post(marketplace_install))
         .route("/api/marketplace/uninstall", delete(marketplace_uninstall))
-        .route("/api/marketplace/move-to-global", post(marketplace_move_to_global))
+        .route(
+            "/api/marketplace/move-to-global",
+            post(marketplace_move_to_global),
+        )
         .route("/api/builtin-skills", get(builtin_skills_list))
         .route("/api/builtin-skills/install", post(builtin_skills_install))
         .route("/api/skill-files", get(list_skill_files_api))
@@ -1090,7 +1169,10 @@ async fn prepare_server(
         .route("/api/sessions", post(create_session))
         .route("/api/sessions", patch(rename_session_api))
         .route("/api/sessions", delete(remove_session_api))
-        .route("/api/sessions/permission", get(get_session_permission).patch(update_session_permission))
+        .route(
+            "/api/sessions/permission",
+            get(get_session_permission).patch(update_session_permission),
+        )
         .route("/api/skill-sessions", get(list_skill_sessions))
         .route("/api/skill-sessions", delete(remove_skill_session_api))
         .route("/api/skill-sessions/state", get(get_skill_session_state))
@@ -1099,11 +1181,20 @@ async fn prepare_server(
         .route("/api/queue/clear", post(clear_queued_messages))
         // Missions
         .route("/api/missions", get(list_missions).post(create_mission))
-        .route("/api/missions/sessions/state", get(get_mission_session_state))
-        .route("/api/missions/{id}", put(update_mission).delete(delete_mission))
+        .route(
+            "/api/missions/sessions/state",
+            get(get_mission_session_state),
+        )
+        .route(
+            "/api/missions/{id}",
+            put(update_mission).delete(delete_mission),
+        )
         .route("/api/missions/{id}/runs", get(list_mission_runs))
         .route("/api/missions/{id}/trigger", post(trigger_mission))
-        .route("/api/mission-file", get(get_mission_file).post(upsert_mission_file))
+        .route(
+            "/api/mission-file",
+            get(get_mission_file).post(upsert_mission_file),
+        )
         // Chat & plan (also accessible via named WebRTC RPC)
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/clear", post(clear_chat_history_api))
@@ -1128,13 +1219,21 @@ async fn prepare_server(
             post(api::media::ingest_handler)
                 // Originals include multi-GB videos; the axum default (2 MB) is
                 // far too small for this one route.
-                .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024 * 1024)),
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    32 * 1024 * 1024 * 1024,
+                )),
         )
         .route("/api/media/verify", post(api::media::verify_handler))
         .route("/api/media/reconcile", post(api::media::reconcile_handler))
         .route("/api/media/backup", post(api::media::backup_handler))
-        .route("/api/media/request-delete", post(api::media::request_delete_handler))
-        .route("/api/media/pending-deletes", get(api::media::pending_deletes_handler))
+        .route(
+            "/api/media/request-delete",
+            post(api::media::request_delete_handler),
+        )
+        .route(
+            "/api/media/pending-deletes",
+            get(api::media::pending_deletes_handler),
+        )
         .route("/api/tts", post(api::tts::tts_handler))
         .route("/api/yinyue/say", post(api::yinyue::say_handler))
         .route("/api/bridge/socket", get(bridge::socket_handler))
@@ -1153,7 +1252,10 @@ async fn prepare_server(
         .route("/api/account/logout", post(post_account_logout))
         .route("/api/pair/request", post(api::pair::post_pair_request))
         .route("/api/pair/confirm", post(api::pair::post_pair_confirm))
-        .route("/api/pair/qr-confirm", post(api::pair::post_pair_qr_confirm))
+        .route(
+            "/api/pair/qr-confirm",
+            post(api::pair::post_pair_qr_confirm),
+        )
         .route(
             "/api/pair/window/keepalive",
             post(api::pair::post_pair_window_keepalive),
@@ -1196,14 +1298,25 @@ async fn prepare_server(
         .route("/api/proxy/disconnect", post(disconnect_proxy_room_api))
         .route("/api/proxy/status", get(proxy_status_api))
         .route("/api/token-usage", get(token_usage_api))
-        .route("/api/room-config", get(get_room_config).post(update_room_config))
+        .route(
+            "/api/room-config",
+            get(get_room_config).post(update_room_config),
+        )
         .route("/api/health", get(health_handler))
         .route("/api/utils/pick-folder", get(pick_folder))
         .route("/api/utils/ollama-status", get(get_ollama_status))
         .route("/api/storage/roots", get(storage_roots))
         .route("/api/storage/tree", get(storage_tree))
-        .route("/api/storage/file", get(storage_read_file).put(storage_write_file).delete(storage_delete_file))
-        .route("/apps/{skill_name}/capability/{tool_name}", post(capability_dispatch))
+        .route(
+            "/api/storage/file",
+            get(storage_read_file)
+                .put(storage_write_file)
+                .delete(storage_delete_file),
+        )
+        .route(
+            "/apps/{skill_name}/capability/{tool_name}",
+            post(capability_dispatch),
+        )
         .route("/apps/{skill_name}/{*file_path}", get(serve_app_file))
         .fallback(static_handler)
         .with_state(state.clone())
@@ -1213,7 +1326,9 @@ async fn prepare_server(
     // Spawn the cron mission scheduler.
     {
         let scheduler_state = state.clone();
-        tokio::spawn(crate::extensions::missions::scheduler::mission_scheduler_loop(scheduler_state));
+        tokio::spawn(
+            crate::extensions::missions::scheduler::mission_scheduler_loop(scheduler_state),
+        );
     }
 
     // Spawn Yinyue's event-reactive watch loop. Taps the same event bus and, on
@@ -1251,7 +1366,8 @@ async fn prepare_server(
         const SWEEP_INTERVAL_SECS: u64 = 60;
         const STALE_THRESHOLD_SECS: u64 = 15 * 60; // 15 min — well beyond any normal turn
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
+            let mut tick =
+                tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
             tick.tick().await; // skip the immediate first tick
             loop {
                 tick.tick().await;
@@ -1267,9 +1383,7 @@ async fn prepare_server(
                         threshold_secs = STALE_THRESHOLD_SECS,
                         "run/sweep: reaped stale Running rows"
                     );
-                    let _ = sweep_state
-                        .events_tx
-                        .send(ServerEvent::StateUpdated);
+                    let _ = sweep_state.events_tx.send(ServerEvent::StateUpdated);
                 }
             }
         });
@@ -1393,7 +1507,16 @@ pub async fn start_server(
     idle_shutdown_secs: Option<u64>,
     agent_events_rx: mpsc::UnboundedReceiver<(crate::engine::agent::AgentEvent, Option<String>)>,
 ) -> anyhow::Result<()> {
-    let handle = prepare_server(manager, skills, host, port, dev_mode, idle_shutdown_secs, agent_events_rx).await?;
+    let handle = prepare_server(
+        manager,
+        skills,
+        host,
+        port,
+        dev_mode,
+        idle_shutdown_secs,
+        agent_events_rx,
+    )
+    .await?;
     handle.task.await??;
     Ok(())
 }
@@ -1430,7 +1553,10 @@ async fn capability_dispatch(
         _ => {
             return (
                 StatusCode::NOT_FOUND,
-                format!("Unknown built-in tool '{}' on /apps/*/capability/*", tool_name),
+                format!(
+                    "Unknown built-in tool '{}' on /apps/*/capability/*",
+                    tool_name
+                ),
             )
                 .into_response();
         }
@@ -1440,11 +1566,18 @@ async fn capability_dispatch(
     // body, so until this check the split above was decorative — a page could
     // POST Memory_query with `verb: "delete"` and delete. And the verb is
     // concatenated into a URL, so an unknown one must not be forwarded at all.
-    let verb = args.get("verb").and_then(|v| v.as_str()).unwrap_or_default();
+    let verb = args
+        .get("verb")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     let Some(mutates) = crate::server::api::memory::verb_mutates(verb)
         .filter(|_| crate::server::api::memory::is_safe_verb(verb))
     else {
-        return (StatusCode::BAD_REQUEST, format!("Unknown memory verb '{verb}'")).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("Unknown memory verb '{verb}'"),
+        )
+            .into_response();
     };
     if mutates && !writes_allowed {
         return (
@@ -1455,7 +1588,11 @@ async fn capability_dispatch(
     }
 
     if state.skills.get_skill(&skill_name).await.is_none() {
-        return (StatusCode::NOT_FOUND, format!("Skill '{}' not found", skill_name)).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            format!("Skill '{}' not found", skill_name),
+        )
+            .into_response();
     }
 
     // Attribute the row to this host. Used to be a default inside the ling-mem
@@ -1470,7 +1607,8 @@ async fn capability_dispatch(
     }
 
     let ling_mem_url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
-    match crate::engine::tools::memory_http::call_memory_http(&ling_mem_url, &tool_name, args).await {
+    match crate::engine::tools::memory_http::call_memory_http(&ling_mem_url, &tool_name, args).await
+    {
         Ok(data) => axum::Json(data).into_response(),
         Err(e) => {
             let msg = format!("{:#}", e);
@@ -1521,7 +1659,13 @@ async fn serve_app_file(
         return build_err(403, &format!("Skill '{}' is not an app", skill_name));
     };
     if app.launcher != "web" {
-        return build_err(403, &format!("Skill '{}' app launcher is '{}', not 'web'", skill_name, app.launcher));
+        return build_err(
+            403,
+            &format!(
+                "Skill '{}' app launcher is '{}', not 'web'",
+                skill_name, app.launcher
+            ),
+        );
     }
 
     // Resolve the file within the skill directory.
@@ -1553,13 +1697,28 @@ async fn serve_app_file(
     // Delegate to tower-http's ServeFile: it speaks Range/206 (video seeking
     // in skill pages needs partial content), conditional requests, and HEAD.
     use tower::ServiceExt as _;
-    let range_hdr = req.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
-    match tower_http::services::ServeFile::new(&canonical_full).oneshot(req).await {
+    let range_hdr = req
+        .headers()
+        .get("range")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    match tower_http::services::ServeFile::new(&canonical_full)
+        .oneshot(req)
+        .await
+    {
         Ok(res) => {
-            tracing::debug!("serve_app_file {} range={:?} -> {}", file_path_clean, range_hdr, res.status());
+            tracing::debug!(
+                "serve_app_file {} range={:?} -> {}",
+                file_path_clean,
+                range_hdr,
+                res.status()
+            );
             let mut res = res.map(axum::body::Body::new);
             let headers = res.headers_mut();
-            headers.insert("X-Frame-Options", "ALLOWALL".parse().expect("static header"));
+            headers.insert(
+                "X-Frame-Options",
+                "ALLOWALL".parse().expect("static header"),
+            );
             // No-store on skill assets: skills are user-iterated, often
             // edited mid-session, and ES-module URL caching makes a stale
             // scan.js indistinguishable from a missing feature. Forcing
@@ -1575,17 +1734,20 @@ async fn serve_app_file(
 async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
-    let build_response = |builder: axum::http::response::Builder, body: axum::body::Body| -> Response {
-        builder.body(body).unwrap_or_else(|_| {
-            Response::new(axum::body::Body::from("internal server error"))
-        })
-    };
+    let build_response =
+        |builder: axum::http::response::Builder, body: axum::body::Body| -> Response {
+            builder
+                .body(body)
+                .unwrap_or_else(|_| Response::new(axum::body::Body::from("internal server error")))
+        };
 
     if state.dev_mode {
         // In dev mode, static assets are served by the Vite dev server.
         // Return 404 so the user knows to use the Vite proxy.
         return build_response(
-            Response::builder().status(404).header("Content-Type", "text/plain"),
+            Response::builder()
+                .status(404)
+                .header("Content-Type", "text/plain"),
             axum::body::Body::from(
                 "Dev mode: static assets are served by Vite. Use the Vite dev server URL instead.",
             ),
@@ -1679,7 +1841,11 @@ async fn pick_folder() -> impl IntoResponse {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        (axum::http::StatusCode::NOT_IMPLEMENTED, "Folder picker not available on this platform").into_response()
+        (
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            "Folder picker not available on this platform",
+        )
+            .into_response()
     }
 }
 
