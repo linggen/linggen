@@ -288,7 +288,17 @@ pub(crate) async fn tts_handler(
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
     }
 
-    match state.tts.synthesize(&req.text, req.voice.as_deref()).await {
+    // No voice named → the configured pet voice, applied per clip so a
+    // Settings change speaks on the very next line.
+    let voice = match req.voice {
+        Some(v) => Some(v),
+        None => {
+            let v = state.manager.get_config_snapshot().await.pet.voice;
+            (!v.trim().is_empty()).then_some(v)
+        }
+    };
+
+    match state.tts.synthesize(&req.text, voice.as_deref()).await {
         Ok(wav) => (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
         Err(e) => {
             tracing::warn!("[tts] synthesis failed: {e}");

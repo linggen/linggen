@@ -228,6 +228,19 @@ export const GeneralTab: React.FC<{
             <p className="text-[11px] text-slate-400 mt-0.5">Her brain. Auto uses the Linggen Cloud model when signed in, else your default. Pick a fast configured model for snappier replies. Applied per turn.</p>
           </div>
           <div>
+            <label className={labelCls}>Voice</label>
+            <select
+              className={inputCls}
+              value={config.pet?.voice ?? 'vivian'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, voice: e.target.value } })}
+            >
+              {['vivian', 'serena', 'ono_anna', 'sohee', 'uncle_fu', 'ryan', 'aiden', 'eric', 'dylan'].map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">Her speaker (Qwen3-TTS). Applied on her next spoken line; the fallback voice ignores it.</p>
+          </div>
+          <div>
             <label className={labelCls}>Speech Text</label>
             <select
               className={inputCls}

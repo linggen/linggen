@@ -56,6 +56,14 @@ pub struct PetConfig {
     /// specific model id to pin. Applied per turn.
     #[serde(default = "default_pet_model")]
     pub model: String,
+    /// Speaker for her synthesized voice (a Qwen3-TTS speaker name). Applied
+    /// per clip; unknown names fall back to the provider default.
+    #[serde(default = "default_pet_voice")]
+    pub voice: String,
+}
+
+fn default_pet_voice() -> String {
+    "vivian".into()
 }
 
 impl Default for PetConfig {
@@ -67,6 +75,7 @@ impl Default for PetConfig {
             recall_count: default_pet_recall_count(),
             recall_min_score: default_pet_recall_min_score(),
             model: default_pet_model(),
+            voice: default_pet_voice(),
         }
     }
 }
@@ -293,7 +302,6 @@ pub struct AgentConfig {
     pub ling_mem_url: String,
 }
 
-
 fn default_episodic_ttl_days() -> u64 {
     7
 }
@@ -423,7 +431,11 @@ impl Config {
         if let Some(ref p) = self.home_path {
             if p.starts_with("~/") || p == "~" {
                 let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-                if p == "~" { home } else { home.join(&p[2..]) }
+                if p == "~" {
+                    home
+                } else {
+                    home.join(&p[2..])
+                }
             } else {
                 PathBuf::from(p)
             }
@@ -466,9 +478,8 @@ impl Config {
         use crate::provider::models::{CHATGPT_BUILTIN_MODEL_ID, CHATGPT_RETIRED_MODEL_IDS};
         let retired = |id: &str| CHATGPT_RETIRED_MODEL_IDS.contains(&id);
 
-        self.models.retain(|m| {
-            !(retired(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
-        });
+        self.models
+            .retain(|m| !(retired(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth")));
 
         let surviving: std::collections::HashSet<&str> =
             self.models.iter().map(|m| m.id.as_str()).collect();
@@ -478,7 +489,9 @@ impl Config {
             }
         }
         let mut seen = std::collections::HashSet::new();
-        self.routing.default_models.retain(|id| seen.insert(id.clone()));
+        self.routing
+            .default_models
+            .retain(|id| seen.insert(id.clone()));
     }
 
     pub fn runtime_config_path(config_dir: Option<&Path>) -> PathBuf {
@@ -518,7 +531,17 @@ impl Config {
                 );
             }
             // Validate provider is known.
-            let known_providers = ["ollama", "openai", "chatgpt", "anthropic", "gemini", "groq", "deepseek", "openrouter", "github"];
+            let known_providers = [
+                "ollama",
+                "openai",
+                "chatgpt",
+                "anthropic",
+                "gemini",
+                "groq",
+                "deepseek",
+                "openrouter",
+                "github",
+            ];
             if !known_providers.contains(&model.provider.as_str()) {
                 anyhow::bail!(
                     "Model '{}' has unknown provider '{}'. Known providers: {}",
@@ -561,9 +584,7 @@ impl Config {
         // A 0-day TTL would evict episodic rows immediately on the next
         // dream pass, before the user has had a chance to inspect them.
         if self.agent.episodic_ttl_days == 0 {
-            anyhow::bail!(
-                "Agent episodic_ttl_days must be greater than 0"
-            );
+            anyhow::bail!("Agent episodic_ttl_days must be greater than 0");
         }
         if let Some(s) = self.agent.memory_inject_min_score {
             if !(0.0..=1.0).contains(&s) || s.is_nan() {
@@ -583,9 +604,7 @@ impl Config {
             anyhow::bail!("Agent ling_mem_url must not be empty");
         }
         if !(url.starts_with("http://") || url.starts_with("https://")) {
-            anyhow::bail!(
-                "Agent ling_mem_url must start with http:// or https:// (got {url})"
-            );
+            anyhow::bail!("Agent ling_mem_url must start with http:// or https:// (got {url})");
         }
         // Warn (log) if default_models references non-existent model IDs.
         // Built-in models (injected at ModelManager build) are valid defaults.
@@ -871,8 +890,7 @@ mod tests {
     /// machine off the network without saying so.
     #[test]
     fn a_legacy_host_port_pair_still_binds_where_it_says() {
-        let cfg: ServerConfig =
-            toml::from_str("port = 9527\nhost = \"0.0.0.0\"").unwrap();
+        let cfg: ServerConfig = toml::from_str("port = 9527\nhost = \"0.0.0.0\"").unwrap();
         assert_eq!(cfg.addr(), ("0.0.0.0".to_string(), 9527));
     }
 
@@ -880,12 +898,14 @@ mod tests {
     /// changing shape under the user in silence.
     #[test]
     fn the_legacy_pair_migrates_to_one_field() {
-        let mut cfg: ServerConfig =
-            toml::from_str("port = 9600\nhost = \"0.0.0.0\"").unwrap();
+        let mut cfg: ServerConfig = toml::from_str("port = 9600\nhost = \"0.0.0.0\"").unwrap();
         cfg.migrate_legacy_fields();
         assert_eq!(cfg.url.as_deref(), Some("0.0.0.0:9600"));
         assert!(cfg.port.is_none() && cfg.host.is_none());
-        assert_eq!(toml::to_string(&cfg).unwrap().trim(), "url = \"0.0.0.0:9600\"");
+        assert_eq!(
+            toml::to_string(&cfg).unwrap().trim(),
+            "url = \"0.0.0.0:9600\""
+        );
     }
 
     /// `url` is authored, so it wins outright — a stale legacy pair left in the
@@ -902,9 +922,18 @@ mod tests {
     /// fall back to the default port.
     #[test]
     fn a_scheme_is_accepted_and_ignored() {
-        assert_eq!(parse_addr("http://0.0.0.0:9527"), Some(("0.0.0.0".into(), 9527)));
-        assert_eq!(parse_addr("http://192.168.1.5:9527/"), Some(("192.168.1.5".into(), 9527)));
-        assert_eq!(parse_addr("127.0.0.1:9527"), Some(("127.0.0.1".into(), 9527)));
+        assert_eq!(
+            parse_addr("http://0.0.0.0:9527"),
+            Some(("0.0.0.0".into(), 9527))
+        );
+        assert_eq!(
+            parse_addr("http://192.168.1.5:9527/"),
+            Some(("192.168.1.5".into(), 9527))
+        );
+        assert_eq!(
+            parse_addr("127.0.0.1:9527"),
+            Some(("127.0.0.1".into(), 9527))
+        );
         // Not an address: no port, empty host, unparseable port.
         assert_eq!(parse_addr("127.0.0.1"), None);
         assert_eq!(parse_addr(":9527"), None);
