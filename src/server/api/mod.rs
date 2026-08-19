@@ -8,11 +8,11 @@ pub(super) mod config;
 pub(super) mod marketplace;
 pub(super) mod media;
 pub(super) mod memory;
+pub(super) mod missions;
 /// `pub(crate)` rather than `pub(super)`: this module owns the paired-device
 /// store, not just its handlers, and perception reads it to say whether a
 /// device exists at all.
 pub(crate) mod pair;
-pub(super) mod missions;
 pub(super) mod permissions;
 pub(super) mod rooms;
 pub(super) mod sessions;
@@ -25,6 +25,7 @@ pub(super) mod storage;
 /// state on one.
 pub(crate) mod topic;
 pub(super) mod tts;
+pub(super) mod tts_mlx;
 pub(super) mod workspace;
 pub(super) mod yinyue;
 

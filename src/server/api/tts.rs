@@ -57,10 +57,12 @@ pub trait TtsProvider: Send + Sync {
     }
 }
 
-/// The daemon's voice: official Kokoro — fast (~5x realtime on Metal, sub-2s)
-/// with its preset voices. The single switch point for the daemon's TTS.
+/// The daemon's voice — the single switch point for the daemon's TTS.
+/// Qwen3-TTS on the GPU via the managed runtime's sidecar, with Kokoro
+/// (and behind it `say`) as the automatic fallback chain, so the voice
+/// upgrade can never cost the pet her speech.
 pub fn default_provider() -> Arc<dyn TtsProvider> {
-    Arc::new(KokoroProvider::new())
+    Arc::new(super::tts_mlx::MlxTtsProvider::new())
 }
 
 /// Kokoro's own voice packs carry the LANGUAGE, not just the timbre: its
@@ -179,7 +181,11 @@ impl KokoroProvider {
         let url =
             format!("https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{name}.pt");
         tracing::info!("[tts] fetching voice pack {name}");
-        let bytes = reqwest::get(&url).await?.error_for_status()?.bytes().await?;
+        let bytes = reqwest::get(&url)
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
         // Write via a temp file and rename: a half-written .pt would be
         // indistinguishable from a good one on the next boot.
         let tmp = dir.join(format!(".{name}.pt.part"));
@@ -283,12 +289,7 @@ pub(crate) async fn tts_handler(
     }
 
     match state.tts.synthesize(&req.text, req.voice.as_deref()).await {
-        Ok(wav) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "audio/wav")],
-            wav,
-        )
-            .into_response(),
+        Ok(wav) => (StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], wav).into_response(),
         Err(e) => {
             tracing::warn!("[tts] synthesis failed: {e}");
             (
