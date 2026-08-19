@@ -123,7 +123,10 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                     );
                     return;
                 }
-                tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, neutral)", line.len());
+                tracing::info!(
+                    "[yinyue-watch] Yinyue heralds ({} chars, neutral)",
+                    line.len()
+                );
                 crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
             });
         }
@@ -131,7 +134,12 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
         // voice (herald). TO A CHAT AGENT (Ling, …) → it shows in that agent's
         // chat as a message from the sender, and that agent responds. Either way
         // the recipient's turn is tagged `agent_chat` (one-hop loop-break).
-        ServerEvent::AgentChat { from, to, message, app } => {
+        ServerEvent::AgentChat {
+            from,
+            to,
+            message,
+            app,
+        } => {
             if from == to {
                 return; // no self-send (also guarded in the tool)
             }
@@ -152,8 +160,15 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                         if line.eq_ignore_ascii_case("silent") {
                             tracing::info!("[yinyue-watch] chose silence (agent_chat)");
                         } else {
-                            tracing::info!("[yinyue-watch] relays agent_chat ({} chars)", line.len());
-                            crate::server::api::yinyue::emit_speak(&state, line, Some("neutral".to_string()));
+                            tracing::info!(
+                                "[yinyue-watch] relays agent_chat ({} chars)",
+                                line.len()
+                            );
+                            crate::server::api::yinyue::emit_speak(
+                                &state,
+                                line,
+                                Some("neutral".to_string()),
+                            );
                         }
                     }
                 });
@@ -202,7 +217,11 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
         // the announce is a fixed TTS line, not a new run, so it can't loop, and a
         // silent failure is exactly what leaves the user wondering what's wrong.
         // Rate-limited so an error storm doesn't make her chant.
-        NotificationPayload::RunFailed { agent_id, auth_required, .. } => {
+        NotificationPayload::RunFailed {
+            agent_id,
+            auth_required,
+            ..
+        } => {
             if !error_announce_allowed() {
                 return; // an error storm shouldn't make her repeat herself
             }
@@ -216,7 +235,8 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
                 // An auth failure has a fix the user can act on — say the fix,
                 // not a vague apology a signed-out install would repeat forever.
                 let line = if auth_required {
-                    "I can't reach my mind right now — it needs a sign-in over in Settings.".to_string()
+                    "I can't reach my mind right now — it needs a sign-in over in Settings."
+                        .to_string()
                 } else {
                     error_line()
                 };
@@ -225,7 +245,10 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
         }
         // A run finished cleanly. This fires on every reply, so only herald when
         // the user has stepped away — otherwise they already see it on screen.
-        NotificationPayload::RunCompleted { agent_id, .. } => {
+        NotificationPayload::RunCompleted {
+            agent_id,
+            session_id,
+        } => {
             if agent_id == YINYUE_AGENT {
                 return; // never herald her own turns
             }
@@ -239,16 +262,56 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
             }
             let state = state.clone();
             tokio::spawn(async move {
+                // Her line must be grounded in what the run actually said —
+                // a content-free "task finished" once let her announce a
+                // deletion that never happened (the run had ended on an
+                // unanswered confirmation question).
+                let outcome = session_id
+                    .as_deref()
+                    .and_then(|sid| last_agent_line(&state, sid, &agent_id))
+                    .unwrap_or_default();
+                let outcome_block = if outcome.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Its last words were: \"{outcome}\".")
+                };
                 let kickoff = format!(
                     "A task by the agent \"{agent_id}\" just finished while the user was away \
-                     from Linggen. If it's worth telling them when they're back, say one brief \
-                     line in your voice — Right now says whether they're back. If it's routine, reply with \
+                     from Linggen.{outcome_block} Report only what those words support — if the \
+                     task ended on a question or an unconfirmed action, relay the question; never \
+                     say something was done (especially deleted or changed) unless the words say \
+                     it was. If it's worth telling them when they're back, say one brief line in \
+                     your voice — Right now says whether they're back. If it's routine, reply with \
                      exactly SILENT. Spoken aloud: plain prose, no markdown. Never nag."
                 );
                 wake_herald(state, kickoff, "happy").await;
             });
         }
     }
+}
+
+/// The last visible line the agent said in a session — tool calls, tool
+/// results and hidden prompts skipped, truncated for a kickoff. `None`
+/// when the session has nothing quotable.
+fn last_agent_line(state: &Arc<ServerState>, session_id: &str, agent_id: &str) -> Option<String> {
+    let history = state
+        .manager
+        .global_sessions
+        .get_chat_history(session_id)
+        .ok()?;
+    let line = history
+        .iter()
+        .rev()
+        .filter(|m| m.from_id == agent_id)
+        .map(|m| m.content.trim())
+        .find(|c| {
+            !c.is_empty() && !c.starts_with("{\"type\":\"tool\"") && !c.contains("[HIDDEN]")
+        })?;
+    let mut out: String = line.chars().take(300).collect();
+    if line.chars().count() > 300 {
+        out.push('…');
+    }
+    Some(out)
 }
 
 /// Min seconds between error announcements. Several runs can fail within seconds
@@ -294,18 +357,23 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
          single word SILENT and nothing else. Be brief. Never nag."
     );
 
-    let emotion = if status.eq_ignore_ascii_case("completed") || status.to_lowercase().contains("success") {
-        "happy"
-    } else {
-        "neutral"
-    };
+    let emotion =
+        if status.eq_ignore_ascii_case("completed") || status.to_lowercase().contains("success") {
+            "happy"
+        } else {
+            "neutral"
+        };
     wake_herald(state, task, emotion).await;
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
 /// user. Answering — via the UI or `answer_prompt` — removes it from the map.
 async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool {
-    state.pending_ask_user.lock().await.contains_key(question_id)
+    state
+        .pending_ask_user
+        .lock()
+        .await
+        .contains_key(question_id)
 }
 
 /// Wake Yinyue to herald a worker event — a finished mission/run, or an agent
@@ -321,7 +389,10 @@ async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) ->
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return false;
     }
-    tracing::info!("[yinyue-watch] Yinyue heralds ({} chars, {emotion})", line.len());
+    tracing::info!(
+        "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
+        line.len()
+    );
     crate::server::api::yinyue::emit_speak(&state, line, Some(emotion.to_string()));
     true
 }
@@ -345,8 +416,12 @@ async fn deliver_to_chat_agent(
         None => focused_session(&state).or_else(|| latest_session_for_agent(&state, &to)),
     };
     let Some((session_id, root)) = resolved else {
-        tracing::info!("[agent-chat] '{from}'→'{to}'{}: no session to deliver to — dropped",
-            app.as_deref().map(|a| format!(" (app {a})")).unwrap_or_default());
+        tracing::info!(
+            "[agent-chat] '{from}'→'{to}'{}: no session to deliver to — dropped",
+            app.as_deref()
+                .map(|a| format!(" (app {a})"))
+                .unwrap_or_default()
+        );
         return;
     };
     let agent = match state
@@ -362,7 +437,13 @@ async fn deliver_to_chat_agent(
     };
     let run_id = state
         .manager
-        .begin_agent_run(&root, Some(session_id.as_str()), &to, None, Some(format!("from {from}")))
+        .begin_agent_run(
+            &root,
+            Some(session_id.as_str()),
+            &to,
+            None,
+            Some(format!("from {from}")),
+        )
         .await
         .unwrap_or_else(|_| format!("run-{to}-agentchat"));
 
@@ -412,7 +493,11 @@ async fn deliver_to_chat_agent(
 
     let _ = state
         .manager
-        .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
+        .finish_agent_run(
+            &run_id,
+            crate::engine::agent::AgentRunStatus::Completed,
+            None,
+        )
         .await;
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
 }
@@ -445,7 +530,10 @@ fn latest_session_for_agent(
 /// Resolve the session bound to an app/skill — the latest existing one (so it
 /// lands in the open app tab when there is one), else a freshly minted
 /// skill-bound session so the request still runs with that app's tools.
-fn session_for_skill(state: &Arc<ServerState>, skill: &str) -> Option<(String, std::path::PathBuf)> {
+fn session_for_skill(
+    state: &Arc<ServerState>,
+    skill: &str,
+) -> Option<(String, std::path::PathBuf)> {
     let home = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
     if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
         if let Some(meta) = sessions
@@ -643,7 +731,10 @@ pub(crate) async fn run_yinyue_turn(
             if engine.model_manager.has_model(&m) {
                 engine.model_id = m;
             } else {
-                tracing::warn!("[yinyue] model '{m}' unavailable; using {}", engine.model_id);
+                tracing::warn!(
+                    "[yinyue] model '{m}' unavailable; using {}",
+                    engine.model_id
+                );
             }
         }
 
@@ -684,10 +775,16 @@ pub(crate) async fn run_yinyue_turn(
     // completed and let an empty reply mean "nothing to say".
     let _ = state
         .manager
-        .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
+        .finish_agent_run(
+            &run_id,
+            crate::engine::agent::AgentRunStatus::Completed,
+            None,
+        )
         .await;
 
-    spoken.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    spoken
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Resolve Yinyue's model from the `pet.model` setting. An explicit id wins;
