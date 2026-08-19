@@ -51,6 +51,14 @@ interface ServerState {
   sendFailedAt: Record<string, number>;
   markSendFailed: (sessionId: string) => void;
 
+  /** Timestamp of a run that vanished server-side without a terminal event
+   *  AND without a persisted reply (daemon killed/restarted mid-turn), keyed
+   *  by session ID. Consumed once by ChatPanel to flip its run summary from
+   *  "{verb} for Xs" — which reads as still working — to "Interrupted". */
+  runInterruptedAt: Record<string, number>;
+  markRunInterrupted: (sessionId: string) => void;
+  consumeRunInterrupted: (sessionId: string) => void;
+
   // Derived
   isRunning: () => boolean;
 
@@ -116,6 +124,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
         pendingSends: pending,
         sendFailedAt: { ...s.sendFailedAt, [sessionId]: Date.now() },
       };
+    }),
+  runInterruptedAt: {},
+  markRunInterrupted: (sessionId) =>
+    set((s) => ({ runInterruptedAt: { ...s.runInterruptedAt, [sessionId]: Date.now() } })),
+  consumeRunInterrupted: (sessionId) =>
+    set((s) => {
+      const next = { ...s.runInterruptedAt };
+      delete next[sessionId];
+      return { runInterruptedAt: next };
     }),
 
   isRunning: () => Object.values(get().agentStatus).some((s) => s !== 'idle'),

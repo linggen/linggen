@@ -443,7 +443,18 @@ export const ChatPanel: React.FC<{
     );
   }, [agentRuns, sessionId, pendingSends, agentStatusText]);
   const [spinnerVerb, setSpinnerVerb] = useState('');
-  const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number } | null>(null);
+  const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number; interrupted?: boolean } | null>(null);
+  // A run that died server-side without a terminal event (daemon killed or
+  // restarted mid-turn) is detected asynchronously by page_state
+  // reconciliation, after the spinner has already stopped and summarized.
+  // Consume the stamp and re-label the summary — "Musing for 3m 5s" reads
+  // as still working when in truth nothing answered.
+  const runInterrupted = useServerStore((s) => s.runInterruptedAt[sessionId || '']);
+  useEffect(() => {
+    if (!runInterrupted || !sessionId) return;
+    useServerStore.getState().consumeRunInterrupted(sessionId);
+    setLastRunSummary((prev) => (prev ? { ...prev, interrupted: true } : prev));
+  }, [runInterrupted, sessionId]);
   useEffect(() => {
     if (isAgentActive) {
       if (!thinkingStartRef.current) {
@@ -897,10 +908,10 @@ export const ChatPanel: React.FC<{
         </div>
       ) : lastRunSummary && (
         <div className="px-3 py-1.5">
-          <div className="flex items-center gap-1.5 text-[13px] text-slate-400 dark:text-slate-500 italic">
+          <div className={`flex items-center gap-1.5 text-[13px] italic ${lastRunSummary.interrupted ? 'text-red-400 dark:text-red-400/80' : 'text-slate-400 dark:text-slate-500'}`}>
             <span>✻</span>
             <span>
-              {lastRunSummary.verb} for{' '}
+              {lastRunSummary.interrupted ? 'Interrupted after' : `${lastRunSummary.verb} for`}{' '}
               {lastRunSummary.elapsed >= 60
                 ? `${Math.floor(lastRunSummary.elapsed / 60)}m ${lastRunSummary.elapsed % 60}s`
                 : `${lastRunSummary.elapsed}s`}

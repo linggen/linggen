@@ -176,6 +176,7 @@ function reconcileStreamingState(runs: any[]): void {
   for (const [sid, sentAt] of Object.entries(serverStore.pendingSends)) {
     if (!running.has(sid) && now - sentAt > STREAM_STATE_STALE_MS) {
       serverStore.setPendingSend(sid, false);
+      void markInterruptedIfUnanswered(sid);
     }
   }
 
@@ -189,4 +190,32 @@ function reconcileStreamingState(runs: any[]): void {
   const pendingTs = serverStore.pendingSends[activeSessionId];
   if (pendingTs && now - pendingTs <= STREAM_STATE_STALE_MS) return;
   chatStore.finalizeAllGenerating(STREAM_STATE_STALE_MS);
+}
+
+/**
+ * A retired pendingSend means the server no longer runs this session's turn,
+ * yet no TurnComplete ever arrived. Two different truths look identical at
+ * that moment: the turn finished while our channel was closed (the reply is
+ * persisted — re-sync renders it), or the daemon was killed/restarted
+ * mid-run and the reply never existed. Re-read the persisted session and
+ * only when the last message is still the user's, say so — otherwise the
+ * chat just ends on the user's bubble under a "{verb} for 3m 5s" summary
+ * that reads as if it is still working.
+ */
+async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
+  if (useSessionStore.getState().activeSessionId !== sessionId) return;
+  try {
+    await useChatStore.getState().fetchSessionState({ sessionId });
+  } catch { /* best-effort — judge from what we have */ }
+  const msgs = useChatStore.getState().messages.filter((m) => !m.isError);
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'user') return;
+  useServerStore.getState().markRunInterrupted(sessionId);
+  const ts = new Date();
+  useChatStore.getState().addMessage({
+    role: 'agent', from: 'system', to: 'user',
+    text: 'No response — the run was interrupted (server restarted mid-turn). Send the message again.',
+    isError: true,
+    timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
+  });
 }
