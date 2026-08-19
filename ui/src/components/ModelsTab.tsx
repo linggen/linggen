@@ -7,6 +7,24 @@ const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 da
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
 const sectionCls = 'bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 
+// Mirrors is_valid_go_duration in src/config.rs (the save-time authority):
+// Ollama's keep_alive grammar — "0", or signed <number><unit> groups with
+// unit ns/us/µs/ms/s/m/h, e.g. "10m", "90s", "1h30m".
+const isValidGoDuration = (s: string): boolean => {
+  let rest = s.replace(/^[+-]/, '');
+  if (rest === '0') return true;
+  if (!rest) return false;
+  while (rest) {
+    const num = rest.match(/^[0-9.]+/);
+    if (!num) return false;
+    rest = rest.slice(num[0].length);
+    const unit = ['ns', 'us', 'µs', 'ms', 's', 'm', 'h'].find((u) => rest.startsWith(u));
+    if (!unit) return false;
+    rest = rest.slice(unit.length);
+  }
+  return true;
+};
+
 const PROVIDER_PRESETS: Record<string, { url: string; defaultModel: string; placeholder: string; authMode?: string }> = {
   ollama: { url: 'http://127.0.0.1:11434', defaultModel: '', placeholder: 'e.g. qwen3:32b' },
   // No defaultModel: the ChatGPT built-in (the common case) is a card above,
@@ -652,7 +670,15 @@ export const ModelsTab: React.FC<{
                   </div>
                   <div>
                     <label className={labelCls}>Keep Alive</label>
-                    <input className={inputCls} value={model.keep_alive || ''} onChange={(e) => updateModel(i, 'keep_alive', e.target.value || null)} placeholder="e.g. 30m" />
+                    <input
+                      className={`${inputCls} ${model.keep_alive && !isValidGoDuration(model.keep_alive.trim()) ? 'border-red-400 dark:border-red-500/60 focus:ring-red-500/50' : ''}`}
+                      value={model.keep_alive || ''}
+                      onChange={(e) => updateModel(i, 'keep_alive', e.target.value || null)}
+                      placeholder="e.g. 30m"
+                    />
+                    {model.keep_alive && !isValidGoDuration(model.keep_alive.trim()) && (
+                      <p className="text-[11px] text-red-500 mt-1">Needs a time unit — e.g. 10m, 30s, 1h</p>
+                    )}
                   </div>
                   <div>
                     <label className={labelCls}>
