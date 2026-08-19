@@ -52,6 +52,15 @@ pub fn shell_path() -> &'static str {
                 dirs.push(dir);
             }
         }
+        // Managed-runtime bins go last, and unconditionally: the prewarm
+        // task creates them while the daemon runs, so an is_dir() gate here
+        // would leave a first boot without them until restart.
+        for dir in crate::runtime::path_dirs() {
+            let dir = dir.to_string_lossy().to_string();
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
         dirs.join(":")
     })
 }
@@ -77,7 +86,5 @@ pub fn resolve_path(path: &std::path::Path) -> std::path::PathBuf {
             path.to_path_buf()
         }
     };
-    expanded
-        .canonicalize()
-        .unwrap_or(expanded)
+    expanded.canonicalize().unwrap_or(expanded)
 }

@@ -12,6 +12,7 @@ mod paths;
 mod perception;
 mod prompts;
 mod provider;
+mod runtime;
 mod server;
 mod state_fs;
 mod telemetry;
@@ -235,7 +236,9 @@ async fn main() -> Result<()> {
                     println!("ChatGPT OAuth tokens cleared.");
                 }
                 AuthAction::Status => {
-                    let tokens = crate::provider::codex_auth::CodexAuthTokens::load(&crate::provider::codex_auth::codex_auth_file());
+                    let tokens = crate::provider::codex_auth::CodexAuthTokens::load(
+                        &crate::provider::codex_auth::codex_auth_file(),
+                    );
                     if tokens.is_valid() {
                         println!("Authenticated via ChatGPT OAuth.");
                         if let Some(ref account_id) = tokens.account_id {
@@ -250,7 +253,9 @@ async fn main() -> Result<()> {
                             println!("  Status: Valid");
                         }
                     } else {
-                        println!("Not authenticated. Run `ling auth login` to sign in with ChatGPT.");
+                        println!(
+                            "Not authenticated. Run `ling auth login` to sign in with ChatGPT."
+                        );
                     }
                 }
             }
@@ -384,6 +389,10 @@ async fn main() -> Result<()> {
 
             let _ = skills.load_all(Some(&ws_root)).await;
 
+            // Managed Python runtime: fetch/repair in the background so no
+            // skill or TTS request ever waits on a download.
+            tokio::spawn(runtime::prewarm());
+
             // Auto-install built-in skills if none found
             if skills.list_skills().await.is_empty() {
                 let sm = skills.clone();
@@ -433,7 +442,10 @@ async fn main() -> Result<()> {
                     for m in models {
                         tracing::info!(
                             "  - ID: {}, Provider: {}, Model: {}, URL: {}",
-                            m.id, m.provider, m.model, m.url
+                            m.id,
+                            m.provider,
+                            m.model,
+                            m.url
                         );
                     }
                 }
@@ -445,7 +457,16 @@ async fn main() -> Result<()> {
                 }
                 tracing::info!("------------------------------");
 
-                server::start_server(manager, skills, &host, port, cli.dev, cli.idle_shutdown_secs, rx).await?;
+                server::start_server(
+                    manager,
+                    skills,
+                    &host,
+                    port,
+                    cli.dev,
+                    cli.idle_shutdown_secs,
+                    rx,
+                )
+                .await?;
             }
         }
 
@@ -466,8 +487,7 @@ async fn main() -> Result<()> {
 
 async fn auto_install_builtin_skills() -> Result<()> {
     let target = crate::paths::global_skills_dir();
-    let zip_url =
-        extensions::marketplace::build_github_zip_url("linggen", "skills", "main");
+    let zip_url = extensions::marketplace::build_github_zip_url("linggen", "skills", "main");
     let client = extensions::marketplace::http_client()?;
     let temp_zip = extensions::marketplace::download_to_temp(&client, &zip_url).await?;
     let result = extensions::marketplace::extract_all_skills_from_zip(&temp_zip, &target);
@@ -486,4 +506,3 @@ async fn auto_install_builtin_skills() -> Result<()> {
     }
     Ok(())
 }
-

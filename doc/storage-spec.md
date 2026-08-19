@@ -49,6 +49,9 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {name}/
 │       ├── SKILL.md                  # Skill definition
 │       └── scripts/                  # Skill assets (optional)
+├── runtime/                          # Managed Python runtime (see src/runtime.rs)
+│   ├── py/                           # Pinned relocatable CPython (python-build-standalone)
+│   └── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)

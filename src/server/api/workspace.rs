@@ -87,11 +87,7 @@ pub(crate) async fn search_files(
     };
 
     let limit = query.limit.unwrap_or(50);
-    let search = query
-        .query
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase();
+    let search = query.query.as_deref().unwrap_or("").to_lowercase();
 
     let walker = WalkBuilder::new(&canonical_root)
         .standard_filters(true)
@@ -210,7 +206,9 @@ pub(crate) async fn get_workspace_state(
         };
 
     let messages = match query.session_id.as_deref() {
-        Some(sid) if !sid.is_empty() => state.manager.global_sessions
+        Some(sid) if !sid.is_empty() => state
+            .manager
+            .global_sessions
             .get_chat_history(sid)
             .unwrap_or_default(),
         _ => Vec::new(),
@@ -356,7 +354,9 @@ pub(crate) async fn run_bash_api(
     // Resolve cwd: use per-session stored cwd if available, else project_root.
     let base_cwd: PathBuf = if let Some(sid) = &req.session_id {
         let guard = state.user_bash_cwd.lock().await;
-        guard.get(sid).cloned()
+        guard
+            .get(sid)
+            .cloned()
             .unwrap_or_else(|| expand_project_root(&req.project_root))
     } else {
         expand_project_root(&req.project_root)
@@ -383,6 +383,13 @@ pub(crate) async fn run_bash_api(
         .arg(&wrapped_cmd)
         .current_dir(&base_cwd)
         .env("PATH", crate::util::shell_path())
+        // Deterministic handle on the managed interpreter for skill
+        // scripts (`${LINGGEN_PY:-python3}`); PATH keeps system python3
+        // first when one exists.
+        .env(
+            "LINGGEN_PY",
+            crate::runtime::python_bin().to_string_lossy().to_string(),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -440,14 +447,15 @@ pub(crate) async fn run_bash_api(
                 // Emit WorkingFolderChanged if cwd actually changed.
                 if old_cwd.as_ref() != Some(&new_cwd) {
                     let git_root = search_exec_find_git_root(&new_cwd);
-                    let project = git_root.as_ref()
-                        .map(|p| p.to_string_lossy().to_string());
-                    let project_name = git_root.as_ref()
+                    let project = git_root.as_ref().map(|p| p.to_string_lossy().to_string());
+                    let project_name = git_root
+                        .as_ref()
                         .and_then(|p| p.file_name())
                         .map(|n| n.to_string_lossy().to_string());
                     // Update session metadata
                     let cwd_str = new_cwd.to_string_lossy().to_string();
-                    if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid) {
+                    if let Ok(Some(mut meta)) = state.manager.global_sessions.get_session_meta(sid)
+                    {
                         meta.cwd = Some(cwd_str.clone());
                         meta.project = project.clone();
                         meta.project_name = project_name.clone();
