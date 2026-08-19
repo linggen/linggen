@@ -13,6 +13,7 @@
 //! binary and rewritten to disk at spawn, so upgrades ride the engine.
 
 use std::process::Stdio;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -34,11 +35,18 @@ const SPEAKERS: [&str; 9] = [
     "serena", "vivian", "uncle_fu", "ryan", "aiden", "ono_anna", "sohee", "eric", "dylan",
 ];
 
-/// How long one clip may take end to end. Warm synthesis is ~2.5s for a
-/// long line; the generous bound covers a first call that still has to
-/// spawn the sidecar and load the model (~3s more).
-const SYNTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Per-clip budget, scaled to the text: healthy synthesis runs ~0.3×
+/// realtime, but the GPU can degrade machine-wide (thermal / competing
+/// Metal work — seen live 2026-08-19 at ~3× realtime), and a fixed 60s
+/// bound meant a minute of silence before Kokoro spoke. Scaling by length
+/// keeps the wait proportional: give up early on a short line, allow a
+/// long one its honest time.
+fn synth_timeout(text: &str) -> std::time::Duration {
+    let chars = text.chars().count() as u64;
+    std::time::Duration::from_secs((12 + chars / 3).clamp(15, 60))
+}
 
 struct Sidecar {
     child: tokio::process::Child,
@@ -47,14 +55,14 @@ struct Sidecar {
 }
 
 pub struct MlxTtsProvider {
-    sidecar: Mutex<Option<Sidecar>>,
+    sidecar: Arc<Mutex<Option<Sidecar>>>,
     fallback: KokoroProvider,
 }
 
 impl MlxTtsProvider {
     pub fn new() -> Self {
         Self {
-            sidecar: Mutex::new(None),
+            sidecar: Arc::new(Mutex::new(None)),
             fallback: KokoroProvider::new(),
         }
     }
@@ -115,7 +123,7 @@ impl MlxTtsProvider {
         }
         let sidecar = guard.as_mut().expect("just spawned");
 
-        let result = tokio::time::timeout(SYNTH_TIMEOUT, async {
+        let result = tokio::time::timeout(synth_timeout(text), async {
             let req = serde_json::json!({ "text": text, "voice": voice });
             sidecar
                 .stdin
@@ -128,9 +136,11 @@ impl MlxTtsProvider {
 
         let reply = match result {
             Ok(Ok(v)) => v,
-            Ok(Err(e)) => return kill_and_err(&mut guard, e).await,
+            Ok(Err(e)) => return self.kill_and_err(&mut guard, e).await,
             Err(_) => {
-                return kill_and_err(&mut guard, anyhow::anyhow!("synthesis timed out")).await
+                return self
+                    .kill_and_err(&mut guard, anyhow::anyhow!("synthesis timed out"))
+                    .await
             }
         };
         if reply.get("ok").and_then(|v| v.as_bool()) != Some(true) {
@@ -148,11 +158,31 @@ impl MlxTtsProvider {
     }
 }
 
-async fn kill_and_err(guard: &mut Option<Sidecar>, e: anyhow::Error) -> anyhow::Result<Vec<u8>> {
-    if let Some(mut s) = guard.take() {
-        let _ = s.child.kill().await;
+impl MlxTtsProvider {
+    /// Kill the sidecar and start a replacement in the background, so the
+    /// clip after a failure doesn't also pay the ~3.5s respawn.
+    async fn kill_and_err(
+        &self,
+        guard: &mut Option<Sidecar>,
+        e: anyhow::Error,
+    ) -> anyhow::Result<Vec<u8>> {
+        if let Some(mut s) = guard.take() {
+            let _ = s.child.kill().await;
+        }
+        let slot = self.sidecar.clone();
+        tokio::spawn(async move {
+            // Locks after the caller's guard drops; a request that raced in
+            // first will have respawned already, and this becomes a no-op.
+            let mut guard = slot.lock().await;
+            if guard.is_none() {
+                match Self::spawn().await {
+                    Ok(s) => *guard = Some(s),
+                    Err(e) => tracing::warn!("[tts-mlx] background respawn failed: {e:#}"),
+                }
+            }
+        });
+        Err(e)
     }
-    Err(e)
 }
 
 async fn read_json(

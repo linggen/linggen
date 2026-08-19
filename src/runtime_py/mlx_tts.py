@@ -63,6 +63,11 @@ def main():
         try:
             req = json.loads(line)
             chunks, sr = [], 24000
+            # Cap generation by the text's plausible audio length (speech
+            # tokens run at 12Hz; ~0.5s of audio per char is already twice
+            # a slow zh reading) so an autoregressive runaway can never
+            # stall the clip until the engine's timeout.
+            max_tokens = min(max(int(len(req["text"]) * 0.5 * 12), 120), 1800)
             # stream=True purely to overlap decode and vocoder work; the
             # whole clip is still returned at once (the /api/tts contract).
             for res in model.generate(
@@ -70,6 +75,7 @@ def main():
                 voice=req["voice"],
                 stream=True,
                 streaming_interval=0.5,
+                max_tokens=max_tokens,
             ):
                 chunks.append(np.array(res.audio))
                 sr = getattr(res, "sample_rate", sr)
