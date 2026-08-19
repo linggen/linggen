@@ -28,6 +28,7 @@ const inputCls =
 const ConfirmCard: React.FC<{ message: string; onDone: (ok: boolean) => void }> = ({ message, onDone }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Escape') onDone(false);
       if (e.key === 'Enter') onDone(true);
     };
@@ -72,7 +73,7 @@ const PromptCard: React.FC<{
           value={value}
           autoFocus
           onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onDone(value); }}
+          onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') onDone(value); }}
         />
         <div className={rowCls}>
           <button className={cancelCls} onClick={() => onDone(null)}>Cancel</button>

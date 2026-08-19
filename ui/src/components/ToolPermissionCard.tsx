@@ -135,7 +135,7 @@ export const ToolPermissionCard: React.FC<ToolPermissionCardProps> = ({ pending,
               placeholder="Tell the agent what to do instead…"
               value={customText}
               onChange={e => setCustomText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && customText.trim()) handleOtherSubmit(); }}
+              onKeyDown={e => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && customText.trim()) handleOtherSubmit(); }}
               className="flex-1 text-[12px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:border-amber-400 dark:focus:border-amber-500/40"
             />
             <button

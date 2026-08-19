@@ -545,6 +545,7 @@ export const SessionList: React.FC<{
                         onChange={(e) => setRenameText(e.target.value)}
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => {
+                          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                           if (e.key === 'Enter') { e.preventDefault(); commitRename(session.id); }
                           else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
                         }}

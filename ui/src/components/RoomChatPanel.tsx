@@ -202,7 +202,7 @@ export const RoomChatPanel: React.FC = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
           placeholder="Type a message..."
           className="flex-1 text-[12px] bg-transparent border-none outline-none text-slate-800 dark:text-slate-200 placeholder-slate-400"
         />

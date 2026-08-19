@@ -274,6 +274,7 @@ export const PhoneTab: React.FC<{
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         onKeyDown={(e) => {
+                          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                           if (e.key === 'Enter') saveEdit(d.id);
                           if (e.key === 'Escape') setEditingId(null);
                         }}

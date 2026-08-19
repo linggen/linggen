@@ -931,7 +931,7 @@ export const RoomTab: React.FC = () => {
                 placeholder="Paste invite link to join a private room..."
                 value={inviteInput}
                 onChange={e => setInviteInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') joinByInvite(); }}
+                onKeyDown={e => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') joinByInvite(); }}
                 className="w-full pl-7 pr-3 py-1.5 bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-white/10 rounded-lg text-[11px] outline-none focus:ring-1 focus:ring-blue-500/50"
               />
             </div>

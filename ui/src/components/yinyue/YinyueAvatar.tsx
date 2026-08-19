@@ -169,6 +169,9 @@ export const YinyueAvatar: React.FC = () => {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
+              // IME composition: Enter here commits the candidate (e.g.
+              // pinyin -> DJ), not the message. keyCode 229 covers Safari.
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter') send();
               else if (e.key === 'Escape') setComposing(false);
             }}
