@@ -81,7 +81,7 @@ interface UiState {
 
   // Yinyue speech bubble (driven by the `yinyue_speak` event)
   yinyueSpeech: YinyueSpeech | null;
-  showYinyueSpeech: (text: string, emotion: string) => void;
+  showYinyueSpeech: (text: string, emotion: string, minVisibleMs?: number) => void;
   clearYinyueSpeech: () => void;
 
   // Pet expression (driven by the `pet_express` event)
@@ -155,7 +155,7 @@ export const useUiStore = create<UiState>((set) => ({
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   yinyueSpeech: null,
-  showYinyueSpeech: (text, emotion) => {
+  showYinyueSpeech: (text, emotion, minVisibleMs) => {
     const id = `ys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     set({ yinyueSpeech: { id, text, emotion } });
     // Dismiss countdown runs ONLY while this tab is visible — heralds
@@ -163,7 +163,11 @@ export const useUiStore = create<UiState>((set) => ({
     // still be waiting when they switch over. The clock starts (or
     // resumes) on visibility; click dismisses anytime; newer speech
     // supersedes (the id check makes stale timers no-ops).
-    const ms = Math.min(45000, Math.max(15000, 2500 + text.length * 55));
+    // The reading-time formula is calibrated for silent text; when her
+    // voice is playing, the caller passes the clip's real duration and
+    // the bubble may never hide before the audio finishes.
+    const reading = Math.min(45000, Math.max(15000, 2500 + text.length * 55));
+    const ms = Math.max(reading, minVisibleMs ?? 0);
     let remaining = ms;
     let timer: number | undefined;
     let startedAt = 0;

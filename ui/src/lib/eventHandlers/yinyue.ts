@@ -128,11 +128,14 @@ async function play(text: string, emotion: string): Promise<void> {
 
   // The moment her audio is ready: leave thinking, show the bubble, and fire any
   // held gesture — so action + bubble + voice all land together.
-  const onAudioStart = () => {
+  const onAudioStart = (audioMs: number) => {
     synthInFlight = false;
     useUiStore.getState().setPetThinking(false);
     useUiStore.getState().setPetSpeaking(true); // talking body loop while the voice plays
-    useUiStore.getState().showYinyueSpeech(text, emotion);
+    // The bubble must outlive the voice: floor its dismiss countdown at the
+    // clip's real duration (plus a beat) — the reading-time formula alone
+    // under-shoots spoken Chinese.
+    useUiStore.getState().showYinyueSpeech(text, emotion, audioMs + 2500);
     flushExpress();
   };
 
@@ -164,7 +167,7 @@ async function play(text: string, emotion: string): Promise<void> {
         useUiStore.getState().setPetSpeaking(false); // voice done → drop the talking loop
       }
     };
-    onAudioStart(); // bubble + gesture land exactly as the voice begins
+    onAudioStart(decoded.duration * 1000); // bubble + gesture land exactly as the voice begins
     src.start();
   } catch (err) {
     // TTS failed — show text, leave thinking, fire the gesture; no audio so no talking loop.
