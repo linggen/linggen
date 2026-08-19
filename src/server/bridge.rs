@@ -48,7 +48,12 @@ struct ResData {
 
 impl ResData {
     fn err(code: &str, message: &str) -> Self {
-        Self { ok: false, data: None, code: Some(code.into()), message: Some(message.into()) }
+        Self {
+            ok: false,
+            data: None,
+            code: Some(code.into()),
+            message: Some(message.into()),
+        }
     }
 
     /// Shape returned to the skill: `{ok:true, data}` or `{ok:false, code, message}`.
@@ -122,7 +127,9 @@ impl BridgeHub {
 
     /// Dispatch one inbound frame from the extension.
     async fn on_frame(&self, text: &str) {
-        let Ok(v) = serde_json::from_str::<Value>(text) else { return };
+        let Ok(v) = serde_json::from_str::<Value>(text) else {
+            return;
+        };
         match v.get("t").and_then(Value::as_str) {
             Some("hello") => self.on_hello(&v).await,
             Some("res") => self.on_res(&v).await,
@@ -134,14 +141,20 @@ impl BridgeHub {
     async fn on_hello(&self, v: &Value) {
         {
             let mut inner = self.inner.lock().await;
-            inner.ext_version = v.get("ext_version").and_then(Value::as_str).map(String::from);
+            inner.ext_version = v
+                .get("ext_version")
+                .and_then(Value::as_str)
+                .map(String::from);
             inner.modules = parse_modules(v);
         }
-        self.send_frame(json!({ "t": "ready", "bridge_version": BRIDGE_VERSION })).await;
+        self.send_frame(json!({ "t": "ready", "bridge_version": BRIDGE_VERSION }))
+            .await;
     }
 
     async fn on_res(&self, v: &Value) {
-        let Some(id) = v.get("id").and_then(Value::as_str) else { return };
+        let Some(id) = v.get("id").and_then(Value::as_str) else {
+            return;
+        };
         let waiter = self.pending.lock().await.remove(id);
         let Some(waiter) = waiter else { return };
         let _ = waiter.send(ResData {
@@ -188,7 +201,13 @@ impl BridgeHub {
     /// Broker one op for an in-process caller (the engine's `Browser_*`
     /// tools). Same envelope the HTTP `call` surface returns:
     /// `{ok:true, data}` or `{ok:false, code, message}`.
-    pub async fn call_value(&self, module: &str, op: &str, params: Value, timeout_ms: u64) -> Value {
+    pub async fn call_value(
+        &self,
+        module: &str,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> Value {
         self.call(module, op, params, timeout_ms).await.into_value()
     }
 
@@ -209,7 +228,9 @@ impl Default for BridgeHub {
 }
 
 fn parse_modules(v: &Value) -> Vec<ModuleState> {
-    let Some(arr) = v.get("modules").and_then(Value::as_array) else { return Vec::new() };
+    let Some(arr) = v.get("modules").and_then(Value::as_array) else {
+        return Vec::new();
+    };
     arr.iter()
         .filter_map(|m| {
             let id = m.get("id").and_then(Value::as_str)?.to_string();
@@ -290,8 +311,18 @@ pub(crate) async fn call_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CallRequest>,
 ) -> impl IntoResponse {
-    let timeout_ms = req.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1_000, 60_000);
-    let res = state.bridge.call(&req.module, &req.op, req.params, timeout_ms).await;
+    // Ceiling fits the slowest legitimate op: the x `targets` roster pull is
+    // batched + retried in the extension (two paced searches, one 12s-backoff
+    // retry each) and can legitimately run ~2 minutes. A 60s cap silently
+    // starved it — the daemon gave up while the extension was still working.
+    let timeout_ms = req
+        .timeout_ms
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(1_000, 180_000);
+    let res = state
+        .bridge
+        .call(&req.module, &req.op, req.params, timeout_ms)
+        .await;
     Json(res.into_value())
 }
 
