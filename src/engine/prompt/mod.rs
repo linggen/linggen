@@ -59,7 +59,9 @@ fn get_os_version() -> String {
                     .ok()
                     .and_then(|o| {
                         if o.status.success() {
-                            String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                            String::from_utf8(o.stdout)
+                                .ok()
+                                .map(|s| s.trim().to_string())
                         } else {
                             None
                         }
@@ -121,9 +123,12 @@ fn workspace_listing(ws_root: &std::path::Path) -> String {
     let mut items: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && !matches!(name.as_str(),
-            ".claude" | ".linggen" | ".git" | ".github" | ".vscode" | ".cursorrules"
-        ) {
+        if name.starts_with('.')
+            && !matches!(
+                name.as_str(),
+                ".claude" | ".linggen" | ".git" | ".github" | ".vscode" | ".cursorrules"
+            )
+        {
             continue;
         }
         let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
@@ -151,19 +156,22 @@ impl AgentEngine {
         // App skills override the agent body — the agent's coding/workflow instructions
         // are irrelevant when the skill runs its own UI (e.g. game-table).
         // The agent's personality traits still carry through.
-        let is_app_skill = self
-            .active_skill
-            .as_ref()
-            .is_some_and(|s| s.app.is_some());
+        let is_app_skill = self.active_skill.as_ref().is_some_and(|s| s.app.is_some());
 
         // Hoist the first paragraph of the spec body (typically "You are X — <short
         // self-description>") into the ## Identity block. Keeps the agent's name
         // alive in app-skill / consumer / mission sessions where the rest of the
         // body is stripped, and labels personality traits with a section header
         // for scan/debug clarity.
-        let spec_body_full = self.spec_system_prompt.as_deref().map(str::trim).unwrap_or("");
+        let spec_body_full = self
+            .spec_system_prompt
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("");
         let (identity_preface, body_rest) = {
-            let (head, tail) = spec_body_full.split_once("\n\n").unwrap_or((spec_body_full, ""));
+            let (head, tail) = spec_body_full
+                .split_once("\n\n")
+                .unwrap_or((spec_body_full, ""));
             let head_trim = head.trim();
             if head_trim.is_empty() || head_trim.len() > 300 {
                 ("", spec_body_full)
@@ -176,7 +184,11 @@ impl AgentEngine {
             (true, true) => String::new(),
             (false, true) => format!("## Identity\n\n{}", identity_preface),
             (true, false) => format!("## Identity\n\n{}", personality.trim()),
-            (false, false) => format!("## Identity\n\n{}\n\n{}", identity_preface, personality.trim()),
+            (false, false) => format!(
+                "## Identity\n\n{}\n\n{}",
+                identity_preface,
+                personality.trim()
+            ),
         };
 
         // Mission frame: identity leads, then the agent's full spec body,
@@ -191,11 +203,15 @@ impl AgentEngine {
             } else {
                 mission.body.clone()
             };
-            let parts: Vec<String> =
-                [identity_block, voice_section(), body_rest.to_string(), resolved]
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .collect();
+            let parts: Vec<String> = [
+                identity_block,
+                voice_section(),
+                body_rest.to_string(),
+                resolved,
+            ]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
             return parts.join("\n\n");
         }
 
@@ -226,23 +242,33 @@ impl AgentEngine {
         if !is_app_skill && !self.available_skills_metadata.is_empty() {
             // Filter by consumer_allowed_skills when in consumer mode.
             let skills: Vec<&(String, String, bool)> = match &self.cfg.consumer_allowed_skills {
-                Some(allowed) => self.available_skills_metadata.iter()
+                Some(allowed) => self
+                    .available_skills_metadata
+                    .iter()
                     .filter(|(name, _, _)| allowed.contains(name))
                     .collect(),
                 None => self.available_skills_metadata.iter().collect(),
             };
             if !skills.is_empty() {
-                prompt.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_SKILLS_HEADER,
-                    &[],
-                ));
+                prompt.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::SYSTEM_SKILLS_HEADER, &[]),
+                );
                 for (name, description, is_app) in skills {
                     // Mark app skills so an agent (Yinyue) knows which are routable
                     // apps it can hand requests to via agent_chat's `app` target.
-                    let display = if *is_app { format!("{name} (app)") } else { name.clone() };
+                    let display = if *is_app {
+                        format!("{name} (app)")
+                    } else {
+                        name.clone()
+                    };
                     prompt.push_str(&self.prompt_store.render_or_fallback(
                         keys::SYSTEM_SKILL_ENTRY,
-                        &[("name", display.as_str()), ("description", description.as_str())],
+                        &[
+                            ("name", display.as_str()),
+                            ("description", description.as_str()),
+                        ],
                     ));
                 }
             }
@@ -269,10 +295,11 @@ impl AgentEngine {
             // unless the skill body already documents PageUpdate itself, in
             // which case the generic hint is redundant duplication.
             if skill.app.is_some() && !resolved_content.contains("PageUpdate") {
-                prompt.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_APP_SKILL_DASHBOARD_HINT,
-                    &[],
-                ));
+                prompt.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::SYSTEM_APP_SKILL_DASHBOARD_HINT, &[]),
+                );
             }
         }
 
@@ -345,20 +372,22 @@ impl AgentEngine {
             }
             sections.reverse();
             if !sections.is_empty() {
-                stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER,
-                    &[],
-                ));
+                stable.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::SYSTEM_PROJECT_INSTRUCTIONS_HEADER, &[]),
+                );
                 for (label, content) in &sections {
                     stable.push_str(&self.prompt_store.render_or_fallback(
                         keys::SYSTEM_PROJECT_INSTRUCTIONS_ENTRY,
                         &[("label", label.as_str()), ("content", content.as_str())],
                     ));
                 }
-                stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::SYSTEM_PROJECT_INSTRUCTIONS_FOOTER,
-                    &[],
-                ));
+                stable.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::SYSTEM_PROJECT_INSTRUCTIONS_FOOTER, &[]),
+                );
             }
         }
 
@@ -382,37 +411,35 @@ impl AgentEngine {
             // shared tail (save triggers, retrieval-visibility, usage rules)
             // is one fragment so the two heads can't drift apart.
             match core_block::load_core(&self.cfg.ling_mem_url) {
-                Some(c) => stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::CORE_MEMORY_BLOCK,
-                    &[("core_facts", &c.facts)],
-                )),
-                None => stable.push_str(&self.prompt_store.render_or_fallback(
-                    keys::CORE_MEMORY_BLOCK_EMPTY,
-                    &[],
-                )),
+                Some(c) => stable.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::CORE_MEMORY_BLOCK, &[("core_facts", &c.facts)]),
+                ),
+                None => stable.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(keys::CORE_MEMORY_BLOCK_EMPTY, &[]),
+                ),
             }
-            stable.push_str(&self.prompt_store.render_or_fallback(
-                keys::CORE_MEMORY_SHARED,
-                &[],
-            ));
-            // Canonical memory protocol — single source of truth for the
-            // read-before-write rule, AskUser shape, tier selection, and
-            // tier discipline on resolution. Injected once into every
-            // memory-enabled session (`include_memory == true`). All other
-            // memory prompt surfaces (agent specs, capability tool
-            // descriptions) defer to this block.
-            stable.push_str(&self.prompt_store.render_or_fallback(
-                keys::MEMORY_PROTOCOL,
-                &[],
-            ));
+            stable.push_str(
+                &self
+                    .prompt_store
+                    .render_or_fallback(keys::CORE_MEMORY_SHARED, &[]),
+            );
+            // The memory *protocol* is no longer engine text: the memory
+            // server ships it as MCP `initialize.instructions`, injected in
+            // `prepare_loop_messages` alongside every other connected
+            // server's instructions — one doctrine source for every host.
         }
 
         // --- Consumer frame (consumer only) ---
         if self.prompt_profile.consumer_frame {
-            stable.push_str(&self.prompt_store.render_or_fallback(
-                keys::SYSTEM_CONSUMER_FRAME,
-                &[],
-            ));
+            stable.push_str(
+                &self
+                    .prompt_store
+                    .render_or_fallback(keys::SYSTEM_CONSUMER_FRAME, &[]),
+            );
         }
 
         let mut hasher = DefaultHasher::new();
@@ -434,7 +461,10 @@ impl AgentEngine {
     ) -> (Vec<ChatMessage>, Option<HashSet<String>>, HashSet<String>) {
         // Build stable system content with caching.
         let (stable_content, hash) = self.build_stable_system_content();
-        let cache_hit = self.cached_system_prompt.as_ref().map_or(false, |c| c.input_hash == hash);
+        let cache_hit = self
+            .cached_system_prompt
+            .as_ref()
+            .map_or(false, |c| c.input_hash == hash);
         if !cache_hit {
             self.cached_system_prompt = Some(CachedSystemPrompt {
                 input_hash: hash,
@@ -447,7 +477,15 @@ impl AgentEngine {
         let mut allowed_tools = self.allowed_tool_names();
         if self.plan_mode {
             let read_only: HashSet<String> = [
-                "Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUser", "ExitPlanMode", "UpdatePlan", "Task",
+                "Read",
+                "Glob",
+                "Grep",
+                "WebSearch",
+                "WebFetch",
+                "AskUser",
+                "ExitPlanMode",
+                "UpdatePlan",
+                "Task",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -476,9 +514,19 @@ impl AgentEngine {
         // countermands a mission's turn protocol (observed derailing the
         // dream mission's memory agent, whose tools are Memory-only).
         let conversational = self.active_mission.is_none()
-            && !["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Task", "EnterPlanMode", "UpdatePlan"]
-                .iter()
-                .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
+            && ![
+                "Read",
+                "Write",
+                "Edit",
+                "Bash",
+                "Grep",
+                "Glob",
+                "Task",
+                "EnterPlanMode",
+                "UpdatePlan",
+            ]
+            .iter()
+            .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
 
         // Dynamic content appended after cached stable prefix.
 
@@ -550,57 +598,87 @@ impl AgentEngine {
                         system.push_str("\n\n");
                         system.push_str(lean);
                         if tool_allowed("AskUser") {
-                            if let Some(b) = self.prompt_store.get(
-                                crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET,
-                            ) {
+                            if let Some(b) = self
+                                .prompt_store
+                                .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET)
+                            {
                                 system.push_str(b);
                             }
                         }
                     }
-                } else if let Some(base) = self.prompt_store.get(crate::prompts::RESPONSE_FORMAT_NATIVE) {
+                } else if let Some(base) = self
+                    .prompt_store
+                    .get(crate::prompts::RESPONSE_FORMAT_NATIVE)
+                {
                     system.push_str("\n\n");
                     system.push_str(base);
                     if tool_allowed("AskUser") {
-                        if let Some(b) = self.prompt_store.get(
-                            crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET,
-                        ) {
+                        if let Some(b) = self
+                            .prompt_store
+                            .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_ASKUSER_BULLET)
+                        {
                             system.push_str(b);
                         }
                     }
-                    if let Some(c) = self.prompt_store.get(
-                        crate::prompts::keys::RESPONSE_FORMAT_NATIVE_CONVERSATIONAL,
-                    ) {
+                    if let Some(c) = self
+                        .prompt_store
+                        .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_CONVERSATIONAL)
+                    {
                         system.push_str(c);
                     }
                     if tool_allowed("EnterPlanMode") {
-                        if let Some(p) = self.prompt_store.get(
-                            crate::prompts::keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE,
-                        ) {
+                        if let Some(p) = self
+                            .prompt_store
+                            .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_PLAN_MODE)
+                        {
                             system.push_str(p);
                         }
                     }
                     if tool_allowed("UpdatePlan") {
-                        if let Some(u) = self.prompt_store.get(
-                            crate::prompts::keys::RESPONSE_FORMAT_NATIVE_UPDATE_PLAN,
-                        ) {
+                        if let Some(u) = self
+                            .prompt_store
+                            .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_UPDATE_PLAN)
+                        {
                             system.push_str(u);
                         }
                     }
-                    if let Some(r) = self.prompt_store.get(
-                        crate::prompts::keys::RESPONSE_FORMAT_NATIVE_RULES_BASE,
-                    ) {
+                    if let Some(r) = self
+                        .prompt_store
+                        .get(crate::prompts::keys::RESPONSE_FORMAT_NATIVE_RULES_BASE)
+                    {
                         system.push_str(r);
                     }
                 }
             } else {
                 // Legacy mode: inject JSON action format + inline tool schemas.
                 let tools_json = self.tools.tool_schema_json(allowed_tools.as_ref());
-                if let Some(rendered) = self.prompt_store.render(
-                    crate::prompts::RESPONSE_FORMAT,
-                    &[("tools", &tools_json)],
-                ) {
+                if let Some(rendered) = self
+                    .prompt_store
+                    .render(crate::prompts::RESPONSE_FORMAT, &[("tools", &tools_json)])
+                {
                     system.push_str("\n\n");
                     system.push_str(&rendered);
+                }
+            }
+        }
+
+        // --- MCP server instructions ---
+        // A connected server states its own rules in `initialize.instructions`;
+        // inject them for every server with at least one tool advertised in
+        // this session — the same semantics Claude Code gives the field. This
+        // replaced the engine's hand-copied [memory_protocol]: doctrine
+        // travels with the server that owns it, identical on every host.
+        if has_tools {
+            for (server, text) in crate::mcp_client::registry().instructions() {
+                let prefix = format!("mcp__{server}__");
+                let advertised = allowed_tools
+                    .as_ref()
+                    .map_or(true, |s| s.iter().any(|t| t.starts_with(&prefix)));
+                if advertised && !text.trim().is_empty() {
+                    system.push_str(&format!(
+                        "\n\n# MCP server `{server}` — its own usage instructions\n\n{}",
+                        text.trim()
+                    ));
                 }
             }
         }
@@ -614,19 +692,24 @@ impl AgentEngine {
         }
 
         // Inject available agents for Task delegation (owner only).
-        if has_tools && self.prompt_profile.include_delegation && !self.available_agents_metadata.is_empty() {
-            let task_available = allowed_tools
-                .as_ref()
-                .map_or(true, |s| s.contains("Task"));
+        if has_tools
+            && self.prompt_profile.include_delegation
+            && !self.available_agents_metadata.is_empty()
+        {
+            let task_available = allowed_tools.as_ref().map_or(true, |s| s.contains("Task"));
             if task_available {
-                system.push_str(&self.prompt_store.render_or_fallback(
-                    crate::prompts::keys::SYSTEM_DELEGATION_HEADER,
-                    &[],
-                ));
+                system.push_str(
+                    &self
+                        .prompt_store
+                        .render_or_fallback(crate::prompts::keys::SYSTEM_DELEGATION_HEADER, &[]),
+                );
                 for (name, description) in &self.available_agents_metadata {
                     system.push_str(&self.prompt_store.render_or_fallback(
                         crate::prompts::keys::SYSTEM_DELEGATION_ENTRY,
-                        &[("name", name.as_str()), ("description", description.as_str())],
+                        &[
+                            ("name", name.as_str()),
+                            ("description", description.as_str()),
+                        ],
                     ));
                 }
                 system.push('\n');
@@ -699,11 +782,17 @@ impl AgentEngine {
         // Attach any pending images to the task message, then clear them.
         let images = std::mem::take(&mut self.pending_images);
         if !images.is_empty() {
-            tracing::info!("Attaching {} inline image(s) to task message ({} bytes total)",
+            tracing::info!(
+                "Attaching {} inline image(s) to task message ({} bytes total)",
                 images.len(),
-                images.iter().map(|i| i.len()).sum::<usize>());
+                images.iter().map(|i| i.len()).sum::<usize>()
+            );
         }
-        let task_msg = if images.is_empty() { task_msg } else { task_msg.with_images(images) };
+        let task_msg = if images.is_empty() {
+            task_msg
+        } else {
+            task_msg.with_images(images)
+        };
         messages.push(task_msg);
         self.push_context_record(
             ContextType::UserInput,
@@ -869,7 +958,6 @@ impl AgentEngine {
     pub(crate) fn render_loop_breaker_prompt(template: &str, tool: &str) -> String {
         crate::prompts::PromptStore::substitute(template, &[("tool", tool)])
     }
-
 }
 
 /// Seconds as a person would say them — "40s", "12m", "2h 3m".

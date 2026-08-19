@@ -99,10 +99,10 @@ codebase.
 
 ## Memory writes
 
-Follow the **Memory protocol** in your system prompt (`[memory_protocol]`):
-read before every write, AskUser on contradiction, write to the tier the
-row deserves. The protocol is the same for the live agent and the N-turn
-encoder subagent — one paragraph, one source of truth.
+Follow the **memory server's instructions** in your system prompt (the
+MCP server `memory` section): read before every write, AskUser on
+contradiction, write to the tier the row deserves. The server ships its
+own protocol — one source of truth on every host.
 
 You own the **explicit** path: user imperatives (*"remember X"*), in-the-
 moment corrections, identity statements — where instant *"Saved."*
