@@ -536,6 +536,18 @@ impl Config {
                     model.url
                 );
             }
+            // keep_alive is forwarded verbatim to Ollama, whose Go duration
+            // parser rejects a bare number ("10") with an opaque 400 at chat
+            // time — catch it here at save time instead.
+            if let Some(ka) = &model.keep_alive {
+                if !is_valid_go_duration(ka.trim()) {
+                    anyhow::bail!(
+                        "Model '{}' keep_alive '{}' needs a time unit — e.g. '10m', '30s', '1h'.",
+                        model.id,
+                        ka
+                    );
+                }
+            }
         }
         if self.server.port() == 0 {
             anyhow::bail!("Server port must be greater than 0");
@@ -642,6 +654,38 @@ impl Default for Config {
     }
 }
 
+/// Mirrors Go's `time.ParseDuration` grammar (what Ollama's `keep_alive`
+/// expects): "0", or a possibly signed sequence of decimal numbers each
+/// followed by a unit (ns/us/µs/ms/s/m/h), e.g. "10m", "90s", "1h30m".
+fn is_valid_go_duration(s: &str) -> bool {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if s == "0" {
+        return true;
+    }
+    let mut rest = s;
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        let num_len = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if num_len == 0 {
+            return false;
+        }
+        rest = &rest[num_len..];
+        // Two-char units before their one-char prefixes ("ms" before "m"/"s").
+        let unit = ["ns", "us", "µs", "ms", "s", "m", "h"]
+            .iter()
+            .find(|u| rest.starts_with(**u));
+        match unit {
+            Some(u) => rest = &rest[u.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +735,32 @@ mod tests {
         cfg.models[0].id = "  ".to_string();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("Model ID cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_keep_alive_missing_unit() {
+        let mut cfg = valid_config();
+        cfg.models[0].keep_alive = Some("10".to_string());
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("needs a time unit"));
+    }
+
+    #[test]
+    fn test_validate_keep_alive_valid_durations() {
+        let mut cfg = valid_config();
+        for ka in ["10m", "30s", "1h30m", "0", "-1m", "1.5h"] {
+            cfg.models[0].keep_alive = Some(ka.to_string());
+            cfg.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_validate_keep_alive_garbage() {
+        let mut cfg = valid_config();
+        for ka in ["", "abc", "10 m", "10x"] {
+            cfg.models[0].keep_alive = Some(ka.to_string());
+            assert!(cfg.validate().is_err(), "expected '{ka}' to be rejected");
+        }
     }
 
     #[test]
