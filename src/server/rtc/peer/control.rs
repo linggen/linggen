@@ -237,6 +237,24 @@ pub(super) fn handle_control_message(
     }
 }
 
+/// Wrap a loopback response for the control channel: a success body rides as
+/// `data`, a failure comes back as `error` so the client's promise rejects.
+///
+/// Wrapping every body as `data` regardless of status is what made a refused
+/// plan action look like a success — the UI resolved, showed nothing, and the
+/// user was left clicking a button that did nothing.
+fn wrap_endpoint_response(status: u16, body: serde_json::Value) -> serde_json::Value {
+    if (200..300).contains(&status) {
+        return serde_json::json!({ "data": body });
+    }
+    let reason = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("HTTP {status}"));
+    serde_json::json!({ "error": reason })
+}
+
 /// Process a pending control channel request asynchronously.
 /// Runs in a spawned task — returns the result to be sent on the data channel
 /// via the ctrl_resp channel (avoiding blocking str0m's event loop).
@@ -347,13 +365,41 @@ pub(super) async fn process_control_request_async(
             let url = format!("http://127.0.0.1:{port}{endpoint}");
             match client.post(&url).json(&body).send().await {
                 Ok(r) => {
+                    let status = r.status().as_u16();
                     let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
-                    serde_json::json!({ "data": body })
+                    if !(200..300).contains(&status) {
+                        tracing::warn!("RTC {} → {endpoint} failed: {status}", req.msg_type);
+                    }
+                    wrap_endpoint_response(status, body)
                 }
                 Err(e) => serde_json::json!({ "error": format!("{e}") }),
             }
         }
 
         _ => serde_json::json!({ "error": "unknown type" }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_endpoint_response;
+    use serde_json::json;
+
+    #[test]
+    fn success_body_rides_as_data() {
+        let out = wrap_endpoint_response(200, json!({ "status": "rejected" }));
+        assert_eq!(out, json!({ "data": { "status": "rejected" } }));
+    }
+
+    #[test]
+    fn failure_surfaces_the_server_reason() {
+        let out = wrap_endpoint_response(404, json!({ "error": "No pending plan" }));
+        assert_eq!(out, json!({ "error": "No pending plan" }));
+    }
+
+    #[test]
+    fn failure_without_a_reason_falls_back_to_the_status() {
+        let out = wrap_endpoint_response(500, json!(null));
+        assert_eq!(out, json!({ "error": "HTTP 500" }));
     }
 }

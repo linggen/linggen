@@ -12,9 +12,18 @@ import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { ContentBlock } from '../types';
 
-/** Resolve the effective project root: explicit override > store value. */
+/**
+ * Resolve the effective project root: explicit override > selected project >
+ * the active session's own project/cwd. The last step matters — a session
+ * opened from the list without a project selected would otherwise send an
+ * empty root, which the server resolves to the home directory.
+ */
 function getProjectRoot(override?: string | null): string {
-  return override || useSessionStore.getState().selectedProjectRoot;
+  if (override) return override;
+  const state = useSessionStore.getState();
+  if (state.selectedProjectRoot) return state.selectedProjectRoot;
+  const sess = state.allSessions.find((s) => s.id === state.activeSessionId);
+  return sess?.project || sess?.cwd || '';
 }
 
 export function useChatActions(
@@ -294,7 +303,11 @@ export function useChatActions(
         const reason = String((e as Error)?.message ?? '');
         const text = reason.includes('CompressionStream')
           ? 'Message failed to send — this browser cannot send attachments that large.'
-          : 'Message failed to send — the connection to the server was interrupted. Try again.';
+          : reason.startsWith('Control channel')
+            ? 'Message failed to send — the connection to the server was interrupted. Try again.'
+            // The server refused it (permission, budget, unknown session). Say
+            // what it said rather than blaming the network.
+            : `Message failed to send — ${reason}`;
         useChatStore.getState().addMessage({
           role: 'agent', from: 'system', to: 'user',
           text, isError: true,
@@ -312,58 +325,61 @@ export function useChatActions(
         session_id: useSessionStore.getState().activeSessionId,
       });
       useInteractionStore.getState().setPendingAskUser(null);
-    } catch (e) { console.error('Error responding to AskUser:', e); }
+    } catch (e) {
+      // Leave the question on screen — it was not delivered.
+      const reason = String((e as Error)?.message ?? e);
+      useUiStore.getState().addToast({ message: `Answer failed to send — ${reason}`, variant: 'error' });
+      console.error('Error responding to AskUser:', e);
+    }
+  }, []);
+
+  /**
+   * Send one plan decision. A failure is shown, never swallowed: a button that
+   * does nothing on click is the same bug as a button that isn't there.
+   */
+  const sendPlanDecision = useCallback(async (
+    type: 'approve' | 'reject' | 'edit',
+    extra?: { edited_plan?: string },
+  ): Promise<boolean> => {
+    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
+    const root = getProjectRoot(projectRootRef.current);
+    const { activeSessionId: sid } = useSessionStore.getState();
+    if (!planAgent) {
+      useUiStore.getState().addToast({ message: 'No plan is waiting for a decision.', variant: 'error' });
+      return false;
+    }
+    try {
+      await getTransport().sendPlanAction({
+        type,
+        project_root: root,
+        agent_id: planAgent,
+        session_id: sid,
+        ...extra,
+      });
+      return true;
+    } catch (e) {
+      const reason = String((e as Error)?.message ?? e);
+      useUiStore.getState().addToast({ message: `Plan ${type} failed — ${reason}`, variant: 'error' });
+      console.error(`Error on plan ${type}:`, e);
+      return false;
+    }
   }, []);
 
   const approvePlan = useCallback(async () => {
-    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
-    const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useSessionStore.getState();
-    if (!planAgent || !root) return;
-    try {
-      await getTransport().sendPlanAction({
-        type: 'approve',
-        project_root: root,
-        agent_id: planAgent,
-        session_id: sid,
-      });
-      // Optimistically mark plan as approved so content stays visible but buttons hide
-      useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'approved' } : null);
-    } catch (e) { console.error('Error approving plan:', e); }
-  }, []);
+    if (!await sendPlanDecision('approve')) return;
+    // Optimistically mark plan as approved so content stays visible but buttons hide
+    useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'approved' } : null);
+  }, [sendPlanDecision]);
 
   const rejectPlan = useCallback(async () => {
-    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
-    const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useSessionStore.getState();
-    if (!planAgent || !root) return;
-    try {
-      await getTransport().sendPlanAction({
-        type: 'reject',
-        project_root: root,
-        agent_id: planAgent,
-        session_id: sid,
-      });
-      useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'rejected' } : null);
-    } catch (e) { console.error('Error rejecting plan:', e); }
-  }, []);
+    if (!await sendPlanDecision('reject')) return;
+    useInteractionStore.getState().setPendingPlan((p) => p ? { ...p, status: 'rejected' } : null);
+  }, [sendPlanDecision]);
 
   const editPlan = useCallback(async (text: string) => {
-    const { pendingPlanAgentId: planAgent } = useInteractionStore.getState();
-    const root = getProjectRoot(projectRootRef.current);
-    const { activeSessionId: sid } = useSessionStore.getState();
-    if (!planAgent || !root) return;
-    try {
-      await getTransport().sendPlanAction({
-        type: 'edit',
-        project_root: root,
-        agent_id: planAgent,
-        session_id: sid,
-        edited_plan: text,
-      });
-      useInteractionStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
-    } catch (e) { console.error('Error editing plan:', e); }
-  }, []);
+    if (!await sendPlanDecision('edit', { edited_plan: text })) return;
+    useInteractionStore.getState().setPendingPlan((prev) => prev ? { ...prev, plan_text: text } : prev);
+  }, [sendPlanDecision]);
 
   const copyChat = useCallback(async () => {
     try {

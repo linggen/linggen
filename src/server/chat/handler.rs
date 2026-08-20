@@ -150,7 +150,13 @@ fn auto_session_title(message: &str) -> String {
 
 /// Expand the request's `project_root` (handles `~`, `~/...`, empty) into an
 /// absolute filesystem path.
-fn resolve_request_root(req_root: &str) -> PathBuf {
+///
+/// Every handler that keys server state by project root must go through this —
+/// the pending-plan map is keyed by the resolved root, so a handler comparing
+/// the raw request string (e.g. the `~/OneDrive - Marine Thinking` symlink the
+/// UI stores) would never find the entry `/api/chat` wrote under the
+/// canonicalized path.
+pub(super) fn resolve_request_root(req_root: &str) -> PathBuf {
     let expanded = if req_root.is_empty() || req_root == "~" {
         dirs::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     } else if let Some(rest) = req_root.strip_prefix("~/") {

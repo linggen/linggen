@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use super::handler::resolve_request_root;
 use super::runtime::{
     persist_and_emit_last_assistant_text, push_user_turn_with_recall, run_loop_with_tracking,
     send_thinking_status, spawn_thinking_forwarder, unwire_interrupt_channel, wire_engine_bridges,
@@ -215,12 +216,21 @@ async fn recover_plan_from_session(
     let sid = session_id.unwrap_or("default");
     let messages = state.manager.global_sessions.get_chat_history(sid).ok()?;
     for msg in messages.iter().rev() {
-        let parsed = serde_json::from_str::<serde_json::Value>(&msg.content).ok()?;
+        // Plain-text messages sit between the plan and the tail of the
+        // history — skip them. Bailing out here (`.ok()?`) made recovery dead
+        // for every plan that wasn't the very last message in the session.
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg.content) else {
+            continue;
+        };
         if parsed.get("type").and_then(|v| v.as_str()) != Some("plan") {
             continue;
         }
-        let plan_val = parsed.get("plan")?;
-        let plan = serde_json::from_value::<crate::engine::Plan>(plan_val.clone()).ok()?;
+        let Some(plan_val) = parsed.get("plan") else {
+            continue;
+        };
+        let Ok(plan) = serde_json::from_value::<crate::engine::Plan>(plan_val.clone()) else {
+            continue;
+        };
         if plan.status == crate::engine::PlanStatus::Planned {
             tracing::info!("[plan] Recovered pending plan from session history for {agent_id}");
             return Some(plan);
@@ -235,7 +245,7 @@ pub(crate) async fn approve_plan_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<PlanActionRequest>,
 ) -> impl IntoResponse {
-    let root = PathBuf::from(&req.project_root);
+    let root = resolve_request_root(&req.project_root);
     let root_str = root.to_string_lossy().to_string();
     let session_id = req.session_id.clone();
 
@@ -421,7 +431,7 @@ pub(crate) async fn reject_plan_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<PlanActionRequest>,
 ) -> impl IntoResponse {
-    let root = PathBuf::from(&req.project_root);
+    let root = resolve_request_root(&req.project_root);
     let root_str = root.to_string_lossy().to_string();
 
     let removed = state
@@ -474,7 +484,7 @@ pub(crate) async fn edit_plan_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<EditPlanRequest>,
 ) -> impl IntoResponse {
-    let root = PathBuf::from(&req.project_root);
+    let root = resolve_request_root(&req.project_root);
     let root_str = root.to_string_lossy().to_string();
     let session_id = req.session_id.clone();
     let agent_id = req.agent_id.clone();
