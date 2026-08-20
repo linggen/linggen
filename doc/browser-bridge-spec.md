@@ -99,16 +99,35 @@ ext → daemon   { "t": "ping" }
 
 Module id `x`. Ops mirror the reads Pulse needs today (the tools they replace are noted):
 
-| op | params | replaces |
-|:---|:-------|:---------|
-| `search` | `{ query, max }` | `FetchX` (recent search) |
-| `user_tweets` | `{ username, max }` | `FetchXOwnPosts` |
-| `mentions` | `{ username, max }` | `FetchXMentions` |
-| `user_lookup` | `{ username }` | id + follower-count resolution |
-| `targets` | `{ handles[], per_author }` | `FetchXTargets` |
-| `followers` | `{ username, max }` | `FetchXFollowers` |
+| op | params | replaces | state |
+|:---|:-------|:---------|:------|
+| `search` | `{ query, max }` | `FetchX` (recent search) | wired |
+| `targets` | `{ handles[], per_author, max }` | `FetchXTargets` | wired (batched — see below) |
+| `own` | `{ username, max }` | `FetchXOwnPosts` | wired |
+| `following` | `{ handle, self, max }` | roster: who I already follow | wired |
+| `whotofollow` | `{ exclude[], self, max }` | roster: suggestions | wired |
+| `post` | `{ text, reply_to? }` | — (the only write) | wired — see **Posting** |
+| `mentions` | `{ max }` | `FetchXMentions` | not wired |
+| `user_lookup` | `{ username }` | id + follower-count resolution | not wired |
+| `followers` | `{ username, max }` | `FetchXFollowers` | not wired |
+
+**Match on shape, not on op names.** X renames its graphql operations freely, and an op that waits for one by name fails silently when it happens: the capture times out, the reader returns an empty list, and an empty list is indistinguishable from "there was nothing". This has now bitten twice — `SearchTimeline`'s wrapper reshaping (2026-08-18) and `UserTweetsAndReplies` disappearing from the profile page (2026-08-20, which emptied Pulse's already-replied list and resurfaced answered posts). Readers whose op name is unstable accumulate results by JSON shape from whatever the tab fires instead.
+
+**Budget the waiting.** A read is mostly waiting: the bridge paces 3-10s before dispatch, the x module another 4-9s before the tab opens, then the capture runs to 20s and the tab dwells 1-4s. Callers must allow ~45s for an ordinary read (`targets` batches and needs far more); a caller timeout under that fails on pacing alone, and every caller renders a timeout as an authoritative empty.
 
 Each op returns the same normalized item shape Pulse already consumes — `{ source:"x", author, handle, followers, title, text, url, score, likes, reposts, replies, age_hours, created_iso }` — so skill-side scoring is unchanged regardless of whether data came from the bridge or the paid API. `[]` is a valid empty result.
+
+## Posting
+
+`post` is the bridge's one write. The read design — hidden tab, listen, close — is wrong for a write in every particular, so it inverts all of it:
+
+- **Visible.** The tab is active and grouped "Linggen", like Browser Control's. A write must be legible while it happens so the user can interrupt it, never something they discover afterwards.
+- **Gated, every time.** It goes through the same `gateAction` floor as Browser Control: posting always confirms, even on a trusted `x.com`, and the prompt never offers "Always". This is the promise in the published Web Store listing — do not route around it.
+- **Driven, not filled.** The composer is typed and clicked through CDP (`Input.dispatchKeyEvent` / `dispatchMouseEvent`), not scripted from the page. Two reasons: x.com's composer is a rich-text editor that drops bulk `insertText`, and CDP events reach the page as `isTrusted`, where page-injected events do not.
+- **Read back before committing.** The composer's contents are compared against what was typed, and a mismatch aborts. A dropped character is invisible until it is public, and a post cannot be recalled.
+- **Confirmed by x.com, not assumed.** It resolves on x.com's own `CreateTweet` response and returns the new post's id. Nothing upstream may report a post as sent that x.com did not confirm. On any failure the tab is left open, so the user can see the real state of their account.
+
+**No agent may call it.** `post` is deliberately absent from the MCP tool table: only a human pressing a button in a skill page reaches it. That is what keeps "the agent never posts" true while letting the user post without leaving the page. Widening this to agent-initiated posting is a separate decision with its own permission design, not a tool registration.
 
 ## Security
 
@@ -127,7 +146,7 @@ The extension cannot ship through `install.sh` (Web Store gated). Pulse's only j
 
 ## Out of scope
 
-- Writes (posting, replies, DMs, follows). Read-only by design.
+- DMs and follows. `post` is the only write (see **Posting**); everything else the bridge does is a read.
 - Background harvesting / polling. On-demand only.
 - Any in-page UI in the extension beyond a small status popup.
 - Sites other than X. Added as modules later, same contract.
