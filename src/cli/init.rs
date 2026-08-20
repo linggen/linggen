@@ -63,7 +63,8 @@ fn ensure_directories() {
     for dir in &dirs {
         match fs::create_dir_all(dir) {
             Ok(_) => {
-                let rel = dir.strip_prefix(crate::paths::linggen_home())
+                let rel = dir
+                    .strip_prefix(crate::paths::linggen_home())
                     .map(|p| format!("~/.linggen/{}", p.display()))
                     .unwrap_or_else(|_| dir.display().to_string());
                 println!("  {}[OK]{} {}", GREEN, RESET, rel);
@@ -93,7 +94,10 @@ pub fn install_default_agents() -> Result<()> {
         }
     }
 
-    println!("  {}[OK]{} Installed {} default agent specs", GREEN, RESET, count);
+    println!(
+        "  {}[OK]{} Installed {} default agent specs",
+        GREEN, RESET, count
+    );
     Ok(())
 }
 
@@ -134,7 +138,10 @@ pub fn install_default_missions() -> Result<()> {
     // mission is not re-created on the next start.
     fs::write(&sentinel, b"")?;
     if count > 0 {
-        println!("  {}[OK]{} Seeded {} built-in mission(s)", GREEN, RESET, count);
+        println!(
+            "  {}[OK]{} Seeded {} built-in mission(s)",
+            GREEN, RESET, count
+        );
     }
     Ok(())
 }
@@ -143,7 +150,12 @@ pub fn install_default_missions() -> Result<()> {
 fn ensure_default_config() -> Result<()> {
     let (_, existing_path) = crate::config::Config::load_with_path()?;
     if let Some(path) = &existing_path {
-        println!("  {}[OK]{} Config already exists: {}", GREEN, RESET, path.display());
+        println!(
+            "  {}[OK]{} Config already exists: {}",
+            GREEN,
+            RESET,
+            path.display()
+        );
         return Ok(());
     }
 
@@ -151,7 +163,9 @@ fn ensure_default_config() -> Result<()> {
     let path = config.save_runtime(None)?;
     println!(
         "  {}[OK]{} Created default config: {}",
-        GREEN, RESET, path.display()
+        GREEN,
+        RESET,
+        path.display()
     );
     println!(
         "        {}Tip:{} Edit this file to add your model providers and API keys.",
@@ -174,13 +188,19 @@ fn run_skill_install_scripts() {
         if path.is_dir() {
             match crate::extensions::skills::run_install_script(&path) {
                 Ok(Some(_)) => {
-                    ran.push(path.file_name().unwrap_or_default().to_string_lossy().to_string());
+                    ran.push(
+                        path.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                    );
                 }
                 Ok(None) => {} // no install script
                 Err(e) => {
                     println!(
                         "  {}[WARN]{} Install script failed for {}: {}",
-                        YELLOW, RESET,
+                        YELLOW,
+                        RESET,
                         path.file_name().unwrap_or_default().to_string_lossy(),
                         e
                     );
@@ -191,7 +211,8 @@ fn run_skill_install_scripts() {
     if !ran.is_empty() {
         println!(
             "  {}[OK]{} Ran install scripts for: {}",
-            GREEN, RESET,
+            GREEN,
+            RESET,
             ran.join(", ")
         );
     }
@@ -223,14 +244,19 @@ async fn install_default_skills() {
                 Ok(installed) if !installed.is_empty() => {
                     println!(
                         "  {}[OK]{} Installed {} skills from linggen/skills",
-                        GREEN, RESET, installed.len()
+                        GREEN,
+                        RESET,
+                        installed.len()
                     );
                 }
                 Ok(_) => {
                     println!("  {}[SKIP]{} No skills found in repository", YELLOW, RESET);
                 }
                 Err(e) => {
-                    println!("  {}[SKIP]{} Skills extraction failed: {}", YELLOW, RESET, e);
+                    println!(
+                        "  {}[SKIP]{} Skills extraction failed: {}",
+                        YELLOW, RESET, e
+                    );
                 }
             }
             let _ = fs::remove_file(&temp_zip);

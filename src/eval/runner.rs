@@ -1,5 +1,5 @@
-use crate::engine::agent::AgentManager;
 use crate::config::Config;
+use crate::engine::agent::AgentManager;
 use crate::eval::grader::run_grader;
 use crate::eval::report::save_transcript;
 use crate::eval::{EvalConfig, EvalResult, EvalTaskDef};
@@ -37,7 +37,13 @@ pub async fn run_single_task(
     let safe_name: String = task_def
         .name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let tmpdir = std::env::temp_dir().join(format!("linggen-eval-{}-{}", safe_name, ts));
     std::fs::create_dir_all(&tmpdir)?;
@@ -47,10 +53,7 @@ pub async fn run_single_task(
         // Run custom setup script (e.g. clone a real repo, checkout a commit)
         let script_path = task_dir.join(setup_script);
         if !script_path.exists() {
-            anyhow::bail!(
-                "setup_script not found: {}",
-                script_path.display()
-            );
+            anyhow::bail!("setup_script not found: {}", script_path.display());
         }
         let setup_output = std::process::Command::new("bash")
             .arg(&script_path)
@@ -141,13 +144,10 @@ pub async fn run_single_task(
     }
 
     // 8. Run agent loop with timeout
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        async {
-            let mut engine = agent.lock().await;
-            engine.run_agent_loop(Some("eval")).await
-        },
-    )
+    let outcome = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
+        let mut engine = agent.lock().await;
+        engine.run_agent_loop(Some("eval")).await
+    })
     .await;
 
     let (outcome_kind, iterations_used) = {
@@ -155,8 +155,12 @@ pub async fn run_single_task(
         let iters = engine.context_records.len();
         match &outcome {
             Ok(Ok(crate::engine::AgentOutcome::Plan(_))) => ("plan".to_string(), iters),
-            Ok(Ok(crate::engine::AgentOutcome::PlanApproved(_))) => ("plan_approved".to_string(), iters),
-            Ok(Ok(crate::engine::AgentOutcome::PlanModeRequested { .. })) => ("plan_mode_requested".to_string(), iters),
+            Ok(Ok(crate::engine::AgentOutcome::PlanApproved(_))) => {
+                ("plan_approved".to_string(), iters)
+            }
+            Ok(Ok(crate::engine::AgentOutcome::PlanModeRequested { .. })) => {
+                ("plan_mode_requested".to_string(), iters)
+            }
             Ok(Ok(crate::engine::AgentOutcome::None)) => ("none".to_string(), iters),
             Ok(Err(_)) => ("error".to_string(), iters),
             Err(_) => ("timeout".to_string(), iters),
@@ -164,13 +168,16 @@ pub async fn run_single_task(
     };
 
     // 9. Run grader
-    let grade_script_name = task_def
-        .grade_script
-        .as_deref()
-        .unwrap_or("grade.sh");
+    let grade_script_name = task_def.grade_script.as_deref().unwrap_or("grade.sh");
     let grade_script = task_dir.join(grade_script_name);
 
-    let grade_result = run_grader(&grade_script, &tmpdir, &task_def.name, task_def.grade_timeout_secs).await?;
+    let grade_result = run_grader(
+        &grade_script,
+        &tmpdir,
+        &task_def.name,
+        task_def.grade_timeout_secs,
+    )
+    .await?;
 
     let duration = start.elapsed();
 

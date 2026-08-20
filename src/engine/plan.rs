@@ -11,13 +11,18 @@ impl AgentEngine {
         // Preserve items from any prior UpdatePlan call during plan mode.
         // If no items exist (model didn't call UpdatePlan), auto-extract from
         // numbered headings/steps in the plan text.
-        let mut items = self.plan.as_ref()
+        let mut items = self
+            .plan
+            .as_ref()
             .map(|p| p.items.clone())
             .unwrap_or_default();
         if items.is_empty() {
             items = Self::extract_plan_items(&plan_text);
             if !items.is_empty() {
-                info!("[plan] Auto-extracted {} plan items from headings", items.len());
+                info!(
+                    "[plan] Auto-extracted {} plan items from headings",
+                    items.len()
+                );
             }
         }
         // If UpdatePlan already set items but the plan_text from ExitPlanMode is
@@ -25,7 +30,9 @@ impl AgentEngine {
         // stripped), rebuild plan_text from the items so the PlanBlock shows
         // meaningful content instead of a stub.
         let plan_text = if !items.is_empty() && plan_text.len() < 100 {
-            let existing_plan_text = self.plan.as_ref()
+            let existing_plan_text = self
+                .plan
+                .as_ref()
                 .map(|p| p.plan_text.clone())
                 .filter(|t| t.len() > plan_text.len());
             existing_plan_text.unwrap_or_else(|| {
@@ -37,7 +44,11 @@ impl AgentEngine {
                 for item in &items {
                     lines.push(format!("- [ ] {}", item.title));
                 }
-                info!("[plan] Rebuilt plan_text from {} items (original was {} chars)", items.len(), plan_text.len());
+                info!(
+                    "[plan] Rebuilt plan_text from {} items (original was {} chars)",
+                    items.len(),
+                    plan_text.len()
+                );
                 lines.join("\n")
             })
         } else {
@@ -50,14 +61,22 @@ impl AgentEngine {
             plan_text,
             items,
         };
-        info!("[plan] finalize_plan_mode: status={:?} items={}", plan.status, plan.items.len());
+        info!(
+            "[plan] finalize_plan_mode: status={:?} items={}",
+            plan.status,
+            plan.items.len()
+        );
         self.persist_and_emit_plan(plan.clone()).await;
         AgentOutcome::Plan(plan)
     }
 
     /// Store the plan in memory and emit a PlanUpdate event.
     pub(crate) async fn persist_and_emit_plan(&mut self, plan: Plan) {
-        info!("[plan] persist_and_emit_plan: status={:?} items={}", plan.status, plan.items.len());
+        info!(
+            "[plan] persist_and_emit_plan: status={:?} items={}",
+            plan.status,
+            plan.items.len()
+        );
         self.plan = Some(plan);
 
         if let Some(manager) = self.tools.get_manager() {
@@ -67,10 +86,10 @@ impl AgentEngine {
                 .unwrap_or_else(|| "unknown".to_string());
             let plan = self.plan.clone().unwrap();
             manager
-                .send_event(crate::engine::agent::AgentEvent::PlanUpdate {
-                    agent_id,
-                    plan,
-                }, self.session_id.clone())
+                .send_event(
+                    crate::engine::agent::AgentEvent::PlanUpdate { agent_id, plan },
+                    self.session_id.clone(),
+                )
                 .await;
         }
     }
@@ -84,7 +103,10 @@ impl AgentEngine {
         for line in text.lines() {
             let trimmed = line.trim();
             // Match "### 1. Title", "### Step 1: Title", "## 2. Title"
-            if let Some(rest) = trimmed.strip_prefix("###").or_else(|| trimmed.strip_prefix("##")) {
+            if let Some(rest) = trimmed
+                .strip_prefix("###")
+                .or_else(|| trimmed.strip_prefix("##"))
+            {
                 let rest = rest.trim();
                 // "Step N: Title" or "Step N. Title" or "N. Title" or "N: Title"
                 let title = Self::extract_step_title(rest);
@@ -115,11 +137,15 @@ impl AgentEngine {
         }
         // Expect . or :
         match chars.peek() {
-            Some('.') | Some(':') => { chars.next(); }
+            Some('.') | Some(':') => {
+                chars.next();
+            }
             _ => return None,
         }
         let title: String = chars.collect::<String>().trim().to_string();
-        if title.is_empty() { return None; }
+        if title.is_empty() {
+            return None;
+        }
         // Truncate overly long titles
         if title.len() > 120 {
             Some(format!("{}...", &title[..117]))
@@ -203,9 +229,18 @@ Add links.
 
     #[test]
     fn extract_step_title_variants() {
-        assert_eq!(AgentEngine::extract_step_title("1. Foo bar"), Some("Foo bar".into()));
-        assert_eq!(AgentEngine::extract_step_title("Step 3: Baz"), Some("Baz".into()));
-        assert_eq!(AgentEngine::extract_step_title("12. Long step"), Some("Long step".into()));
+        assert_eq!(
+            AgentEngine::extract_step_title("1. Foo bar"),
+            Some("Foo bar".into())
+        );
+        assert_eq!(
+            AgentEngine::extract_step_title("Step 3: Baz"),
+            Some("Baz".into())
+        );
+        assert_eq!(
+            AgentEngine::extract_step_title("12. Long step"),
+            Some("Long step".into())
+        );
         assert_eq!(AgentEngine::extract_step_title("No number"), None);
         assert_eq!(AgentEngine::extract_step_title("1."), None);
     }

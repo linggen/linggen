@@ -47,11 +47,7 @@ struct MissionFrontmatter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     kickoff: Vec<String>,
 
-    #[serde(
-        rename = "kickoff-day",
-        default,
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(rename = "kickoff-day", default, skip_serializing_if = "Vec::is_empty")]
     kickoff_day: Vec<String>,
 
     #[serde(
@@ -114,8 +110,7 @@ struct LegacyFrontmatter {
 /// at column zero, so the new format's nested `permission.mode:`
 /// does not trigger a false positive.
 fn yaml_looks_legacy(yaml: &str) -> bool {
-    yaml.contains("permission_tier:")
-        || yaml.lines().any(|line| line.starts_with("mode:"))
+    yaml.contains("permission_tier:") || yaml.lines().any(|line| line.starts_with("mode:"))
 }
 
 /// Parse a mission `.md` file. Tries the new format first; on

@@ -68,7 +68,10 @@ fn gate_for(ent: &serde_json::Value, app: &str) -> serde_json::Value {
         .and_then(|t| t.get(app))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let trial_active = trial.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+    let trial_active = trial
+        .get("active")
+        .and_then(|a| a.as_bool())
+        .unwrap_or(false);
     serde_json::json!({
         "app": app,
         "entitled": entitled,

@@ -32,7 +32,11 @@ pub(super) async fn run_loop_with_tracking(
                 // a stopped run isn't heralded as a completion.
                 let was_cancelled = manager.is_run_cancelled(&run_id).await;
                 let _ = manager
-                    .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
+                    .finish_agent_run(
+                        &run_id,
+                        crate::engine::agent::AgentRunStatus::Completed,
+                        None,
+                    )
                     .await;
                 if !was_cancelled {
                     crate::telemetry::global().bump("chat.turn_ok");
@@ -55,7 +59,9 @@ pub(super) async fn run_loop_with_tracking(
                     tracing::error!("Agent loop failed: {}", msg);
                     crate::engine::agent::AgentRunStatus::Failed
                 };
-                let _ = manager.finish_agent_run(&run_id, status, Some(msg.clone())).await;
+                let _ = manager
+                    .finish_agent_run(&run_id, status, Some(msg.clone()))
+                    .await;
                 // AUTH_REQUIRED errors render as a structured block in chat so
                 // the UI can show an inline "Sign in with ChatGPT" button —
                 // no need to navigate to Settings → Models to re-authenticate.
@@ -65,9 +71,9 @@ pub(super) async fn run_loop_with_tracking(
                     to: "user".to_string(),
                     content: display,
                     session_id: session_id.map(|s| s.to_string()),
-                run_id: None,
-                parent_agent_id: None,
-            });
+                    run_id: None,
+                    parent_agent_id: None,
+                });
                 // Reset agent status so the UI's "Model Loading…" spinner stops.
                 let _ = events_tx.send(ServerEvent::AgentStatus {
                     agent_id: agent_id.to_string(),
@@ -83,8 +89,10 @@ pub(super) async fn run_loop_with_tracking(
                 // Let Yinyue surface it in her own voice (her watch loop reacts).
                 // Only genuine failures — a user cancel isn't something to apologize for.
                 if matches!(status, crate::engine::agent::AgentRunStatus::Failed) {
-                    crate::telemetry::global()
-                        .error("model", crate::server::chat::helpers::model_error_code(&msg));
+                    crate::telemetry::global().error(
+                        "model",
+                        crate::server::chat::helpers::model_error_code(&msg),
+                    );
                     let _ = events_tx.send(ServerEvent::Notification(
                         crate::server::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),
@@ -159,8 +167,15 @@ pub(super) async fn persist_and_emit_last_assistant_text(
     if let Some(text) = &engine.last_assistant_text {
         if !text.is_empty() {
             persist_and_emit_message(
-                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                &ctx.agent_id, "user", text, ctx.session_id.as_deref(), false,
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                text,
+                ctx.session_id.as_deref(),
+                false,
             )
             .await;
         }
@@ -271,7 +286,14 @@ async fn auto_recall_memory(
     // Unscoped rows — identity, preferences, cross-project gotchas — always
     // pass; the same contract as the plugin's recall.sh on Claude Code.
     let cwd_scope: Option<String> = session_id
-        .and_then(|sid| state.manager.global_sessions.get_session_meta(sid).ok().flatten())
+        .and_then(|sid| {
+            state
+                .manager
+                .global_sessions
+                .get_session_meta(sid)
+                .ok()
+                .flatten()
+        })
         .and_then(|m| m.cwd.or(m.project))
         .filter(|p| crate::engine::tools::is_project_dir(std::path::Path::new(p)));
 
@@ -323,9 +345,7 @@ async fn auto_recall_memory(
             return None;
         }
         Err(_) => {
-            warn_recall_unreachable(&format!(
-                "no answer in {}s", RECALL_BUDGET.as_secs()
-            ));
+            warn_recall_unreachable(&format!("no answer in {}s", RECALL_BUDGET.as_secs()));
             return None;
         }
     };
@@ -345,15 +365,27 @@ async fn auto_recall_memory(
             break;
         }
 
-        let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = row
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if id.is_empty() {
             // Without an id the agent can't act on the row (delete/replace_ids
             // need one) and the UI can't deep-link. Skip rather than surface
             // a half-row.
             continue;
         }
-        let typ = row.get("type").and_then(|v| v.as_str()).unwrap_or("fact").to_string();
-        let host = row.get("host").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let typ = row
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("fact")
+            .to_string();
+        let host = row
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
         let date = row
             .get("created_at")
             .and_then(|v| v.as_str())
@@ -380,7 +412,14 @@ async fn auto_recall_memory(
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
             .unwrap_or(0.0);
-        hits.push(RecallRow { id, r#type: typ, host, date, content, score });
+        hits.push(RecallRow {
+            id,
+            r#type: typ,
+            host,
+            date,
+            content,
+            score,
+        });
     }
 
     if hits.is_empty() {
@@ -438,9 +477,10 @@ pub(super) async fn push_user_turn_with_recall(
         // CC's recall.sh and the engine's always-on block — one protocol
         // across all surfaces.
         let model_text = format_recall_for_model(&rows);
-        engine
-            .chat_history
-            .push(crate::message::ChatMessage::new("system", model_text.clone()));
+        engine.chat_history.push(crate::message::ChatMessage::new(
+            "system",
+            model_text.clone(),
+        ));
 
         // What the user sees: persisted as a chat message with
         // from_id="memory-recall" so the UI can render a collapsible
@@ -509,10 +549,7 @@ pub(super) fn spawn_thinking_forwarder(
 }
 
 /// Send "Thinking" agent-status with the supplied detail.
-pub(super) async fn send_thinking_status(
-    ctx: &ChatRunCtx,
-    detail: impl Into<String>,
-) {
+pub(super) async fn send_thinking_status(ctx: &ChatRunCtx, detail: impl Into<String>) {
     ctx.state
         .send_agent_status(
             ctx.agent_id.clone(),

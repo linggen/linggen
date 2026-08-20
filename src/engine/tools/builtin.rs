@@ -139,7 +139,9 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
 /// Look up a tool by canonical name or alias. `None` if no built-in
 /// tool matches.
 pub(super) fn lookup(name: &str) -> Option<&'static Arc<dyn Tool>> {
-    registry().iter().find(|t| t.name() == name || t.aliases().contains(&name))
+    registry()
+        .iter()
+        .find(|t| t.name() == name || t.aliases().contains(&name))
 }
 
 /// Public tier lookup used by `engine::permission::tool_action_tier`.
@@ -178,7 +180,13 @@ pub(super) fn model_facing_args_schemas() -> Vec<(String, String, Value)> {
     registry()
         .iter()
         .filter(|t| t.model_facing())
-        .map(|t| (t.name().to_string(), t.description().to_string(), t.args_schema()))
+        .map(|t| {
+            (
+                t.name().to_string(),
+                t.description().to_string(),
+                t.args_schema(),
+            )
+        })
         .collect()
 }
 
@@ -199,14 +207,20 @@ pub(super) fn model_facing_legacy_entries() -> Vec<Value> {
 pub struct GlobTool;
 #[async_trait]
 impl Tool for GlobTool {
-    fn name(&self) -> &'static str { "Glob" }
+    fn name(&self) -> &'static str {
+        "Glob"
+    }
     // A filesystem walk. The default 5 min is meaningless here: a glob that
     // has not answered in a minute is walking somewhere it should not be.
-    fn max_duration(&self) -> Option<Duration> { Some(Duration::from_secs(60)) }
+    fn max_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(60))
+    }
     fn description(&self) -> &'static str {
         "Find files by glob pattern. Returns matching file paths sorted by modification time."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -242,11 +256,15 @@ impl Tool for GlobTool {
 pub struct ReadTool;
 #[async_trait]
 impl Tool for ReadTool {
-    fn name(&self) -> &'static str { "Read" }
+    fn name(&self) -> &'static str {
+        "Read"
+    }
     fn description(&self) -> &'static str {
         "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -292,13 +310,19 @@ impl Tool for ReadTool {
 pub struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
-    fn name(&self) -> &'static str { "Grep" }
+    fn name(&self) -> &'static str {
+        "Grep"
+    }
     // Same reasoning as Glob — it walks the tree.
-    fn max_duration(&self) -> Option<Duration> { Some(Duration::from_secs(60)) }
+    fn max_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(60))
+    }
     fn description(&self) -> &'static str {
         "Search file contents using regex. Returns matching lines with file path, line number, and snippet."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -338,9 +362,15 @@ impl Tool for GrepTool {
 pub struct CaptureScreenshotTool;
 #[async_trait]
 impl Tool for CaptureScreenshotTool {
-    fn name(&self) -> &'static str { "capture_screenshot" }
-    fn description(&self) -> &'static str { "Capture a screenshot of a URL." }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn name(&self) -> &'static str {
+        "capture_screenshot"
+    }
+    fn description(&self) -> &'static str {
+        "Capture a screenshot of a URL."
+    }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -372,14 +402,20 @@ impl Tool for CaptureScreenshotTool {
 pub struct BashTool;
 #[async_trait]
 impl Tool for BashTool {
-    fn name(&self) -> &'static str { "Bash" }
+    fn name(&self) -> &'static str {
+        "Bash"
+    }
     // The user asked for this command; builds and downloads run long, and the
     // shell layer bounds itself.
-    fn max_duration(&self) -> Option<Duration> { None }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
     fn description(&self) -> &'static str {
         "Run a shell command via sh -c. Working directory persists across calls (cd is remembered). Use for build, test, git, and other commands that require shell execution. Prefer dedicated tools (Read, Glob, Grep) over Bash equivalents."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -426,11 +462,15 @@ impl Tool for BashTool {
 pub struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
-    fn name(&self) -> &'static str { "Write" }
+    fn name(&self) -> &'static str {
+        "Write"
+    }
     fn description(&self) -> &'static str {
         "Write content to a file (creates or overwrites). Prefer Edit for existing files. Path is relative to workspace root."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Edit }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Edit
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -460,11 +500,15 @@ impl Tool for WriteTool {
 pub struct EditTool;
 #[async_trait]
 impl Tool for EditTool {
-    fn name(&self) -> &'static str { "Edit" }
+    fn name(&self) -> &'static str {
+        "Edit"
+    }
     fn description(&self) -> &'static str {
         "Apply an exact string replacement in a file. Prefer this over Write for existing files. Read the file first."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Edit }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Edit
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -499,14 +543,24 @@ impl Tool for EditTool {
 pub struct LockPathsTool;
 #[async_trait]
 impl Tool for LockPathsTool {
-    fn name(&self) -> &'static str { "lock_paths" }
+    fn name(&self) -> &'static str {
+        "lock_paths"
+    }
     fn description(&self) -> &'static str {
         "Acquire exclusive write locks on a set of glob patterns to prevent races with sibling agents."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
-    fn args_schema(&self) -> Value { json!({"type": "object"}) }
-    fn legacy_schema_entry(&self) -> Value { json!({"name": "lock_paths"}) }
-    fn model_facing(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({"name": "lock_paths"})
+    }
+    fn model_facing(&self) -> bool {
+        false
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: LockPathsArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for lock_paths: {}", e))?;
@@ -517,12 +571,24 @@ impl Tool for LockPathsTool {
 pub struct UnlockPathsTool;
 #[async_trait]
 impl Tool for UnlockPathsTool {
-    fn name(&self) -> &'static str { "unlock_paths" }
-    fn description(&self) -> &'static str { "Release locks acquired via lock_paths." }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
-    fn args_schema(&self) -> Value { json!({"type": "object"}) }
-    fn legacy_schema_entry(&self) -> Value { json!({"name": "unlock_paths"}) }
-    fn model_facing(&self) -> bool { false }
+    fn name(&self) -> &'static str {
+        "unlock_paths"
+    }
+    fn description(&self) -> &'static str {
+        "Release locks acquired via lock_paths."
+    }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({"name": "unlock_paths"})
+    }
+    fn model_facing(&self) -> bool {
+        false
+    }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
         let args: UnlockPathsArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for unlock_paths: {}", e))?;
@@ -537,14 +603,22 @@ impl Tool for UnlockPathsTool {
 pub struct TaskTool;
 #[async_trait]
 impl Tool for TaskTool {
-    fn name(&self) -> &'static str { "Task" }
+    fn name(&self) -> &'static str {
+        "Task"
+    }
     // A delegated subagent run — open-ended by nature.
-    fn max_duration(&self) -> Option<Duration> { None }
-    fn aliases(&self) -> &'static [&'static str] { &["delegate_to_agent"] }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["delegate_to_agent"]
+    }
     fn description(&self) -> &'static str {
         "Delegate a task to another agent. Send a specific task description with clear scope and expected output."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -573,14 +647,22 @@ impl Tool for TaskTool {
 pub struct SkillTool;
 #[async_trait]
 impl Tool for SkillTool {
-    fn name(&self) -> &'static str { "Skill" }
+    fn name(&self) -> &'static str {
+        "Skill"
+    }
     // A skill defines its own work, and plenty of it runs for minutes.
-    fn max_duration(&self) -> Option<Duration> { None }
-    fn aliases(&self) -> &'static [&'static str] { &["skill"] }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["skill"]
+    }
     fn description(&self) -> &'static str {
         "Invoke a skill by name. Returns the skill's full instructions. Use to discover and run installed skills."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -609,14 +691,22 @@ impl Tool for SkillTool {
 pub struct RunAppTool;
 #[async_trait]
 impl Tool for RunAppTool {
-    fn name(&self) -> &'static str { "RunApp" }
+    fn name(&self) -> &'static str {
+        "RunApp"
+    }
     // Hands off to an app; the run does not own its lifetime.
-    fn max_duration(&self) -> Option<Duration> { None }
-    fn aliases(&self) -> &'static [&'static str] { &["run_app"] }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["run_app"]
+    }
     fn description(&self) -> &'static str {
         "Launch an app-enabled skill. The skill must have an 'app' config with a launcher (web/bash/url). For web apps, returns the URL to open in the UI."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Admin }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Admin
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -649,18 +739,26 @@ impl Tool for RunAppTool {
 pub struct WebSearchTool;
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &'static str { "WebSearch" }
-    fn aliases(&self) -> &'static [&'static str] { &["web_search"] }
+    fn name(&self) -> &'static str {
+        "WebSearch"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["web_search"]
+    }
     fn description(&self) -> &'static str {
         "Search the web (Linggen Cloud; requires linggen.dev sign-in, metered \
          against the account's monthly pool). Returns titles, URLs, and \
          snippets. If it reports a sign-in or quota error, do not retry — \
          tell the user instead."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     // Results are time-sensitive and a sign-in error must not outlive the
     // sign-in that fixes it, so nothing here is worth caching for a run.
-    fn cacheable(&self) -> bool { false }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -708,12 +806,18 @@ impl Tool for WebSearchTool {
 pub struct WebFetchTool;
 #[async_trait]
 impl Tool for WebFetchTool {
-    fn name(&self) -> &'static str { "WebFetch" }
-    fn aliases(&self) -> &'static [&'static str] { &["web_fetch"] }
+    fn name(&self) -> &'static str {
+        "WebFetch"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["web_fetch"]
+    }
     fn description(&self) -> &'static str {
         "Fetch a URL and return its content as text. HTML tags are stripped. Default max 100KB."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -790,13 +894,19 @@ static PET_INTENTS: LazyLock<Vec<PetIntent>> = LazyLock::new(|| {
 pub struct ExpressTool;
 #[async_trait]
 impl Tool for ExpressTool {
-    fn name(&self) -> &'static str { "Express" }
-    fn aliases(&self) -> &'static [&'static str] { &["express"] }
+    fn name(&self) -> &'static str {
+        "Express"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["express"]
+    }
     fn description(&self) -> &'static str {
         "Show feeling on your avatar body: a sustained mood and/or a one-shot \
          gesture (no speech). Use sparingly and naturally — never narrate it."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         let names: Vec<Value> = PET_INTENTS
             .iter()
@@ -993,14 +1103,20 @@ impl RightNow {
 pub struct SenseTool;
 #[async_trait]
 impl Tool for SenseTool {
-    fn name(&self) -> &'static str { "sense" }
-    fn aliases(&self) -> &'static [&'static str] { &["Sense"] }
+    fn name(&self) -> &'static str {
+        "sense"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["Sense"]
+    }
     fn description(&self) -> &'static str {
         "Glance at the room before you react: whether the user is here (typing), \
          present but reading, or away; how busy the day is; the hour. Your \
          perception — read it to decide whether and how to respond. Never read it aloud."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
@@ -1043,8 +1159,12 @@ struct RecentActivityArgs {
 pub struct RecentActivityTool;
 #[async_trait]
 impl Tool for RecentActivityTool {
-    fn name(&self) -> &'static str { "recent_activity" }
-    fn aliases(&self) -> &'static [&'static str] { &["RecentActivity"] }
+    fn name(&self) -> &'static str {
+        "recent_activity"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["RecentActivity"]
+    }
     fn description(&self) -> &'static str {
         "What has changed lately — deletes, syncs, backups, imports, devices coming and \
          going — newest first, each with who did it and how long ago. Covers this machine \
@@ -1053,7 +1173,9 @@ impl Tool for RecentActivityTool {
          on, or when the doorbell in your prompt says something did and you need more than \
          the headline. Returns plain lines, not JSON. Last few days only; older days are gone."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1072,9 +1194,8 @@ impl Tool for RecentActivityTool {
         })
     }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let args: RecentActivityArgs = serde_json::from_value(call.args).unwrap_or(
-            RecentActivityArgs { limit: None },
-        );
+        let args: RecentActivityArgs =
+            serde_json::from_value(call.args).unwrap_or(RecentActivityArgs { limit: None });
         let limit = args.limit.unwrap_or(20).clamp(1, 200);
         let here = crate::perception::activity::log().lines(limit);
         // The merge §6 asks for, at read time. The state block carries one line
@@ -1124,14 +1245,20 @@ struct AnswerPromptArgs {
 pub struct AnswerPromptTool;
 #[async_trait]
 impl Tool for AnswerPromptTool {
-    fn name(&self) -> &'static str { "answer_prompt" }
-    fn aliases(&self) -> &'static [&'static str] { &["AnswerPrompt"] }
+    fn name(&self) -> &'static str {
+        "answer_prompt"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["AnswerPrompt"]
+    }
     fn description(&self) -> &'static str {
         "Relay the user's answer to a question or permission prompt another agent is \
          blocked on. Carry only what the user actually told you — never decide for them. \
          Omit question_id to answer the one open prompt."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1155,7 +1282,9 @@ impl Tool for AnswerPromptTool {
         let args: AnswerPromptArgs = serde_json::from_value(call.args)
             .map_err(|e| anyhow::anyhow!("invalid args for answer_prompt: {}", e))?;
         let Some(bridge) = tools.ask_user_bridge() else {
-            return Ok(ToolResult::Success("there's no open prompt to answer.".to_string()));
+            return Ok(ToolResult::Success(
+                "there's no open prompt to answer.".to_string(),
+            ));
         };
 
         // Resolve the target: an explicit id, else the single open prompt that
@@ -1171,7 +1300,11 @@ impl Tool for AnswerPromptTool {
                         .filter(|(_, p)| p.agent_id != "yinyue")
                         .map(|(k, _)| k.clone())
                         .collect();
-                    if others.len() == 1 { others.pop() } else { None }
+                    if others.len() == 1 {
+                        others.pop()
+                    } else {
+                        None
+                    }
                 }
             };
             qid.and_then(|id| pending.remove(&id).map(|p| (id, p)))
@@ -1201,8 +1334,16 @@ impl Tool for AnswerPromptTool {
                     .collect()
             })
             .unwrap_or_default();
-        let selected = if matches.len() == 1 { matches } else { Vec::new() };
-        let custom_text = if selected.is_empty() { Some(args.answer.clone()) } else { None };
+        let selected = if matches.len() == 1 {
+            matches
+        } else {
+            Vec::new()
+        };
+        let custom_text = if selected.is_empty() {
+            Some(args.answer.clone())
+        } else {
+            None
+        };
 
         let answers = vec![crate::engine::tools::AskUserAnswer {
             question_index: 0,
@@ -1217,12 +1358,20 @@ impl Tool for AnswerPromptTool {
             ));
         }
         // Dismiss the widget on every surface, like the normal answer path.
-        let _ = bridge.events_tx.send(crate::server::ServerEvent::WidgetResolved {
-            widget_id: qid,
-            session_id,
-        });
-        let what = if selected.is_empty() { args.answer } else { selected.join(", ") };
-        Ok(ToolResult::Success(format!("relayed the user's answer: {what}")))
+        let _ = bridge
+            .events_tx
+            .send(crate::server::ServerEvent::WidgetResolved {
+                widget_id: qid,
+                session_id,
+            });
+        let what = if selected.is_empty() {
+            args.answer
+        } else {
+            selected.join(", ")
+        };
+        Ok(ToolResult::Success(format!(
+            "relayed the user's answer: {what}"
+        )))
     }
 }
 
@@ -1245,16 +1394,24 @@ struct AgentChatArgs {
 pub struct AgentChatTool;
 #[async_trait]
 impl Tool for AgentChatTool {
-    fn name(&self) -> &'static str { "agent_chat" }
+    fn name(&self) -> &'static str {
+        "agent_chat"
+    }
     // Waits on another agent to answer.
-    fn max_duration(&self) -> Option<Duration> { None }
-    fn aliases(&self) -> &'static [&'static str] { &["AgentChat"] }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["AgentChat"]
+    }
     fn description(&self) -> &'static str {
         "Send a brief one-way message to another agent (e.g. tell Yinyue something \
          worth surfacing to the user). Fire-and-forget — if you need a reply, use Task \
          instead. You can't send if you were yourself reached via agent_chat."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -1281,10 +1438,14 @@ impl Tool for AgentChatTool {
         let from = tools.agent_id().unwrap_or("agent").to_string();
         let to = args.to.trim().to_string();
         if to.is_empty() {
-            return Ok(ToolResult::Success("no recipient given — nothing sent.".to_string()));
+            return Ok(ToolResult::Success(
+                "no recipient given — nothing sent.".to_string(),
+            ));
         }
         if to == from {
-            return Ok(ToolResult::Success("you can't message yourself.".to_string()));
+            return Ok(ToolResult::Success(
+                "you can't message yourself.".to_string(),
+            ));
         }
         // Loop-break: a turn that was itself woken by an agent_chat can't relay
         // onward — the chain stops at one hop; a fresh user message re-arms it.
@@ -1321,11 +1482,17 @@ impl Tool for AgentChatTool {
 pub struct AskUserTool;
 #[async_trait]
 impl Tool for AskUserTool {
-    fn name(&self) -> &'static str { "AskUser" }
+    fn name(&self) -> &'static str {
+        "AskUser"
+    }
     // Waits on a person. A deadline here would cancel every prompt the user
     // has not answered yet, which is the opposite of what it is for.
-    fn max_duration(&self) -> Option<Duration> { None }
-    fn aliases(&self) -> &'static [&'static str] { &["ask_user"] }
+    fn max_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["ask_user"]
+    }
     fn description(&self) -> &'static str {
         "Ask the user 1-4 structured questions with 2-6 options each. User can always type custom text. Blocks until response (5 min timeout)."
     }
@@ -1399,7 +1566,16 @@ mod express_tests {
 
         let names: Vec<&str> = actions.iter().filter_map(|v| v.as_str()).collect();
         for expected in [
-            "nod", "wave", "dance", "appear", "disappear", "walk", "run", "think", "spin", "pose",
+            "nod",
+            "wave",
+            "dance",
+            "appear",
+            "disappear",
+            "walk",
+            "run",
+            "think",
+            "spin",
+            "pose",
         ] {
             assert!(names.contains(&expected), "missing intent '{expected}'");
         }
@@ -1408,7 +1584,11 @@ mod express_tests {
         let seq = schema["properties"]["sequence"]["items"]["enum"]
             .as_array()
             .expect("sequence items enum array");
-        assert_eq!(seq.len(), actions.len(), "sequence vocab must match action vocab");
+        assert_eq!(
+            seq.len(),
+            actions.len(),
+            "sequence vocab must match action vocab"
+        );
     }
 }
 
@@ -1429,7 +1609,10 @@ mod max_duration_tests {
     fn tree_walks_are_bounded_tighter_than_the_default() {
         let walk = tool_max_duration("Glob").expect("Glob must be bounded");
         let default = tool_max_duration("Read").expect("Read must be bounded");
-        assert!(walk < default, "a walk should give up sooner than the default");
+        assert!(
+            walk < default,
+            "a walk should give up sooner than the default"
+        );
         assert_eq!(tool_max_duration("Grep"), Some(walk));
     }
 

@@ -157,17 +157,13 @@ pub(crate) async fn disconnect_proxy_room_api(
 }
 
 /// GET /api/proxy/status — list active proxy room connections.
-pub(crate) async fn proxy_status_api(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn proxy_status_api(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let connections = state.proxy_connections.list().await;
     Json(serde_json::json!({ "connections": connections }))
 }
 
 /// GET /api/token-usage — get current token usage from persistent store.
-pub(crate) async fn token_usage_api(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn token_usage_api(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let store = state.token_usage.lock().await;
     let room_cfg = crate::server::rtc::room_config::load_room_config();
     Json(serde_json::json!({
@@ -233,9 +229,7 @@ pub(crate) async fn proxy_rooms(
                     json["instance_id"] = serde_json::Value::String(id);
                 }
             }
-            req = req
-                .header("Content-Type", "application/json")
-                .json(&json);
+            req = req.header("Content-Type", "application/json").json(&json);
         } else {
             req = req
                 .header("Content-Type", "application/json")
@@ -245,8 +239,8 @@ pub(crate) async fn proxy_rooms(
 
     match req.send().await {
         Ok(resp) => {
-            let status = StatusCode::from_u16(resp.status().as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body_text = resp.text().await.unwrap_or_default();
             if !status.is_success() {
                 tracing::warn!(

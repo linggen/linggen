@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Extensions treated as binary — refuse to serve their content.
-const BINARY_EXTENSIONS: &[&str] = &[".redb", ".db", ".sqlite", ".sqlite3", ".bin", ".exe", ".dll", ".so", ".dylib"];
+const BINARY_EXTENSIONS: &[&str] = &[
+    ".redb", ".db", ".sqlite", ".sqlite3", ".bin", ".exe", ".dll", ".so", ".dylib",
+];
 
 /// Dotfile directory names we auto-detect under the user's home.
 const DOTFILE_DIRS: &[(&str, &str)] = &[
@@ -101,7 +103,10 @@ fn validate_root(root: &str) -> Option<PathBuf> {
     let root_path = PathBuf::from(root);
     let canonical = root_path.canonicalize().ok()?;
     let roots = allowed_roots();
-    if roots.iter().any(|(_, p)| p.canonicalize().ok().as_ref() == Some(&canonical)) {
+    if roots
+        .iter()
+        .any(|(_, p)| p.canonicalize().ok().as_ref() == Some(&canonical))
+    {
         Some(canonical)
     } else {
         None
@@ -142,9 +147,7 @@ fn modified_secs(meta: &std::fs::Metadata) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/storage/roots` — list existing dotfile root directories.
-pub(crate) async fn storage_roots(
-    State(_state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn storage_roots(State(_state): State<Arc<ServerState>>) -> impl IntoResponse {
     let roots: Vec<StorageRoot> = allowed_roots()
         .into_iter()
         .map(|(label, path)| StorageRoot {
@@ -189,9 +192,7 @@ pub(crate) async fn storage_tree(
         };
 
         if is_dir {
-            let children_count = std::fs::read_dir(entry.path())
-                .map(|rd| rd.count())
-                .ok();
+            let children_count = std::fs::read_dir(entry.path()).map(|rd| rd.count()).ok();
             entries.push(StorageEntry {
                 name,
                 path: entry_rel,
@@ -214,7 +215,9 @@ pub(crate) async fn storage_tree(
 
     // Sort: dirs first, then alphabetical
     entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
     Json(TreeResponse { entries }).into_response()

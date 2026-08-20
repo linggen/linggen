@@ -545,7 +545,10 @@ pub(crate) async fn pending_deletes_handler(headers: axum::http::HeaderMap) -> R
         // stamp): it owns the queue and sees all of it, including the entries
         // waiting on a backup — scoping it like a phone made every queued badge
         // vanish on reload, and hiding the blocked ones would hide the reason.
-        None => load_delete_queue().into_iter().map(|e| e.local_id).collect(),
+        None => load_delete_queue()
+            .into_iter()
+            .map(|e| e.local_id)
+            .collect(),
     };
     Json(json!({ "localIds": ids })).into_response()
 }
@@ -659,9 +662,7 @@ fn reconcile_wireless(all: &[String], asking: Option<&str>) -> anyhow::Result<us
     let mut adopted = false;
     if let Some(me) = asking {
         for e in queue.iter_mut() {
-            if own.owner(e.device.as_deref()).is_none()
-                && on_phone.contains(e.local_id.as_str())
-            {
+            if own.owner(e.device.as_deref()).is_none() && on_phone.contains(e.local_id.as_str()) {
                 e.device = Some(me.to_string());
                 adopted = true;
             }
@@ -776,7 +777,16 @@ fn backup_wireless() -> anyhow::Result<(usize, usize)> {
         // backup is a Mac-side action, so "who is connected now" is the wrong
         // answer and may be nobody.
         let by = r.get("by").cloned();
-        match ensure_archived(sha, created_ms, filename, staged, size, by, &archived_shas, &run) {
+        match ensure_archived(
+            sha,
+            created_ms,
+            filename,
+            staged,
+            size,
+            by,
+            &archived_shas,
+            &run,
+        ) {
             Ok(()) => archived += 1,
             Err(e) => {
                 tracing::warn!("[media] backup failed for {staged}: {e}");
@@ -1218,7 +1228,10 @@ mod tests {
         let rows = vec![row("a1", "aaa", Some(A)), row("b1", "bbb", Some(B))];
         let o = own(&rows, Some(A), &[A, B]);
         assert!(!o.alone);
-        assert!(!o.speaks_for(None), "guessing would delete someone's photos");
+        assert!(
+            !o.speaks_for(None),
+            "guessing would delete someone's photos"
+        );
     }
 
     #[test]
@@ -1245,7 +1258,11 @@ mod tests {
 
         assert!(adopt_unclaimed_rows(&mut rows, &on_phone, A, &o));
 
-        assert_eq!(row_owner(&rows[0]), Some(A), "presence is proof of ownership");
+        assert_eq!(
+            row_owner(&rows[0]),
+            Some(A),
+            "presence is proof of ownership"
+        );
         assert_eq!(row_owner(&rows[1]), Some(A), "the dead owner's row too");
         assert_eq!(row_owner(&rows[2]), Some(B), "never another live phone's");
         assert_eq!(row_owner(&rows[3]), None, "absence stays ambiguous");
@@ -1266,10 +1283,22 @@ mod tests {
     fn a_queue_entry_reaches_its_own_phone_and_unclaimed_ones_reach_everybody() {
         let rows = vec![row("a1", "aaa", Some(A)), row("b1", "bbb", Some(B))];
         let o = own(&rows, Some(A), &[A, B]);
-        let mine = DeleteEntry { local_id: "a1".into(), device: Some(A.into()) };
-        let theirs = DeleteEntry { local_id: "b1".into(), device: Some(B.into()) };
-        let nobodys = DeleteEntry { local_id: "u1".into(), device: None };
-        let orphan = DeleteEntry { local_id: "g1".into(), device: Some(GONE.into()) };
+        let mine = DeleteEntry {
+            local_id: "a1".into(),
+            device: Some(A.into()),
+        };
+        let theirs = DeleteEntry {
+            local_id: "b1".into(),
+            device: Some(B.into()),
+        };
+        let nobodys = DeleteEntry {
+            local_id: "u1".into(),
+            device: None,
+        };
+        let orphan = DeleteEntry {
+            local_id: "g1".into(),
+            device: Some(GONE.into()),
+        };
         assert!(mine.concerns(&o));
         assert!(!theirs.concerns(&o));
         assert!(nobodys.concerns(&o));
@@ -1280,8 +1309,14 @@ mod tests {
     fn a_caller_with_no_device_identity_gets_only_unclaimed_entries() {
         let rows = vec![row("a1", "aaa", Some(A))];
         let o = own(&rows, None, &[A]);
-        let mine = DeleteEntry { local_id: "a1".into(), device: Some(A.into()) };
-        let nobodys = DeleteEntry { local_id: "u1".into(), device: None };
+        let mine = DeleteEntry {
+            local_id: "a1".into(),
+            device: Some(A.into()),
+        };
+        let nobodys = DeleteEntry {
+            local_id: "u1".into(),
+            device: None,
+        };
         assert!(!mine.concerns(&o));
         assert!(nobodys.concerns(&o));
     }

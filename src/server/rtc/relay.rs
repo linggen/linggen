@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::server::ServerState;
 
@@ -60,7 +60,11 @@ async fn relay_supervisor(state: Arc<ServerState>) {
 
         match (&link, &last_token) {
             (Some(l), None) => {
-                info!("Remote access enabled: {} ({})", crate::account::instance_name(), l.instance_id);
+                info!(
+                    "Remote access enabled: {} ({})",
+                    crate::account::instance_name(),
+                    l.instance_id
+                );
             }
             (Some(l), Some(old)) if l.token != *old => {
                 info!("Account credential changed — restarting relay tasks");
@@ -109,23 +113,18 @@ async fn relay_supervisor(state: Arc<ServerState>) {
 /// Send heartbeats every 5 minutes to keep the instance online.
 async fn heartbeat_loop(link: &Link) {
     let client = build_relay_client();
-    let url = format!(
-        "{}/api/instances/{}/heartbeat",
-        link.base, link.instance_id
-    );
+    let url = format!("{}/api/instances/{}/heartbeat", link.base, link.instance_id);
 
     loop {
-        match client
-            .post(&url)
-            .bearer_auth(&link.token)
-            .send()
-            .await
-        {
+        match client.post(&url).bearer_auth(&link.token).send().await {
             Ok(resp) if resp.status().is_success() => {
                 debug!("Heartbeat sent");
             }
             Ok(resp) if resp.status() == 401 || resp.status() == 403 => {
-                warn!("Heartbeat auth rejected ({}). Will retry after credential reload.", resp.status());
+                warn!(
+                    "Heartbeat auth rejected ({}). Will retry after credential reload.",
+                    resp.status()
+                );
                 return;
             }
             Ok(resp) => {
@@ -143,19 +142,11 @@ async fn heartbeat_loop(link: &Link) {
 /// Poll for incoming SDP offers and create peer connections.
 async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
     let client = build_relay_client();
-    let url = format!(
-        "{}/api/signaling/{}/offer",
-        link.base, link.instance_id
-    );
+    let url = format!("{}/api/signaling/{}/offer", link.base, link.instance_id);
     let mut error_backoff = Duration::from_secs(5);
 
     loop {
-        match client
-            .get(&url)
-            .bearer_auth(&link.token)
-            .send()
-            .await
-        {
+        match client.get(&url).bearer_auth(&link.token).send().await {
             Ok(resp) if resp.status() == 204 => {
                 error_backoff = Duration::from_secs(5); // reset on success
             }
@@ -188,12 +179,17 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                                 // Consumer — check if room is enabled first
                                 let room_cfg = super::room_config::load_room_config();
                                 if !room_cfg.room_enabled {
-                                    info!("Rejecting consumer offer (room disabled, nonce: {nonce})");
+                                    info!(
+                                        "Rejecting consumer offer (room disabled, nonce: {nonce})"
+                                    );
                                     continue;
                                 }
                                 // Derive permission from room_config
-                                let permission = super::room_config::tools_to_permission(&room_cfg.allowed_tools);
-                                let user_id = data["consumer_user_id"].as_str().unwrap_or("").to_string();
+                                let permission = super::room_config::tools_to_permission(
+                                    &room_cfg.allowed_tools,
+                                );
+                                let user_id =
+                                    data["consumer_user_id"].as_str().unwrap_or("").to_string();
                                 info!("Received proxy room offer (nonce: {nonce}, type: {ct}, perm: {:?})", permission);
                                 super::UserContext::consumer(
                                     user_id,
@@ -205,7 +201,9 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                             } else {
                                 // Owner — Admin permission
                                 info!("Received remote offer (nonce: {nonce})");
-                                super::UserContext::owner(crate::account::load_account().and_then(|a| a.user_id))
+                                super::UserContext::owner(
+                                    crate::account::load_account().and_then(|a| a.user_id),
+                                )
                             };
 
                             let lk = link.clone();
@@ -222,11 +220,18 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                 }
             }
             Ok(resp) if resp.status() == 401 || resp.status() == 403 => {
-                warn!("Relay auth rejected ({}). Re-run `ling login` to fix. Stopping relay.", resp.status());
+                warn!(
+                    "Relay auth rejected ({}). Re-run `ling login` to fix. Stopping relay.",
+                    resp.status()
+                );
                 return;
             }
             Ok(resp) => {
-                warn!("Offer poll failed: {} (backoff {:?})", resp.status(), error_backoff);
+                warn!(
+                    "Offer poll failed: {} (backoff {:?})",
+                    resp.status(),
+                    error_backoff
+                );
                 tokio::time::sleep(error_backoff).await;
                 error_backoff = (error_backoff * 2).min(Duration::from_secs(120));
                 continue; // skip the normal 2s poll delay
@@ -257,10 +262,7 @@ async fn handle_remote_offer(
         Ok(answer_sdp) => {
             info!("Created peer connection for remote offer, posting answer");
 
-            let answer_url = format!(
-                "{}/api/signaling/{}/answer",
-                link.base, link.instance_id
-            );
+            let answer_url = format!("{}/api/signaling/{}/answer", link.base, link.instance_id);
 
             match client
                 .post(&answer_url)

@@ -73,8 +73,9 @@ pub struct McpRegistry {
     state: RwLock<State>,
 }
 
-static REGISTRY: LazyLock<McpRegistry> =
-    LazyLock::new(|| McpRegistry { state: RwLock::new(State::default()) });
+static REGISTRY: LazyLock<McpRegistry> = LazyLock::new(|| McpRegistry {
+    state: RwLock::new(State::default()),
+});
 
 pub fn registry() -> &'static McpRegistry {
     &REGISTRY
@@ -105,7 +106,14 @@ impl McpRegistry {
                 let target = describe(&cfg);
                 let gated = cfg.gated;
                 if !cfg.enabled {
-                    return Attempt { name, target, enabled: false, gated, found: None, error: None };
+                    return Attempt {
+                        name,
+                        target,
+                        enabled: false,
+                        gated,
+                        found: None,
+                        error: None,
+                    };
                 }
                 let outcome = tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await;
                 let (found, error) = match outcome {
@@ -113,7 +121,14 @@ impl McpRegistry {
                     Ok(Err(e)) => (None, Some(format!("{e:#}"))),
                     Err(_) => (None, Some(format!("no answer in {DISCOVERY_TIMEOUT:?}"))),
                 };
-                Attempt { name, target, enabled: true, gated, found, error }
+                Attempt {
+                    name,
+                    target,
+                    enabled: true,
+                    gated,
+                    found,
+                    error,
+                }
             });
         }
 
@@ -122,7 +137,14 @@ impl McpRegistry {
         let mut servers = Vec::new();
         while let Some(joined) = set.join_next().await {
             let Ok(attempt) = joined else { continue };
-            let Attempt { name, target, enabled, gated, found, error } = attempt;
+            let Attempt {
+                name,
+                target,
+                enabled,
+                gated,
+                found,
+                error,
+            } = attempt;
             match found {
                 Some(found) => {
                     info!("MCP `{name}` connected — {} tool(s)", found.tools.len());
@@ -156,7 +178,11 @@ impl McpRegistry {
         }
         servers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        *self.state.write().unwrap() = State { clients, tools, servers };
+        *self.state.write().unwrap() = State {
+            clients,
+            tools,
+            servers,
+        };
     }
 
     /// Every configured server and what became of it — what the Settings tab
@@ -177,7 +203,13 @@ impl McpRegistry {
     /// the server's own statement of what it accepts, so a field it never
     /// declared is never invented for it.
     pub fn advertised_tool(&self, qualified: &str) -> Option<AdvertisedTool> {
-        self.state.read().unwrap().tools.iter().find(|t| t.qualified == qualified).cloned()
+        self.state
+            .read()
+            .unwrap()
+            .tools
+            .iter()
+            .find(|t| t.qualified == qualified)
+            .cloned()
     }
 
     /// Which server owns a qualified name, and what it calls the tool.
@@ -240,7 +272,11 @@ struct Attempt {
 fn describe(cfg: &McpServerConfig) -> String {
     match cfg.transport() {
         Ok(super::config::Transport::Stdio { command, args, .. }) => {
-            if args.is_empty() { format!("stdio: {command}") } else { format!("stdio: {command} {}", args.join(" ")) }
+            if args.is_empty() {
+                format!("stdio: {command}")
+            } else {
+                format!("stdio: {command} {}", args.join(" "))
+            }
         }
         Ok(super::config::Transport::Http { url, .. }) => url,
         Err(why) => format!("misconfigured — {why}"),
@@ -267,7 +303,11 @@ async fn discover(name: &str, cfg: &McpServerConfig) -> Result<Discovered> {
             input_schema: t.input_schema,
         })
         .collect();
-    Ok(Discovered { name: name.to_string(), client, tools })
+    Ok(Discovered {
+        name: name.to_string(),
+        client,
+        tools,
+    })
 }
 
 #[cfg(test)]
@@ -286,10 +326,15 @@ mod tests {
     /// test process and every fresh daemon starts in.
     #[tokio::test]
     async fn an_empty_registry_offers_nothing_and_routes_nowhere() {
-        let empty = McpRegistry { state: RwLock::new(State::default()) };
+        let empty = McpRegistry {
+            state: RwLock::new(State::default()),
+        };
         assert!(empty.advertised().is_empty());
         assert!(empty.instructions().is_empty());
-        let err = empty.call("mcp__nope__x", serde_json::json!({})).await.unwrap_err();
+        let err = empty
+            .call("mcp__nope__x", serde_json::json!({}))
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no MCP server offers"), "{err}");
     }
 
@@ -297,7 +342,9 @@ mod tests {
     /// discovery is best effort, and the daemon carries on without it.
     #[tokio::test]
     async fn an_unreachable_server_costs_only_its_own_tools() {
-        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let reg = McpRegistry {
+            state: RwLock::new(State::default()),
+        };
         let mut cfgs = BTreeMap::new();
         cfgs.insert(
             "dead".to_string(),
@@ -309,7 +356,11 @@ mod tests {
         );
         cfgs.insert(
             "parked".to_string(),
-            McpServerConfig { url: Some("http://127.0.0.1:9/mcp".into()), enabled: false, ..Default::default() },
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9/mcp".into()),
+                enabled: false,
+                ..Default::default()
+            },
         );
         reg.connect_all(&cfgs).await;
         assert!(reg.advertised().is_empty());
@@ -350,7 +401,11 @@ mod tests {
         assert!(
             registry().advertised().iter().any(|t| t.qualified == want),
             "advertised: {:?}",
-            registry().advertised().iter().map(|t| &t.qualified).collect::<Vec<_>>()
+            registry()
+                .advertised()
+                .iter()
+                .map(|t| &t.qualified)
+                .collect::<Vec<_>>()
         );
 
         // Reaches the list the model is actually shown.
@@ -359,7 +414,10 @@ mod tests {
             .iter()
             .filter_map(|d| d.get("function")?.get("name")?.as_str())
             .collect();
-        assert!(names.contains(&want.as_str()), "not advertised to the model");
+        assert!(
+            names.contains(&want.as_str()),
+            "not advertised to the model"
+        );
         // …alongside the built-ins, not instead of them.
         assert!(names.contains(&"Read"));
 
@@ -373,7 +431,10 @@ mod tests {
         // The server's own doctrine came across on initialize — the hook
         // phase 2 needs to stop hand-copying the memory protocol.
         assert!(
-            registry().instructions().iter().any(|(s, i)| s == "ling-mem" && !i.is_empty()),
+            registry()
+                .instructions()
+                .iter()
+                .any(|(s, i)| s == "ling-mem" && !i.is_empty()),
             "expected ling-mem to ship instructions"
         );
 
@@ -403,23 +464,32 @@ mod tests {
             return;
         }
 
-        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let reg = McpRegistry {
+            state: RwLock::new(State::default()),
+        };
         let mut cfgs = BTreeMap::new();
         cfgs.insert(
             "memory".to_string(),
-            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), ..Default::default() },
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9528/mcp".into()),
+                ..Default::default()
+            },
         );
         reg.connect_all(&cfgs).await;
         let tool = qualify("memory", "memory_search");
 
         let rows = |v: &str| -> usize {
-            serde_json::from_str::<Value>(v).ok()
+            serde_json::from_str::<Value>(v)
+                .ok()
                 .and_then(|j| j.as_array().map(|a| a.len()))
                 .unwrap_or(0)
         };
 
         let loose = reg
-            .call(&tool, serde_json::json!({"query": "linggen memory", "limit": 10}))
+            .call(
+                &tool,
+                serde_json::json!({"query": "linggen memory", "limit": 10}),
+            )
             .await
             .expect("dispatch");
         // A threshold almost nothing clears. Not asserted to be *zero*: the
@@ -428,11 +498,17 @@ mod tests {
         // floor bit at all — if the field were dropped on the way through,
         // this would come back identical to the loose call.
         let strict = reg
-            .call(&tool, serde_json::json!({"query": "linggen memory", "limit": 10, "min_score": 0.999}))
+            .call(
+                &tool,
+                serde_json::json!({"query": "linggen memory", "limit": 10, "min_score": 0.999}),
+            )
             .await
             .expect("dispatch");
 
-        assert!(rows(&loose) > 1, "need a few rows for this to mean anything");
+        assert!(
+            rows(&loose) > 1,
+            "need a few rows for this to mean anything"
+        );
         assert!(
             rows(&strict) < rows(&loose),
             "the floor did nothing — loose={} strict={}",
@@ -457,15 +533,24 @@ mod tests {
             return;
         }
 
-        let reg = McpRegistry { state: RwLock::new(State::default()) };
+        let reg = McpRegistry {
+            state: RwLock::new(State::default()),
+        };
         let mut cfgs = BTreeMap::new();
         cfgs.insert(
             "trusted".to_string(),
-            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), gated: false, ..Default::default() },
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9528/mcp".into()),
+                gated: false,
+                ..Default::default()
+            },
         );
         cfgs.insert(
             "guarded".to_string(),
-            McpServerConfig { url: Some("http://127.0.0.1:9528/mcp".into()), ..Default::default() },
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9528/mcp".into()),
+                ..Default::default()
+            },
         );
         reg.connect_all(&cfgs).await;
 

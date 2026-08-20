@@ -101,7 +101,11 @@ impl McpClient {
             .await
             .context("MCP tools/list")?;
 
-        let tools = result.get("tools").and_then(Value::as_array).cloned().unwrap_or_default();
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         Ok(tools
             .into_iter()
             .filter_map(|t| {
@@ -146,7 +150,11 @@ impl McpClient {
         // succeeded. Surface it as text: the model is what decides what to do
         // about a tool that refused, exactly as with our own tools.
         let text = content_text(&result);
-        if result.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+        if result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             return Ok(format!("error: {text}"));
         }
         Ok(text)
@@ -219,7 +227,10 @@ mod tests {
             return;
         }
 
-        let cfg = McpServerConfig { url: Some(URL.into()), ..Default::default() };
+        let cfg = McpServerConfig {
+            url: Some(URL.into()),
+            ..Default::default()
+        };
         let client = McpClient::connect("ling-mem", &cfg).await.expect("connect");
 
         let tools = client.list_tools().await.expect("tools/list");
@@ -231,7 +242,12 @@ mod tests {
 
         // Every discovered tool must carry a schema the model can fill in.
         for t in &tools {
-            assert_eq!(t.input_schema.get("type").and_then(Value::as_str), Some("object"), "{}", t.name);
+            assert_eq!(
+                t.input_schema.get("type").and_then(Value::as_str),
+                Some("object"),
+                "{}",
+                t.name
+            );
         }
 
         let out = client

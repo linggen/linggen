@@ -25,13 +25,9 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 }
 
 /// GET /api/missions — list all global missions.
-pub(crate) async fn list_missions(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn list_missions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     match state.manager.missions.list_all_missions() {
-        Ok(missions) => {
-            Json(serde_json::json!({ "missions": missions })).into_response()
-        }
+        Ok(missions) => Json(serde_json::json!({ "missions": missions })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to list missions: {}", e),
@@ -233,19 +229,18 @@ pub(crate) async fn update_mission(
     let name_draft = req.name;
 
     // Resolve permission update only if caller provided any permission fields.
-    let permission_update: Option<Option<MissionPermission>> =
-        if req.permission_mode.is_some()
-            || req.permission_paths.is_some()
-            || req.permission_warning.is_some()
-        {
-            Some(build_permission(
-                req.permission_mode.as_deref(),
-                req.permission_paths,
-                req.permission_warning,
-            ))
-        } else {
-            None
-        };
+    let permission_update: Option<Option<MissionPermission>> = if req.permission_mode.is_some()
+        || req.permission_paths.is_some()
+        || req.permission_warning.is_some()
+    {
+        Some(build_permission(
+            req.permission_mode.as_deref(),
+            req.permission_paths,
+            req.permission_warning,
+        ))
+    } else {
+        None
+    };
 
     // cwd alias: update cwd and the legacy `project` field together so both
     // stay in sync through the Phase 1 migration window.
@@ -418,9 +413,7 @@ pub(crate) async fn trigger_mission_core(
     // Validate the optional target day early — a malformed date must not
     // reach the kickoff template.
     let day = match day.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(d) if chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok() => {
-            Some(d.to_string())
-        }
+        Some(d) if chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok() => Some(d.to_string()),
         Some(d) => return TriggerOutcome::BadDay(d.to_string()),
         None => None,
     };
@@ -431,7 +424,12 @@ pub(crate) async fn trigger_mission_core(
     let raw_cwd = project_root
         .or_else(|| mission.cwd.clone())
         .or_else(|| mission.project.clone())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
     let root = crate::util::resolve_path(std::path::Path::new(&raw_cwd));
     let project_path = root.to_string_lossy().to_string();
 
@@ -549,7 +547,9 @@ pub(crate) async fn get_mission_session_state(
         return Json(serde_json::json!({ "messages": [] })).into_response();
     };
 
-    let messages = state.manager.global_sessions
+    let messages = state
+        .manager
+        .global_sessions
         .get_chat_history(&session_id)
         .unwrap_or_default();
 
@@ -616,4 +616,3 @@ pub(crate) async fn list_mission_runs(
             .into_response(),
     }
 }
-

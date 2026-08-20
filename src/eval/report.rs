@@ -64,10 +64,7 @@ pub fn save_transcript(
     context_records: &[crate::engine::ContextRecord],
     chat_history: &[crate::message::ChatMessage],
 ) -> Option<std::path::PathBuf> {
-    let results_dir = ws_root
-        .join("evals")
-        .join("results")
-        .join(task_name);
+    let results_dir = ws_root.join("evals").join("results").join(task_name);
 
     if std::fs::create_dir_all(&results_dir).is_err() {
         return None;

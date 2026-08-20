@@ -219,7 +219,10 @@ pub fn config_from_me(token: String, me: &serde_json::Value) -> AccountConfig {
     AccountConfig {
         api_token: token,
         user_id: me.get("id").and_then(|v| v.as_str()).map(String::from),
-        user_name: me.get("display_name").and_then(|v| v.as_str()).map(String::from),
+        user_name: me
+            .get("display_name")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         avatar_url: avatar,
     }
 }

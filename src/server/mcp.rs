@@ -35,7 +35,10 @@ const READ_MODULE_TIMEOUT_MS: u64 = 60_000;
 /// daemon (the memory engine) via the engine's HTTP client path, or to
 /// the engine's own mission machinery (the dream tools).
 enum Backend {
-    Bridge { module: &'static str, op: &'static str },
+    Bridge {
+        module: &'static str,
+        op: &'static str,
+    },
     Agent,
     /// Composed read: daemon days rollup + engine in-flight/run state.
     DreamStatus,
@@ -43,7 +46,6 @@ enum Backend {
     /// same guarded path the HTTP trigger and the calendar use.
     DreamRun,
 }
-
 
 /// One MCP tool: its wire name, the backend it brokers to, its schema.
 /// `timeout_ms` applies to bridge calls; memory calls carry their own.
@@ -415,7 +417,10 @@ fn render_data(tool: &McpTool, data: &Value) -> Value {
     };
     match op {
         "screenshot" => {
-            let base64 = data.get("base64").and_then(Value::as_str).unwrap_or_default();
+            let base64 = data
+                .get("base64")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             json!({
                 "content": [{ "type": "image", "data": base64, "mimeType": "image/png" }],
                 "isError": false
@@ -423,7 +428,10 @@ fn render_data(tool: &McpTool, data: &Value) -> Value {
         }
         "read_page" => {
             let url = data.get("url").and_then(Value::as_str).unwrap_or_default();
-            let title = data.get("title").and_then(Value::as_str).unwrap_or_default();
+            let title = data
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let tree = data.get("tree").and_then(Value::as_str).unwrap_or_default();
             tool_content(format!("{url} — \"{title}\"\n\n{tree}"), false)
         }
@@ -446,12 +454,18 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
     };
     match tool.backend {
         Backend::Bridge { module, op } => {
-            let res = deps.bridge.call_value(module, op, args, tool.timeout_ms).await;
+            let res = deps
+                .bridge
+                .call_value(module, op, args, tool.timeout_ms)
+                .await;
             if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                 let data = res.get("data").cloned().unwrap_or(Value::Null);
                 return Ok(render_data(tool, &data));
             }
-            let code = res.get("code").and_then(Value::as_str).unwrap_or("upstream_error");
+            let code = res
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("upstream_error");
             let message = res.get("message").and_then(Value::as_str).unwrap_or("");
             let text = match code {
                 "no_bridge" | "module_unavailable" => "browser not connected — the \
@@ -473,7 +487,10 @@ async fn call_tool(deps: &McpDeps<'_>, name: &str, args: Value) -> Result<Value,
                     true,
                 ));
             };
-            let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or_default();
+            let prompt = args
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let agent = args.get("agent").and_then(Value::as_str);
             match super::mcp_agent::run(state, agent, prompt).await {
                 Ok(text) => Ok(tool_content(text, false)),
@@ -565,8 +582,14 @@ async fn compose_dream_status(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let first_undreamed = rollup.get("first_undreamed").cloned().unwrap_or(Value::Null);
-    let first_unscanned = rollup.get("first_unscanned").cloned().unwrap_or(Value::Null);
+    let first_undreamed = rollup
+        .get("first_undreamed")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let first_unscanned = rollup
+        .get("first_unscanned")
+        .cloned()
+        .unwrap_or(Value::Null);
     let open_issues = rollup.get("open_issues").cloned().unwrap_or(json!(0));
 
     let in_flight = crate::extensions::missions::scheduler::mission_in_flight("dream");
@@ -613,7 +636,10 @@ async fn compose_dream_status(
 
 /// Handle one JSON-RPC message. `None` means a notification (no response).
 async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
-    let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
+    let method = msg
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let id = msg.get("id").cloned();
     if id.is_none() || method.starts_with("notifications/") {
         return None;
@@ -625,8 +651,14 @@ async fn handle_rpc(deps: &McpDeps<'_>, msg: &Value) -> Option<Value> {
         "tools/list" => rpc_result(id, tools_list_result()),
         "tools/call" => {
             let params = msg.get("params").cloned().unwrap_or_default();
-            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             match call_tool(deps, name, args).await {
                 Ok(result) => rpc_result(id, result),
                 Err(message) => rpc_error(id, -32602, &message),
@@ -645,9 +677,7 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         None => true,
         Some(value) => value
             .to_str()
-            .map(|o| {
-                o.starts_with("http://127.0.0.1") || o.starts_with("http://localhost")
-            })
+            .map(|o| o.starts_with("http://127.0.0.1") || o.starts_with("http://localhost"))
             .unwrap_or(false),
     }
 }
@@ -702,7 +732,11 @@ mod tests {
     // No ServerState in unit tests — agent_run errors cleanly, everything
     // else is state-independent.
     fn deps(hub: &BridgeHub) -> McpDeps<'_> {
-        McpDeps { bridge: hub, ling_mem_url: TEST_MEM_URL, state: None }
+        McpDeps {
+            bridge: hub,
+            ling_mem_url: TEST_MEM_URL,
+            state: None,
+        }
     }
 
     #[tokio::test]

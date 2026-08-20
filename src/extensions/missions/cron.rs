@@ -52,9 +52,9 @@ pub(super) fn to_seven_field(schedule: &str) -> Result<String> {
 
 pub fn validate_cron(schedule: &str) -> Result<()> {
     let seven = to_seven_field(schedule)?;
-    seven.parse::<cron::Schedule>().map_err(|e| {
-        anyhow::anyhow!("Invalid cron expression '{}': {}", schedule, e)
-    })?;
+    seven
+        .parse::<cron::Schedule>()
+        .map_err(|e| anyhow::anyhow!("Invalid cron expression '{}': {}", schedule, e))?;
     Ok(())
 }
 

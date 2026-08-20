@@ -9,10 +9,7 @@ use super::runtime::{
 use super::ChatRunCtx;
 
 /// Dispatch a skill (slash command) invocation.
-pub(super) async fn run_skill_dispatch(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-) {
+pub(super) async fn run_skill_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     let parts: Vec<&str> = ctx.clean_msg.trim().splitn(2, ' ').collect();
     let cmd = parts[0].trim_start_matches('/');
     let user_args = parts
@@ -64,16 +61,30 @@ pub(super) async fn run_skill_dispatch(
         // SKILL.md declaration is the approval); undeclared runtime access
         // still prompts via the per-operation ceiling check. So no grant
         // prompt fires here regardless of mode.
-        match engine.activate_skill(skill, ActivationMode::SlashCommand).await {
-            ActivationOutcome::Activated { grants_changed: true } => {
+        match engine
+            .activate_skill(skill, ActivationMode::SlashCommand)
+            .await
+        {
+            ActivationOutcome::Activated {
+                grants_changed: true,
+            } => {
                 let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
             }
-            ActivationOutcome::Activated { grants_changed: false } => {}
+            ActivationOutcome::Activated {
+                grants_changed: false,
+            } => {}
             ActivationOutcome::Cancelled => {
                 let msg = format!("Skill '{}' cancelled — permission not granted.", cmd);
                 persist_and_emit_message(
-                    &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                    &ctx.agent_id, "user", &msg, ctx.session_id.as_deref(), false,
+                    &ctx.manager,
+                    &ctx.events_tx,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &msg,
+                    ctx.session_id.as_deref(),
+                    false,
                 )
                 .await;
                 unwire_interrupt_channel(ctx, engine, &interrupt_key).await;
@@ -86,8 +97,15 @@ pub(super) async fn run_skill_dispatch(
 
     let skill_msg = format!("Running skill: {}", cmd);
     persist_and_emit_message(
-        &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-        &ctx.agent_id, "user", &skill_msg, ctx.session_id.as_deref(), false,
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        &ctx.agent_id,
+        "user",
+        &skill_msg,
+        ctx.session_id.as_deref(),
+        false,
     )
     .await;
 
@@ -95,8 +113,13 @@ pub(super) async fn run_skill_dispatch(
     send_thinking_status(ctx, format!("Running skill: {}", cmd)).await;
 
     let outcome = run_loop_with_tracking(
-        &ctx.manager, &ctx.root, engine, &ctx.agent_id,
-        ctx.session_id.as_deref(), "chat:skill", &ctx.events_tx,
+        &ctx.manager,
+        &ctx.root,
+        engine,
+        &ctx.agent_id,
+        ctx.session_id.as_deref(),
+        "chat:skill",
+        &ctx.events_tx,
     )
     .await;
 
@@ -106,14 +129,26 @@ pub(super) async fn run_skill_dispatch(
         tracing::warn!("Skill loop failed: {}", e);
         let err_msg = format!("Error: {}", e);
         persist_and_emit_message(
-            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+            &ctx.manager,
+            &ctx.events_tx,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &err_msg,
+            ctx.session_id.as_deref(),
+            false,
         )
         .await;
     } else {
         tracing::info!("Skill completed: {}", cmd);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+            emit_outcome_event(
+                outcome,
+                &ctx.events_tx,
+                &ctx.agent_id,
+                ctx.session_id.as_deref(),
+            );
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
@@ -153,8 +188,15 @@ async fn resolve_slash_skill(
             skill.name
         );
         persist_and_emit_message(
-            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+            &ctx.manager,
+            &ctx.events_tx,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &err_msg,
+            ctx.session_id.as_deref(),
+            false,
         )
         .await;
         return SlashResolution::HandledOrBlocked;
@@ -162,8 +204,15 @@ async fn resolve_slash_skill(
     if !ctx.policy.is_skill_allowed(&skill.name) {
         let err_msg = format!("Skill '{}' is not available in this room.", skill.name);
         persist_and_emit_message(
-            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+            &ctx.manager,
+            &ctx.events_tx,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &err_msg,
+            ctx.session_id.as_deref(),
+            false,
         )
         .await;
         return SlashResolution::HandledOrBlocked;
@@ -192,8 +241,15 @@ async fn launch_skill_app(
 ) {
     let launch_msg = format!("Launching app: {}", skill.name);
     persist_and_emit_message(
-        &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-        "user", &ctx.agent_id, &launch_msg, ctx.session_id.as_deref(), false,
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        "user",
+        &ctx.agent_id,
+        &launch_msg,
+        ctx.session_id.as_deref(),
+        false,
     )
     .await;
 
@@ -245,8 +301,15 @@ async fn launch_skill_app(
                         let result_msg = String::from_utf8_lossy(&output.stdout).to_string();
                         if !result_msg.trim().is_empty() {
                             persist_and_emit_message(
-                                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                                &ctx.agent_id, "user", &result_msg, ctx.session_id.as_deref(), false,
+                                &ctx.manager,
+                                &ctx.events_tx,
+                                &ctx.root,
+                                &ctx.agent_id,
+                                &ctx.agent_id,
+                                "user",
+                                &result_msg,
+                                ctx.session_id.as_deref(),
+                                false,
                             )
                             .await;
                         }
@@ -254,8 +317,15 @@ async fn launch_skill_app(
                     Err(e) => {
                         let err_msg = format!("Failed to run app: {}", e);
                         persist_and_emit_message(
-                            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                            &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+                            &ctx.manager,
+                            &ctx.events_tx,
+                            &ctx.root,
+                            &ctx.agent_id,
+                            &ctx.agent_id,
+                            "user",
+                            &err_msg,
+                            ctx.session_id.as_deref(),
+                            false,
                         )
                         .await;
                     }
@@ -290,8 +360,15 @@ pub(super) async fn run_trigger_dispatch(
                     skill.name
                 );
                 persist_and_emit_message(
-                    &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                    &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+                    &ctx.manager,
+                    &ctx.events_tx,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &err_msg,
+                    ctx.session_id.as_deref(),
+                    false,
                 )
                 .await;
                 return;
@@ -299,15 +376,24 @@ pub(super) async fn run_trigger_dispatch(
             if !ctx.policy.is_skill_allowed(&skill.name) {
                 let err_msg = format!("Skill '{}' is not available in this room.", skill.name);
                 persist_and_emit_message(
-                    &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                    &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+                    &ctx.manager,
+                    &ctx.events_tx,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &err_msg,
+                    ctx.session_id.as_deref(),
+                    false,
                 )
                 .await;
                 return;
             }
             if user_args.is_none() {
-                skill_default_task =
-                    Some(format!("Run the '{}' skill: {}", skill.name, skill.description));
+                skill_default_task = Some(format!(
+                    "Run the '{}' skill: {}",
+                    skill.name, skill.description
+                ));
             }
             // Trigger mode is implicit-approval: prefix opt-in stands in for
             // the prompt. activate_skill never returns Cancelled here.
@@ -326,8 +412,15 @@ pub(super) async fn run_trigger_dispatch(
 
     let skill_msg = format!("Running skill via trigger: {}", skill_name);
     persist_and_emit_message(
-        &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-        &ctx.agent_id, "user", &skill_msg, ctx.session_id.as_deref(), false,
+        &ctx.manager,
+        &ctx.events_tx,
+        &ctx.root,
+        &ctx.agent_id,
+        &ctx.agent_id,
+        "user",
+        &skill_msg,
+        ctx.session_id.as_deref(),
+        false,
     )
     .await;
 
@@ -339,8 +432,13 @@ pub(super) async fn run_trigger_dispatch(
     wire_engine_bridges(&ctx.state, engine, ctx.session_id.clone());
 
     let outcome = run_loop_with_tracking(
-        &ctx.manager, &ctx.root, engine, &ctx.agent_id,
-        ctx.session_id.as_deref(), "chat:trigger", &ctx.events_tx,
+        &ctx.manager,
+        &ctx.root,
+        engine,
+        &ctx.agent_id,
+        ctx.session_id.as_deref(),
+        "chat:trigger",
+        &ctx.events_tx,
     )
     .await;
 
@@ -350,14 +448,26 @@ pub(super) async fn run_trigger_dispatch(
         tracing::warn!("Trigger skill loop failed: {}", e);
         let err_msg = format!("Error: {}", e);
         persist_and_emit_message(
-            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+            &ctx.manager,
+            &ctx.events_tx,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &err_msg,
+            ctx.session_id.as_deref(),
+            false,
         )
         .await;
     } else {
         tracing::info!("Trigger skill completed: {}", skill_name);
         if let Ok(outcome) = &outcome {
-            emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+            emit_outcome_event(
+                outcome,
+                &ctx.events_tx,
+                &ctx.agent_id,
+                ctx.session_id.as_deref(),
+            );
         }
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }

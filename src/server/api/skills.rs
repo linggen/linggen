@@ -1,7 +1,7 @@
 //! Skill listing + skill-file CRUD endpoints.
 
-use crate::server::{ServerEvent, ServerState};
 use crate::extensions::skills::Skill;
+use crate::server::{ServerEvent, ServerState};
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -141,9 +141,7 @@ fn normalize_skill_md_path(path: &str) -> Result<String, String> {
     Ok(rel)
 }
 
-pub(crate) async fn list_skill_files_api(
-    Query(query): Query<ProjectQuery>,
-) -> impl IntoResponse {
+pub(crate) async fn list_skill_files_api(Query(query): Query<ProjectQuery>) -> impl IntoResponse {
     let root = canonical_project_root(&query.project_root);
     let mut items: Vec<SkillFileListItem> = Vec::new();
 
@@ -182,9 +180,7 @@ pub(crate) async fn list_skill_files_api(
     Json(items).into_response()
 }
 
-pub(crate) async fn get_skill_file_api(
-    Query(query): Query<SkillFileQuery>,
-) -> impl IntoResponse {
+pub(crate) async fn get_skill_file_api(Query(query): Query<SkillFileQuery>) -> impl IntoResponse {
     let root = canonical_project_root(&query.project_root);
     let rel = match normalize_skill_md_path(&query.path) {
         Ok(path) => path,
@@ -197,10 +193,8 @@ pub(crate) async fn get_skill_file_api(
     };
     let valid = content.starts_with("---")
         && content.splitn(3, "---").count() >= 3
-        && serde_yml::from_str::<serde_yml::Value>(
-            content.splitn(3, "---").nth(1).unwrap_or(""),
-        )
-        .is_ok();
+        && serde_yml::from_str::<serde_yml::Value>(content.splitn(3, "---").nth(1).unwrap_or(""))
+            .is_ok();
     Json(SkillFileResponse {
         path: rel,
         content,
@@ -224,7 +218,11 @@ pub(crate) async fn upsert_skill_file_api(
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
     if !req.content.starts_with("---") {
-        return (StatusCode::BAD_REQUEST, "Skill must start with YAML frontmatter").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "Skill must start with YAML frontmatter",
+        )
+            .into_response();
     }
     let full_path = root.join(&rel);
     if let Some(parent) = full_path.parent() {

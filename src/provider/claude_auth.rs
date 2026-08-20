@@ -127,12 +127,7 @@ pub fn load() -> Result<ClaudeAuthTokens> {
 #[cfg(target_os = "macos")]
 fn load_from_macos_keychain() -> Result<ClaudeAuthTokens> {
     let output = std::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            KEYCHAIN_SERVICE_MACOS,
-            "-w",
-        ])
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE_MACOS, "-w"])
         .output()
         .context("Failed to run `security`. Is the macOS keychain accessible?")?;
 

@@ -192,9 +192,7 @@ impl SkillToolDef {
         // Replace {{param}} placeholders with argument values.
         for (name, param) in &self.args {
             let placeholder = format!("{{{{{}}}}}", name);
-            let value = obj
-                .and_then(|o| o.get(name))
-                .or(param.default.as_ref());
+            let value = obj.and_then(|o| o.get(name)).or(param.default.as_ref());
 
             if let Some(val) = value {
                 let str_val = match val {
@@ -262,11 +260,17 @@ impl SkillToolDef {
             let mut prop = serde_json::Map::new();
             prop.insert("type".to_string(), Value::String(param.param_type.clone()));
             if !param.description.is_empty() {
-                prop.insert("description".to_string(), Value::String(param.description.clone()));
+                prop.insert(
+                    "description".to_string(),
+                    Value::String(param.description.clone()),
+                );
             }
             // OpenAI requires "items" for array types.
             if param.param_type == "array" {
-                let items = param.items.clone().unwrap_or_else(|| serde_json::json!({"type": "object"}));
+                let items = param
+                    .items
+                    .clone()
+                    .unwrap_or_else(|| serde_json::json!({"type": "object"}));
                 prop.insert("items".to_string(), items);
             }
             properties.insert(name.clone(), Value::Object(prop));
@@ -347,7 +351,9 @@ mod tests {
         // gpt-5.5 over-fill patterns
         assert!(is_effectively_empty(&json!([{}])));
         assert!(is_effectively_empty(&json!([{}, {}])));
-        assert!(is_effectively_empty(&json!({"top_bar": null, "body": null})));
+        assert!(is_effectively_empty(
+            &json!({"top_bar": null, "body": null})
+        ));
         assert!(is_effectively_empty(&json!({"a": {"b": null}})));
         assert!(is_effectively_empty(&json!([{"a": null}, {}])));
         // Concrete content — not empty

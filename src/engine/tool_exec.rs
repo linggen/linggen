@@ -86,7 +86,9 @@ impl AgentEngine {
                 let custom = answer.and_then(|a| a.custom_text.as_deref()).unwrap_or("");
                 if !custom.is_empty() {
                     info!("Permission: '{}' → DenyWithMessage", tool);
-                    return Some(permission::PermissionAction::DenyWithMessage(custom.to_string()));
+                    return Some(permission::PermissionAction::DenyWithMessage(
+                        custom.to_string(),
+                    ));
                 }
                 let selected = answer
                     .and_then(|a| a.selected.first())
@@ -97,7 +99,8 @@ impl AgentEngine {
                 match selected {
                     "Allow once" | "Approve" => Some(permission::PermissionAction::AllowOnce),
                     "Deny" | "Cancel" => Some(permission::PermissionAction::Deny),
-                    "Allow for this session" | "Run in current mode"
+                    "Allow for this session"
+                    | "Run in current mode"
                     | "Allow this site for the session" => {
                         Some(permission::PermissionAction::AllowSession)
                     }
@@ -194,7 +197,8 @@ impl AgentEngine {
                         crate::prompts::keys::TOOL_NOT_ALLOWED,
                         &[("tool", &tool), ("allowed_list", &allowed_list.join(", "))],
                     ),
-                    &tool_call_id, &canonical_tool,
+                    &tool_call_id,
+                    &canonical_tool,
                 ));
                 return PreExecOutcome::Blocked(LoopControl::Continue);
             }
@@ -209,10 +213,7 @@ impl AgentEngine {
             serde_json::to_string(&safe_args).unwrap_or_else(|_| "{}".to_string()),
             serde_json::json!({ "args": safe_args.clone() }),
         );
-        let log_run = self
-            .run_id
-            .clone()
-            .unwrap_or_else(|| "root".to_string());
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
         info!("[{}] Tool: {} {}", log_run, canonical_tool, safe_args);
         if canonical_tool == "Read" {
             if let Some(path) = normalize_tool_path_arg(&self.tools.builtins.cwd(), &args) {
@@ -248,7 +249,8 @@ impl AgentEngine {
                                     crate::prompts::keys::WRITE_SAFETY_BLOCKED,
                                     &[("rendered", &rendered)],
                                 ),
-                                &tool_call_id, &canonical_tool,
+                                &tool_call_id,
+                                &canonical_tool,
                             ));
                             return PreExecOutcome::Blocked(LoopControl::Continue);
                         }
@@ -272,10 +274,15 @@ impl AgentEngine {
         // Blocks tools not allowed by mission tiers or consumer room settings.
         // The prompt already excludes these tools, but this catches hallucinations.
         if !self.cfg.is_tool_allowed(&canonical_tool) {
-            let available = self.cfg.effective_tool_restrictions()
+            let available = self
+                .cfg
+                .effective_tool_restrictions()
                 .map(|s| s.into_iter().collect::<Vec<_>>().join(", "))
                 .unwrap_or_default();
-            let msg = format!("Tool '{}' is not available. Allowed: {}", canonical_tool, available);
+            let msg = format!(
+                "Tool '{}' is not available. Allowed: {}",
+                canonical_tool, available
+            );
             messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
@@ -284,7 +291,8 @@ impl AgentEngine {
         // When consumer_allowed_skills is set, block Skill invocations not in the list.
         if canonical_tool == "Skill" {
             if let Some(ref allowed_skills) = self.cfg.consumer_allowed_skills {
-                let skill_name = args.get("skill")
+                let skill_name = args
+                    .get("skill")
                     .or_else(|| args.get("name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
@@ -330,7 +338,9 @@ impl AgentEngine {
             if let Some(ref prefixes) = self.cfg.bash_allow_prefixes {
                 let cmd = bash_command.as_deref().unwrap_or("");
                 let cmd_trimmed = cmd.trim();
-                let allowed = prefixes.iter().any(|prefix| cmd_trimmed.starts_with(prefix));
+                let allowed = prefixes
+                    .iter()
+                    .any(|prefix| cmd_trimmed.starts_with(prefix));
                 if !allowed {
                     let msg = format!(
                         "Bash command not allowed by this mission's permission tier. \
@@ -375,8 +385,11 @@ impl AgentEngine {
             permission::PermissionCheckResult::Allowed => { /* proceed */ }
             permission::PermissionCheckResult::Blocked(reason) => {
                 info!("Permission blocked: {} — {}", canonical_tool, reason);
-                let summary =
-                    permission::permission_target_summary(&canonical_tool, &args, &self.tools.builtins.cwd());
+                let summary = permission::permission_target_summary(
+                    &canonical_tool,
+                    &args,
+                    &self.tools.builtins.cwd(),
+                );
                 let msg = self.prompt_store.render_or_fallback(
                     crate::prompts::keys::PERMISSION_DENIED,
                     &[("tool", &canonical_tool), ("summary", &summary)],
@@ -385,8 +398,11 @@ impl AgentEngine {
                 return PreExecOutcome::Blocked(LoopControl::Continue);
             }
             permission::PermissionCheckResult::NeedsPrompt(prompt_kind) => {
-                let summary =
-                    permission::permission_target_summary(&canonical_tool, &args, &self.tools.builtins.cwd());
+                let summary = permission::permission_target_summary(
+                    &canonical_tool,
+                    &args,
+                    &self.tools.builtins.cwd(),
+                );
 
                 // Non-interactive sessions (mission, proxy consumer) cannot prompt —
                 // return permission-needed immediately.
@@ -399,10 +415,13 @@ impl AgentEngine {
                     return PreExecOutcome::Blocked(LoopControl::Continue);
                 }
 
-                let permission::PromptKind::ExceedsCeiling { target_mode, path, tool_summary } = prompt_kind;
-                let question = permission::build_exceeds_ceiling_question(
-                    &tool_summary, &target_mode, &path,
-                );
+                let permission::PromptKind::ExceedsCeiling {
+                    target_mode,
+                    path,
+                    tool_summary,
+                } = prompt_kind;
+                let question =
+                    permission::build_exceeds_ceiling_question(&tool_summary, &target_mode, &path);
                 match self.ask_permission_raw(&canonical_tool, question).await {
                     Some(permission::PermissionAction::AllowOnce) => { /* proceed */ }
                     Some(permission::PermissionAction::AllowSession) => {
@@ -413,10 +432,12 @@ impl AgentEngine {
                         }
                         // Notify UI so the mode badge updates.
                         if let Some(manager) = self.tools.get_manager() {
-                            manager.send_event(
-                                crate::engine::agent::AgentEvent::StateUpdated,
-                                self.session_id.clone(),
-                            ).await;
+                            manager
+                                .send_event(
+                                    crate::engine::agent::AgentEvent::StateUpdated,
+                                    self.session_id.clone(),
+                                )
+                                .await;
                         }
                     }
                     Some(permission::PermissionAction::Deny) => {
@@ -424,7 +445,11 @@ impl AgentEngine {
                             crate::prompts::keys::PERMISSION_DENIED,
                             &[("tool", &canonical_tool), ("summary", &summary)],
                         );
-                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+                        messages.push(self.tool_result_msg_for(
+                            msg,
+                            &tool_call_id,
+                            &canonical_tool,
+                        ));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     Some(permission::PermissionAction::DenyWithMessage(user_msg)) => {
@@ -432,13 +457,17 @@ impl AgentEngine {
                             "Permission denied by user for {} '{}'. User says: {}",
                             canonical_tool, summary, user_msg
                         );
-                        messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+                        messages.push(self.tool_result_msg_for(
+                            msg,
+                            &tool_call_id,
+                            &canonical_tool,
+                        ));
                         return PreExecOutcome::Blocked(LoopControl::Continue);
                     }
                     None => {
-                        let msg = self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::PERMISSION_TIMEOUT, &[],
-                        );
+                        let msg = self
+                            .prompt_store
+                            .render_or_fallback(crate::prompts::keys::PERMISSION_TIMEOUT, &[]);
                         let _ = self.persist_assistant_message(&msg, session_id).await;
                         return PreExecOutcome::Blocked(LoopControl::Return(AgentOutcome::None));
                     }
@@ -476,9 +505,16 @@ impl AgentEngine {
                 .as_deref()
                 .map(|template| Self::render_loop_breaker_prompt(template, &canonical_tool))
                 .unwrap_or_else(|| {
-                    self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REDUNDANT_TOOL, &[("tool", &canonical_tool)])
+                    self.prompt_store.render_or_fallback(
+                        crate::prompts::NUDGE_REDUNDANT_TOOL,
+                        &[("tool", &canonical_tool)],
+                    )
                 });
-            messages.push(self.tool_result_msg_for(loop_breaker_prompt, &tool_call_id, &canonical_tool));
+            messages.push(self.tool_result_msg_for(
+                loop_breaker_prompt,
+                &tool_call_id,
+                &canonical_tool,
+            ));
             self.push_context_record(
                 ContextType::Error,
                 Some("redundant_tool_loop".to_string()),
@@ -499,7 +535,8 @@ impl AgentEngine {
                 self.upsert_observation("tool", &canonical_tool, cached.model.clone());
                 messages.push(self.tool_result_msg_for(
                     self.observation_text("tool", &canonical_tool, &cached.model),
-                    &tool_call_id, &canonical_tool,
+                    &tool_call_id,
+                    &canonical_tool,
                 ));
                 return PreExecOutcome::Blocked(LoopControl::Continue);
             }
@@ -526,19 +563,22 @@ impl AgentEngine {
                 .unwrap_or_else(|| "unknown".to_string());
             let target = self.outbound_target();
             // Emit structured ContentBlockStart for the Web UI.
-            let compact_args = serde_json::to_string(&safe_args)
-                .unwrap_or_else(|_| "{}".to_string());
+            let compact_args =
+                serde_json::to_string(&safe_args).unwrap_or_else(|_| "{}".to_string());
             let _ = manager
-                .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
-                    agent_id: from.clone(),
-                    block_id: block_id.clone(),
-                    block_type: "tool_use".to_string(),
-                    tool: Some(canonical_tool.clone()),
-                    args: Some(compact_args),
-                    parent_id: self.parent_agent_id.clone(),
-                    run_id: self.run_id.clone(),
-                    parent_run_id: self.parent_run_id.clone(),
-                }, self.session_id.clone())
+                .send_event(
+                    crate::engine::agent::AgentEvent::ContentBlockStart {
+                        agent_id: from.clone(),
+                        block_id: block_id.clone(),
+                        block_type: "tool_use".to_string(),
+                        tool: Some(canonical_tool.clone()),
+                        args: Some(compact_args),
+                        parent_id: self.parent_agent_id.clone(),
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    },
+                    self.session_id.clone(),
+                )
                 .await;
             // Persist tool call to session store as an observation (not loaded
             // into chat history on reload — tool results are ephemeral context).
@@ -652,10 +692,16 @@ impl AgentEngine {
                     // For Edit/Write, include diff data so the frontend can render inline diffs.
                     // For Bash, include output lines so the widget has them even if
                     // progress events arrived after the block was marked done.
-                    let extra = self.build_tool_extra(&canonical_tool, &original_args)
+                    let extra = self
+                        .build_tool_extra(&canonical_tool, &original_args)
                         .or_else(|| {
                             if canonical_tool == "Bash" {
-                                if let tools::ToolResult::CommandOutput { ref stdout, ref stderr, .. } = result {
+                                if let tools::ToolResult::CommandOutput {
+                                    ref stdout,
+                                    ref stderr,
+                                    ..
+                                } = result
+                                {
                                     let mut lines: Vec<&str> = stdout.lines().collect();
                                     if !stderr.is_empty() {
                                         lines.extend(stderr.lines());
@@ -671,30 +717,39 @@ impl AgentEngine {
                             }
                         });
                     manager
-                        .send_event(crate::engine::agent::AgentEvent::ContentBlockUpdate {
-                            agent_id: agent_id.clone(),
-                            block_id: block_id.clone(),
-                            status: Some("done".to_string()),
-                            summary: Some(tool_done_status.clone()),
-                            is_error: Some(false),
-                            parent_id: self.parent_agent_id.clone(),
-                            extra,
-                            run_id: self.run_id.clone(),
-                            parent_run_id: self.parent_run_id.clone(),
-                        }, self.session_id.clone())
+                        .send_event(
+                            crate::engine::agent::AgentEvent::ContentBlockUpdate {
+                                agent_id: agent_id.clone(),
+                                block_id: block_id.clone(),
+                                status: Some("done".to_string()),
+                                summary: Some(tool_done_status.clone()),
+                                is_error: Some(false),
+                                parent_id: self.parent_agent_id.clone(),
+                                extra,
+                                run_id: self.run_id.clone(),
+                                parent_run_id: self.parent_run_id.clone(),
+                            },
+                            self.session_id.clone(),
+                        )
                         .await;
                     manager
-                        .send_event(crate::engine::agent::AgentEvent::StateUpdated, self.session_id.clone())
+                        .send_event(
+                            crate::engine::agent::AgentEvent::StateUpdated,
+                            self.session_id.clone(),
+                        )
                         .await;
                     manager
-                        .send_event(crate::engine::agent::AgentEvent::AgentStatus {
-                            agent_id,
-                            status: "thinking".to_string(),
-                            detail: Some(format!("Thinking ({})", self.model_id)),
-                            parent_id: self.parent_agent_id.clone(),
-                            run_id: self.run_id.clone(),
-                            parent_run_id: self.parent_run_id.clone(),
-                        }, self.session_id.clone())
+                        .send_event(
+                            crate::engine::agent::AgentEvent::AgentStatus {
+                                agent_id,
+                                status: "thinking".to_string(),
+                                detail: Some(format!("Thinking ({})", self.model_id)),
+                                parent_id: self.parent_agent_id.clone(),
+                                run_id: self.run_id.clone(),
+                                parent_run_id: self.parent_run_id.clone(),
+                            },
+                            self.session_id.clone(),
+                        )
                         .await;
                 }
 
@@ -718,9 +773,7 @@ impl AgentEngine {
                     } else {
                         "File updated.".to_string()
                     };
-                    let _ = self
-                        .persist_assistant_message(&msg, session_id)
-                        .await;
+                    let _ = self.persist_assistant_message(&msg, session_id).await;
                 }
 
                 let obs_content = self.observation_text("tool", &canonical_tool, &rendered_model);
@@ -732,7 +785,11 @@ impl AgentEngine {
                 // sees what it captured — the text observation only records
                 // that a capture happened.
                 if canonical_tool == "Browser_screenshot" {
-                    if let tools::ToolResult::Screenshot { ref url, ref base64 } = result {
+                    if let tools::ToolResult::Screenshot {
+                        ref url,
+                        ref base64,
+                    } = result
+                    {
                         if !base64.is_empty() {
                             let img_msg =
                                 ChatMessage::new("user", format!("[screenshot of {url}]"))
@@ -742,10 +799,9 @@ impl AgentEngine {
                     }
                 }
 
-                let is_empty_search =
-                    (canonical_tool == "Grep"
-                        && (rendered_model.contains("(no matches)")
-                            || rendered_model.contains("no file candidates found")))
+                let is_empty_search = (canonical_tool == "Grep"
+                    && (rendered_model.contains("(no matches)")
+                        || rendered_model.contains("no file candidates found")))
                     || (canonical_tool == "Glob" && rendered_model.contains("(no files)"));
                 if is_empty_search {
                     *empty_search_streak += 1;
@@ -755,12 +811,12 @@ impl AgentEngine {
                     *empty_search_streak = 0;
                 }
                 if *empty_search_streak >= 4 {
-                    messages.push(self.tool_result_msg(
-                        self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::NUDGE_EMPTY_SEARCH,
-                            &[],
+                    messages.push(
+                        self.tool_result_msg(
+                            self.prompt_store
+                                .render_or_fallback(crate::prompts::keys::NUDGE_EMPTY_SEARCH, &[]),
                         ),
-                    ));
+                    );
                     self.push_context_record(
                         ContextType::Error,
                         Some("empty_search_loop".to_string()),
@@ -790,10 +846,7 @@ impl AgentEngine {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
                     if let Some(name) = skill_name {
-                        let lookup = self
-                            .tools
-                            .get_manager()
-                            .map(|m| m.skills.clone());
+                        let lookup = self.tools.get_manager().map(|m| m.skills.clone());
                         if let Some(skills) = lookup {
                             if let Some(skill) = skills.reload_one(&name).await {
                                 let _ = self
@@ -830,27 +883,33 @@ impl AgentEngine {
                     // Emit structured ContentBlockUpdate (failed) for the Web UI.
                     let err_summary = format!("{}: {}", tool_failed_status, e);
                     manager
-                        .send_event(crate::engine::agent::AgentEvent::ContentBlockUpdate {
-                            agent_id: agent_id.clone(),
-                            block_id: block_id.clone(),
-                            status: Some("failed".to_string()),
-                            summary: Some(err_summary),
-                            is_error: Some(true),
-                            parent_id: self.parent_agent_id.clone(),
-                            extra: None,
-                            run_id: self.run_id.clone(),
-                            parent_run_id: self.parent_run_id.clone(),
-                        }, self.session_id.clone())
+                        .send_event(
+                            crate::engine::agent::AgentEvent::ContentBlockUpdate {
+                                agent_id: agent_id.clone(),
+                                block_id: block_id.clone(),
+                                status: Some("failed".to_string()),
+                                summary: Some(err_summary),
+                                is_error: Some(true),
+                                parent_id: self.parent_agent_id.clone(),
+                                extra: None,
+                                run_id: self.run_id.clone(),
+                                parent_run_id: self.parent_run_id.clone(),
+                            },
+                            self.session_id.clone(),
+                        )
                         .await;
                     manager
-                        .send_event(crate::engine::agent::AgentEvent::AgentStatus {
-                            agent_id,
-                            status: "thinking".to_string(),
-                            detail: Some(format!("Thinking ({})", self.model_id)),
-                            parent_id: self.parent_agent_id.clone(),
-                            run_id: self.run_id.clone(),
-                            parent_run_id: self.parent_run_id.clone(),
-                        }, self.session_id.clone())
+                        .send_event(
+                            crate::engine::agent::AgentEvent::AgentStatus {
+                                agent_id,
+                                status: "thinking".to_string(),
+                                detail: Some(format!("Thinking ({})", self.model_id)),
+                                parent_id: self.parent_agent_id.clone(),
+                                run_id: self.run_id.clone(),
+                                parent_run_id: self.parent_run_id.clone(),
+                            },
+                            self.session_id.clone(),
+                        )
                         .await;
                 }
                 let err_content = self.prompt_store.render_or_fallback(
@@ -906,9 +965,9 @@ impl AgentEngine {
                 let start_line = std::fs::read_to_string(&file_path)
                     .ok()
                     .and_then(|content| {
-                        content.find(new_s).map(|pos| {
-                            content[..pos].lines().count().max(1)
-                        })
+                        content
+                            .find(new_s)
+                            .map(|pos| content[..pos].lines().count().max(1))
                     });
 
                 Some(serde_json::json!({
@@ -937,7 +996,11 @@ impl AgentEngine {
 
                 // Truncate content for diff display (avoid huge payloads)
                 let preview = if content.len() > 10_000 {
-                    format!("{}…\n(truncated, {} total chars)", &content[..10_000], content.len())
+                    format!(
+                        "{}…\n(truncated, {} total chars)",
+                        &content[..10_000],
+                        content.len()
+                    )
                 } else {
                     content.to_string()
                 };
@@ -1049,7 +1112,14 @@ impl AgentEngine {
                 // honoring a cancel — the old early return here left the
                 // chip spinning forever after a stop.
                 let control = self
-                    .post_execute_tool(exec, result, messages, tool_cache, empty_search_streak, session_id)
+                    .post_execute_tool(
+                        exec,
+                        result,
+                        messages,
+                        tool_cache,
+                        empty_search_streak,
+                        session_id,
+                    )
                     .await;
 
                 // Check cancellation after tool execution before feeding
@@ -1090,16 +1160,17 @@ impl AgentEngine {
                 crate::prompts::keys::BAILOUT_REPETITION_LOOP,
                 &[("count", &(*streak + 1).to_string())],
             );
-            let _ = self
-                .persist_assistant_message(&message, session_id)
-                .await;
+            let _ = self.persist_assistant_message(&message, session_id).await;
             self.active_skill = None;
             return Some(LoopControl::Return(AgentOutcome::None));
         }
 
-        messages.push(self.tool_result_msg(
-            self.prompt_store.render_or_fallback(crate::prompts::NUDGE_REPETITION, &[]),
-        ));
+        messages.push(
+            self.tool_result_msg(
+                self.prompt_store
+                    .render_or_fallback(crate::prompts::NUDGE_REPETITION, &[]),
+            ),
+        );
         self.push_context_record(
             ContextType::Error,
             Some("loop_detected".to_string()),
@@ -1111,5 +1182,4 @@ impl AgentEngine {
         *streak = 0;
         Some(LoopControl::Continue)
     }
-
 }

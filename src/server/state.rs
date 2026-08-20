@@ -144,7 +144,13 @@ impl ServerState {
         session_id: Option<String>,
     ) {
         self.send_agent_status_with_ids(
-            agent_id, status, detail, parent_agent_id, session_id, None, None,
+            agent_id,
+            status,
+            detail,
+            parent_agent_id,
+            session_id,
+            None,
+            None,
         )
         .await
     }

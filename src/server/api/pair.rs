@@ -206,10 +206,13 @@ pub fn actor_for_headers(headers: &axum::http::HeaderMap) -> Option<Actor> {
         return Some(a);
     }
     let id = headers.get(ACTOR_DEVICE_HEADER)?.to_str().ok()?;
-    load_devices().into_iter().find(|d| d.id == id).map(|d| Actor {
-        device: d.id,
-        account: d.account.map(|a| a.id),
-    })
+    load_devices()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map(|d| Actor {
+            device: d.id,
+            account: d.account.map(|a| a.id),
+        })
 }
 
 /// What to call the person behind a phone, wherever one is named — the paired
@@ -299,13 +302,18 @@ pub fn is_valid_device_token(token: &str) -> bool {
 
 fn random_hex(bytes: usize) -> String {
     let mut rng = rand::rng();
-    (0..bytes).map(|_| format!("{:02x}", rng.random::<u8>())).collect()
+    (0..bytes)
+        .map(|_| format!("{:02x}", rng.random::<u8>()))
+        .collect()
 }
 
 /// Show the code on THIS Mac — the screen-confirm half of the handshake.
 /// Best-effort: the dialog needs macOS; the daemon log always carries it.
 fn show_code(code: &str, device_name: &str) {
-    tracing::info!("[pair] code {code} for device '{device_name}' (valid {}s)", CODE_TTL.as_secs());
+    tracing::info!(
+        "[pair] code {code} for device '{device_name}' (valid {}s)",
+        CODE_TTL.as_secs()
+    );
     #[cfg(target_os = "macos")]
     {
         let text = format!(
@@ -316,7 +324,10 @@ fn show_code(code: &str, device_name: &str) {
             text.replace('"', "'"),
             CODE_TTL.as_secs(),
         );
-        let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn();
     }
 }
 
@@ -396,12 +407,19 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
         p.attempts += 1;
         if p.attempts > MAX_ATTEMPTS {
             *pending = None;
-            return err(StatusCode::TOO_MANY_REQUESTS, "too many tries — start again");
+            return err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many tries — start again",
+            );
         }
         if p.code != req.code.trim() {
             return err(StatusCode::UNAUTHORIZED, "wrong code");
         }
-        let claimed = (p.device_name.clone(), p.device_id.clone(), p.account.clone());
+        let claimed = (
+            p.device_name.clone(),
+            p.device_id.clone(),
+            p.account.clone(),
+        );
         *pending = None;
         claimed
     };
@@ -447,16 +465,18 @@ pub(crate) async fn get_pair_info(
     let (mac_name, account_name) = mac_identity();
     let devices: Vec<serde_json::Value> = load_devices()
         .iter()
-        .map(|d| serde_json::json!({
-            "id": d.id,
-            "name": d.name,
-            "created_at": d.created_at,
-            "settings": d.settings,
-            "account": d.account,
-            // Who to call them on screen. `account` above is the truth and
-            // stays absent for a signed-out phone; this is what to print.
-            "person": person_label(&d.account),
-        }))
+        .map(|d| {
+            serde_json::json!({
+                "id": d.id,
+                "name": d.name,
+                "created_at": d.created_at,
+                "settings": d.settings,
+                "account": d.account,
+                // Who to call them on screen. `account` above is the truth and
+                // stays absent for a signed-out phone; this is what to print.
+                "person": person_label(&d.account),
+            })
+        })
         .collect();
     Json(serde_json::json!({
         "lan_live": lan_live,
@@ -473,7 +493,10 @@ pub(crate) async fn get_pair_info(
 /// The device token a phone presents on every LAN call — `x-linggen-device`
 /// or `Authorization: Bearer`.
 fn device_token_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
-    if let Some(t) = headers.get("x-linggen-device").and_then(|v| v.to_str().ok()) {
+    if let Some(t) = headers
+        .get("x-linggen-device")
+        .and_then(|v| v.to_str().ok())
+    {
         return Some(t.to_string());
     }
     headers
@@ -491,7 +514,10 @@ fn device_token_from_headers(headers: &axum::http::HeaderMap) -> Option<String> 
 /// - `oauth`  → ChatGPT/Codex (phone signs in on-device)
 /// - `byok`   → a configured provider; the Mac's key + base_url ride along
 /// - `local`  → Ollama/local; not reachable off the Mac
-fn resolve_model_catalog(allow: &[String], config: &crate::config::Config) -> Vec<serde_json::Value> {
+fn resolve_model_catalog(
+    allow: &[String],
+    config: &crate::config::Config,
+) -> Vec<serde_json::Value> {
     let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
     allow
         .iter()
@@ -503,7 +529,9 @@ fn resolve_model_catalog(allow: &[String], config: &crate::config::Config) -> Ve
                 return serde_json::json!({ "id": id, "kind": "cloud" });
             }
             match config.models.iter().find(|m| &m.id == id) {
-                Some(m) if m.provider == "ollama" => serde_json::json!({ "id": id, "kind": "local" }),
+                Some(m) if m.provider == "ollama" => {
+                    serde_json::json!({ "id": id, "kind": "local" })
+                }
                 Some(m) => serde_json::json!({
                     "id": id,
                     "kind": "byok",
@@ -545,7 +573,11 @@ pub(crate) async fn get_pair_me(
         .settings
         .get("models")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let config = state.manager.get_config_snapshot().await;
     Json(serde_json::json!({
@@ -686,7 +718,10 @@ pub fn advertise(port: u16, lan_bound: bool) {
             &host,
             (),
             port,
-            &[("name", mac_name.as_str()), ("account", account.as_deref().unwrap_or(""))][..],
+            &[
+                ("name", mac_name.as_str()),
+                ("account", account.as_deref().unwrap_or("")),
+            ][..],
         )?
         .enable_addr_auto();
         info.set_requires_probe(false);
@@ -696,7 +731,9 @@ pub fn advertise(port: u16, lan_bound: bool) {
         Ok(())
     });
     match result {
-        Ok(()) => tracing::info!("[bonjour] advertising _linggen._tcp as '{mac_name}' on port {port}"),
+        Ok(()) => {
+            tracing::info!("[bonjour] advertising _linggen._tcp as '{mac_name}' on port {port}")
+        }
         Err(e) => tracing::warn!("[bonjour] advertise failed: {e}"),
     }
 }
@@ -739,7 +776,9 @@ fn relay_instance() -> Option<String> {
 /// scan from a guess without ever holding something that would let it — or
 /// anyone reading its database — pair with this Mac.
 fn open_pair_window(secret: &str) {
-    let Some(instance) = relay_instance() else { return };
+    let Some(instance) = relay_instance() else {
+        return;
+    };
     let hash = sha256_hex(secret);
     tokio::spawn(async move {
         post_pair_window(&instance, Some(hash)).await;
@@ -748,14 +787,18 @@ fn open_pair_window(secret: &str) {
 
 /// Shut the window: the QR is no longer in front of anybody.
 fn close_pair_window() {
-    let Some(instance) = relay_instance() else { return };
+    let Some(instance) = relay_instance() else {
+        return;
+    };
     tokio::spawn(async move {
         post_pair_window(&instance, None).await;
     });
 }
 
 async fn post_pair_window(instance: &str, hash: Option<String>) {
-    let Some((token, _)) = crate::account::resolve_token() else { return };
+    let Some((token, _)) = crate::account::resolve_token() else {
+        return;
+    };
     let url = format!(
         "{}/api/instances/{}/pair-window",
         crate::account::site_url(),
@@ -772,7 +815,10 @@ async fn post_pair_window(instance: &str, hash: Option<String>) {
         .await
     {
         Ok(r) if r.status().is_success() => {
-            tracing::info!("[pair] relay pairing window {}", if open { "open" } else { "closed" });
+            tracing::info!(
+                "[pair] relay pairing window {}",
+                if open { "open" } else { "closed" }
+            );
         }
         Ok(r) => tracing::warn!("[pair] pairing window update failed: {}", r.status()),
         Err(e) => tracing::warn!("[pair] pairing window update error: {e}"),
@@ -783,7 +829,11 @@ fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Ask linggen.dev for a relay credential belonging to a phone we have just
@@ -818,8 +868,12 @@ async fn grant_for(device: &PairedDevice) -> Option<String> {
 /// way and the credential is re-asserted from `paired-devices.json` on the
 /// next heartbeat rather than trusted to one call.
 async fn revoke_relay_grant(grant: &str) {
-    let Some(instance) = relay_instance() else { return };
-    let Some((token, _)) = crate::account::resolve_token() else { return };
+    let Some(instance) = relay_instance() else {
+        return;
+    };
+    let Some((token, _)) = crate::account::resolve_token() else {
+        return;
+    };
     let url = format!(
         "{}/api/instances/{}/device-grants",
         crate::account::site_url(),
@@ -951,7 +1005,11 @@ fn mint_qr(port: u16) -> (String, String, String) {
 /// Rendering must not mint, or two open surfaces would rotate each other for
 /// ever: each would see the other's new code, redraw, and mint again.
 fn current_qr(port: u16) -> (String, String, String) {
-    let existing = QR_PENDING.lock().unwrap().as_ref().map(|p| p.secret.clone());
+    let existing = QR_PENDING
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.secret.clone());
     match existing {
         Some(secret) => render_qr(port, &secret),
         None => mint_qr(port),
@@ -1072,7 +1130,11 @@ pub(crate) async fn post_pair_qr_confirm(
         Ok(d) => d,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     };
-    tracing::info!("[pair] device '{}' paired via QR ({})", device.name, device.id);
+    tracing::info!(
+        "[pair] device '{}' paired via QR ({})",
+        device.name,
+        device.id
+    );
     // Spent, so retire it. Only here, on the success path: a failed attempt
     // leaves the code the user is looking at alive to try again.
     rotate_qr(state.port);

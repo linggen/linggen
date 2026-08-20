@@ -8,46 +8,58 @@
 //! str0m is Sans-IO: we drive the event loop ourselves using a UDP socket
 //! in a tokio task per peer connection.
 
-mod peer;
 pub(crate) mod page_state;
+mod peer;
 pub mod proxy_client;
 pub mod proxy_room;
 pub mod relay;
-pub mod token_store;
 pub mod room_config;
+pub mod token_store;
 
 /// User-level permission ceiling — the maximum level this user can operate at.
 /// Session permission (read/edit/admin) is per-session and changeable by the user,
 /// but always capped by UserPermission.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UserPermission {
-    Chat,   // Conversation only — no tools
-    Read,   // Browse + search (WebSearch, WebFetch)
-    Edit,   // Full coding tools (Read, Write, Edit, Bash, etc.)
-    Admin,  // Full access — settings, config, everything
+    Chat,  // Conversation only — no tools
+    Read,  // Browse + search (WebSearch, WebFetch)
+    Edit,  // Full coding tools (Read, Write, Edit, Bash, etc.)
+    Admin, // Full access — settings, config, everything
 }
 
 impl UserPermission {
-    pub fn is_admin(&self) -> bool { matches!(self, UserPermission::Admin) }
+    pub fn is_admin(&self) -> bool {
+        matches!(self, UserPermission::Admin)
+    }
 
     /// Check if this permission level allows accessing an HTTP endpoint.
     /// Admin can access everything. Others are restricted to static assets + session creation.
     pub fn can_access_endpoint(&self, method: &str, url: &str) -> bool {
-        if self.is_admin() { return true; }
+        if self.is_admin() {
+            return true;
+        }
         // Static assets (tunnel loading) and skill app files
-        if (url == "/index.html" || url.starts_with("/assets/") || url.starts_with("/apps/")) && method == "GET" {
+        if (url == "/index.html" || url.starts_with("/assets/") || url.starts_with("/apps/"))
+            && method == "GET"
+        {
             return true;
         }
         // Session creation + deletion (consumers can manage their own sessions)
-        if url == "/api/sessions" && method == "POST" { return true; }
-        if url == "/api/sessions/all" && method == "DELETE" { return true; }
+        if url == "/api/sessions" && method == "POST" {
+            return true;
+        }
+        if url == "/api/sessions/all" && method == "DELETE" {
+            return true;
+        }
         // Workspace state — chat history on page load / refresh
-        if method == "GET" && (url.starts_with("/api/workspace/state") || url.starts_with("/api/skill-sessions/state")) {
+        if method == "GET"
+            && (url.starts_with("/api/workspace/state")
+                || url.starts_with("/api/skill-sessions/state"))
+        {
             return true;
         }
         false
     }
-
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -124,7 +136,8 @@ impl UserContext {
     pub fn owner(user_id: Option<String>) -> Self {
         let account = crate::account::load_account();
         Self {
-            user_id: user_id.or_else(|| account.as_ref().and_then(|a| a.user_id.clone()))
+            user_id: user_id
+                .or_else(|| account.as_ref().and_then(|a| a.user_id.clone()))
                 .unwrap_or_else(|| "__local__".to_string()),
             user_name: account
                 .as_ref()
@@ -253,9 +266,7 @@ use std::sync::Arc;
 use crate::server::ServerState;
 
 /// Return the WHIP auth token (local UI fetches this before connecting).
-pub async fn whip_token_handler(
-    State(state): State<Arc<ServerState>>,
-) -> Json<serde_json::Value> {
+pub async fn whip_token_handler(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "token": state.whip_token }))
 }
 
@@ -298,7 +309,11 @@ pub async fn whip_handler(
             .into_response(),
         Err(e) => {
             tracing::error!("WHIP error: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("WHIP error: {e}")).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("WHIP error: {e}"),
+            )
+                .into_response()
         }
     }
 }

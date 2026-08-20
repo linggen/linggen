@@ -131,7 +131,9 @@ pub(crate) async fn get_status_api(
         if let Some(sid) = &query.session_id {
             tokens.get(sid).copied().unwrap_or((0, 0))
         } else {
-            tokens.values().fold((0, 0), |acc, v| (acc.0 + v.0, acc.1 + v.1))
+            tokens
+                .values()
+                .fold((0, 0), |acc, v| (acc.0 + v.0, acc.1 + v.1))
         }
     };
 

@@ -55,8 +55,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
             } else {
                 None
             };
-            let target_dir =
-                marketplace::skill_target_dir(&name, scope, project_root.as_deref())?;
+            let target_dir = marketplace::skill_target_dir(&name, scope, project_root.as_deref())?;
 
             let msg = marketplace::install_skill(
                 &name,
@@ -81,8 +80,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
             } else {
                 None
             };
-            let target_dir =
-                marketplace::skill_target_dir(&name, scope, project_root.as_deref())?;
+            let target_dir = marketplace::skill_target_dir(&name, scope, project_root.as_deref())?;
 
             let msg = marketplace::delete_skill(&name, &target_dir)?;
             println!("{}", msg);
@@ -112,10 +110,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                 };
                 for entry in entries.filter_map(|e| e.ok()) {
                     let path = entry.path();
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("?");
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
 
                     // Check if it's a skill directory (has SKILL.md) or a .md file
                     let is_skill = if path.is_dir() {
@@ -142,10 +137,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                 println!("  No results found.");
                 return Ok(());
             }
-            println!(
-                "  {:<30} {:<50} {}",
-                "NAME", "URL", "DESCRIPTION"
-            );
+            println!("  {:<30} {:<50} {}", "NAME", "URL", "DESCRIPTION");
             println!("  {}", "-".repeat(100));
             for skill in &results {
                 let desc = skill
@@ -155,10 +147,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                     .chars()
                     .take(40)
                     .collect::<String>();
-                println!(
-                    "  {:<30} {:<50} {}",
-                    skill.name, skill.url, desc
-                );
+                println!("  {:<30} {:<50} {}", skill.name, skill.url, desc);
             }
             println!("\n  {} result(s)", results.len());
         }

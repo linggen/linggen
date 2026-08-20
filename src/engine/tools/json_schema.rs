@@ -155,7 +155,9 @@ fn tool_def(name: &str, description: &str, parameters: Value) -> Value {
 /// through this path; they read the original optional-style schema
 /// where their models behave correctly.
 pub fn strictify_for_openai(schema: Value) -> Value {
-    let Value::Object(mut obj) = schema else { return schema; };
+    let Value::Object(mut obj) = schema else {
+        return schema;
+    };
 
     // Recurse into nested object schemas + array item schemas before
     // rewriting this level, so nested constraints land first.
@@ -189,7 +191,9 @@ pub fn strictify_for_openai(schema: Value) -> Value {
     if let Some(Value::Object(props)) = obj.get_mut("properties") {
         all_names = props.keys().cloned().collect();
         for name in &all_names {
-            let Some(prop) = props.get_mut(name) else { continue; };
+            let Some(prop) = props.get_mut(name) else {
+                continue;
+            };
             let taken = std::mem::take(prop);
             let mut rewritten = strictify_for_openai(taken);
 
@@ -199,10 +203,7 @@ pub fn strictify_for_openai(schema: Value) -> Value {
                     match prop_obj.get_mut("type") {
                         Some(Value::String(s)) => {
                             let kept = s.clone();
-                            prop_obj.insert(
-                                "type".to_string(),
-                                json!([kept, "null"]),
-                            );
+                            prop_obj.insert("type".to_string(), json!([kept, "null"]));
                         }
                         Some(Value::Array(arr)) => {
                             if !arr.iter().any(|v| v.as_str() == Some("null")) {
@@ -295,7 +296,11 @@ mod tests {
     #[test]
     fn test_oai_tool_definitions_returns_all() {
         let defs = oai_tool_definitions(None);
-        assert!(defs.len() >= 10, "expected at least 10 tool definitions, got {}", defs.len());
+        assert!(
+            defs.len() >= 10,
+            "expected at least 10 tool definitions, got {}",
+            defs.len()
+        );
         for def in &defs {
             assert_eq!(def["type"], "function");
             assert!(def["function"]["name"].is_string());
@@ -316,7 +321,10 @@ mod tests {
         });
         let out = strictify_for_openai(input);
         assert_eq!(out["properties"]["path"]["type"], json!("string"));
-        assert_eq!(out["properties"]["max_bytes"]["type"], json!(["integer", "null"]));
+        assert_eq!(
+            out["properties"]["max_bytes"]["type"],
+            json!(["integer", "null"])
+        );
         assert_eq!(out["required"], json!(["path", "max_bytes"]));
         assert_eq!(out["additionalProperties"], json!(false));
     }
@@ -332,10 +340,16 @@ mod tests {
             "required": ["verb"]
         });
         let out = strictify_for_openai(input);
-        assert_eq!(out["properties"]["verb"]["enum"], json!(["list", "search", "get"]));
+        assert_eq!(
+            out["properties"]["verb"]["enum"],
+            json!(["list", "search", "get"])
+        );
         assert_eq!(out["properties"]["verb"]["type"], json!("string"));
         assert_eq!(out["properties"]["type"]["type"], json!(["string", "null"]));
-        assert_eq!(out["properties"]["type"]["enum"], json!(["fact", "preference", null]));
+        assert_eq!(
+            out["properties"]["type"]["enum"],
+            json!(["fact", "preference", null])
+        );
     }
 
     #[test]
@@ -360,7 +374,10 @@ mod tests {
         let out = strictify_for_openai(input);
         let item_schema = &out["properties"]["items"]["items"];
         assert_eq!(item_schema["required"], json!(["id", "title"]));
-        assert_eq!(item_schema["properties"]["title"]["type"], json!(["string", "null"]));
+        assert_eq!(
+            item_schema["properties"]["title"]["type"],
+            json!(["string", "null"])
+        );
         assert_eq!(item_schema["additionalProperties"], json!(false));
     }
 
@@ -403,7 +420,10 @@ mod tests {
     #[test]
     fn test_read_tool_schema_has_required_path() {
         let defs = oai_tool_definitions(None);
-        let read = defs.iter().find(|d| d["function"]["name"] == "Read").unwrap();
+        let read = defs
+            .iter()
+            .find(|d| d["function"]["name"] == "Read")
+            .unwrap();
         let required = read["function"]["parameters"]["required"]
             .as_array()
             .unwrap();
@@ -425,7 +445,9 @@ mod tests {
             "required": ["a"]
         })));
         // No properties / no params → trivially strict-safe.
-        assert!(is_fully_required(&json!({"type": "object", "properties": {}})));
+        assert!(is_fully_required(
+            &json!({"type": "object", "properties": {}})
+        ));
         // Nested optional inside a required object → not strict-safe.
         assert!(!is_fully_required(&json!({
             "type": "object",

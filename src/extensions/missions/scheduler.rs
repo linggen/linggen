@@ -202,10 +202,8 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
         }
 
         // Clean up state for missions that no longer exist
-        let active_keys: std::collections::HashSet<String> = enabled_missions
-            .iter()
-            .map(|m| m.id.clone())
-            .collect();
+        let active_keys: std::collections::HashSet<String> =
+            enabled_missions.iter().map(|m| m.id.clone()).collect();
         mission_states.retain(|k, _| active_keys.contains(k));
     }
 }
@@ -276,7 +274,10 @@ pub fn mission_kickoff_messages(
         return mission.kickoff.clone();
     }
     let label = mission.name.as_deref().unwrap_or(&mission.id);
-    vec![format!("Run the \"{}\" mission per your system prompt.", label)]
+    vec![format!(
+        "Run the \"{}\" mission per your system prompt.",
+        label
+    )]
 }
 
 /// Create a new session for a mission run in the global session store.
@@ -286,9 +287,8 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         crate::util::now_ts_secs(),
         &uuid::Uuid::new_v4().to_string()[..8]
     );
-    let store = crate::state_fs::SessionStore::with_sessions_dir(
-        crate::paths::global_sessions_dir(),
-    );
+    let store =
+        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let mission_cwd = mission.cwd.clone().or_else(|| mission.project.clone());
     let meta = crate::state_fs::sessions::SessionMeta {
         id: session_id.clone(),
@@ -301,7 +301,9 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         cwd: mission_cwd.clone(),
         project: mission_cwd.clone(),
         project_name: mission_cwd.as_ref().and_then(|p| {
-            std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string())
+            std::path::Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
         }),
         mission_id: Some(mission.id.clone()),
         // Pin the mission's agent so engine creation resolves to it no
@@ -341,8 +343,16 @@ pub async fn dispatch_mission_prompt_public(
     day: Option<String>,
     attended: bool,
 ) {
-    dispatch_mission_prompt(state, root, project_path, mission, session_id, day, attended)
-        .await;
+    dispatch_mission_prompt(
+        state,
+        root,
+        project_path,
+        mission,
+        session_id,
+        day,
+        attended,
+    )
+    .await;
 }
 
 /// Resolve a mission's working dir the same way the scheduler loop does:
@@ -402,7 +412,10 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
             let runs = match state.manager.missions.list_mission_runs(&mission.id) {
                 Ok(runs) => runs,
                 Err(e) => {
-                    debug!("catchup: list_mission_runs failed for '{}': {e}", mission.id);
+                    debug!(
+                        "catchup: list_mission_runs failed for '{}': {e}",
+                        mission.id
+                    );
                     continue;
                 }
             };
@@ -460,7 +473,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                 None,
                 false,
             )
-                .await;
+            .await;
         }
     });
 }
@@ -541,13 +554,14 @@ async fn dispatch_mission_prompt(
     }
 
     let sid = session_id.as_deref().unwrap_or("default");
-    let agent = match state.manager.get_or_create_session_agent(sid, &root, agent_id).await {
+    let agent = match state
+        .manager
+        .get_or_create_session_agent(sid, &root, agent_id)
+        .await
+    {
         Ok(a) => a,
         Err(e) => {
-            warn!(
-                "Mission scheduler: failed to get mission agent: {}",
-                e
-            );
+            warn!("Mission scheduler: failed to get mission agent: {}", e);
             finalize_mission_run(&state, mission, &mission_run_id, "failed");
             return;
         }
@@ -561,7 +575,11 @@ async fn dispatch_mission_prompt(
     // Emit session_created so the unified session list updates in real-time
     if !has_pre_session {
         if let Some(ref sid) = session_id {
-            let evt_cwd = mission.cwd.clone().or_else(|| mission.project.clone()).unwrap_or_default();
+            let evt_cwd = mission
+                .cwd
+                .clone()
+                .or_else(|| mission.project.clone())
+                .unwrap_or_default();
             let _ = events_tx.send(crate::server::ServerEvent::SessionCreated {
                 session_id: sid.clone(),
                 title: mission_session_title(mission),
@@ -588,10 +606,7 @@ async fn dispatch_mission_prompt(
     {
         Ok(id) => id,
         Err(e) => {
-            warn!(
-                "Mission scheduler: failed to begin run: {}",
-                e
-            );
+            warn!("Mission scheduler: failed to begin run: {}", e);
             return;
         }
     };
@@ -610,9 +625,8 @@ async fn dispatch_mission_prompt(
     // Persist the first kickoff item as a user message in the session.
     // Skip if the trigger API already persisted it (pre-created session).
     if !has_pre_session {
-        let global_store = crate::state_fs::SessionStore::with_sessions_dir(
-            crate::paths::global_sessions_dir(),
-        );
+        let global_store =
+            crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
         if let Some(sid) = session_id.as_deref() {
             let _ = global_store.add_chat_message(
                 sid,
@@ -863,7 +877,11 @@ async fn dispatch_mission_prompt(
             let _ = manager
                 .finish_agent_run(&run_id, run_status, Some(msg))
                 .await;
-            if cancelled { "cancelled" } else { "failed" }
+            if cancelled {
+                "cancelled"
+            } else {
+                "failed"
+            }
         }
     };
 
@@ -885,9 +903,7 @@ async fn dispatch_mission_prompt(
         )
         .await;
 
-    manager
-        .update_agent_activity(project_path, agent_id)
-        .await;
+    manager.update_agent_activity(project_path, agent_id).await;
 
     finalize_mission_run(&state, mission, &mission_run_id, status);
 
@@ -966,12 +982,7 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
 
 /// Flip the up-front `running` entry to its terminal status. The entry
 /// keeps its original `triggered_at` (the actual start time).
-fn finalize_mission_run(
-    state: &Arc<ServerState>,
-    mission: &Mission,
-    run_id: &str,
-    status: &str,
-) {
+fn finalize_mission_run(state: &Arc<ServerState>, mission: &Mission, run_id: &str, status: &str) {
     if let Err(e) = state
         .manager
         .missions
@@ -1030,4 +1041,3 @@ mod tests {
         assert!(!set.contains("Skill"));
     }
 }
-

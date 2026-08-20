@@ -74,7 +74,11 @@ impl InboundReassembly {
             }
             self.transfers.insert(
                 transfer_id.to_string(),
-                Transfer { expected, chunks: Vec::with_capacity(expected), bytes: 0 },
+                Transfer {
+                    expected,
+                    chunks: Vec::with_capacity(expected),
+                    bytes: 0,
+                },
             );
             return Inbound::Buffered;
         }
@@ -152,8 +156,7 @@ mod tests {
         use std::io::Write;
         let b64 = base64::engine::general_purpose::STANDARD;
 
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(text.as_bytes()).unwrap();
         let compressed = encoder.finish().unwrap();
         let chunks: Vec<&[u8]> = compressed.chunks(chunk_size).collect();

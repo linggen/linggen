@@ -21,16 +21,16 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig}
 use crate::server::ServerState;
 
 mod control;
-mod media_channel;
 mod forward;
 mod inbound;
 mod inference;
+mod media_channel;
 mod response;
 mod session;
 mod stun;
 use control::{handle_control_message, process_control_request_async};
-use inbound::{Inbound, InboundReassembly};
 use forward::{forward_event_to_channels, EventFilter};
+use inbound::{Inbound, InboundReassembly};
 use inference::process_inference_request;
 use response::{enqueue_push, enqueue_response, DcWrite, MAX_DC_WRITE_QUEUE};
 use session::handle_session_message;
@@ -57,10 +57,7 @@ pub(super) type PeerActor = Arc<std::sync::Mutex<Option<crate::server::api::pair
 /// Built in one place because it is sent twice — once when the control channel
 /// opens, and again if `identify` changes the answer. Two builders would be two
 /// chances to describe the same peer differently.
-pub(super) fn user_info_msg(
-    user_ctx: &super::UserContext,
-    identified: bool,
-) -> serde_json::Value {
+pub(super) fn user_info_msg(user_ctx: &super::UserContext, identified: bool) -> serde_json::Value {
     let user = serde_json::json!({
         "user_id": user_ctx.user_id,
         "user_type": user_ctx.user_type_for(identified),
@@ -268,8 +265,7 @@ async fn run_peer(
     // uploads) and the teardown that records the departure all need it.
     // Download chunks are produced off-loop and queued here; bounded so a slow
     // peer applies backpressure to the reader instead of growing memory.
-    let (media_out_tx, mut media_out_rx) =
-        tokio::sync::mpsc::channel::<response::DcWrite>(64);
+    let (media_out_tx, mut media_out_rx) = tokio::sync::mpsc::channel::<response::DcWrite>(64);
     // Bulk chunks wait in their own lane so a 10 MB file can never queue
     // ahead of heartbeats and RPC responses — control frames stay
     // interactive while media drains at whatever the path allows. Bounded
@@ -348,7 +344,9 @@ async fn run_peer(
         // per-cycle caps keep the socket reads below from starving.
         if !dc_write_paused {
             for _ in 0..32 {
-                let Some(write) = pending_dc_writes.pop_front() else { break };
+                let Some(write) = pending_dc_writes.pop_front() else {
+                    break;
+                };
                 let written = rtc
                     .channel(write.channel)
                     .map(|mut ch| ch.write(write.binary, &write.data))
@@ -371,7 +369,9 @@ async fn run_peer(
                 }
             }
             for _ in 0..32 {
-                let Some(write) = media_backlog.pop_front() else { break };
+                let Some(write) = media_backlog.pop_front() else {
+                    break;
+                };
                 let written = rtc
                     .channel(write.channel)
                     .map(|mut ch| ch.write(write.binary, &write.data))
@@ -429,7 +429,8 @@ async fn run_peer(
                             // greeting to disagree with everything after it.
                             let info_msg = user_info_msg(&user_ctx, false);
                             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                pending_dc_writes.push_back(DcWrite::text(id, info_msg.to_string()));
+                                pending_dc_writes
+                                    .push_back(DcWrite::text(id, info_msg.to_string()));
                             }
                             // Privacy warning for consumers
                             if user_ctx.is_consumer() {
@@ -442,7 +443,8 @@ async fn run_peer(
                                     }
                                 });
                                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                    pending_dc_writes.push_back(DcWrite::text(id, warning.to_string()));
+                                    pending_dc_writes
+                                        .push_back(DcWrite::text(id, warning.to_string()));
                                 }
                             }
                         } else if label == "inference" {
@@ -598,8 +600,10 @@ async fn run_peer(
                                                 "data": { "status": 403, "body": "{\"error\":\"Not allowed\"}" }
                                             });
                                             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
-                                                pending_dc_writes
-                                                    .push_back(DcWrite::text(data.id, err.to_string()));
+                                                pending_dc_writes.push_back(DcWrite::text(
+                                                    data.id,
+                                                    err.to_string(),
+                                                ));
                                             }
                                         }
                                         continue;
@@ -795,7 +799,11 @@ async fn run_peer(
                 let identified = peer_actor.lock().unwrap().is_some();
                 tokio::spawn(async move {
                     let ps = super::page_state::build_page_state(
-                        &st, &ctx, flags, &user_ctx_clone, identified,
+                        &st,
+                        &ctx,
+                        flags,
+                        &user_ctx_clone,
+                        identified,
                     )
                     .await;
                     if let Ok(data) = serde_json::to_value(&ps) {
@@ -998,7 +1006,6 @@ pub(super) struct ControlRequest {
     pub(super) body: serde_json::Value,
 }
 
-
 /// Get the local (non-loopback) IP address for WebRTC host candidates.
 /// Connects a UDP socket to a public address to determine the local IP
 /// (no actual packets are sent).
@@ -1035,4 +1042,3 @@ fn summarize_sdp(sdp: &str) -> String {
         format!("{bytes}B/{lines}L ufrag={ufrag} setup={setup} candidate={candidate}")
     }
 }
-

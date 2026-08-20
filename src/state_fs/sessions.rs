@@ -58,7 +58,11 @@ pub struct SessionMeta {
     pub agent_id: Option<String>,
     /// User ID of the session creator (owner or consumer's linggen.dev user_id).
     /// Used to isolate sessions by user in proxy rooms.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "consumer_user_id")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "consumer_user_id"
+    )]
     pub user_id: Option<String>,
     /// Per-session override of the auto-compaction trigger fraction of
     /// `context_window_tokens`. None = use engine default (0.95). Set via
@@ -85,7 +89,9 @@ pub struct SessionMeta {
     pub title_locked: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -100,7 +106,10 @@ pub struct ChatMsg {
 impl SessionStore {
     /// Create a store rooted at the given sessions directory.
     pub fn with_sessions_dir(sessions_dir: PathBuf) -> Self {
-        Self { sessions_dir, append_lock: Mutex::new(()) }
+        Self {
+            sessions_dir,
+            append_lock: Mutex::new(()),
+        }
     }
 
     // ------------------------------------------------------------------
@@ -294,10 +303,7 @@ impl SessionStore {
         Ok(())
     }
 
-    pub fn get_chat_history(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<ChatMsg>> {
+    pub fn get_chat_history(&self, session_id: &str) -> Result<Vec<ChatMsg>> {
         Self::validate_id(session_id)?;
         let msgs_path = self.session_dir(session_id).join("messages.jsonl");
         if !msgs_path.exists() {
@@ -339,13 +345,17 @@ impl SessionStore {
         for line in reader.lines() {
             let line = line?;
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
             if trimmed.contains("\"type\":\"plan\"") && trimmed.contains("\"plan\":{") {
                 last_plan_idx = Some(lines.len());
             }
             lines.push(line);
         }
-        let Some(idx) = last_plan_idx else { return Ok(false) };
+        let Some(idx) = last_plan_idx else {
+            return Ok(false);
+        };
         lines[idx] = serde_json::to_string(updated)?;
         let tmp_path = msgs_path.with_extension("jsonl.tmp");
         {
@@ -430,8 +440,16 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-            compact_threshold: None, compact_focus: None, title_locked: false,
+            cwd: None,
+            project: None,
+            project_name: None,
+            mission_id: None,
+            agent_id: None,
+            model_id: None,
+            user_id: None,
+            compact_threshold: None,
+            compact_focus: None,
+            title_locked: false,
         };
         store.add_session(&meta).unwrap();
 
@@ -447,7 +465,10 @@ mod tests {
         assert_eq!(sessions[0].title, "Renamed");
         // rename_session locks the title so the auto-rename hook stays
         // silent on subsequent turns.
-        let reloaded = store.get_session_meta("sess-1000-abcd1234").unwrap().unwrap();
+        let reloaded = store
+            .get_session_meta("sess-1000-abcd1234")
+            .unwrap()
+            .unwrap();
         assert!(reloaded.title_locked);
 
         store.remove_session("sess-1000-abcd1234").unwrap();
@@ -465,8 +486,16 @@ mod tests {
                     created_at: ts,
                     skill: None,
                     creator: "user".into(),
-                    cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                    compact_threshold: None, compact_focus: None, title_locked: false,
+                    cwd: None,
+                    project: None,
+                    project_name: None,
+                    mission_id: None,
+                    agent_id: None,
+                    model_id: None,
+                    user_id: None,
+                    compact_threshold: None,
+                    compact_focus: None,
+                    title_locked: false,
                 })
                 .unwrap();
         }
@@ -484,8 +513,16 @@ mod tests {
             created_at: 1000,
             skill: None,
             creator: "user".into(),
-            cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-            compact_threshold: None, compact_focus: None, title_locked: false,
+            cwd: None,
+            project: None,
+            project_name: None,
+            mission_id: None,
+            agent_id: None,
+            model_id: None,
+            user_id: None,
+            compact_threshold: None,
+            compact_focus: None,
+            title_locked: false,
         };
         store.add_session(&meta).unwrap();
 
@@ -524,8 +561,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .unwrap();
 
@@ -573,8 +618,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .unwrap();
         store
@@ -606,8 +659,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .unwrap();
         store
@@ -639,8 +700,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .is_err());
         assert!(store
@@ -650,8 +719,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .is_err());
         assert!(store
@@ -661,8 +738,16 @@ mod tests {
                 created_at: 1000,
                 skill: None,
                 creator: "user".into(),
-                cwd: None, project: None, project_name: None, mission_id: None, agent_id: None, model_id: None, user_id: None,
-                compact_threshold: None, compact_focus: None, title_locked: false,
+                cwd: None,
+                project: None,
+                project_name: None,
+                mission_id: None,
+                agent_id: None,
+                model_id: None,
+                user_id: None,
+                compact_threshold: None,
+                compact_focus: None,
+                title_locked: false,
             })
             .is_err());
     }

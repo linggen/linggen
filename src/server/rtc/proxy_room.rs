@@ -58,20 +58,33 @@ impl ProxyRoomConnections {
         model_ids: Vec<String>,
         client: Arc<crate::provider::proxy_provider::ProxyModelClient>,
     ) {
-        self.rooms.write().await.insert(instance_id, ProxyRoomInfo {
-            room_name, owner_name, model_ids, client,
-        });
+        self.rooms.write().await.insert(
+            instance_id,
+            ProxyRoomInfo {
+                room_name,
+                owner_name,
+                model_ids,
+                client,
+            },
+        );
     }
 
     /// Remove a connection, returning the model IDs to unregister.
     async fn remove(&self, instance_id: &str) -> Option<Vec<String>> {
-        self.rooms.write().await.remove(instance_id).map(|info| info.model_ids)
+        self.rooms
+            .write()
+            .await
+            .remove(instance_id)
+            .map(|info| info.model_ids)
     }
 
     /// Remove all connections, returning all model IDs to unregister.
     async fn remove_all(&self) -> Vec<String> {
         let mut map = self.rooms.write().await;
-        let ids: Vec<String> = map.values().flat_map(|info| info.model_ids.clone()).collect();
+        let ids: Vec<String> = map
+            .values()
+            .flat_map(|info| info.model_ids.clone())
+            .collect();
         map.clear();
         ids
     }
@@ -83,12 +96,17 @@ impl ProxyRoomConnections {
 
     /// List all active connections.
     pub async fn list(&self) -> Vec<ProxyConnectionStatus> {
-        self.rooms.read().await.iter().map(|(id, info)| ProxyConnectionStatus {
-            instance_id: id.clone(),
-            room_name: info.room_name.clone(),
-            owner_name: info.owner_name.clone(),
-            models: info.model_ids.clone(),
-        }).collect()
+        self.rooms
+            .read()
+            .await
+            .iter()
+            .map(|(id, info)| ProxyConnectionStatus {
+                instance_id: id.clone(),
+                room_name: info.room_name.clone(),
+                owner_name: info.owner_name.clone(),
+                models: info.model_ids.clone(),
+            })
+            .collect()
     }
 }
 
@@ -111,7 +129,9 @@ async fn rebuild_model_manager(state: &ServerState) {
     let old_mm = Arc::clone(&model_lock);
 
     // Start with only local (non-proxy) models
-    let local_configs: Vec<_> = old_mm.list_models().iter()
+    let local_configs: Vec<_> = old_mm
+        .list_models()
+        .iter()
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
@@ -129,14 +149,17 @@ async fn rebuild_model_manager(state: &ServerState) {
             // already knows the models, we just need the configs back.
             // Simplest: store the original model JSON in ProxyRoomInfo.
             // For now, build minimal configs from the tracked IDs.
-            info.model_ids.iter().map(|id| {
-                let model_name = id.strip_prefix("proxy:").unwrap_or(id);
-                serde_json::json!({
-                    "id": model_name,
-                    "model": model_name,
-                    "supports_tools": true,
+            info.model_ids
+                .iter()
+                .map(|id| {
+                    let model_name = id.strip_prefix("proxy:").unwrap_or(id);
+                    serde_json::json!({
+                        "id": model_name,
+                        "model": model_name,
+                        "supports_tools": true,
+                    })
                 })
-            }).collect(),
+                .collect(),
             Some(info.owner_name.clone()).filter(|s| !s.is_empty()),
         );
     }
@@ -181,18 +204,17 @@ pub async fn connect_proxy_room(
         instance_id,
         &token,
         Some(state.events_tx.clone()),
-    ).await?;
+    )
+    .await?;
 
     info!("WebRTC connection established to proxy room");
 
     // Create the proxy model client with request demuxing
     let disconnect_rx = conn.disconnect_rx;
-    let proxy_client = Arc::new(
-        crate::provider::proxy_provider::ProxyModelClient::new(
-            conn.request_tx,
-            conn.response_rx,
-        )
-    );
+    let proxy_client = Arc::new(crate::provider::proxy_provider::ProxyModelClient::new(
+        conn.request_tx,
+        conn.response_rx,
+    ));
 
     // Discover models available on the owner's linggen
     let models = proxy_client.list_models().await?;
@@ -207,7 +229,9 @@ pub async fn connect_proxy_room(
     let mut model_lock = state.manager.models.write().await;
     let old_mm = Arc::clone(&model_lock);
 
-    let local_configs: Vec<_> = old_mm.list_models().iter()
+    let local_configs: Vec<_> = old_mm
+        .list_models()
+        .iter()
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
@@ -238,16 +262,21 @@ pub async fn connect_proxy_room(
     drop(model_lock);
 
     // Track the connection
-    state.proxy_connections.insert(
-        instance_id.to_string(),
-        room_name.unwrap_or_default(),
-        owner_name.unwrap_or_default(),
-        registered_ids,
-        proxy_client,
-    ).await;
+    state
+        .proxy_connections
+        .insert(
+            instance_id.to_string(),
+            room_name.unwrap_or_default(),
+            owner_name.unwrap_or_default(),
+            registered_ids,
+            proxy_client,
+        )
+        .await;
 
     info!("Proxy room models registered successfully");
-    let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+    let _ = state
+        .events_tx
+        .send(crate::server::ServerEvent::StateUpdated);
 
     // Watch for disconnect — auto-cleanup when proxy connection drops
     let iid = instance_id.to_string();
@@ -269,7 +298,9 @@ pub async fn disconnect_proxy_room_by_instance(state: Arc<ServerState>, instance
         Some(_) => {
             // Rebuild manager with remaining rooms
             rebuild_model_manager(&state).await;
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
             info!("Proxy room models removed (instance: {instance_id})");
         }
         None => {
@@ -288,7 +319,9 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
     let old_mm = Arc::clone(&model_lock);
 
     // Rebuild ModelManager with only non-proxy models, preserving health tracker
-    let configs: Vec<_> = old_mm.list_models().iter()
+    let configs: Vec<_> = old_mm
+        .list_models()
+        .iter()
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
@@ -347,8 +380,14 @@ pub async fn auto_connect_joined_rooms(state: Arc<ServerState>) {
 
     let mut connected = 0u32;
     for room in rooms {
-        let consumer_type = room.get("consumer_type").and_then(|v| v.as_str()).unwrap_or("");
-        let online = room.get("online").and_then(|v| v.as_bool()).unwrap_or(false);
+        let consumer_type = room
+            .get("consumer_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let online = room
+            .get("online")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         if consumer_type != "linggen" || !online {
             continue;
@@ -358,7 +397,10 @@ pub async fn auto_connect_joined_rooms(state: Arc<ServerState>) {
             Some(id) => id.to_string(),
             None => continue,
         };
-        let owner_name = room.get("owner_name").and_then(|v| v.as_str()).map(String::from);
+        let owner_name = room
+            .get("owner_name")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let room_name = room.get("name").and_then(|v| v.as_str()).map(String::from);
 
         match connect_proxy_room(state.clone(), &instance_id, owner_name, room_name).await {

@@ -340,66 +340,203 @@ pub enum ServerEvent {
 impl ServerEvent {
     /// Convert a 1:1 `AgentEvent` variant into the corresponding `ServerEvent`.
     /// Returns `None` for variants that require special handling (AgentStatus, TaskUpdate).
-    pub(crate) fn from_agent_event(event: crate::engine::agent::AgentEvent, session_id: Option<String>) -> Option<Self> {
+    pub(crate) fn from_agent_event(
+        event: crate::engine::agent::AgentEvent,
+        session_id: Option<String>,
+    ) -> Option<Self> {
         use crate::engine::agent::AgentEvent;
         match event {
             AgentEvent::StateUpdated => Some(Self::StateUpdated),
-            AgentEvent::Message { from, to, content, run_id, parent_id } => {
-                Some(Self::Message {
-                    from,
-                    to,
-                    content,
-                    session_id,
-                    run_id,
-                    parent_agent_id: parent_id,
-                })
-            }
-            AgentEvent::SubagentSpawned { parent_id, subagent_id, task, subagent_run_id, parent_run_id } => {
-                Some(Self::SubagentSpawned { parent_id, subagent_id, task, session_id, subagent_run_id, parent_run_id })
-            }
-            AgentEvent::SubagentResult { parent_id, subagent_id, outcome, subagent_run_id, parent_run_id } => {
-                Some(Self::SubagentResult { parent_id, subagent_id, outcome, session_id, subagent_run_id, parent_run_id })
-            }
-            AgentEvent::Outcome { agent_id, outcome } => {
-                Some(Self::Outcome { agent_id, outcome, session_id })
-            }
-            AgentEvent::ContextUsage {
-                agent_id, stage, message_count, char_count, estimated_tokens,
-                token_limit, actual_prompt_tokens, actual_completion_tokens,
-                compressed, summary_count,
-            } => Some(Self::ContextUsage {
-                agent_id, stage, message_count, char_count, estimated_tokens,
-                token_limit, actual_prompt_tokens, actual_completion_tokens,
-                compressed, summary_count, session_id,
+            AgentEvent::Message {
+                from,
+                to,
+                content,
+                run_id,
+                parent_id,
+            } => Some(Self::Message {
+                from,
+                to,
+                content,
+                session_id,
+                run_id,
+                parent_agent_id: parent_id,
             }),
-            AgentEvent::PlanUpdate { agent_id, plan } => {
-                Some(Self::PlanUpdate { agent_id, plan, session_id })
-            }
-            AgentEvent::AgentChat { from, to, message, app } => {
-                Some(Self::AgentChat { from, to, message, app })
-            }
+            AgentEvent::SubagentSpawned {
+                parent_id,
+                subagent_id,
+                task,
+                subagent_run_id,
+                parent_run_id,
+            } => Some(Self::SubagentSpawned {
+                parent_id,
+                subagent_id,
+                task,
+                session_id,
+                subagent_run_id,
+                parent_run_id,
+            }),
+            AgentEvent::SubagentResult {
+                parent_id,
+                subagent_id,
+                outcome,
+                subagent_run_id,
+                parent_run_id,
+            } => Some(Self::SubagentResult {
+                parent_id,
+                subagent_id,
+                outcome,
+                session_id,
+                subagent_run_id,
+                parent_run_id,
+            }),
+            AgentEvent::Outcome { agent_id, outcome } => Some(Self::Outcome {
+                agent_id,
+                outcome,
+                session_id,
+            }),
+            AgentEvent::ContextUsage {
+                agent_id,
+                stage,
+                message_count,
+                char_count,
+                estimated_tokens,
+                token_limit,
+                actual_prompt_tokens,
+                actual_completion_tokens,
+                compressed,
+                summary_count,
+            } => Some(Self::ContextUsage {
+                agent_id,
+                stage,
+                message_count,
+                char_count,
+                estimated_tokens,
+                token_limit,
+                actual_prompt_tokens,
+                actual_completion_tokens,
+                compressed,
+                summary_count,
+                session_id,
+            }),
+            AgentEvent::PlanUpdate { agent_id, plan } => Some(Self::PlanUpdate {
+                agent_id,
+                plan,
+                session_id,
+            }),
+            AgentEvent::AgentChat {
+                from,
+                to,
+                message,
+                app,
+            } => Some(Self::AgentChat {
+                from,
+                to,
+                message,
+                app,
+            }),
             AgentEvent::PetExpress { emotion, action } => {
                 Some(Self::PetExpress { emotion, action })
             }
-            AgentEvent::TextSegment { agent_id, text, parent_id } => {
-                Some(Self::TextSegment { agent_id, text, parent_id, session_id })
+            AgentEvent::TextSegment {
+                agent_id,
+                text,
+                parent_id,
+            } => Some(Self::TextSegment {
+                agent_id,
+                text,
+                parent_id,
+                session_id,
+            }),
+            AgentEvent::ModelFallback {
+                agent_id,
+                preferred_model,
+                actual_model,
+                reason,
+            } => Some(Self::ModelFallback {
+                agent_id,
+                preferred_model,
+                actual_model,
+                reason,
+                session_id,
+            }),
+            AgentEvent::ToolProgress {
+                agent_id,
+                tool,
+                line,
+                stream,
+            } => Some(Self::ToolProgress {
+                agent_id,
+                tool,
+                line,
+                stream,
+                session_id,
+            }),
+            AgentEvent::ContentBlockStart {
+                agent_id,
+                block_id,
+                block_type,
+                tool,
+                args,
+                parent_id,
+                run_id,
+                parent_run_id,
+            } => {
+                tracing::debug!(
+                    "ContentBlockStart: agent={} type={} tool={:?}",
+                    agent_id,
+                    block_type,
+                    tool
+                );
+                Some(Self::ContentBlockStart {
+                    agent_id,
+                    block_id,
+                    block_type,
+                    tool,
+                    args,
+                    parent_id,
+                    session_id,
+                    run_id,
+                    parent_run_id,
+                })
             }
-            AgentEvent::ModelFallback { agent_id, preferred_model, actual_model, reason } => {
-                Some(Self::ModelFallback { agent_id, preferred_model, actual_model, reason, session_id })
-            }
-            AgentEvent::ToolProgress { agent_id, tool, line, stream } => {
-                Some(Self::ToolProgress { agent_id, tool, line, stream, session_id })
-            }
-            AgentEvent::ContentBlockStart { agent_id, block_id, block_type, tool, args, parent_id, run_id, parent_run_id } => {
-                tracing::debug!("ContentBlockStart: agent={} type={} tool={:?}", agent_id, block_type, tool);
-                Some(Self::ContentBlockStart { agent_id, block_id, block_type, tool, args, parent_id, session_id, run_id, parent_run_id })
-            }
-            AgentEvent::ContentBlockUpdate { agent_id, block_id, status, summary, is_error, parent_id, extra, run_id, parent_run_id } => {
-                Some(Self::ContentBlockUpdate { agent_id, block_id, status, summary, is_error, parent_id, extra, session_id, run_id, parent_run_id })
-            }
-            AgentEvent::TurnComplete { agent_id, duration_ms, context_tokens, parent_id, run_id, parent_run_id } => {
-                Some(Self::TurnComplete { agent_id, duration_ms, context_tokens, parent_id, session_id, run_id, parent_run_id })
-            }
+            AgentEvent::ContentBlockUpdate {
+                agent_id,
+                block_id,
+                status,
+                summary,
+                is_error,
+                parent_id,
+                extra,
+                run_id,
+                parent_run_id,
+            } => Some(Self::ContentBlockUpdate {
+                agent_id,
+                block_id,
+                status,
+                summary,
+                is_error,
+                parent_id,
+                extra,
+                session_id,
+                run_id,
+                parent_run_id,
+            }),
+            AgentEvent::TurnComplete {
+                agent_id,
+                duration_ms,
+                context_tokens,
+                parent_id,
+                run_id,
+                parent_run_id,
+            } => Some(Self::TurnComplete {
+                agent_id,
+                duration_ms,
+                context_tokens,
+                parent_id,
+                session_id,
+                run_id,
+                parent_run_id,
+            }),
             // AgentStatus and TaskUpdate need special handling — return None.
             AgentEvent::AgentStatus { .. } | AgentEvent::TaskUpdate { .. } => None,
         }

@@ -8,11 +8,11 @@ use axum::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::engine::ActivationMode;
 use super::types::{
     AskUserResponseRequest, ClearChatRequest, CompactChatRequest, CompactConfigRequest,
     SystemPromptQuery,
 };
+use crate::engine::ActivationMode;
 
 pub(crate) async fn clear_chat_history_api(
     State(state): State<Arc<ServerState>>,
@@ -24,7 +24,11 @@ pub(crate) async fn clear_chat_history_api(
         .unwrap_or_else(|| "default".to_string());
     // project_root not needed — chat history is stored globally by session ID.
     // Skipping canonicalize avoids failures when the project directory is deleted.
-    match state.manager.global_sessions.clear_chat_history(&session_id) {
+    match state
+        .manager
+        .global_sessions
+        .clear_chat_history(&session_id)
+    {
         Ok(removed) => {
             // Clear in-memory chat history for this session's engine.
             {
@@ -55,7 +59,12 @@ pub(crate) async fn get_system_prompt_api(
     // A stale `selectedProjectRoot` in the UI used to 400 here; that's a
     // session/UI staleness issue, not something the user needs to fix
     // before exporting the prompt.
-    let session_meta = state.manager.global_sessions.get_session_meta(sid).ok().flatten();
+    let session_meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(sid)
+        .ok()
+        .flatten();
     let mut candidates: Vec<String> = Vec::new();
     let q_root = query.project_root.trim();
     if !q_root.is_empty() {
@@ -93,7 +102,10 @@ pub(crate) async fn get_system_prompt_api(
     let mut engine = match state.manager.spawn_delegation_engine(&root, agent_id).await {
         Ok(e) => e,
         Err(_) => {
-            return (StatusCode::NOT_FOUND, format!("Agent '{}' not found", agent_id))
+            return (
+                StatusCode::NOT_FOUND,
+                format!("Agent '{}' not found", agent_id),
+            )
                 .into_response()
         }
     };
@@ -108,11 +120,14 @@ pub(crate) async fn get_system_prompt_api(
             }
         }
         if let Some(ref mission_id) = meta.mission_id {
-            let mission = state
-                .manager
-                .missions
-                .reload_one(mission_id)
-                .or_else(|| state.manager.missions.get_mission(mission_id).ok().flatten());
+            let mission = state.manager.missions.reload_one(mission_id).or_else(|| {
+                state
+                    .manager
+                    .missions
+                    .get_mission(mission_id)
+                    .ok()
+                    .flatten()
+            });
             if let Some(mission) = mission {
                 // Mirror what mission_scheduler does at dispatch time:
                 // - inject the mission body via active_mission
@@ -149,7 +164,10 @@ pub(crate) async fn get_system_prompt_api(
         true,
         crate::engine::prompt::PromptPurpose::Preview,
     );
-    let system_prompt = messages.first().map(|m| m.content.clone()).unwrap_or_default();
+    let system_prompt = messages
+        .first()
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
     // Tool schemas are delivered to the model via the native function-calling
     // `tools` API parameter — not embedded in the system prompt text. Expose
     // them alongside so the debug export shows the full model-facing surface.
@@ -242,8 +260,16 @@ pub(crate) async fn compact_chat_api(
                         let is_user = m.role == "user" || m.role == "system";
                         crate::state_fs::sessions::ChatMsg {
                             agent_id: agent_id.clone(),
-                            from_id: if is_user { "user".to_string() } else { agent_id.clone() },
-                            to_id: if is_user { agent_id.clone() } else { "user".to_string() },
+                            from_id: if is_user {
+                                "user".to_string()
+                            } else {
+                                agent_id.clone()
+                            },
+                            to_id: if is_user {
+                                agent_id.clone()
+                            } else {
+                                "user".to_string()
+                            },
                             content: m.content.clone(),
                             timestamp: crate::util::now_ts_secs(),
                             is_observation: m.role == "tool",
@@ -379,7 +405,11 @@ fn extract_file_references(content: &str) -> Vec<String> {
             .or_else(|| trimmed.strip_prefix("Edit "))
             .or_else(|| trimmed.strip_prefix("Write "))
         {
-            let path = rest.split_whitespace().next().unwrap_or("").trim_matches('`');
+            let path = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches('`');
             if !path.is_empty() {
                 files.push(path.to_string());
             }

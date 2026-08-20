@@ -267,9 +267,11 @@ pub(crate) fn tool_status_line(
                 .unwrap_or_else(|| "Delegation failed".to_string()),
         },
         n if n.starts_with("browser_") => {
-            let detail =
-                first_string_arg(args, &["url", "keys", "text", "ref", "direction", "action", "for"])
-                    .map(|v| preview_value(&v, 100));
+            let detail = first_string_arg(
+                args,
+                &["url", "keys", "text", "ref", "direction", "action", "for"],
+            )
+            .map(|v| preview_value(&v, 100));
             let (start, done, failed) = match n {
                 "browser_navigate" => ("Browsing to", "Browsed to", "Navigation failed"),
                 "browser_readpage" => ("Reading page", "Read page", "Page read failed"),

@@ -311,11 +311,7 @@ impl MissionLoader {
         Ok(missions)
     }
 
-    pub fn append_mission_run(
-        &self,
-        mission_id: &str,
-        entry: &MissionRunEntry,
-    ) -> Result<()> {
+    pub fn append_mission_run(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
         fs::create_dir_all(self.mission_dir(mission_id))?;
         let path = self.runs_path(mission_id);
         let mut file = fs::OpenOptions::new()
@@ -373,11 +369,7 @@ impl MissionLoader {
     }
 
     /// Remove the run entry whose `session_id` matches, rewriting `runs.jsonl`.
-    pub fn remove_run_by_session(
-        &self,
-        mission_id: &str,
-        session_id: &str,
-    ) -> Result<()> {
+    pub fn remove_run_by_session(&self, mission_id: &str, session_id: &str) -> Result<()> {
         let entries = self.list_mission_runs(mission_id)?;
         let filtered: Vec<&MissionRunEntry> = entries
             .iter()
@@ -440,10 +432,14 @@ impl MissionLoader {
     /// truth and the catch-up window (completed-only) treats the slot
     /// as unfilled.
     pub fn mark_running_runs_interrupted(&self) {
-        let Ok(dirs) = fs::read_dir(&self.dir) else { return };
+        let Ok(dirs) = fs::read_dir(&self.dir) else {
+            return;
+        };
         for entry in dirs.flatten() {
             let mission_id = entry.file_name().to_string_lossy().to_string();
-            let Ok(runs) = self.list_mission_runs(&mission_id) else { continue };
+            let Ok(runs) = self.list_mission_runs(&mission_id) else {
+                continue;
+            };
             for run in runs.iter().filter(|r| r.status == "running") {
                 match self.update_mission_run_status(&mission_id, &run.run_id, "interrupted") {
                     Ok(()) => tracing::info!(
@@ -514,7 +510,6 @@ impl MissionRunStore for MissionLoader {
         Self::last_successful_run_at(self, mission_id)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -591,10 +586,16 @@ mod tests {
 
         let loaded = store.get_mission("daily-cleanup").unwrap().unwrap();
         assert_eq!(loaded.schedule, "0 9 * * *");
-        assert_eq!(loaded.prompt, "Clean up old files\n\nRemove build artifacts.");
+        assert_eq!(
+            loaded.prompt,
+            "Clean up old files\n\nRemove build artifacts."
+        );
         assert_eq!(loaded.model, Some("gpt-4".to_string()));
         assert_eq!(loaded.cwd, Some("/tmp/proj".to_string()));
-        assert_eq!(loaded.allowed_tools, vec!["Read".to_string(), "Bash".to_string()]);
+        assert_eq!(
+            loaded.allowed_tools,
+            vec!["Read".to_string(), "Bash".to_string()]
+        );
         let perm = loaded.permission.as_ref().unwrap();
         assert_eq!(perm.paths.len(), 1);
         assert_eq!(perm.paths[0].path, "~/.linggen");
@@ -626,9 +627,11 @@ mod tests {
         let plain = store
             .create_mission(draft_min("Plain", "0 * * * *", "p"))
             .unwrap();
-        let plain_md =
-            std::fs::read_to_string(store.mission_path(&plain.id)).unwrap();
-        assert!(!plain_md.contains("agent:"), "default agent must not be serialized");
+        let plain_md = std::fs::read_to_string(store.mission_path(&plain.id)).unwrap();
+        assert!(
+            !plain_md.contains("agent:"),
+            "default agent must not be serialized"
+        );
         assert!(
             !plain_md.contains("catchup_hours:"),
             "missing catchup_hours must not be serialized"
@@ -710,8 +713,12 @@ mod tests {
             status: status.into(),
             skipped: false,
         };
-        store.append_mission_run(&m.id, &run("run-1", "running")).unwrap();
-        store.append_mission_run(&m.id, &run("run-2", "running")).unwrap();
+        store
+            .append_mission_run(&m.id, &run("run-1", "running"))
+            .unwrap();
+        store
+            .append_mission_run(&m.id, &run("run-2", "running"))
+            .unwrap();
 
         // Normal finalize: running → completed, other rows untouched.
         store
@@ -725,8 +732,12 @@ mod tests {
         assert_eq!(by_id(&runs, "run-2"), "running");
 
         // Unknown run id / missing file: no-op, not an error.
-        store.update_mission_run_status(&m.id, "run-x", "failed").unwrap();
-        store.update_mission_run_status("no-such-mission", "run-1", "failed").unwrap();
+        store
+            .update_mission_run_status(&m.id, "run-x", "failed")
+            .unwrap();
+        store
+            .update_mission_run_status("no-such-mission", "run-1", "failed")
+            .unwrap();
 
         // Startup heal flips only rows still `running`.
         store.mark_running_runs_interrupted();
@@ -848,9 +859,13 @@ mod tests {
     #[test]
     fn test_duplicate_name_gets_suffix() {
         let (store, _dir) = temp_store();
-        let m1 = store.create_mission(draft_min("Test", "0 * * * *", "First")).unwrap();
+        let m1 = store
+            .create_mission(draft_min("Test", "0 * * * *", "First"))
+            .unwrap();
         assert_eq!(m1.id, "test");
-        let m2 = store.create_mission(draft_min("Test", "0 * * * *", "Second")).unwrap();
+        let m2 = store
+            .create_mission(draft_min("Test", "0 * * * *", "Second"))
+            .unwrap();
         assert_eq!(m2.id, "test-2");
     }
 
@@ -860,9 +875,10 @@ mod tests {
         // If this fails the daemon will silently skip dream at startup —
         // exactly the symptom we hit when kickoff strings with embedded
         // JSON were left as plain scalars.
-        let dream_md = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/missions/dream/mission.md"),
-        )
+        let dream_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/missions/dream/mission.md"
+        ))
         .expect("missions/dream/mission.md should exist");
         let mission = parse_mission_md("dream", &dream_md)
             .expect("dream mission.md must parse — daemon scan_disk skips invalid files silently");
@@ -888,7 +904,9 @@ mod tests {
     #[test]
     fn test_update_invalid_cron_rejected() {
         let (store, _dir) = temp_store();
-        let m = store.create_mission(draft_min("Test", "0 * * * *", "Test")).unwrap();
+        let m = store
+            .create_mission(draft_min("Test", "0 * * * *", "Test"))
+            .unwrap();
         let result = store.update_mission(
             &m.id,
             MissionDraft {
@@ -903,7 +921,9 @@ mod tests {
     fn test_directory_structure() {
         let (store, dir) = temp_store();
         let root = dir.path().to_path_buf();
-        let m = store.create_mission(draft_min("Test Dir", "0 * * * *", "Hello")).unwrap();
+        let m = store
+            .create_mission(draft_min("Test Dir", "0 * * * *", "Hello"))
+            .unwrap();
         assert!(root.join("test-dir").is_dir());
         assert!(root.join("test-dir").join("mission.md").exists());
 

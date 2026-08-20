@@ -258,7 +258,10 @@ fn read_peer() -> Option<Peer> {
         .get("recent")
         .and_then(|r| r.as_array())
         .map(|a| {
-            let raw: Vec<String> = a.iter().filter_map(|l| l.as_str().map(String::from)).collect();
+            let raw: Vec<String> = a
+                .iter()
+                .filter_map(|l| l.as_str().map(String::from))
+                .collect();
             trust(&raw, PEER_RECENT_MAX)
         })
         .unwrap_or_default();
@@ -349,7 +352,11 @@ pub fn mark_seen(session_id: &str, revision: u64) {
 /// full. Split out from the static so a test can fill a table of its own.
 fn remember(map: &mut HashMap<String, u64>, session_id: &str, revision: u64) {
     if map.len() >= SEEN_MAX && !map.contains_key(session_id) {
-        if let Some(oldest) = map.iter().min_by_key(|(_, rev)| **rev).map(|(s, _)| s.clone()) {
+        if let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, rev)| **rev)
+            .map(|(s, _)| s.clone())
+        {
             map.remove(&oldest);
         }
     }
@@ -388,7 +395,10 @@ mod tests {
             ring(&thing(), Some(1))[0],
             "1 thing happened since you last looked"
         );
-        assert_eq!(ring(&thing(), Some(0))[0], "nothing new since you last looked");
+        assert_eq!(
+            ring(&thing(), Some(0))[0],
+            "nothing new since you last looked"
+        );
     }
 
     #[test]

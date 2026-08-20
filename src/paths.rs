@@ -78,7 +78,6 @@ pub fn topics_dir() -> PathBuf {
     linggen_home().join("topics")
 }
 
-
 /// `~/.linggen/memory/` — root of the memory tree.
 ///
 /// Holds the LanceDB store (`memory.lancedb/`, owned by the `ling-mem`
@@ -90,7 +89,6 @@ pub fn topics_dir() -> PathBuf {
 pub fn memory_dir() -> PathBuf {
     linggen_home().join("memory")
 }
-
 
 /// Resolve the workspace root: the explicit `--root` argument when given,
 /// otherwise the cwd canonicalized to the nearest enclosing git root (or

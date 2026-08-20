@@ -86,11 +86,7 @@ pub(crate) fn load_core(ling_mem_url: &str) -> Option<CoreContent> {
         return None;
     }
 
-    let bullets = rows
-        .iter()
-        .map(render_row)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let bullets = rows.iter().map(render_row).collect::<Vec<_>>().join("\n");
     let facts = if rows.len() > 1 {
         format!("{bullets}{RECONCILE_FOOTER}")
     } else {

@@ -136,8 +136,7 @@ mod tests {
     fn same_file_twice_sequentially_is_allowed() {
         let dir = temp_dir("inc-twice");
         fs::write(dir.join("v.md"), "once\n").unwrap();
-        let out =
-            resolve_md_includes("{{#include v.md}}\n{{#include v.md}}", &dir).unwrap();
+        let out = resolve_md_includes("{{#include v.md}}\n{{#include v.md}}", &dir).unwrap();
         assert_eq!(out, "once\nonce\n");
         let _ = fs::remove_dir_all(&dir);
     }

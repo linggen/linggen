@@ -35,15 +35,49 @@ pub(super) fn parse_explicit_target_prefix(message: &str) -> Option<(&str, &str)
 /// "hi" + "de". Longest match wins so "i want to" beats bare "i".
 const TITLE_FILLER: &[&str] = &[
     // greetings / interjections
-    "hi", "hello", "hey", "yo", "hiya", "sup", "greetings",
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "hiya",
+    "sup",
+    "greetings",
     // politeness / acks
-    "ok", "okay", "please", "pls", "plz", "thanks", "thx", "btw", "anyway", "so", "well", "just",
+    "ok",
+    "okay",
+    "please",
+    "pls",
+    "plz",
+    "thanks",
+    "thx",
+    "btw",
+    "anyway",
+    "so",
+    "well",
+    "just",
     // soft asks (longer phrases first so they take precedence over shorter prefixes)
-    "i would like to", "i'd like to", "i want to", "i need to",
-    "could you please", "would you please", "can you please",
-    "do you know", "do you", "did you", "can you", "could you", "would you",
-    "will you", "should you", "are you", "is it", "is there", "is the",
-    "let's", "lets", "let me",
+    "i would like to",
+    "i'd like to",
+    "i want to",
+    "i need to",
+    "could you please",
+    "would you please",
+    "can you please",
+    "do you know",
+    "do you",
+    "did you",
+    "can you",
+    "could you",
+    "would you",
+    "will you",
+    "should you",
+    "are you",
+    "is it",
+    "is there",
+    "is the",
+    "let's",
+    "lets",
+    "let me",
 ];
 
 /// Skip leading filler tokens + punctuation so the title reflects the
@@ -98,7 +132,12 @@ fn auto_session_title(message: &str) -> String {
     if words.is_empty() {
         return "New Chat".to_string();
     }
-    let first: String = words.iter().take(MAX_WORDS).copied().collect::<Vec<_>>().join(" ");
+    let first: String = words
+        .iter()
+        .take(MAX_WORDS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
     if first.chars().count() > MAX_CHARS {
         let s: String = first.chars().take(MAX_CHARS - 3).collect();
         format!("{}...", s.trim_end())
@@ -514,7 +553,11 @@ async fn restore_chat_history_if_empty(
                 }
             }
         };
-        let role = if m.from_id == "user" || is_relay { "user" } else { "assistant" };
+        let role = if m.from_id == "user" || is_relay {
+            "user"
+        } else {
+            "assistant"
+        };
         // Older relay rows carry their label baked into the text already.
         let content = if is_relay && !m.content.starts_with('[') {
             format!("[{}]: {}", super::sender_label(&m.from_id), m.content)
@@ -545,7 +588,9 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
     if engine.active_skill.is_some() {
         return;
     }
-    let Some(sid) = ctx.session_id.as_deref() else { return };
+    let Some(sid) = ctx.session_id.as_deref() else {
+        return;
+    };
     let bound_skill_name = match ctx.manager.global_sessions.get_session_meta(sid) {
         Ok(meta) => meta.and_then(|m| m.skill),
         Err(e) => {
@@ -553,7 +598,9 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
             return;
         }
     };
-    let Some(skill_name) = bound_skill_name else { return };
+    let Some(skill_name) = bound_skill_name else {
+        return;
+    };
 
     if !ctx.policy.is_skill_allowed(&skill_name) {
         tracing::info!("Session-bound skill '{}' blocked by policy", skill_name);
@@ -593,11 +640,13 @@ async fn apply_session_bound_skill(engine: &mut crate::engine::AgentEngine, ctx:
     // (e.g. pulse's workspace_path) that the skill iframe PATCHed onto
     // permission.json before the first user turn. Mirrors the same
     // preload the slash-command path does in skill_dispatch.rs.
-    engine.session_permissions =
-        crate::engine::permission::SessionPermissions::load(&sdir);
+    engine.session_permissions = crate::engine::permission::SessionPermissions::load(&sdir);
 
-    if let crate::engine::ActivationOutcome::Activated { grants_changed: true } =
-        engine.activate_skill(skill, crate::engine::ActivationMode::SessionBound).await
+    if let crate::engine::ActivationOutcome::Activated {
+        grants_changed: true,
+    } = engine
+        .activate_skill(skill, crate::engine::ActivationMode::SessionBound)
+        .await
     {
         let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
     }
@@ -706,7 +755,12 @@ pub(crate) async fn chat_handler(
 
     let was_busy = agent.try_lock().is_err();
     let queued_item = enqueue_if_busy(
-        &state, was_busy, &project_root_str, &effective_session_id, &target_id, &clean_msg,
+        &state,
+        was_busy,
+        &project_root_str,
+        &effective_session_id,
+        &target_id,
+        &clean_msg,
     )
     .await;
 
@@ -794,8 +848,7 @@ pub(crate) async fn chat_handler(
 
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
 
-        let policy =
-            crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type);
+        let policy = crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type);
         policy.apply(&mut engine);
 
         // Skill- and mission-created sessions don't write to the user's
@@ -865,8 +918,7 @@ pub(crate) async fn chat_handler(
     });
 
     let status = if was_busy { "queued" } else { "started" };
-    Json(serde_json::json!({ "status": status, "session_id": session_id_response }))
-        .into_response()
+    Json(serde_json::json!({ "status": status, "session_id": session_id_response })).into_response()
 }
 
 #[cfg(test)]
@@ -905,10 +957,7 @@ mod tests {
     #[test]
     fn auto_title_strips_leading_greeting() {
         // "hi, do you know my cat" → drop "hi,", drop "do you know" → "my cat"
-        assert_eq!(
-            auto_session_title("hi, do you know my cat"),
-            "my cat"
-        );
+        assert_eq!(auto_session_title("hi, do you know my cat"), "my cat");
     }
 
     #[test]
@@ -930,7 +979,10 @@ mod tests {
     #[test]
     fn auto_title_word_boundary_keeps_real_words() {
         // "hide" must not get its "hi" prefix stripped.
-        assert_eq!(auto_session_title("hide the sidebar on mobile"), "hide the sidebar...");
+        assert_eq!(
+            auto_session_title("hide the sidebar on mobile"),
+            "hide the sidebar..."
+        );
     }
 
     #[test]

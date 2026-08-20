@@ -1,8 +1,8 @@
 mod builtin;
 pub use builtin::builtin_tier;
 pub(crate) use builtin::tool_cacheable;
-pub(crate) use builtin::RightNow;
 pub(crate) use builtin::tool_max_duration;
+pub(crate) use builtin::RightNow;
 
 pub(crate) mod browser_tool;
 mod file_tools;
@@ -10,16 +10,16 @@ pub(crate) mod json_schema;
 pub(crate) mod memory_http;
 mod memory_mcp;
 pub(crate) use memory_mcp::is_project_dir;
-mod search_exec;
-mod write_tools;
 mod delegation;
+mod search_exec;
 mod tool_helpers;
+mod write_tools;
 
-pub use tool_helpers::canonical_tool_name;
+pub(crate) use delegation::{run_delegation, TaskArgs};
 pub use search_exec::find_git_root as search_exec_find_git_root;
+pub use tool_helpers::canonical_tool_name;
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
-pub(crate) use delegation::{run_delegation, TaskArgs};
 
 use crate::engine::agent::AgentManager;
 use anyhow::Result;
@@ -235,11 +235,7 @@ impl Tools {
             .is_some_and(|t| t.elapsed() <= window)
     }
 
-    pub fn set_context(
-        &mut self,
-        manager: Arc<AgentManager>,
-        agent_id: String,
-    ) {
+    pub fn set_context(&mut self, manager: Arc<AgentManager>, agent_id: String) {
         self.manager = Some(manager);
         self.agent_id = Some(agent_id);
     }
@@ -263,8 +259,6 @@ impl Tools {
     pub fn set_run_id(&mut self, run_id: Option<String>) {
         self.run_id = run_id;
     }
-
-
 
     pub fn set_ask_user_bridge(&mut self, bridge: Arc<AskUserBridge>) {
         self.ask_user_bridge = Some(bridge);
@@ -373,7 +367,8 @@ impl Tools {
         // `mcp__<server>__<tool>` name instead. Memory calls pick up the
         // session state only the host holds on the way out; see `memory_mcp`.
         if crate::mcp_client::is_mcp_tool(&call.tool) {
-            let args = memory_mcp::augment(self, &call.tool, std::mem::take(&mut call.args)).await?;
+            let args =
+                memory_mcp::augment(self, &call.tool, std::mem::take(&mut call.args)).await?;
             let out = crate::mcp_client::registry().call(&call.tool, args).await?;
             return Ok(ToolResult::Success(out));
         }
@@ -388,13 +383,17 @@ impl Tools {
 
         // Validate question count.
         if args.questions.is_empty() || args.questions.len() > 4 {
-            anyhow::bail!("AskUser requires 1-4 questions, got {}", args.questions.len());
+            anyhow::bail!(
+                "AskUser requires 1-4 questions, got {}",
+                args.questions.len()
+            );
         }
         for (i, q) in args.questions.iter().enumerate() {
             if q.options.len() < 2 || q.options.len() > 6 {
                 anyhow::bail!(
                     "AskUser question {} requires 2-6 options, got {}",
-                    i, q.options.len()
+                    i,
+                    q.options.len()
                 );
             }
         }

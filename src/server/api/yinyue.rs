@@ -28,7 +28,9 @@ pub(crate) struct SayRequest {
 /// endpoint below calls it directly.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
     // Err only means no surface is currently connected — nothing to hear her.
-    let _ = state.events_tx.send(ServerEvent::PetSpeak { text, emotion });
+    let _ = state
+        .events_tx
+        .send(ServerEvent::PetSpeak { text, emotion });
 }
 
 /// POST /api/yinyue/say — `{ text, emotion? }`. Trigger entry point for the
@@ -66,7 +68,9 @@ pub(crate) async fn chat_handler(
     // user's reply and the open prompt land in the same turn (no cross-turn recall).
     let task = frame_with_pending_prompt(&state, &text).await;
     tokio::spawn(async move {
-        if let Some(reply) = crate::server::yinyue_watch::run_yinyue_turn(&state, task, "user").await {
+        if let Some(reply) =
+            crate::server::yinyue_watch::run_yinyue_turn(&state, task, "user").await
+        {
             if !reply.eq_ignore_ascii_case("silent") {
                 emit_speak(&state, reply, None);
             }

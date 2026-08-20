@@ -53,7 +53,10 @@ pub(super) fn forward_event_to_channels(
     // The session's cwd moved (agent cd) — effective_mode is computed from it,
     // so schedule a scoped page_state push alongside the forwarded event or the
     // permission chip keeps showing the previous folder's mode.
-    if matches!(event, crate::server::ServerEvent::WorkingFolderChanged { .. }) {
+    if matches!(
+        event,
+        crate::server::ServerEvent::WorkingFolderChanged { .. }
+    ) {
         *dirty_flags |= crate::server::rtc::page_state::DIRTY_SCOPED;
     }
 
@@ -170,7 +173,8 @@ pub(super) fn forward_event_to_channels(
     if filter.view == Some("embed") && ui_msg.kind == "room_chat" {
         tracing::trace!(
             "[fwd] DROP(embed-no-room-chat) user={} pinned={}",
-            dbg_user, dbg_pinned
+            dbg_user,
+            dbg_pinned
         );
         return;
     }
@@ -237,7 +241,8 @@ pub(super) fn forward_event_to_channels(
                     if ui_msg.kind == "room_chat" {
                         tracing::info!(
                             "[room_chat] forward → control DC user={} channel={:?}",
-                            dbg_user, cid
+                            dbg_user,
+                            cid
                         );
                     }
                     pending_dc_writes.push_back(DcWrite::text(cid, json.clone()));
@@ -294,7 +299,10 @@ pub(super) fn forward_event_to_channels(
                     } else {
                         tracing::trace!(
                             "[fwd] BUFFER+ user={} sid={} kind={} depth={}",
-                            dbg_user, dbg_sid, dbg_kind, buf.len()
+                            dbg_user,
+                            dbg_sid,
+                            dbg_kind,
+                            buf.len()
                         );
                     }
                 }
@@ -316,7 +324,8 @@ pub(super) fn forward_event_to_channels(
             if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {
                 tracing::info!(
                     "[room_chat] forward → inference DC user={} channel={:?}",
-                    dbg_user, cid
+                    dbg_user,
+                    cid
                 );
                 pending_dc_writes.push_back(DcWrite::text(cid, chat_msg.to_string()));
             }

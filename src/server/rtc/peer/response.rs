@@ -23,10 +23,18 @@ pub(super) struct DcWrite {
 
 impl DcWrite {
     pub fn text(channel: str0m::channel::ChannelId, msg: impl Into<String>) -> Self {
-        Self { channel, binary: false, data: msg.into().into_bytes() }
+        Self {
+            channel,
+            binary: false,
+            data: msg.into().into_bytes(),
+        }
     }
     pub fn binary(channel: str0m::channel::ChannelId, data: Vec<u8>) -> Self {
-        Self { channel, binary: true, data }
+        Self {
+            channel,
+            binary: true,
+            data,
+        }
     }
 }
 

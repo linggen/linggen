@@ -71,7 +71,10 @@ impl Telemetry {
             // as install. `via` comes from the install-source marker
             // file written by the installer; missing → "unknown".
             let mut p = read_install_source(&self.inner.data_dir, self.inner.product);
-            p.insert("via".into(), p.get("via").cloned().unwrap_or_else(|| "unknown".into()));
+            p.insert(
+                "via".into(),
+                p.get("via").cloned().unwrap_or_else(|| "unknown".into()),
+            );
             Some(p)
         } else if state.last_version != APP_VERSION {
             let mut p = std::collections::BTreeMap::new();
@@ -84,7 +87,10 @@ impl Telemetry {
         };
 
         if let Some(payload) = install_payload {
-            self.spawn_post("install", Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)));
+            self.spawn_post(
+                "install",
+                Some(serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)),
+            );
         }
 
         // Read-modify-write: preserve last_command_day across launch.
@@ -115,7 +121,11 @@ impl Telemetry {
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
             .take(32)
             .collect();
-        let code = if code.is_empty() { "other".to_string() } else { code };
+        let code = if code.is_empty() {
+            "other".to_string()
+        } else {
+            code
+        };
         self.bump(&format!("error.{stage}.{code}"));
     }
 
@@ -196,7 +206,8 @@ impl Telemetry {
             return;
         }
         let mut payload = serde_json::json!({ "verb": verb });
-        if let (Some(obj), serde_json::Value::Object(extra_obj)) = (payload.as_object_mut(), extra) {
+        if let (Some(obj), serde_json::Value::Object(extra_obj)) = (payload.as_object_mut(), extra)
+        {
             for (k, v) in extra_obj {
                 obj.insert(k, v);
             }
@@ -249,7 +260,10 @@ fn is_opted_out(data_dir: &Path) -> bool {
     // LING_MEM_NO_TELEMETRY (so users who already set it for ling-mem
     // also disable engine telemetry without surprise).
     for name in ["LINGGEN_NO_TELEMETRY", "LING_MEM_NO_TELEMETRY"] {
-        if matches!(std::env::var(name).as_deref(), Ok("1") | Ok("true") | Ok("yes")) {
+        if matches!(
+            std::env::var(name).as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        ) {
             return true;
         }
     }
@@ -303,7 +317,10 @@ fn save_state(path: &Path, state: &State) -> std::io::Result<()> {
 /// Read the install-source marker file written by the installer (linggen.dev
 /// wrapper, Apple Shifu's "Set up Linggen" flow, brew, etc.) into a payload
 /// map. Missing file → empty map; caller fills in `via=unknown`.
-fn read_install_source(data_dir: &Path, product: &str) -> std::collections::BTreeMap<String, String> {
+fn read_install_source(
+    data_dir: &Path,
+    product: &str,
+) -> std::collections::BTreeMap<String, String> {
     let path = data_dir.join(format!(".{product}-install-source"));
     let mut map = std::collections::BTreeMap::new();
     if let Ok(text) = std::fs::read_to_string(&path) {
@@ -346,7 +363,10 @@ pub fn read_system_state(data_dir: &Path) -> serde_json::Value {
 
 /// Like `read_install_source` but returns `None` when the file is absent
 /// (vs an empty map). Use this when file presence itself is the signal.
-fn read_install_source_full(data_dir: &Path, product: &str) -> Option<std::collections::BTreeMap<String, String>> {
+fn read_install_source_full(
+    data_dir: &Path,
+    product: &str,
+) -> Option<std::collections::BTreeMap<String, String>> {
     let path = data_dir.join(format!(".{product}-install-source"));
     if !path.exists() {
         return None;

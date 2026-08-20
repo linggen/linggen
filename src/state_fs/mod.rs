@@ -59,22 +59,23 @@ impl StateFs {
     /// Resolve a relative path and verify it stays within the state root.
     fn safe_resolve(&self, rel_path: &str) -> Result<PathBuf> {
         let path = self.root.join(rel_path);
-        let canonical = path
+        let canonical = path.canonicalize().or_else(|_| {
+            // File might not exist yet (write case). Canonicalize the parent instead.
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+                let canon_parent = parent.canonicalize()?;
+                Ok(canon_parent.join(path.file_name().unwrap_or_default()))
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "cannot resolve path",
+                ))
+            }
+        })?;
+        let canon_root = self
+            .root
             .canonicalize()
-            .or_else(|_| {
-                // File might not exist yet (write case). Canonicalize the parent instead.
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
-                    let canon_parent = parent.canonicalize()?;
-                    Ok(canon_parent.join(path.file_name().unwrap_or_default()))
-                } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "cannot resolve path",
-                    ))
-                }
-            })?;
-        let canon_root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+            .unwrap_or_else(|_| self.root.clone());
         if !canonical.starts_with(&canon_root) {
             anyhow::bail!(
                 "Path traversal rejected: {} escapes state root {}",

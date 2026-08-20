@@ -149,19 +149,17 @@ mod tests {
     #[test]
     fn test_truncation() {
         let long = "a".repeat(200);
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                // We can't actually fetch a URL in unit tests, so test truncation logic directly
-                let limit = 100usize;
-                let truncated = long.len() > limit;
-                let content = if truncated {
-                    long[..limit].to_string()
-                } else {
-                    long.clone()
-                };
-                (content, truncated)
-            });
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            // We can't actually fetch a URL in unit tests, so test truncation logic directly
+            let limit = 100usize;
+            let truncated = long.len() > limit;
+            let content = if truncated {
+                long[..limit].to_string()
+            } else {
+                long.clone()
+            };
+            (content, truncated)
+        });
         assert_eq!(result.0.len(), 100);
         assert!(result.1);
     }
@@ -170,7 +168,7 @@ mod tests {
     fn test_truncation_char_boundary() {
         // Multi-byte chars: each is 3 bytes in UTF-8
         let text = "aaaa\u{00e9}\u{00e9}"; // 4 + 2*2 = 8 chars, but 4 + 2*2 = 8 bytes (é is 2 bytes)
-        // With a limit that might land in the middle of a multi-byte char
+                                           // With a limit that might land in the middle of a multi-byte char
         let limit = 5;
         let mut end = limit;
         while !text.is_char_boundary(end) && end > 0 {

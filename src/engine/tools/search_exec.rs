@@ -67,11 +67,13 @@ fn kill_process_group(child: &std::process::Child) {
 
 impl Tools {
     pub(super) async fn search_rg(&self, args: SearchArgs) -> Result<ToolResult> {
-        self.run_blocking("search_rg", move |tools| tools.search_rg_inner(args)).await
+        self.run_blocking("search_rg", move |tools| tools.search_rg_inner(args))
+            .await
     }
 
     pub(super) async fn run_command(&self, args: RunCommandArgs) -> Result<ToolResult> {
-        self.run_blocking("run_command", move |tools| tools.run_command_inner(args)).await
+        self.run_blocking("run_command", move |tools| tools.run_command_inner(args))
+            .await
     }
 
     fn search_rg_inner(&self, args: SearchArgs) -> Result<ToolResult> {
@@ -146,7 +148,11 @@ impl Tools {
             if c.is_dir() {
                 c
             } else {
-                tracing::warn!("Bash cwd {:?} does not exist, falling back to root {:?}", c, self.root);
+                tracing::warn!(
+                    "Bash cwd {:?} does not exist, falling back to root {:?}",
+                    c,
+                    self.root
+                );
                 self.root.clone()
             }
         };
@@ -195,7 +201,11 @@ impl Tools {
                         match line {
                             Ok(l) => {
                                 if let Some(tx) = &tx {
-                                    let _ = tx.send(("Bash".to_string(), "stdout".to_string(), l.clone()));
+                                    let _ = tx.send((
+                                        "Bash".to_string(),
+                                        "stdout".to_string(),
+                                        l.clone(),
+                                    ));
                                 }
                                 acc.push_str(&l);
                                 acc.push('\n');
@@ -217,7 +227,11 @@ impl Tools {
                         match line {
                             Ok(l) => {
                                 if let Some(tx) = &tx {
-                                    let _ = tx.send(("Bash".to_string(), "stderr".to_string(), l.clone()));
+                                    let _ = tx.send((
+                                        "Bash".to_string(),
+                                        "stderr".to_string(),
+                                        l.clone(),
+                                    ));
                                 }
                                 acc.push_str(&l);
                                 acc.push('\n');
@@ -282,17 +296,21 @@ impl Tools {
                 let new_cwd = PathBuf::from(s[after_sent..pwd_end].to_string());
                 if new_cwd.is_absolute() && new_cwd.exists() {
                     if let Some(sid) = &self.session_id {
-                        let old_cwd = self.cwd_by_session.lock().unwrap()
-                            .get(sid).cloned();
-                        self.cwd_by_session.lock().unwrap().insert(sid.clone(), new_cwd.clone());
+                        let old_cwd = self.cwd_by_session.lock().unwrap().get(sid).cloned();
+                        self.cwd_by_session
+                            .lock()
+                            .unwrap()
+                            .insert(sid.clone(), new_cwd.clone());
                         // Emit working folder change if cwd actually changed
                         if old_cwd.as_ref() != Some(&new_cwd) {
                             if let Some(ref tx) = self.progress_tx {
                                 let git_root = find_git_root(&new_cwd);
-                                let project = git_root.as_ref()
+                                let project = git_root
+                                    .as_ref()
                                     .map(|p| p.to_string_lossy().to_string())
                                     .unwrap_or_default();
-                                let project_name = git_root.as_ref()
+                                let project_name = git_root
+                                    .as_ref()
                                     .and_then(|p| p.file_name())
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_default();

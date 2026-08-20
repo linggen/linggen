@@ -1,5 +1,5 @@
-use crate::provider::models::{StreamChunk, TokenUsage};
 use crate::message::{ChatMessage, ToolCallFunction, ToolCallMessage};
+use crate::provider::models::{StreamChunk, TokenUsage};
 use anyhow::Result;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -93,7 +93,10 @@ impl OllamaClient {
             let text = resp.text().await.unwrap_or_default();
             tracing::error!(
                 "Ollama chat_text error ({}): {} | model={} msgs=[{}]",
-                status, text, model, summarize_messages(messages)
+                status,
+                text,
+                model,
+                summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
@@ -132,7 +135,12 @@ impl OllamaClient {
         keep_alive: Option<String>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
-        tracing::info!("Ollama stream: model={} msgs={} chars={}", model, messages.len(), total_len);
+        tracing::info!(
+            "Ollama stream: model={} msgs={} chars={}",
+            model,
+            messages.len(),
+            total_len
+        );
         if let Some(last) = messages.last() {
             tracing::debug!("Last msg ({}): {:.200}", last.role, last.content);
         }
@@ -157,7 +165,10 @@ impl OllamaClient {
             let text = resp.text().await.unwrap_or_default();
             tracing::error!(
                 "Ollama chat_text_stream error ({}): {} | model={} msgs=[{}]",
-                status, text, model, summarize_messages(messages)
+                status,
+                text,
+                model,
+                summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
@@ -198,7 +209,11 @@ impl OllamaClient {
                     } else {
                         line.clone()
                     };
-                    return Some(Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated)));
+                    return Some(Err(anyhow::anyhow!(
+                        "json parse error: {} (line: {})",
+                        e,
+                        truncated
+                    )));
                 }
             };
 
@@ -244,7 +259,10 @@ impl OllamaClient {
         let total_len: usize = messages.iter().map(|m| m.content.len()).sum();
         tracing::info!(
             "Ollama tool stream: model={} msgs={} chars={} tools={}",
-            model, messages.len(), total_len, tools.len()
+            model,
+            messages.len(),
+            total_len,
+            tools.len()
         );
 
         let url = format!("{}/api/chat", self.base_url);
@@ -267,7 +285,10 @@ impl OllamaClient {
             let text = resp.text().await.unwrap_or_default();
             tracing::error!(
                 "Ollama chat_tool_stream error ({}): {} | model={} tools={} msgs=[{}]",
-                status, text, model, req.tools.as_ref().map_or(0, |t| t.len()),
+                status,
+                text,
+                model,
+                req.tools.as_ref().map_or(0, |t| t.len()),
                 summarize_messages(messages)
             );
             if let Ok(body) = serde_json::to_string(&req) {
@@ -315,11 +336,18 @@ impl OllamaClient {
                         } else {
                             line.clone()
                         };
-                        return vec![Err(anyhow::anyhow!("json parse error: {} (line: {})", e, truncated))];
+                        return vec![Err(anyhow::anyhow!(
+                            "json parse error: {} (line: {})",
+                            e,
+                            truncated
+                        ))];
                     }
                 };
 
-                let done = payload.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
+                let done = payload
+                    .get("done")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 if done {
                     let prompt_eval = payload.get("prompt_eval_count").and_then(|v| v.as_u64());
@@ -350,9 +378,15 @@ impl OllamaClient {
                             Some(f) => f,
                             None => continue,
                         };
-                        let name = func.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let name = func
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         let arguments = func.get("arguments").map(|v| v.to_string());
-                        let id = format!("call_{}", uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string());
+                        let id = format!(
+                            "call_{}",
+                            uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+                        );
                         chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
                             index: idx,
                             id: Some(id),
@@ -432,7 +466,11 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            let truncated = if text.len() > 500 { format!("{}…", &text[..500]) } else { text };
+            let truncated = if text.len() > 500 {
+                format!("{}…", &text[..500])
+            } else {
+                text
+            };
             anyhow::bail!("ollama error ({}): {}", status, truncated);
         }
 
@@ -503,7 +541,11 @@ impl OllamaClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            let truncated = if text.len() > 500 { format!("{}…", &text[..500]) } else { text };
+            let truncated = if text.len() > 500 {
+                format!("{}…", &text[..500])
+            } else {
+                text
+            };
             anyhow::bail!("ollama error ({}): {}", status, truncated);
         }
         let payload: OllamaShowResponse = resp.json().await?;

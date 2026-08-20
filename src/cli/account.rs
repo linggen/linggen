@@ -92,11 +92,13 @@ pub(super) async fn receive_token_via_callback() -> Result<Option<String>> {
     }
 }
 
-
 pub async fn run_login() -> Result<()> {
     println!("\n  🔑 Linggen Account Sign-in\n");
     if let Some(acc) = account::load_account() {
-        let who = acc.user_name.map(|n| format!(" as {n}")).unwrap_or_default();
+        let who = acc
+            .user_name
+            .map(|n| format!(" as {n}"))
+            .unwrap_or_default();
         println!("  Already signed in{who}.");
         println!("  Run `ling account logout` first to switch accounts.\n");
         return Ok(());

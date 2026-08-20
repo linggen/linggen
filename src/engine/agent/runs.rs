@@ -218,7 +218,12 @@ mod tests {
         let run = make_run("r1", "s1", None, 1000);
         store.add_run(&run);
 
-        store.update_run("r1", AgentRunStatus::Completed, Some("done".into()), Some(2000));
+        store.update_run(
+            "r1",
+            AgentRunStatus::Completed,
+            Some("done".into()),
+            Some(2000),
+        );
         let fetched = store.get_run("r1").unwrap();
         assert_eq!(fetched.status, AgentRunStatus::Completed);
         assert_eq!(fetched.detail.as_deref(), Some("done"));

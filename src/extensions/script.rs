@@ -18,7 +18,11 @@ pub enum Invocation<'a> {
 /// Build a sync `std::process::Command` configured to invoke bash with the
 /// given cwd, env, and invocation. Caller chains `.output()` and handles
 /// stdout/stderr per their policy.
-pub fn sync_command(inv: Invocation<'_>, cwd: &Path, env: &[(&str, &OsStr)]) -> std::process::Command {
+pub fn sync_command(
+    inv: Invocation<'_>,
+    cwd: &Path,
+    env: &[(&str, &OsStr)],
+) -> std::process::Command {
     let mut cmd = std::process::Command::new("bash");
     cmd.current_dir(cwd);
     for (k, v) in env {

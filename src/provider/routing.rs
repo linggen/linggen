@@ -204,7 +204,10 @@ mod tests {
             tool_depth: None,
             _skill_model_hint: None,
         };
-        assert_eq!(resolve_model(&routing, None, &low, &models), Some("small".to_string()));
+        assert_eq!(
+            resolve_model(&routing, None, &low, &models),
+            Some("small".to_string())
+        );
 
         // High complexity -> big
         let high = ComplexitySignal {
@@ -212,13 +215,19 @@ mod tests {
             tool_depth: None,
             _skill_model_hint: None,
         };
-        assert_eq!(resolve_model(&routing, None, &high, &models), Some("big".to_string()));
+        assert_eq!(
+            resolve_model(&routing, None, &high, &models),
+            Some("big".to_string())
+        );
     }
 
     #[test]
     fn no_policy_returns_none() {
         let models = vec![ollama_model("local")];
         let routing = RoutingConfig::default();
-        assert_eq!(resolve_model(&routing, None, &empty_signal(), &models), None);
+        assert_eq!(
+            resolve_model(&routing, None, &empty_signal(), &models),
+            None
+        );
     }
 }

@@ -11,14 +11,14 @@ use futures_util::StreamExt;
 // blunt summary-less cap. See doc/compaction-spec.md.
 
 impl AgentEngine {
-
     pub(crate) fn context_soft_token_limit(&self) -> usize {
         // Three layers, highest to lowest:
         //   1. Per-session override (POST /api/chat/compact_config)
         //   2. Global default from app config (`agent.compact_threshold` in linggen.toml)
         //   3. Hardcoded engine default (0.95)
         // Range clamp keeps wild values from breaking the trigger.
-        let frac = self.compact_threshold
+        let frac = self
+            .compact_threshold
             .or(self.cfg.compact_threshold_default)
             .map(|t| t.clamp(0.1, 0.99) as f64)
             .unwrap_or(0.95);
@@ -105,16 +105,27 @@ impl AgentEngine {
             // (depth-0) messages and routing falls back to main chat as
             // before.
             let is_subagent = self.tools.builtins.delegation_depth() > 0;
-            let run_id = if is_subagent { self.run_id.clone() } else { None };
-            let parent_id = if is_subagent { self.parent_agent_id.clone() } else { None };
+            let run_id = if is_subagent {
+                self.run_id.clone()
+            } else {
+                None
+            };
+            let parent_id = if is_subagent {
+                self.parent_agent_id.clone()
+            } else {
+                None
+            };
             manager
-                .send_event(crate::engine::agent::AgentEvent::Message {
-                    from: agent_id.clone(),
-                    to: target.clone(),
-                    content: content.to_string(),
-                    run_id,
-                    parent_id,
-                }, self.session_id.clone())
+                .send_event(
+                    crate::engine::agent::AgentEvent::Message {
+                        from: agent_id.clone(),
+                        to: target.clone(),
+                        content: content.to_string(),
+                        run_id,
+                        parent_id,
+                    },
+                    self.session_id.clone(),
+                )
                 .await;
             // Subagents inherit the parent's session_id. Persisting their
             // terminal message into the parent's messages.jsonl was making
@@ -144,7 +155,10 @@ impl AgentEngine {
 
                 // Nudge UI to refresh immediately.
                 manager
-                    .send_event(crate::engine::agent::AgentEvent::StateUpdated, self.session_id.clone())
+                    .send_event(
+                        crate::engine::agent::AgentEvent::StateUpdated,
+                        self.session_id.clone(),
+                    )
                     .await;
             }
         }
@@ -242,10 +256,19 @@ impl AgentEngine {
 
     // Observations
 
-    pub(crate) fn observation_text(&self, observation_type: &str, name: &str, content: &str) -> String {
+    pub(crate) fn observation_text(
+        &self,
+        observation_type: &str,
+        name: &str,
+        content: &str,
+    ) -> String {
         self.prompt_store.render_or_fallback(
             crate::prompts::keys::OBSERVATION_WRAPPER,
-            &[("type", observation_type), ("name", name), ("content", content)],
+            &[
+                ("type", observation_type),
+                ("name", name),
+                ("content", content),
+            ],
         )
     }
 
@@ -311,21 +334,24 @@ impl AgentEngine {
             None => (None, None),
         };
         let _ = manager
-            .send_event(crate::engine::agent::AgentEvent::ContextUsage {
-                agent_id: self
-                    .agent_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                stage: stage.to_string(),
-                message_count: messages.len(),
-                char_count: Self::estimate_chars_for_messages(messages),
-                estimated_tokens: Self::estimate_tokens_for_messages(messages),
-                token_limit,
-                actual_prompt_tokens: actual_prompt,
-                actual_completion_tokens: actual_completion,
-                compressed: summary_count > 0,
-                summary_count,
-            }, self.session_id.clone())
+            .send_event(
+                crate::engine::agent::AgentEvent::ContextUsage {
+                    agent_id: self
+                        .agent_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    stage: stage.to_string(),
+                    message_count: messages.len(),
+                    char_count: Self::estimate_chars_for_messages(messages),
+                    estimated_tokens: Self::estimate_tokens_for_messages(messages),
+                    token_limit,
+                    actual_prompt_tokens: actual_prompt,
+                    actual_completion_tokens: actual_completion,
+                    compressed: summary_count > 0,
+                    summary_count,
+                },
+                self.session_id.clone(),
+            )
             .await;
     }
 
@@ -354,7 +380,11 @@ impl AgentEngine {
     /// tool_use↔tool_result pairing are untouched, so this is always safe.
     /// The protected head and everything from `protect_from` onward (the
     /// verbatim recent tail) are left intact. Returns tokens reclaimed.
-    fn evict_old_tool_results(messages: &mut [ChatMessage], head: usize, protect_from: usize) -> usize {
+    fn evict_old_tool_results(
+        messages: &mut [ChatMessage],
+        head: usize,
+        protect_from: usize,
+    ) -> usize {
         let placeholder_tokens = Self::estimate_tokens_for_text(Self::TOOL_EVICTED_PLACEHOLDER);
         let upper = protect_from.min(messages.len());
         let mut reclaimed = 0usize;
@@ -588,16 +618,19 @@ impl AgentEngine {
 
         match self
             .model_manager
-            .chat_text_stream(&self.model_id, &summarize_msgs, self.reasoning_effort.as_deref(), self.app_product())
+            .chat_text_stream(
+                &self.model_id,
+                &summarize_msgs,
+                self.reasoning_effort.as_deref(),
+                self.app_product(),
+            )
             .await
         {
             Ok(mut stream) => {
                 let mut result = String::new();
                 while let Some(chunk) = stream.next().await {
                     match chunk {
-                        Ok(crate::provider::models::StreamChunk::Token(t)) => {
-                            result.push_str(&t)
-                        }
+                        Ok(crate::provider::models::StreamChunk::Token(t)) => result.push_str(&t),
                         Ok(_) => {}
                         Err(e) => {
                             tracing::warn!(

@@ -55,8 +55,7 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
         }));
     }
 
-    let strict_params =
-        crate::engine::tools::json_schema::strictify_for_openai(params);
+    let strict_params = crate::engine::tools::json_schema::strictify_for_openai(params);
     Some(serde_json::json!({
         "type": "function",
         "name": func.get("name")?,
@@ -165,7 +164,9 @@ impl OpenAiClient {
     fn apply_auth(&self, mut rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if self.codex_auth_live {
             // Read fresh token from disk so login/refresh is picked up immediately
-            let tokens = crate::provider::codex_auth::CodexAuthTokens::load(&crate::provider::codex_auth::codex_auth_file());
+            let tokens = crate::provider::codex_auth::CodexAuthTokens::load(
+                &crate::provider::codex_auth::codex_auth_file(),
+            );
             if let Some(ref token) = tokens.access_token {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
             }
@@ -198,7 +199,11 @@ impl OpenAiClient {
     /// Tag the request with the app product for per-app usage attribution on
     /// the Linggen Cloud proxy (it meters tokens per X-Linggen-App bucket).
     /// No-op for every other provider.
-    fn with_app_header(&self, rb: reqwest::RequestBuilder, app: Option<&str>) -> reqwest::RequestBuilder {
+    fn with_app_header(
+        &self,
+        rb: reqwest::RequestBuilder,
+        app: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         match app {
             Some(app) if self.linggen_account_live => rb.header("X-Linggen-App", app),
             _ => rb,
@@ -245,10 +250,10 @@ impl OpenAiClient {
         &self,
         rb: reqwest::RequestBuilder,
     ) -> anyhow::Result<reqwest::Response> {
-        let first = self
-            .apply_auth(rb.try_clone().ok_or_else(|| {
-                anyhow::anyhow!("request body not cloneable for auth retry")
-            })?);
+        let first = self.apply_auth(
+            rb.try_clone()
+                .ok_or_else(|| anyhow::anyhow!("request body not cloneable for auth retry"))?,
+        );
         let resp = first.send().await?;
         if resp.status() != reqwest::StatusCode::UNAUTHORIZED || !self.codex_auth_live {
             return Ok(resp);
@@ -434,7 +439,9 @@ impl OpenAiClient {
             let stream_options = if is_gemini {
                 None
             } else {
-                Some(OaiStreamOptions { include_usage: true })
+                Some(OaiStreamOptions {
+                    include_usage: true,
+                })
             };
             let mut req = serde_json::json!({
                 "model": model,
@@ -453,7 +460,9 @@ impl OpenAiClient {
             Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
             self.http.post(url).json(&req)
         };
-        let resp = self.send_with_oauth_retry(self.with_app_header(rb, app)).await?;
+        let resp = self
+            .send_with_oauth_retry(self.with_app_header(rb, app))
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -612,126 +621,125 @@ impl OpenAiClient {
             }
         };
 
-        let rb =
-            if self.uses_responses_api() {
-                // ChatGPT Responses API with tools
-                let url = format!("{}/responses", self.base_url);
-                let mut instructions = String::new();
-                let mut input_items: Vec<serde_json::Value> = Vec::new();
-                for msg in messages {
-                    if msg.role == "system" {
-                        if !instructions.is_empty() {
-                            instructions.push('\n');
-                        }
-                        instructions.push_str(&msg.content);
-                    } else if msg.role == "tool" {
-                        // Tool result messages → function_call_output items
-                        let call_id = msg
-                            .tool_call_id
-                            .as_deref()
-                            .map(|id| ensure_fc_prefix(id))
-                            .unwrap_or_default();
+        let rb = if self.uses_responses_api() {
+            // ChatGPT Responses API with tools
+            let url = format!("{}/responses", self.base_url);
+            let mut instructions = String::new();
+            let mut input_items: Vec<serde_json::Value> = Vec::new();
+            for msg in messages {
+                if msg.role == "system" {
+                    if !instructions.is_empty() {
+                        instructions.push('\n');
+                    }
+                    instructions.push_str(&msg.content);
+                } else if msg.role == "tool" {
+                    // Tool result messages → function_call_output items
+                    let call_id = msg
+                        .tool_call_id
+                        .as_deref()
+                        .map(|id| ensure_fc_prefix(id))
+                        .unwrap_or_default();
+                    input_items.push(serde_json::json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": msg.content,
+                    }));
+                } else if msg.role == "assistant" && !msg.tool_calls.is_empty() {
+                    // Assistant message with tool calls → emit text + function_call items
+                    if !msg.content.is_empty() {
                         input_items.push(serde_json::json!({
-                            "type": "function_call_output",
-                            "call_id": call_id,
-                            "output": msg.content,
+                            "role": "assistant",
+                            "content": msg.content,
                         }));
-                    } else if msg.role == "assistant" && !msg.tool_calls.is_empty() {
-                        // Assistant message with tool calls → emit text + function_call items
-                        if !msg.content.is_empty() {
-                            input_items.push(serde_json::json!({
-                                "role": "assistant",
-                                "content": msg.content,
-                            }));
-                        }
-                        for tc in &msg.tool_calls {
-                            let tc_id = ensure_fc_prefix(&tc.id);
-                            input_items.push(serde_json::json!({
-                                "type": "function_call",
-                                "id": tc_id,
-                                "call_id": tc_id,
-                                "name": tc.function.name,
-                                "arguments": match &tc.function.arguments {
-                                    serde_json::Value::String(s) => s.clone(),
-                                    other => serde_json::to_string(other).unwrap_or_default(),
-                                },
-                            }));
-                        }
-                    } else {
-                        input_items.push(responses_api_input_item(msg));
                     }
-                }
-
-                // Convert OpenAI-style tool defs to Responses API function tools.
-                // Single source of truth: `wire_tool_def` handles flattening +
-                // strict-mode rewrite; admin's system-prompt export calls the
-                // same helper so what the user sees in the export matches what
-                // the wire receives.
-                let resp_tools: Vec<serde_json::Value> = tools
-                    .iter()
-                    .filter_map(|t| wire_tool_def(t))
-                    .collect();
-
-                let mut req = serde_json::json!({
-                    "model": model,
-                    "input": input_items,
-                    "tools": resp_tools,
-                    "stream": true,
-                    "store": false,
-                });
-                // Reasoning models (gpt-5.x, o-series) on the Responses API take
-                // a `reasoning: { effort }` OBJECT — not the Chat Completions
-                // `reasoning_effort` scalar. The Responses branch never applied
-                // it, so the configured effort was silently dropped and the
-                // model always ran at default effort. `max_output_tokens` is
-                // deliberately left unset: OpenAI defaults it to the model
-                // maximum, so — unlike Gemini's small thinking budget (which we
-                // DO bump) — reasoning can't starve the visible output into an
-                // empty response.
-                if let Some(effort) = reasoning_effort {
-                    let e = effort.to_lowercase();
-                    if ["low", "medium", "high"].contains(&e.as_str())
-                        && Self::model_supports_reasoning(model, false)
-                    {
-                        req["reasoning"] = serde_json::json!({ "effort": e });
+                    for tc in &msg.tool_calls {
+                        let tc_id = ensure_fc_prefix(&tc.id);
+                        input_items.push(serde_json::json!({
+                            "type": "function_call",
+                            "id": tc_id,
+                            "call_id": tc_id,
+                            "name": tc.function.name,
+                            "arguments": match &tc.function.arguments {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => serde_json::to_string(other).unwrap_or_default(),
+                            },
+                        }));
                     }
+                } else {
+                    input_items.push(responses_api_input_item(msg));
                 }
-                if !instructions.is_empty() {
-                    req["instructions"] = serde_json::Value::String(instructions);
-                }
-                tracing::debug!("Responses API tool request to {}", url);
-                self.http.post(url).json(&req)
-            } else {
-                // Standard Chat Completions format
-                let url = format!("{}/chat/completions", self.base_url);
-                let oai_messages: Vec<OaiMessageWithTools> = messages
-                    .iter()
-                    .map(OaiMessageWithTools::from_chat)
-                    .collect();
-                let mut req = serde_json::json!({
-                    "model": model,
-                    "messages": oai_messages,
-                    "stream": true,
-                    "tools": tools,
-                });
-                let is_gemini = self.base_url.contains("googleapis.com");
-                // Only include stream_options for providers known to support it.
-                // Gemini's OpenAI-compatible API doesn't support stream_options.
-                if !is_gemini {
-                    req["stream_options"] = serde_json::json!({"include_usage": true});
-                }
-                // Gemini 2.5 thinking models can exhaust their output budget on
-                // internal reasoning and return empty responses. Set a generous
-                // max_completion_tokens so there's room for both thinking and output.
-                if is_gemini && model.contains("2.5") {
-                    req["max_completion_tokens"] = serde_json::json!(65536);
-                }
-                // Apply reasoning effort per provider
-                Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
-                self.http.post(url).json(&req)
-            };
+            }
 
-        let resp = self.send_with_oauth_retry(self.with_app_header(rb, app)).await?;
+            // Convert OpenAI-style tool defs to Responses API function tools.
+            // Single source of truth: `wire_tool_def` handles flattening +
+            // strict-mode rewrite; admin's system-prompt export calls the
+            // same helper so what the user sees in the export matches what
+            // the wire receives.
+            let resp_tools: Vec<serde_json::Value> =
+                tools.iter().filter_map(|t| wire_tool_def(t)).collect();
+
+            let mut req = serde_json::json!({
+                "model": model,
+                "input": input_items,
+                "tools": resp_tools,
+                "stream": true,
+                "store": false,
+            });
+            // Reasoning models (gpt-5.x, o-series) on the Responses API take
+            // a `reasoning: { effort }` OBJECT — not the Chat Completions
+            // `reasoning_effort` scalar. The Responses branch never applied
+            // it, so the configured effort was silently dropped and the
+            // model always ran at default effort. `max_output_tokens` is
+            // deliberately left unset: OpenAI defaults it to the model
+            // maximum, so — unlike Gemini's small thinking budget (which we
+            // DO bump) — reasoning can't starve the visible output into an
+            // empty response.
+            if let Some(effort) = reasoning_effort {
+                let e = effort.to_lowercase();
+                if ["low", "medium", "high"].contains(&e.as_str())
+                    && Self::model_supports_reasoning(model, false)
+                {
+                    req["reasoning"] = serde_json::json!({ "effort": e });
+                }
+            }
+            if !instructions.is_empty() {
+                req["instructions"] = serde_json::Value::String(instructions);
+            }
+            tracing::debug!("Responses API tool request to {}", url);
+            self.http.post(url).json(&req)
+        } else {
+            // Standard Chat Completions format
+            let url = format!("{}/chat/completions", self.base_url);
+            let oai_messages: Vec<OaiMessageWithTools> = messages
+                .iter()
+                .map(OaiMessageWithTools::from_chat)
+                .collect();
+            let mut req = serde_json::json!({
+                "model": model,
+                "messages": oai_messages,
+                "stream": true,
+                "tools": tools,
+            });
+            let is_gemini = self.base_url.contains("googleapis.com");
+            // Only include stream_options for providers known to support it.
+            // Gemini's OpenAI-compatible API doesn't support stream_options.
+            if !is_gemini {
+                req["stream_options"] = serde_json::json!({"include_usage": true});
+            }
+            // Gemini 2.5 thinking models can exhaust their output budget on
+            // internal reasoning and return empty responses. Set a generous
+            // max_completion_tokens so there's room for both thinking and output.
+            if is_gemini && model.contains("2.5") {
+                req["max_completion_tokens"] = serde_json::json!(65536);
+            }
+            // Apply reasoning effort per provider
+            Self::apply_reasoning_effort(&mut req, reasoning_effort, is_gemini, model);
+            self.http.post(url).json(&req)
+        };
+
+        let resp = self
+            .send_with_oauth_retry(self.with_app_header(rb, app))
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -908,7 +916,8 @@ impl OpenAiClient {
                     }
 
                     // Extract Gemini thought_signature — check chunk level first, then choice level.
-                    let chunk_level_sig = chunk.extra_content
+                    let chunk_level_sig = chunk
+                        .extra_content
                         .as_ref()
                         .and_then(|ec| ec.google.as_ref())
                         .and_then(|g| g.thought_signature.clone());
@@ -919,7 +928,8 @@ impl OpenAiClient {
                     };
 
                     let thought_sig = chunk_level_sig.or_else(|| {
-                        choice.extra_content
+                        choice
+                            .extra_content
                             .as_ref()
                             .and_then(|ec| ec.google.as_ref())
                             .and_then(|g| g.thought_signature.clone())
@@ -930,17 +940,20 @@ impl OpenAiClient {
                         let mut chunks: Vec<Result<StreamChunk>> = Vec::new();
                         for tc in tool_calls.into_iter() {
                             let name = tc.function.as_ref().and_then(|f| f.name.clone());
-                            let args_delta =
-                                tc.function.as_ref().and_then(|f| f.arguments.clone());
+                            let args_delta = tc.function.as_ref().and_then(|f| f.arguments.clone());
                             // Extract thought_signature from the tool call's own extra_content
                             // (Gemini puts it here), falling back to choice/chunk level.
-                            let sig = tc.extra_content
+                            let sig = tc
+                                .extra_content
                                 .as_ref()
                                 .and_then(|ec| ec.google.as_ref())
                                 .and_then(|g| g.thought_signature.clone())
                                 .or_else(|| thought_sig.clone());
                             if sig.is_some() && name.is_some() {
-                                tracing::debug!("Gemini thought_signature captured for tool call '{}'", name.as_deref().unwrap_or("?"));
+                                tracing::debug!(
+                                    "Gemini thought_signature captured for tool call '{}'",
+                                    name.as_deref().unwrap_or("?")
+                                );
                             }
                             chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
                                 index: tc.index,
@@ -1093,7 +1106,9 @@ impl OaiMessageWithTools {
             // Use the real signature if captured, otherwise use the documented
             // dummy value that bypasses the validator (for legacy history or
             // when the stream didn't include one).
-            let first_sig = msg.tool_calls.iter()
+            let first_sig = msg
+                .tool_calls
+                .iter()
                 .find_map(|tc| tc.thought_signature.clone());
 
             let tc: Vec<serde_json::Value> = msg
@@ -1116,7 +1131,9 @@ impl OaiMessageWithTools {
                     });
                     // Attach thought_signature to first tool call (Gemini spec)
                     if i == 0 {
-                        let sig = tc.thought_signature.as_deref()
+                        let sig = tc
+                            .thought_signature
+                            .as_deref()
                             .or(first_sig.as_deref())
                             .unwrap_or("skip_thought_signature_validator");
                         obj["extra_content"] = serde_json::json!({
@@ -1127,7 +1144,8 @@ impl OaiMessageWithTools {
                 })
                 .collect();
             // Also set message-level extra_content (some providers read it here).
-            let sig = first_sig.as_deref()
+            let sig = first_sig
+                .as_deref()
                 .unwrap_or("skip_thought_signature_validator");
             let extra_content = Some(serde_json::json!({
                 "google": { "thought_signature": sig }
@@ -1173,12 +1191,10 @@ impl OaiMessageWithTools {
     }
 }
 
-
 #[derive(Debug, Serialize)]
 struct OaiStreamOptions {
     include_usage: bool,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct OaiStreamChunk {
@@ -1361,6 +1377,9 @@ mod tests {
         // optionals are NOT widened to nullable, no additionalProperties:false.
         assert_eq!(wire["parameters"]["required"], json!([]));
         assert!(wire["parameters"].get("additionalProperties").is_none());
-        assert_eq!(wire["parameters"]["properties"]["body"]["type"], json!("object"));
+        assert_eq!(
+            wire["parameters"]["properties"]["body"]["type"],
+            json!("object")
+        );
     }
 }

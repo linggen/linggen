@@ -11,8 +11,9 @@ use super::model::{PermissionAction, PermissionMode};
 
 pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Path) -> String {
     match tool {
-        "Write" | "Edit" => normalize_tool_path_arg(cwd, args)
-            .unwrap_or_else(|| "<unknown file>".to_string()),
+        "Write" | "Edit" => {
+            normalize_tool_path_arg(cwd, args).unwrap_or_else(|| "<unknown file>".to_string())
+        }
         "Bash" => args
             .get("cmd")
             .or_else(|| args.get("command"))

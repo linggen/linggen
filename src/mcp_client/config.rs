@@ -166,9 +166,7 @@ impl McpServerConfig {
                 url: u.to_string(),
                 headers: self.headers.clone(),
             }),
-            (Some(_), Some(_)) => {
-                Err("has both `command` and `url` — pick one".into())
-            }
+            (Some(_), Some(_)) => Err("has both `command` and `url` — pick one".into()),
             _ => Err("needs either `command` (stdio) or `url` (http)".into()),
         }
     }
@@ -183,10 +181,8 @@ mod tests {
         // Copied from the shape CC writes, `type` and all. The file it came
         // from is not read; the *entry* still transliterates, which is the
         // property worth keeping.
-        let s: McpServerConfig = serde_json::from_str(
-            r#"{"type":"http","url":"http://127.0.0.1:9527/mcp"}"#,
-        )
-        .unwrap();
+        let s: McpServerConfig =
+            serde_json::from_str(r#"{"type":"http","url":"http://127.0.0.1:9527/mcp"}"#).unwrap();
         assert_eq!(
             s.transport().unwrap(),
             Transport::Http {
@@ -251,7 +247,10 @@ mod tests {
 
         // A trailing slash on the configured base must not double up.
         let slashed = with_builtin(&none, "http://127.0.0.1:9528/");
-        assert_eq!(slashed[BUILTIN_MEMORY].url.as_deref(), Some("http://127.0.0.1:9528/mcp"));
+        assert_eq!(
+            slashed[BUILTIN_MEMORY].url.as_deref(),
+            Some("http://127.0.0.1:9528/mcp")
+        );
     }
 
     /// Silently re-adding it would make `enabled = false` a lie, and a switch
@@ -261,18 +260,34 @@ mod tests {
         let mut user = BTreeMap::new();
         user.insert(
             BUILTIN_MEMORY.to_string(),
-            McpServerConfig { enabled: false, url: Some("http://elsewhere/mcp".into()), ..Default::default() },
+            McpServerConfig {
+                enabled: false,
+                url: Some("http://elsewhere/mcp".into()),
+                ..Default::default()
+            },
         );
         let merged = with_builtin(&user, "http://127.0.0.1:9528");
-        assert!(!merged[BUILTIN_MEMORY].enabled, "turning memory off must stick");
-        assert_eq!(merged[BUILTIN_MEMORY].url.as_deref(), Some("http://elsewhere/mcp"));
+        assert!(
+            !merged[BUILTIN_MEMORY].enabled,
+            "turning memory off must stick"
+        );
+        assert_eq!(
+            merged[BUILTIN_MEMORY].url.as_deref(),
+            Some("http://elsewhere/mcp")
+        );
         assert_eq!(merged.len(), 1);
     }
 
     #[test]
     fn other_servers_survive_the_merge_and_keep_their_gate() {
         let mut user = BTreeMap::new();
-        user.insert("gh".to_string(), McpServerConfig { command: Some("npx".into()), ..Default::default() });
+        user.insert(
+            "gh".to_string(),
+            McpServerConfig {
+                command: Some("npx".into()),
+                ..Default::default()
+            },
+        );
         let merged = with_builtin(&user, "http://127.0.0.1:9528");
         assert_eq!(merged.len(), 2);
         assert!(merged["gh"].gated);

@@ -1,6 +1,6 @@
-use crate::provider::codex_auth;
 use crate::config::Config;
 use crate::credentials::{self, Credentials};
+use crate::provider::codex_auth;
 use crate::server::ServerState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::sync::Arc;
@@ -62,17 +62,14 @@ pub(crate) async fn update_config_api(
 // Model health API — in-memory health status for all configured models
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn get_models_health(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn get_models_health(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     use crate::provider::models::ModelHealthStatus;
 
     let models_guard = state.manager.models.read().await;
     let health_records = models_guard.health.get_all().await;
 
     // Build a map of model_id → health record for easy lookup
-    let health_map: std::collections::HashMap<String, _> =
-        health_records.into_iter().collect();
+    let health_map: std::collections::HashMap<String, _> = health_records.into_iter().collect();
 
     // Return health for all configured models
     let config = state.manager.get_config_snapshot().await;
@@ -97,7 +94,10 @@ pub(crate) async fn get_models_health(
             })
         };
         if let Some(cw) = cw {
-            entry.as_object_mut().unwrap().insert("context_window".to_string(), serde_json::json!(cw));
+            entry
+                .as_object_mut()
+                .unwrap()
+                .insert("context_window".to_string(), serde_json::json!(cw));
         }
         result.push(entry);
     }
@@ -197,9 +197,9 @@ pub(crate) async fn start_codex_auth_login(
                 tracing::info!("ChatGPT OAuth login completed via Web UI");
                 // Rebuild ModelManager so it picks up the fresh token
                 let config = manager.get_config_snapshot().await;
-                let new_models = std::sync::Arc::new(
-                    crate::provider::models::ModelManager::new(config.models.clone()),
-                );
+                let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
+                    config.models.clone(),
+                ));
                 *manager.models.write().await = new_models;
                 // Clear all session engines so they use the new models
                 manager.session_engines.lock().await.clear();

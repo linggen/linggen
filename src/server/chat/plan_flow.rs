@@ -4,12 +4,7 @@ use crate::server::chat::helpers::{
     emit_outcome_event, persist_and_emit_message, persist_message_only,
 };
 use crate::server::{ServerEvent, ServerState};
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,10 +19,7 @@ use super::ChatRunCtx;
 use crate::server::AgentStatusKind;
 
 /// Dispatch plan mode: agent researches codebase and produces a structured plan (read-only).
-pub(super) async fn run_plan_dispatch(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-) {
+pub(super) async fn run_plan_dispatch(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     send_thinking_status(ctx, "Planning").await;
 
     // Extract task from "/plan <task>" prefix or use full message.
@@ -89,12 +81,23 @@ pub(super) async fn run_plan_dispatch(
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 let plan_json = serde_json::json!({ "type": "plan", "plan": plan }).to_string();
                 persist_message_only(
-                    &ctx.manager, &ctx.root, &ctx.agent_id,
-                    &ctx.agent_id, "user", &plan_json,
-                    ctx.session_id.as_deref(), false,
-                ).await;
+                    &ctx.manager,
+                    &ctx.root,
+                    &ctx.agent_id,
+                    &ctx.agent_id,
+                    "user",
+                    &plan_json,
+                    ctx.session_id.as_deref(),
+                    false,
+                )
+                .await;
             }
-            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+            emit_outcome_event(
+                out,
+                &ctx.events_tx,
+                &ctx.agent_id,
+                ctx.session_id.as_deref(),
+            );
             if let crate::engine::AgentOutcome::Plan(ref plan) = out {
                 ctx.manager
                     .set_pending_plan(
@@ -109,8 +112,15 @@ pub(super) async fn run_plan_dispatch(
         Err(err) => {
             let error_msg = super::helpers::format_turn_error(&err.to_string());
             persist_and_emit_message(
-                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                &ctx.agent_id, "user", &error_msg, ctx.session_id.as_deref(), false,
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                &error_msg,
+                ctx.session_id.as_deref(),
+                false,
             )
             .await;
         }
@@ -120,10 +130,7 @@ pub(super) async fn run_plan_dispatch(
 
 /// Run the execution loop for an approved plan. Wires thinking/interrupt channels,
 /// runs the loop, and emits outcome events. Engine must already have plan + task set.
-pub(super) async fn run_plan_execution(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-) {
+pub(super) async fn run_plan_execution(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     let (thinking_tx, thinking_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.thinking_tx = Some(thinking_tx);
     let interrupt_key = wire_interrupt_channel(ctx, engine).await;
@@ -139,8 +146,13 @@ pub(super) async fn run_plan_execution(
     send_thinking_status(ctx, "Executing plan").await;
 
     let exec_outcome = run_loop_with_tracking(
-        &ctx.manager, &ctx.root, engine, &ctx.agent_id,
-        ctx.session_id.as_deref(), "chat:plan-execution", &ctx.events_tx,
+        &ctx.manager,
+        &ctx.root,
+        engine,
+        &ctx.agent_id,
+        ctx.session_id.as_deref(),
+        "chat:plan-execution",
+        &ctx.events_tx,
     )
     .await;
 
@@ -149,7 +161,12 @@ pub(super) async fn run_plan_execution(
 
     match exec_outcome {
         Ok(ref out) => {
-            emit_outcome_event(out, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+            emit_outcome_event(
+                out,
+                &ctx.events_tx,
+                &ctx.agent_id,
+                ctx.session_id.as_deref(),
+            );
             // Done (AgentOutcome::None): emit last_assistant_text so the UI
             // shows the completion summary.
             if matches!(out, crate::engine::AgentOutcome::None) {
@@ -160,9 +177,9 @@ pub(super) async fn run_plan_execution(
                             to: "user".to_string(),
                             content: text.clone(),
                             session_id: ctx.session_id.clone(),
-                run_id: None,
-                parent_agent_id: None,
-            });
+                            run_id: None,
+                            parent_agent_id: None,
+                        });
                     }
                 }
             }
@@ -170,8 +187,15 @@ pub(super) async fn run_plan_execution(
         Err(err) => {
             let error_msg = super::helpers::format_turn_error(&err.to_string());
             persist_and_emit_message(
-                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                &ctx.agent_id, "user", &error_msg, ctx.session_id.as_deref(), false,
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                &error_msg,
+                ctx.session_id.as_deref(),
+                false,
             )
             .await;
         }
@@ -223,7 +247,9 @@ pub(crate) async fn approve_plan_handler(
         .await
     {
         Some(p) => Some(p),
-        None => recover_plan_from_session(&state, &root, &req.agent_id, session_id.as_deref()).await,
+        None => {
+            recover_plan_from_session(&state, &root, &req.agent_id, session_id.as_deref()).await
+        }
     };
     let Some(mut plan) = plan else {
         return (
@@ -295,12 +321,18 @@ async fn run_approved_plan_task(
     engine.observations.clear();
     engine.task = Some(format!(
         "Execute the approved plan: {}",
-        engine.plan.as_ref().map(|p| p.summary.as_str()).unwrap_or("Plan")
+        engine
+            .plan
+            .as_ref()
+            .map(|p| p.summary.as_str())
+            .unwrap_or("Plan")
     ));
 
     // Emit PlanUpdate SSE and rewrite the persisted plan message in-place.
     let approved_snapshot = engine.plan.clone().unwrap();
-    engine.persist_and_emit_plan(approved_snapshot.clone()).await;
+    engine
+        .persist_and_emit_plan(approved_snapshot.clone())
+        .await;
     persist_plan_message(&manager, &root, &sid_default, &agent_id, &approved_snapshot).await;
 
     // Plan execution only calls run_agent_loop (no skill dispatch), so
@@ -326,9 +358,17 @@ async fn run_approved_plan_task(
         if matches!(plan.status, PlanStatus::Executing | PlanStatus::Approved) {
             plan.status = PlanStatus::Completed;
             let completed_snapshot = plan.clone();
-            engine.persist_and_emit_plan(completed_snapshot.clone()).await;
-            persist_plan_message(&manager, &root, &sid_default, &agent_id, &completed_snapshot)
+            engine
+                .persist_and_emit_plan(completed_snapshot.clone())
                 .await;
+            persist_plan_message(
+                &manager,
+                &root,
+                &sid_default,
+                &agent_id,
+                &completed_snapshot,
+            )
+            .await;
         }
     }
 
@@ -390,7 +430,9 @@ pub(crate) async fn reject_plan_handler(
         .await;
     let removed = match removed {
         Some(p) => Some(p),
-        None => recover_plan_from_session(&state, &root, &req.agent_id, req.session_id.as_deref()).await,
+        None => {
+            recover_plan_from_session(&state, &root, &req.agent_id, req.session_id.as_deref()).await
+        }
     };
 
     if removed.is_none() {
@@ -448,10 +490,8 @@ pub(crate) async fn edit_plan_handler(
     {
         Some(p) => p,
         None => {
-            let Some(mut plan) = recover_plan_from_session(
-                &state, &root, &agent_id, session_id.as_deref(),
-            )
-            .await
+            let Some(mut plan) =
+                recover_plan_from_session(&state, &root, &agent_id, session_id.as_deref()).await
             else {
                 return (
                     StatusCode::NOT_FOUND,

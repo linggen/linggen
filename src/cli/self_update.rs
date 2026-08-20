@@ -130,7 +130,11 @@ async fn update_binary(
         .context("Failed to download release asset")?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("[{}] Download failed with HTTP {}", binary_name, resp.status());
+        anyhow::bail!(
+            "[{}] Download failed with HTTP {}",
+            binary_name,
+            resp.status()
+        );
     }
 
     let bytes = resp.bytes().await.context("Failed to read download")?;
@@ -153,7 +157,12 @@ async fn update_binary(
     std::fs::write(&tarball_path, &bytes).context("Failed to write temp tarball")?;
 
     let output = std::process::Command::new("tar")
-        .args(["xzf", &tarball_path.to_string_lossy(), "-C", &temp_dir.to_string_lossy()])
+        .args([
+            "xzf",
+            &tarball_path.to_string_lossy(),
+            "-C",
+            &temp_dir.to_string_lossy(),
+        ])
         .output()
         .context("Failed to run tar to extract binary")?;
 
@@ -185,10 +194,17 @@ async fn update_binary(
         Some(cv) => {
             crate::telemetry::global().bump("update.ok");
             println!("[{}] Updated v{} -> v{}", binary_name, cv, manifest.version);
-            println!("\n  Tip: run `ling init` to update agents and skills to match the new version.");
+            println!(
+                "\n  Tip: run `ling init` to update agents and skills to match the new version."
+            );
         }
         None => {
-            println!("[{}] Installed v{} at {}", binary_name, manifest.version, target_path.display());
+            println!(
+                "[{}] Installed v{} at {}",
+                binary_name,
+                manifest.version,
+                target_path.display()
+            );
             println!("\n  Tip: run `ling init` to set up agents, skills, and default config.");
         }
     }

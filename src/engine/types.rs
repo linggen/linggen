@@ -1,12 +1,12 @@
-use crate::provider::models::ModelManager;
-use crate::engine::agent::AgentManager;
 use crate::engine::agent::record::AgentSpec;
+use crate::engine::agent::AgentManager;
 use crate::engine::permission;
+use crate::engine::skill::registry::SkillRegistry;
+use crate::engine::skill::Skill;
 use crate::engine::tool_registry::ToolRegistry;
 use crate::engine::tools;
 use crate::message::ChatMessage;
-use crate::engine::skill::Skill;
-use crate::engine::skill::registry::SkillRegistry;
+use crate::provider::models::ModelManager;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -65,7 +65,6 @@ pub enum PlanStatus {
     Rejected,
 }
 
-
 #[derive(Debug, Clone)]
 pub enum ThinkingEvent {
     /// Internal reasoning token (hidden from user, shows "Thinking..." indicator).
@@ -83,7 +82,6 @@ pub enum AgentRole {
     #[serde(rename = "lead")]
     Lead,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceMode {
@@ -455,7 +453,9 @@ impl AgentEngine {
         let mut builtins = tools::Tools::new(cfg.ws_root.clone())?;
         let prompt_store = {
             let override_dir = crate::prompts::PromptStore::default_override_dir();
-            std::sync::Arc::new(crate::prompts::PromptStore::load(Some(override_dir.as_path())))
+            std::sync::Arc::new(crate::prompts::PromptStore::load(Some(
+                override_dir.as_path(),
+            )))
         };
         builtins.set_prompt_store(std::sync::Arc::clone(&prompt_store));
         let tools = ToolRegistry::new(builtins);
@@ -591,7 +591,9 @@ impl AgentEngine {
     /// Kept as a public method until callers stop invoking it.
     pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
         let _ = skills;
-        if self.spec.is_none() { return };
+        if self.spec.is_none() {
+            return;
+        };
         // Reserved for future per-session tool wiring (e.g. dynamically
         // installed skill-declared tools); currently nothing to do.
     }

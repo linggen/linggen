@@ -10,8 +10,8 @@
 //! directory-walking rules. The engine never touches `std::fs` for
 //! agent loading — it goes through this module.
 
-use crate::engine::agent::registry::AgentRegistry;
 use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
+use crate::engine::agent::registry::AgentRegistry;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -78,7 +78,11 @@ fn load_specs_from_dir(agents_dir: &Path) -> Vec<AgentSpecFile> {
             })
             .collect(),
         Err(err) => {
-            warn!("Cannot read agents directory {}: {}", agents_dir.display(), err);
+            warn!(
+                "Cannot read agents directory {}: {}",
+                agents_dir.display(),
+                err
+            );
             return Vec::new();
         }
     };
@@ -267,7 +271,11 @@ You are Ling."#;
         let (spec, prompt) = parse_agent_markdown(md).unwrap();
         assert_eq!(spec.name, "ling");
         assert!(spec.personality.is_some());
-        assert!(spec.personality.as_ref().unwrap().contains("Concise and direct"));
+        assert!(spec
+            .personality
+            .as_ref()
+            .unwrap()
+            .contains("Concise and direct"));
         assert_eq!(prompt, "You are Ling.");
     }
 
@@ -309,8 +317,14 @@ You are the lead."#;
         fs::write(&spec_path, md).expect("write agent");
 
         let (_, prompt) = parse_agent_file(&spec_path).expect("parse with include");
-        assert!(prompt.contains("plain prose"), "include content missing: {prompt}");
-        assert!(!prompt.contains("{{#include"), "directive left behind: {prompt}");
+        assert!(
+            prompt.contains("plain prose"),
+            "include content missing: {prompt}"
+        );
+        assert!(
+            !prompt.contains("{{#include"),
+            "directive left behind: {prompt}"
+        );
         assert!(prompt.ends_with("Be kind."));
 
         let _ = fs::remove_dir_all(&root);
@@ -332,8 +346,15 @@ You are the lead."#;
             "invalid file should be skipped"
         );
         let alpha_specs: Vec<_> = specs.iter().filter(|s| s.agent_id == "alpha").collect();
-        assert_eq!(alpha_specs.len(), 1, "duplicate agent_id should be deduplicated");
-        assert!(alpha_specs[0].spec_path.ends_with("a.md") || alpha_specs[0].spec_path.ends_with("z.md"));
+        assert_eq!(
+            alpha_specs.len(),
+            1,
+            "duplicate agent_id should be deduplicated"
+        );
+        assert!(
+            alpha_specs[0].spec_path.ends_with("a.md")
+                || alpha_specs[0].spec_path.ends_with("z.md")
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -4,7 +4,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::reload::Handle;
-use tracing_subscriber::{fmt::time::ChronoUtc, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+use tracing_subscriber::{
+    fmt::time::ChronoUtc, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry,
+};
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static FILTER_HANDLE: OnceLock<Handle<EnvFilter, Registry>> = OnceLock::new();
@@ -31,18 +33,19 @@ fn build_filter(level: &str) -> EnvFilter {
 
 pub fn setup_tracing_with_settings(settings: LoggingSettings<'_>) -> Result<PathBuf> {
     let log_dir = resolve_log_dir(settings.directory)?;
-    let retention_days = settings.retention_days.unwrap_or(DEFAULT_RETENTION_DAYS).max(1);
+    let retention_days = settings
+        .retention_days
+        .unwrap_or(DEFAULT_RETENTION_DAYS)
+        .max(1);
     if let Err(e) = cleanup_old_logs(&log_dir, retention_days) {
         eprintln!("Failed to cleanup old logs: {e}");
     }
 
     let file_appender = tracing_appender::rolling::daily(&log_dir, LOG_FILE_PREFIX);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    LOG_GUARD
-        .set(guard)
-        .map_err(|_| anyhow!(
-            "Logging already initialized. Cannot setup logging multiple times."
-        ))?;
+    LOG_GUARD.set(guard).map_err(|_| {
+        anyhow!("Logging already initialized. Cannot setup logging multiple times.")
+    })?;
 
     // Second-level timestamp precision to keep logs readable.
     let time_format = ChronoUtc::new("%Y-%m-%dT%H:%M:%S".to_string());

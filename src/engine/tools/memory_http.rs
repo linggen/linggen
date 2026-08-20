@@ -66,11 +66,7 @@ const INSTALL_BIN_MIRROR_URL: &str = "https://linggen.dev/dl/install-bin.sh";
 /// business, and each one does it: the `/mcp` group says `mcp`, a skill's
 /// webpage door says `linggen`. A default buried here would have named this
 /// engine on behalf of a caller that isn't it.
-pub async fn call_memory_http(
-    ling_mem_url: &str,
-    caller: &str,
-    mut args: Value,
-) -> Result<Value> {
+pub async fn call_memory_http(ling_mem_url: &str, caller: &str, mut args: Value) -> Result<Value> {
     let ling_mem_url = ling_mem_url.trim_end_matches('/');
 
     // Verb → endpoint. Strip the verb from the body so the daemon sees
@@ -119,11 +115,16 @@ pub async fn call_memory_http(
     // regardless of type/origin/outcome. Keep `contexts` intact for
     // callers that legitimately scope by tag.
     if let Some(obj) = args.as_object_mut() {
-        let is_ttl_sweep = obj.get("past_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_ttl_sweep = obj
+            .get("past_ttl")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if is_ttl_sweep {
             for k in ["type", "from", "outcome"] {
                 if obj.remove(k).is_some() {
-                    tracing::debug!("ling-mem client: dropped over-constraining `{k}` on past_ttl sweep");
+                    tracing::debug!(
+                        "ling-mem client: dropped over-constraining `{k}` on past_ttl sweep"
+                    );
                 }
             }
         }
@@ -224,9 +225,9 @@ pub async fn post_memory_verb(
     match post_raw(&url, body).await {
         Ok(v) => Ok(v),
         Err(DispatchError::NoDaemon) => {
-            autostart()
-                .await
-                .with_context(|| format!("autostarting ling-mem after first attempt to {url} failed"))?;
+            autostart().await.with_context(|| {
+                format!("autostarting ling-mem after first attempt to {url} failed")
+            })?;
             post_raw(&url, body).await.map_err(anyhow::Error::from)
         }
         Err(DispatchError::Other(e)) => Err(e),
@@ -255,10 +256,9 @@ async fn post_raw(url: &str, args: &Value) -> Result<(u16, Value), DispatchError
     };
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| DispatchError::Other(anyhow::Error::from(e).context(format!("reading {url} response"))))?;
+    let body = response.text().await.map_err(|e| {
+        DispatchError::Other(anyhow::Error::from(e).context(format!("reading {url} response")))
+    })?;
 
     match serde_json::from_str::<Value>(&body) {
         Ok(envelope) if envelope.is_object() => Ok((status.as_u16(), envelope)),
@@ -267,7 +267,11 @@ async fn post_raw(url: &str, args: &Value) -> Result<(u16, Value), DispatchError
             let message = format!(
                 "ling-mem error [{}]: {}",
                 status.as_u16(),
-                if trimmed.is_empty() { "<empty body>" } else { trimmed }
+                if trimmed.is_empty() {
+                    "<empty body>"
+                } else {
+                    trimmed
+                }
             );
             if status.is_success() {
                 // A 2xx that isn't the envelope is the daemon misbehaving,
@@ -289,7 +293,10 @@ fn parse_envelope(envelope: Value) -> Result<Value> {
     match obj.get("ok").and_then(|v| v.as_bool()) {
         Some(true) => Ok(obj.get("data").cloned().unwrap_or(Value::Null)),
         Some(false) => {
-            let msg = obj.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+            let msg = obj
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
             let code = obj.get("code").and_then(|v| v.as_str());
             match code {
                 Some(c) => Err(anyhow!("ling-mem error [{c}]: {msg}")),
@@ -302,7 +309,10 @@ fn parse_envelope(envelope: Value) -> Result<Value> {
 
 /// Parse `<bin> --version` ("ling-mem X.Y.Z") into a comparable tuple.
 fn ling_mem_version(path: &std::path::Path) -> Option<(u32, u32, u32)> {
-    let out = std::process::Command::new(path).arg("--version").output().ok()?;
+    let out = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -448,8 +458,7 @@ pub(crate) async fn backup_store_best_effort() {
 }
 
 async fn try_backup_store() -> Result<()> {
-    let bin =
-        resolve_ling_mem().ok_or_else(|| anyhow!("ling-mem binary not found for backup"))?;
+    let bin = resolve_ling_mem().ok_or_else(|| anyhow!("ling-mem binary not found for backup"))?;
     let dir = crate::paths::linggen_home().join("memory/backups");
     tokio::fs::create_dir_all(&dir).await?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();

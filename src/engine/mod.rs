@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod agent;
 mod context;
+mod dispatch;
 pub mod mission;
 pub mod permission;
 mod plan;
@@ -11,9 +12,8 @@ pub mod skill;
 pub mod skill_activation;
 pub mod skill_tool;
 mod streaming;
-pub mod tool_registry;
-mod dispatch;
 mod tool_exec;
+pub mod tool_registry;
 pub(crate) mod tool_render;
 pub mod tools;
 mod types;
@@ -22,8 +22,8 @@ pub mod web_search;
 
 // Re-export public API types
 pub use types::{
-    ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextRecord, ContextType,
-    EngineConfig, InterfaceMode, Plan, PlanStatus, ThinkingEvent,
+    ActiveMission, AgentEngine, AgentOutcome, AgentRole, ContextRecord, ContextType, EngineConfig,
+    InterfaceMode, Plan, PlanStatus, ThinkingEvent,
 };
 
 pub use actions::{
@@ -60,12 +60,10 @@ impl AgentEngine {
                         // No longer a real tool — ignore. Loop stops when no tool calls.
                         None
                     }
-                    _ => {
-                        Some(ModelAction {
-                            tool: tc.name.clone(),
-                            args: tc.arguments.clone(),
-                        })
-                    }
+                    _ => Some(ModelAction {
+                        tool: tc.name.clone(),
+                        args: tc.arguments.clone(),
+                    }),
                 }
             })
             .collect()
@@ -142,10 +140,7 @@ impl AgentEngine {
     /// `self` (sets `session_id`, `session_dir`, `session_permissions`,
     /// `context_window_tokens`, `accumulated_token_estimate`,
     /// `native_tool_mode`, plus the builtins' progress channel).
-    async fn initialize_loop(
-        &mut self,
-        session_id: Option<&str>,
-    ) -> Result<LoopState> {
+    async fn initialize_loop(&mut self, session_id: Option<&str>) -> Result<LoopState> {
         self.session_id = session_id.map(|s| s.to_string());
 
         // Load session permissions from permission.json (or initialize defaults).
@@ -156,7 +151,8 @@ impl AgentEngine {
             // Mission and proxy-consumer sessions are non-interactive — they
             // pause/fail instead of prompting. Re-apply after load, since
             // permission.json may have been written before this flag was set.
-            if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
+            if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some()
+            {
                 self.session_permissions.interactive = false;
             }
 
@@ -178,10 +174,8 @@ impl AgentEngine {
                 } else {
                     actual_cwd.to_string_lossy().to_string()
                 };
-                self.session_permissions.set_path_mode(
-                    &cwd_str,
-                    self.cfg.permission_mode.clone(),
-                );
+                self.session_permissions
+                    .set_path_mode(&cwd_str, self.cfg.permission_mode.clone());
                 self.session_permissions.save(&sdir);
             }
 
@@ -198,14 +192,17 @@ impl AgentEngine {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             manager
-                .send_event(crate::engine::agent::AgentEvent::AgentStatus {
-                    agent_id,
-                    status: "working".to_string(),
-                    detail: Some("Running".to_string()),
-                    parent_id: self.parent_agent_id.clone(),
-                    run_id: self.run_id.clone(),
-                    parent_run_id: self.parent_run_id.clone(),
-                }, self.session_id.clone())
+                .send_event(
+                    crate::engine::agent::AgentEvent::AgentStatus {
+                        agent_id,
+                        status: "working".to_string(),
+                        detail: Some("Running".to_string()),
+                        parent_id: self.parent_agent_id.clone(),
+                        run_id: self.run_id.clone(),
+                        parent_run_id: self.parent_run_id.clone(),
+                    },
+                    self.session_id.clone(),
+                )
                 .await;
         }
 
@@ -215,17 +212,15 @@ impl AgentEngine {
         }
 
         // Set up progress channel for streaming Bash output.
-        let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
+        let (progress_tx, progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
         self.tools.builtins.set_progress_tx(progress_tx);
 
         let Some(task) = self.task.clone() else {
             anyhow::bail!("no task set; use /task <text>");
         };
 
-        let log_run = self
-            .run_id
-            .clone()
-            .unwrap_or_else(|| "root".to_string());
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
         // Task strings can be 100+ lines (e.g. MEMORY_EXTRACT embeds the full
         // dashboard-page-layout prompt). Logging the whole thing at INFO
         // overwhelms the log. Show the first non-blank line + size so a
@@ -293,8 +288,12 @@ impl AgentEngine {
                 .ok()
                 .flatten();
             if let Some(cw) = self.context_window_tokens {
-                debug!("Context window: {}t, soft_limit={}, tail_budget={}t",
-                    cw, self.context_soft_token_limit(), self.context_tail_token_budget());
+                debug!(
+                    "Context window: {}t, soft_limit={}, tail_budget={}t",
+                    cw,
+                    self.context_soft_token_limit(),
+                    self.context_tail_token_budget()
+                );
             }
         }
 
@@ -333,10 +332,7 @@ impl AgentEngine {
 
     pub async fn run_agent_loop(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         let mut state = self.initialize_loop(session_id).await?;
-        let log_run = self
-            .run_id
-            .clone()
-            .unwrap_or_else(|| "root".to_string());
+        let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
 
         let mut interrupted_by_user = false;
         for _ in 0..self.cfg.max_iters {
@@ -362,39 +358,50 @@ impl AgentEngine {
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
                 manager
-                    .send_event(crate::engine::agent::AgentEvent::AgentStatus {
-                        agent_id,
-                        status: "thinking".to_string(),
-                        detail: Some(format!("Thinking ({})", self.model_id)),
-                        parent_id: self.parent_agent_id.clone(),
-                        run_id: self.run_id.clone(),
-                        parent_run_id: self.parent_run_id.clone(),
-                    }, self.session_id.clone())
+                    .send_event(
+                        crate::engine::agent::AgentEvent::AgentStatus {
+                            agent_id,
+                            status: "thinking".to_string(),
+                            detail: Some(format!("Thinking ({})", self.model_id)),
+                            parent_id: self.parent_agent_id.clone(),
+                            run_id: self.run_id.clone(),
+                            parent_run_id: self.parent_run_id.clone(),
+                        },
+                        self.session_id.clone(),
+                    )
                     .await;
             }
 
             // Skip compaction while executing an approved plan — the model
             // needs full tool-result context to track progress against plan steps.
-            let executing_plan = self.plan.as_ref()
+            let executing_plan = self
+                .plan
+                .as_ref()
                 .map(|p| p.status == PlanStatus::Executing || p.status == PlanStatus::Approved)
                 .unwrap_or(false);
             let summary_count = if executing_plan {
                 0
             } else {
-                self.maybe_compact_model_messages(&mut state.messages, "loop_iter").await
+                self.maybe_compact_model_messages(&mut state.messages, "loop_iter")
+                    .await
             };
             self.emit_context_usage_event("loop_iter", &state.messages, summary_count)
                 .await;
 
             // Determine whether to use native tool calling for this model.
             let native_tools = if self.model_manager.supports_tools(&self.model_id) {
-                Some(self.tools.oai_tool_definitions(state.allowed_tools.as_ref()))
+                Some(
+                    self.tools
+                        .oai_tool_definitions(state.allowed_tools.as_ref()),
+                )
             } else {
                 None
             };
 
             // Ask model for the next action, streaming thinking tokens.
-            let stream_result = self.stream_with_fallback(&state.messages, native_tools.clone()).await?;
+            let stream_result = self
+                .stream_with_fallback(&state.messages, native_tools.clone())
+                .await?;
             let raw = stream_result.full_text;
             let stream_first_action = stream_result.first_action;
             let native_tool_calls = stream_result.tool_calls;
@@ -447,7 +454,10 @@ impl AgentEngine {
                     || m.contains("deepseek-r");
                 let empty_bail_threshold = if is_reasoning_model { 6 } else { 3 };
                 if state.empty_response_streak >= empty_bail_threshold {
-                    warn!("Bailing out after {} consecutive empty responses from {}", state.empty_response_streak, self.model_id);
+                    warn!(
+                        "Bailing out after {} consecutive empty responses from {}",
+                        state.empty_response_streak, self.model_id
+                    );
 
                     // In plan mode, auto-finalize with whatever research was gathered
                     // instead of showing an error. The user can still see and approve the plan.
@@ -473,19 +483,28 @@ impl AgentEngine {
                     );
                     let _ = self.persist_assistant_message(&msg, session_id).await;
                     if let Some(manager) = self.tools.get_manager() {
-                        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
-                        manager.send_event(crate::engine::agent::AgentEvent::TextSegment {
-                            agent_id,
-                            text: msg.clone(),
-                            parent_id: self.parent_agent_id.clone(),
-                        }, self.session_id.clone()).await;
+                        let agent_id = self
+                            .agent_id
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        manager
+                            .send_event(
+                                crate::engine::agent::AgentEvent::TextSegment {
+                                    agent_id,
+                                    text: msg.clone(),
+                                    parent_id: self.parent_agent_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
+                            .await;
                     }
                     self.active_skill = None;
                     return Ok(AgentOutcome::None);
                 }
                 // Push a nudge and retry
                 let nudge = self.tool_result_msg(
-                    "Your response was empty. Please respond with either a tool call or text.".to_string(),
+                    "Your response was empty. Please respond with either a tool call or text."
+                        .to_string(),
                 );
                 self.push_tracked_message(&mut state.messages, nudge);
                 continue;
@@ -506,23 +525,29 @@ impl AgentEngine {
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
-                                agent_id: agent_id.clone(),
-                                text: visible_text.clone(),
-                                parent_id: self.parent_agent_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::TextSegment {
+                                    agent_id: agent_id.clone(),
+                                    text: visible_text.clone(),
+                                    parent_id: self.parent_agent_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
-                                agent_id,
-                                block_id: uuid::Uuid::new_v4().to_string(),
-                                block_type: "text".to_string(),
-                                tool: None,
-                                args: Some(visible_text),
-                                parent_id: self.parent_agent_id.clone(),
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::ContentBlockStart {
+                                    agent_id,
+                                    block_id: uuid::Uuid::new_v4().to_string(),
+                                    block_type: "text".to_string(),
+                                    tool: None,
+                                    args: Some(visible_text),
+                                    parent_id: self.parent_agent_id.clone(),
+                                    run_id: self.run_id.clone(),
+                                    parent_run_id: self.parent_run_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                     }
                 }
@@ -566,7 +591,8 @@ impl AgentEngine {
                         return Ok(outcome);
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
-                    self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
+                    self.chat_history
+                        .push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw.clone());
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
@@ -585,8 +611,12 @@ impl AgentEngine {
                 }
 
                 // Execute actions (reusing shared dispatch logic)
-                let tc_ids: Vec<String> = native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
-                if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &tc_ids).await? {
+                let tc_ids: Vec<String> =
+                    native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
+                if let Some(outcome) = self
+                    .execute_action_loop(actions, &mut state, session_id, &tc_ids)
+                    .await?
+                {
                     return Ok(outcome);
                 }
                 continue;
@@ -599,9 +629,8 @@ impl AgentEngine {
                 // legacy JSON action parser below.
                 let has_json_actions = {
                     let trimmed = raw.trim();
-                    trimmed.starts_with('{') && (
-                        trimmed.contains("\"type\"") || trimmed.contains("\"name\"")
-                    )
+                    trimmed.starts_with('{')
+                        && (trimmed.contains("\"type\"") || trimmed.contains("\"name\""))
                 };
                 if !has_json_actions {
                     // Plan mode fallback: model output plan text without calling
@@ -623,27 +652,34 @@ impl AgentEngine {
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string());
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
-                                agent_id: agent_id.clone(),
-                                text: raw.clone(),
-                                parent_id: self.parent_agent_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::TextSegment {
+                                    agent_id: agent_id.clone(),
+                                    text: raw.clone(),
+                                    parent_id: self.parent_agent_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
-                                agent_id,
-                                block_id: uuid::Uuid::new_v4().to_string(),
-                                block_type: "text".to_string(),
-                                tool: None,
-                                args: Some(raw.clone()),
-                                parent_id: self.parent_agent_id.clone(),
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::ContentBlockStart {
+                                    agent_id,
+                                    block_id: uuid::Uuid::new_v4().to_string(),
+                                    block_type: "text".to_string(),
+                                    tool: None,
+                                    args: Some(raw.clone()),
+                                    parent_id: self.parent_agent_id.clone(),
+                                    run_id: self.run_id.clone(),
+                                    parent_run_id: self.parent_run_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                     }
                     let _ = self.persist_assistant_message(&raw, session_id).await;
-                    self.chat_history.push(ChatMessage::new("assistant", raw.clone()));
+                    self.chat_history
+                        .push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw.clone());
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
@@ -668,24 +704,30 @@ impl AgentEngine {
                             .unwrap_or_else(|| "unknown".to_string());
                         // Emit TextSegment for streaming display in UI.
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::TextSegment {
-                                agent_id: agent_id.clone(),
-                                text: text_before.clone(),
-                                parent_id: self.parent_agent_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::TextSegment {
+                                    agent_id: agent_id.clone(),
+                                    text: text_before.clone(),
+                                    parent_id: self.parent_agent_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                         // Also emit structured ContentBlockStart(text) for Web UI.
                         manager
-                            .send_event(crate::engine::agent::AgentEvent::ContentBlockStart {
-                                agent_id,
-                                block_id: uuid::Uuid::new_v4().to_string(),
-                                block_type: "text".to_string(),
-                                tool: None,
-                                args: Some(text_before),
-                                parent_id: self.parent_agent_id.clone(),
-                                run_id: self.run_id.clone(),
-                                parent_run_id: self.parent_run_id.clone(),
-                            }, self.session_id.clone())
+                            .send_event(
+                                crate::engine::agent::AgentEvent::ContentBlockStart {
+                                    agent_id,
+                                    block_id: uuid::Uuid::new_v4().to_string(),
+                                    block_type: "text".to_string(),
+                                    tool: None,
+                                    args: Some(text_before),
+                                    parent_id: self.parent_agent_id.clone(),
+                                    run_id: self.run_id.clone(),
+                                    parent_run_id: self.parent_run_id.clone(),
+                                },
+                                self.session_id.clone(),
+                            )
                             .await;
                     }
                 }
@@ -726,9 +768,7 @@ impl AgentEngine {
                     if !raw.contains('{') && looks_like_final_answer(&raw) {
                         // Plain text that looks like a substantive answer (long enough,
                         // not "thinking out loud") — treat as an implicit done.
-                        let _ = self
-                            .persist_assistant_message(&raw, session_id)
-                            .await;
+                        let _ = self.persist_assistant_message(&raw, session_id).await;
                         if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                             continue;
                         }
@@ -745,18 +785,21 @@ impl AgentEngine {
                                 &[],
                             )
                         };
-                        let _ = self
-                            .persist_assistant_message(&message, session_id)
-                            .await;
-                        if self.try_drain_kickoff(&mut state, session_id, &message).await {
+                        let _ = self.persist_assistant_message(&message, session_id).await;
+                        if self
+                            .try_drain_kickoff(&mut state, session_id, &message)
+                            .await
+                        {
                             continue;
                         }
                         self.active_skill = None;
                         return Ok(AgentOutcome::None);
                     }
-                    let nudge = self.tool_result_msg(
-                        self.prompt_store.render_or_fallback(crate::prompts::NUDGE_INVALID_JSON, &[("raw", &raw)]),
-                    );
+                    let nudge =
+                        self.tool_result_msg(self.prompt_store.render_or_fallback(
+                            crate::prompts::NUDGE_INVALID_JSON,
+                            &[("raw", &raw)],
+                        ));
                     self.push_tracked_message(&mut state.messages, nudge);
                     self.push_context_record(
                         ContextType::Error,
@@ -772,7 +815,10 @@ impl AgentEngine {
             state.invalid_json_streak = 0;
 
             // Execute actions with parallel delegation support.
-            if let Some(outcome) = self.execute_action_loop(actions, &mut state, session_id, &[]).await? {
+            if let Some(outcome) = self
+                .execute_action_loop(actions, &mut state, session_id, &[])
+                .await?
+            {
                 return Ok(outcome);
             }
         }
@@ -798,10 +844,9 @@ impl AgentEngine {
         if interrupted_by_user {
             return;
         }
-        let fallback = self.prompt_store.render_or_fallback(
-            crate::prompts::keys::BAILOUT_LOOP_LIMIT,
-            &[],
-        );
+        let fallback = self
+            .prompt_store
+            .render_or_fallback(crate::prompts::keys::BAILOUT_LOOP_LIMIT, &[]);
         self.push_context_record(
             ContextType::Status,
             Some("loop_limit_reached".to_string()),
@@ -810,9 +855,7 @@ impl AgentEngine {
             fallback.clone(),
             serde_json::json!({ "max_iters": self.cfg.max_iters }),
         );
-        let _ = self
-            .persist_assistant_message(&fallback, session_id)
-            .await;
+        let _ = self.persist_assistant_message(&fallback, session_id).await;
     }
 
     /// Execute a list of model actions with batching (delegation, parallel, sequential).
@@ -862,7 +905,10 @@ impl AgentEngine {
                     let pairs: Vec<(&str, &JsonValue)> = actions[..candidate_count]
                         .iter()
                         .map(|a| {
-                            let c = self.tools.canonical_tool_name(&a.tool).unwrap_or(a.tool.as_str());
+                            let c = self
+                                .tools
+                                .canonical_tool_name(&a.tool)
+                                .unwrap_or(a.tool.as_str());
                             (c, &a.args)
                         })
                         .collect();
@@ -907,8 +953,7 @@ impl AgentEngine {
                     return Ok(Some(outcome));
                 }
             } else if parallel_batch_size >= 2 {
-                let batch: Vec<ModelAction> =
-                    actions.drain(..parallel_batch_size).collect();
+                let batch: Vec<ModelAction> = actions.drain(..parallel_batch_size).collect();
                 let batch_start = action_idx;
                 action_idx += parallel_batch_size;
 
@@ -925,13 +970,7 @@ impl AgentEngine {
                 action_idx += 1;
                 let actions_remaining = !actions.is_empty();
                 if let Some(outcome) = self
-                    .dispatch_sequential_action(
-                        action,
-                        state,
-                        actions_remaining,
-                        session_id,
-                        tc_id,
-                    )
+                    .dispatch_sequential_action(action, state, actions_remaining, session_id, tc_id)
                     .await
                 {
                     self.drain_tool_progress(&mut state.progress_rx).await;
@@ -964,10 +1003,7 @@ fn truncate_for_log(task: &str, max_chars: usize) -> String {
         return task.to_string();
     }
     let head: String = task.chars().take(max_chars).collect();
-    format!(
-        "{head}… ({}B total — full in context records)",
-        task.len()
-    )
+    format!("{head}… ({}B total — full in context records)", task.len())
 }
 
 /// True when the assistant's final reply *ends on* one of the mission's
@@ -1007,7 +1043,10 @@ fn summarize_task_for_log(task: &str) -> String {
     let stripped = task.trim_start_matches("[HIDDEN] ").trim_start();
     // Collapse the leading marker again if the model double-marked it.
     let stripped = stripped.trim_start_matches("[HIDDEN] ").trim();
-    let first_line = stripped.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let first_line = stripped
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
     let total_bytes = task.len();
     let total_lines = task.lines().count();
     let one_line = if first_line.chars().count() > MAX {

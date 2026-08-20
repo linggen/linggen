@@ -78,7 +78,11 @@ pub(crate) async fn augment(tools: &Tools, qualified: &str, mut args: Value) -> 
     // namespace, whatever `contexts` the model passed.
     if declares(&tool.input_schema, "contexts") {
         if let Some(scope) = skill_scope(tools).await {
-            set(&mut args, "contexts", Value::Array(vec![Value::String(scope)]));
+            set(
+                &mut args,
+                "contexts",
+                Value::Array(vec![Value::String(scope)]),
+            );
         }
     }
 
@@ -182,7 +186,11 @@ fn set(args: &mut Value, field: &str, value: Value) {
 async fn skill_scope(tools: &Tools) -> Option<String> {
     let manager = tools.get_manager()?;
     let sid = tools.session_id.clone()?;
-    let meta = manager.global_sessions.get_session_meta(&sid).ok().flatten()?;
+    let meta = manager
+        .global_sessions
+        .get_session_meta(&sid)
+        .ok()
+        .flatten()?;
     let skill_name = meta.skill?;
     let skill = manager.skills.reload_one(&skill_name).await?;
     skill.memory_context.filter(|c| !c.trim().is_empty())
@@ -219,7 +227,11 @@ async fn guard_user_voice(tools: &Tools, server: &str, args: &mut Value) -> Resu
     let mut targets: Vec<String> = obj
         .get("replace_ids")
         .and_then(Value::as_array)
-        .map(|ids| ids.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     if obj.contains_key("content") {
         if let Some(id) = obj.get("id").and_then(Value::as_str) {
@@ -312,15 +324,21 @@ mod tests {
 
         // Retiring rows and rewriting content are both guarded…
         let mut retire = json!({"content": "x", "replace_ids": ["a"]});
-        assert!(guard_user_voice(&tools, "memory", &mut retire).await.is_ok());
+        assert!(guard_user_voice(&tools, "memory", &mut retire)
+            .await
+            .is_ok());
         let mut rewrite = json!({"id": "a", "content": "new words"});
-        assert!(guard_user_voice(&tools, "memory", &mut rewrite).await.is_ok());
+        assert!(guard_user_voice(&tools, "memory", &mut rewrite)
+            .await
+            .is_ok());
 
         // …while moving a row's tier changes nothing it says. The guard must
         // not even reach for the store here, which is why this passes with no
         // server connected.
         let mut retier = json!({"id": "a", "tier": "core", "user_directed": true});
-        guard_user_voice(&tools, "memory", &mut retier).await.unwrap();
+        guard_user_voice(&tools, "memory", &mut retier)
+            .await
+            .unwrap();
         assert!(
             retier.get("user_directed").is_none(),
             "an unguarded write must not carry the flag onto the wire"
@@ -356,14 +374,18 @@ mod tests {
         let tools = Tools::new(std::env::temp_dir()).unwrap();
 
         let mut claimed = json!({"content": "x", "replace_ids": ["a"], "user_directed": true});
-        guard_user_voice(&tools, "memory", &mut claimed).await.unwrap();
+        guard_user_voice(&tools, "memory", &mut claimed)
+            .await
+            .unwrap();
         assert_eq!(claimed["user_directed"], json!(true));
 
         // Without the assertion the guard has to resolve each target's voice.
         // With no memory server connected every fetch misses, which is not the
         // guard's problem — the daemon reports a missing id on the real call.
         let mut unclaimed = json!({"content": "x", "replace_ids": ["a"]});
-        guard_user_voice(&tools, "memory", &mut unclaimed).await.unwrap();
+        guard_user_voice(&tools, "memory", &mut unclaimed)
+            .await
+            .unwrap();
         assert!(unclaimed.get("user_directed").is_none());
     }
 }

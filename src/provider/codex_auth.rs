@@ -116,7 +116,10 @@ fn generate_code_challenge(verifier: &str) -> String {
         // Since this is build-time, let's use a subprocess approach for now.
         let output = std::process::Command::new("sh")
             .arg("-c")
-            .arg(format!("printf '%s' '{}' | shasum -a 256 | cut -d' ' -f1", verifier))
+            .arg(format!(
+                "printf '%s' '{}' | shasum -a 256 | cut -d' ' -f1",
+                verifier
+            ))
             .output();
         match output {
             Ok(out) => {
@@ -336,7 +339,8 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
                         if let Some(sender) = tx.lock().await.take() {
                             let _ = sender.send(params.code);
                         }
-                        "Login successful! You can close this tab and return to Linggen.".to_string()
+                        "Login successful! You can close this tab and return to Linggen."
+                            .to_string()
                     }
                 }
             }),
@@ -366,14 +370,24 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
     let open_result = if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(&auth_url).spawn()
     } else if cfg!(target_os = "linux") {
-        std::process::Command::new("xdg-open").arg(&auth_url).spawn()
+        std::process::Command::new("xdg-open")
+            .arg(&auth_url)
+            .spawn()
     } else if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd").args(["/C", "start", &auth_url]).spawn()
+        std::process::Command::new("cmd")
+            .args(["/C", "start", &auth_url])
+            .spawn()
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "unsupported platform"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "unsupported platform",
+        ))
     };
     if let Err(e) = open_result {
-        warn!("Failed to open browser: {} — falling back to device code flow.", e);
+        warn!(
+            "Failed to open browser: {} — falling back to device code flow.",
+            e
+        );
         server_handle.abort();
         return device_code_login().await;
     }
@@ -394,7 +408,10 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
     // Save tokens
     let auth_file = codex_auth_file();
     tokens.save(&auth_file)?;
-    info!("ChatGPT OAuth login successful. Tokens saved to {:?}", auth_file);
+    info!(
+        "ChatGPT OAuth login successful. Tokens saved to {:?}",
+        auth_file
+    );
 
     Ok(tokens)
 }
@@ -402,7 +419,6 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
 // ---------------------------------------------------------------------------
 // Device code flow (for headless environments)
 // ---------------------------------------------------------------------------
-
 
 /// Small bounded client for auth/token calls — these are quick JSON POSTs
 /// and must never hang a caller (a bare `Client::new()` has NO timeouts).
@@ -427,7 +443,10 @@ pub async fn device_code_login() -> Result<CodexAuthTokens> {
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Failed to get device code: {}", resp.text().await.unwrap_or_default());
+        anyhow::bail!(
+            "Failed to get device code: {}",
+            resp.text().await.unwrap_or_default()
+        );
     }
 
     let body: serde_json::Value = resp.json().await?;

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::provider::models::{StreamChunk, ToolCallChunk, TokenUsage};
 use crate::message::ChatMessage;
+use crate::provider::models::{StreamChunk, TokenUsage, ToolCallChunk};
 
 /// A proxy model client that sends inference requests over a WebRTC data channel.
 ///
@@ -31,10 +31,7 @@ pub struct ProxyModelClient {
 impl ProxyModelClient {
     /// Create a new proxy model client from a ProxyConnection.
     /// Spawns a background demuxer task that routes responses to per-request channels.
-    pub fn new(
-        request_tx: mpsc::Sender<String>,
-        mut response_rx: mpsc::Receiver<String>,
-    ) -> Self {
+    pub fn new(request_tx: mpsc::Sender<String>, mut response_rx: mpsc::Receiver<String>) -> Self {
         let pending: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<serde_json::Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
@@ -47,7 +44,9 @@ impl ProxyModelClient {
                     Err(_) => continue,
                 };
                 let rid = val.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
-                if rid.is_empty() { continue; }
+                if rid.is_empty() {
+                    continue;
+                }
 
                 let pending = pending_clone.lock().await;
                 if let Some(tx) = pending.get(rid) {
@@ -56,7 +55,10 @@ impl ProxyModelClient {
             }
         });
 
-        Self { request_tx, pending }
+        Self {
+            request_tx,
+            pending,
+        }
     }
 
     /// Send an inference request and return a stream of StreamChunks.
@@ -66,8 +68,11 @@ impl ProxyModelClient {
         messages: &[ChatMessage],
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
-        let request_id = format!("inf-{}-{}", chrono::Utc::now().timestamp_millis(),
-            rand::random::<u32>() % 100000);
+        let request_id = format!(
+            "inf-{}-{}",
+            chrono::Utc::now().timestamp_millis(),
+            rand::random::<u32>() % 100000
+        );
 
         // Create per-request response channel
         let (resp_tx, resp_rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -87,7 +92,9 @@ impl ProxyModelClient {
             req["tools"] = serde_json::json!(tools);
         }
 
-        self.request_tx.send(req.to_string()).await
+        self.request_tx
+            .send(req.to_string())
+            .await
             .map_err(|_| anyhow::anyhow!("Proxy connection closed"))?;
 
         let pending = self.pending.clone();
@@ -115,14 +122,13 @@ impl ProxyModelClient {
             "type": "list_models",
             "request_id": request_id,
         });
-        self.request_tx.send(req.to_string()).await
+        self.request_tx
+            .send(req.to_string())
+            .await
             .map_err(|_| anyhow::anyhow!("Proxy connection closed"))?;
 
         // Wait for response (with timeout)
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            resp_rx.recv(),
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), resp_rx.recv()).await;
 
         // Cleanup
         self.pending.lock().await.remove(&request_id);
@@ -132,7 +138,8 @@ impl ProxyModelClient {
                 if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
                     anyhow::bail!("Proxy error: {err}");
                 }
-                let models = val.pointer("/data/models")
+                let models = val
+                    .pointer("/data/models")
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
@@ -190,23 +197,47 @@ impl Stream for ProxyInferenceStream {
                     let chunk_type = chunk.get("type").and_then(|v| v.as_str()).unwrap_or("");
                     match chunk_type {
                         "token" => {
-                            let text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let text = chunk
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             Poll::Ready(Some(Ok(StreamChunk::Token(text))))
                         }
-                        "usage" => {
-                            Poll::Ready(Some(Ok(StreamChunk::Usage(TokenUsage {
-                                prompt_tokens: chunk.get("prompt_tokens").and_then(|v| v.as_u64()).map(|v| v as usize),
-                                completion_tokens: chunk.get("completion_tokens").and_then(|v| v.as_u64()).map(|v| v as usize),
-                                total_tokens: chunk.get("total_tokens").and_then(|v| v.as_u64()).map(|v| v as usize),
-                            }))))
-                        }
+                        "usage" => Poll::Ready(Some(Ok(StreamChunk::Usage(TokenUsage {
+                            prompt_tokens: chunk
+                                .get("prompt_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as usize),
+                            completion_tokens: chunk
+                                .get("completion_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as usize),
+                            total_tokens: chunk
+                                .get("total_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as usize),
+                        })))),
                         "tool_call" => {
                             Poll::Ready(Some(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                                index: chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                id: chunk.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                name: chunk.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                arguments_delta: chunk.get("arguments_delta").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                thought_signature: chunk.get("thought_signature").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                index: chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(0)
+                                    as usize,
+                                id: chunk
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                name: chunk
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                arguments_delta: chunk
+                                    .get("arguments_delta")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                thought_signature: chunk
+                                    .get("thought_signature")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
                             }))))
                         }
                         _ => {

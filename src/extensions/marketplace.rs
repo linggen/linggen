@@ -132,10 +132,8 @@ pub fn http_client() -> Result<reqwest::Client> {
 /// Results are interleaved from both sources (each pre-sorted by relevance),
 /// so neither source dominates the top of the list.
 pub async fn search_community(query: &str) -> Result<Vec<MarketplaceSkill>> {
-    let (sh_result, ch_result) = tokio::join!(
-        search_skills_sh_community(query),
-        search_clawhub(query),
-    );
+    let (sh_result, ch_result) =
+        tokio::join!(search_skills_sh_community(query), search_clawhub(query),);
 
     let sh_skills = sh_result.unwrap_or_default();
     let ch_skills = ch_result.unwrap_or_default();
@@ -178,12 +176,20 @@ async fn search_skills_sh_community(query: &str) -> Result<Vec<MarketplaceSkill>
         .skills
         .into_iter()
         .map(|s| {
-            let skill_name = s.skill_id.clone().or(s.name.clone()).unwrap_or_else(|| s.id.clone());
+            let skill_name = s
+                .skill_id
+                .clone()
+                .or(s.name.clone())
+                .unwrap_or_else(|| s.id.clone());
             let source = s.source.as_deref().unwrap_or("");
             MarketplaceSkill {
                 skill_id: s.id.clone(),
                 name: skill_name,
-                url: if source.is_empty() { String::new() } else { format!("https://github.com/{}", source) },
+                url: if source.is_empty() {
+                    String::new()
+                } else {
+                    format!("https://github.com/{}", source)
+                },
                 description: None,
                 install_count: s.installs.unwrap_or(0),
                 git_ref: Some("main".to_string()),
@@ -201,7 +207,10 @@ async fn search_skills_sh_community(query: &str) -> Result<Vec<MarketplaceSkill>
 pub async fn search_clawhub(query: &str) -> Result<Vec<MarketplaceSkill>> {
     let client = http_client()?;
     let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
-    let url = format!("{}/search?q={}&limit=30&nonSuspiciousOnly=true", CLAWHUB_API, encoded);
+    let url = format!(
+        "{}/search?q={}&limit=30&nonSuspiciousOnly=true",
+        CLAWHUB_API, encoded
+    );
 
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
@@ -239,8 +248,14 @@ fn validate_slug(slug: &str) -> Result<()> {
     if slug.is_empty() {
         anyhow::bail!("Slug cannot be empty");
     }
-    if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        anyhow::bail!("Invalid slug '{}': only alphanumeric, hyphens, and underscores allowed", slug);
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!(
+            "Invalid slug '{}': only alphanumeric, hyphens, and underscores allowed",
+            slug
+        );
     }
     Ok(())
 }
@@ -323,8 +338,7 @@ pub async fn install_skill(
                 if let Some(fallback) = search_skills_sh(name).await? {
                     let fallback_source = fallback.source.as_deref().unwrap_or("");
                     if fallback_source != "linggen/skills" {
-                        let fallback_repo =
-                            format!("https://github.com/{}", fallback_source);
+                        let fallback_repo = format!("https://github.com/{}", fallback_source);
                         // Recompute target_dir using fallback id if it differs from original name.
                         let fallback_target = if fallback.id != name {
                             target_dir.parent().unwrap_or(target_dir).join(&fallback.id)
@@ -440,19 +454,26 @@ pub fn delete_skill(name: &str, target_dir: &Path) -> Result<String> {
         anyhow::bail!("Skill '{}' not found at {}", name, target_dir.display());
     }
     fs::remove_dir_all(target_dir)?;
-    Ok(format!("Skill '{}' deleted from {}", name, target_dir.display()))
+    Ok(format!(
+        "Skill '{}' deleted from {}",
+        name,
+        target_dir.display()
+    ))
 }
 
-pub fn skill_target_dir(name: &str, scope: SkillScope, project_root: Option<&Path>) -> Result<PathBuf> {
+pub fn skill_target_dir(
+    name: &str,
+    scope: SkillScope,
+    project_root: Option<&Path>,
+) -> Result<PathBuf> {
     match scope {
         SkillScope::Project => {
-            let root = project_root
-                .ok_or_else(|| anyhow::anyhow!("Project root required for project-scoped install"))?;
+            let root = project_root.ok_or_else(|| {
+                anyhow::anyhow!("Project root required for project-scoped install")
+            })?;
             Ok(root.join(".linggen/skills").join(name))
         }
-        SkillScope::Global => {
-            Ok(crate::paths::global_skills_dir().join(name))
-        }
+        SkillScope::Global => Ok(crate::paths::global_skills_dir().join(name)),
     }
 }
 
@@ -599,7 +620,9 @@ pub(crate) async fn download_to_temp(client: &reqwest::Client, url: &str) -> Res
             Ok(r) if r.status().is_success() => {
                 let bytes = r.bytes().await.context("Failed to read response")?;
                 fs::write(&tmp_path, &bytes).context("Failed to write temp file")?;
-                let kept = tmp_path.keep().map_err(|e| anyhow::anyhow!("tempfile keep error: {}", e))?;
+                let kept = tmp_path
+                    .keep()
+                    .map_err(|e| anyhow::anyhow!("tempfile keep error: {}", e))?;
                 return Ok(kept);
             }
             Ok(r) if attempt < max_attempts - 1 && is_retryable_status(r.status()) => {
@@ -684,8 +707,7 @@ fn extract_skill_from_zip(
             .filter(|c| matches!(c, Component::Normal(_)))
             .count();
         if normal_count == 2 {
-            root_skill_md_candidate =
-                Some((dir_name.clone(), parent.to_path_buf(), name.clone()));
+            root_skill_md_candidate = Some((dir_name.clone(), parent.to_path_buf(), name.clone()));
         }
 
         // Match directory name against skill name, normalizing hyphens/underscores
@@ -785,7 +807,10 @@ fn is_safe_zip_path(rel_path: &str, base_dir: &Path) -> bool {
     // Reject any path component that is ".." to prevent traversal.
     // Using a string check is conservative but safe regardless of whether
     // base_dir is absolute or relative.
-    if Path::new(rel_path).components().any(|c| matches!(c, Component::ParentDir)) {
+    if Path::new(rel_path)
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
         return false;
     }
     // Double-check: the joined path must still start with the base.
@@ -842,8 +867,12 @@ pub(crate) fn extract_all_skills_from_zip(
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)?;
             let entry_name = entry.name().to_string();
-            if entry.is_dir() { continue; }
-            if !is_safe_zip_path(&entry_name, &target_dir) { continue; }
+            if entry.is_dir() {
+                continue;
+            }
+            if !is_safe_zip_path(&entry_name, &target_dir) {
+                continue;
+            }
             let dest = target_dir.join(&entry_name);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
@@ -1048,7 +1077,10 @@ mod tests {
     fn test_skill_target_dir_project() {
         let root = Path::new("/tmp/my-project");
         let result = skill_target_dir("my-skill", SkillScope::Project, Some(root)).unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/my-project/.linggen/skills/my-skill"));
+        assert_eq!(
+            result,
+            PathBuf::from("/tmp/my-project/.linggen/skills/my-skill")
+        );
     }
 
     #[test]

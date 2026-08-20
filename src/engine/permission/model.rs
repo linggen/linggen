@@ -148,11 +148,21 @@ fn segment_is_hardcoded_deny(seg: &str) -> bool {
     // rm -rf / and rm -rf /* — whole-disk wipe.
     if program == "rm" {
         let has_recursive = tokens[1..].iter().any(|t| {
-            *t == "-rf" || *t == "-fr" || *t == "-Rf" || *t == "-fR" || *t == "--recursive"
-                || *t == "-r" || *t == "-R"
+            *t == "-rf"
+                || *t == "-fr"
+                || *t == "-Rf"
+                || *t == "-fR"
+                || *t == "--recursive"
+                || *t == "-r"
+                || *t == "-R"
         });
         let has_force = tokens[1..].iter().any(|t| {
-            *t == "-f" || *t == "-rf" || *t == "-fr" || *t == "-Rf" || *t == "-fR" || *t == "--force"
+            *t == "-f"
+                || *t == "-rf"
+                || *t == "-fr"
+                || *t == "-Rf"
+                || *t == "-fR"
+                || *t == "--force"
         });
         if has_recursive && has_force {
             for arg in &tokens[1..] {
@@ -206,7 +216,11 @@ fn split_command_segments(cmd: &str) -> Vec<String> {
         let b = bytes[i];
         let split = match b {
             b';' => Some(1usize),
-            b'|' => Some(if i + 1 < len && bytes[i + 1] == b'|' { 2 } else { 1 }),
+            b'|' => Some(if i + 1 < len && bytes[i + 1] == b'|' {
+                2
+            } else {
+                1
+            }),
             b'&' if i + 1 < len && bytes[i + 1] == b'&' => Some(2),
             _ => None,
         };
@@ -291,65 +305,198 @@ pub fn classify_bash_command(cmd: &str) -> BashClass {
 
 fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
     const READ_PROGRAMS: &[&str] = &[
-        "ls", "cat", "head", "tail", "less", "more", "wc", "file", "stat", "du", "df",
-        "pwd", "env", "printenv", "echo", "printf", "which", "whereis", "type",
-        "find", "grep", "rg", "ag", "ack", "fd", "tree", "bat", "jq", "yq",
-        "uname", "hostname", "date", "id", "whoami", "realpath", "dirname", "basename",
-        "ping", "dig", "nslookup", "host", "test", "true", "false", "seq", "sort",
-        "uniq", "tr", "cut", "paste", "diff", "comm",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "wc",
+        "file",
+        "stat",
+        "du",
+        "df",
+        "pwd",
+        "env",
+        "printenv",
+        "echo",
+        "printf",
+        "which",
+        "whereis",
+        "type",
+        "find",
+        "grep",
+        "rg",
+        "ag",
+        "ack",
+        "fd",
+        "tree",
+        "bat",
+        "jq",
+        "yq",
+        "uname",
+        "hostname",
+        "date",
+        "id",
+        "whoami",
+        "realpath",
+        "dirname",
+        "basename",
+        "ping",
+        "dig",
+        "nslookup",
+        "host",
+        "test",
+        "true",
+        "false",
+        "seq",
+        "sort",
+        "uniq",
+        "tr",
+        "cut",
+        "paste",
+        "diff",
+        "comm",
         // Read-only system diagnostics (used by apple-shifu and similar inspection
         // skills). These programs only display info — they don't mutate state.
-        "uptime", "sw_vers", "vm_stat", "netstat", "ifconfig", "ipconfig", "scutil",
-        "ps", "lsof", "vmmap", "iostat",
+        "uptime",
+        "sw_vers",
+        "vm_stat",
+        "netstat",
+        "ifconfig",
+        "ipconfig",
+        "scutil",
+        "ps",
+        "lsof",
+        "vmmap",
+        "iostat",
         // macOS system / security inspection. Bare invocations are read-only;
         // mutating forms (sysctl -w, csrutil disable, spctl --add, fdesetup
         // enable, etc.) all require sudo, which the hardcoded deny floor blocks.
-        "sysctl", "spctl", "csrutil", "fdesetup", "socketfilterfw", "systemsetup",
+        "sysctl",
+        "spctl",
+        "csrutil",
+        "fdesetup",
+        "socketfilterfw",
+        "systemsetup",
     ];
 
     const GIT_READ: &[&str] = &[
-        "status", "log", "diff", "show", "branch", "tag", "remote", "rev-parse",
-        "blame", "stash", "describe", "shortlog", "ls-files", "ls-tree",
+        "status",
+        "log",
+        "diff",
+        "show",
+        "branch",
+        "tag",
+        "remote",
+        "rev-parse",
+        "blame",
+        "stash",
+        "describe",
+        "shortlog",
+        "ls-files",
+        "ls-tree",
     ];
 
-    const CARGO_READ: &[&str] = &["check", "clippy", "doc", "metadata", "tree", "verify-project"];
-    const NPM_READ: &[&str] = &["list", "ls", "outdated", "view", "info", "audit", "why", "explain"];
+    const CARGO_READ: &[&str] = &[
+        "check",
+        "clippy",
+        "doc",
+        "metadata",
+        "tree",
+        "verify-project",
+    ];
+    const NPM_READ: &[&str] = &[
+        "list", "ls", "outdated", "view", "info", "audit", "why", "explain",
+    ];
     const PIP_READ: &[&str] = &["list", "show", "freeze", "check"];
     const GO_READ: &[&str] = &["vet", "list", "doc", "env", "version"];
 
     const ADMIN_PROGRAMS: &[&str] = &[
-        "rm", "sudo", "su", "kill", "killall", "pkill",
-        "chmod", "chown", "chgrp",
-        "podman", "systemctl", "launchctl", "service",
-        "mount", "umount", "mkfs", "fdisk", "dd",
-        "apt", "apt-get", "yum", "dnf", "pacman",
-        "reboot", "shutdown", "halt", "poweroff",
-        "iptables", "ufw", "firewall-cmd",
-        "crontab", "at",
+        "rm",
+        "sudo",
+        "su",
+        "kill",
+        "killall",
+        "pkill",
+        "chmod",
+        "chown",
+        "chgrp",
+        "podman",
+        "systemctl",
+        "launchctl",
+        "service",
+        "mount",
+        "umount",
+        "mkfs",
+        "fdisk",
+        "dd",
+        "apt",
+        "apt-get",
+        "yum",
+        "dnf",
+        "pacman",
+        "reboot",
+        "shutdown",
+        "halt",
+        "poweroff",
+        "iptables",
+        "ufw",
+        "firewall-cmd",
+        "crontab",
+        "at",
     ];
 
     const WRITE_PROGRAMS: &[&str] = &[
-        "mkdir", "cp", "mv", "touch", "sed", "awk", "patch",
-        "ln", "install", "rsync", "tee",
+        "mkdir", "cp", "mv", "touch", "sed", "awk", "patch", "ln", "install", "rsync", "tee",
     ];
 
     const GIT_WRITE: &[&str] = &[
-        "add", "commit", "push", "pull", "merge", "rebase", "checkout", "switch",
-        "fetch", "clone", "init", "reset", "cherry-pick", "am", "apply",
+        "add",
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "rebase",
+        "checkout",
+        "switch",
+        "fetch",
+        "clone",
+        "init",
+        "reset",
+        "cherry-pick",
+        "am",
+        "apply",
     ];
 
     const CARGO_WRITE: &[&str] = &["build", "test", "run", "fmt", "install", "publish", "bench"];
-    const NPM_WRITE: &[&str] = &["install", "ci", "run", "start", "test", "build", "publish", "exec"];
+    const NPM_WRITE: &[&str] = &[
+        "install", "ci", "run", "start", "test", "build", "publish", "exec",
+    ];
     const PIP_WRITE: &[&str] = &["install", "uninstall"];
     const GO_WRITE: &[&str] = &["build", "test", "run", "install", "get", "mod"];
 
     // brew and docker have read subcommands worth carving out so inspection
     // skills (apple-shifu) don't have to admin-prompt for `brew list` /
     // `docker images`.
-    const BREW_READ: &[&str] = &["list", "info", "search", "outdated", "deps", "leaves",
-                                  "doctor", "config", "--version", "-v", "--prefix", "tap-info"];
-    const DOCKER_READ: &[&str] = &["ps", "images", "logs", "inspect", "version", "info",
-                                    "system", "history", "port", "top", "stats", "diff", "events"];
+    const BREW_READ: &[&str] = &[
+        "list",
+        "info",
+        "search",
+        "outdated",
+        "deps",
+        "leaves",
+        "doctor",
+        "config",
+        "--version",
+        "-v",
+        "--prefix",
+        "tap-info",
+    ];
+    const DOCKER_READ: &[&str] = &[
+        "ps", "images", "logs", "inspect", "version", "info", "system", "history", "port", "top",
+        "stats", "diff", "events",
+    ];
 
     if ADMIN_PROGRAMS.contains(&program) {
         return BashClass::Admin;
@@ -363,29 +510,49 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
 
     match program {
         "git" => {
-            if GIT_READ.contains(&subcommand) { BashClass::Read }
-            else if GIT_WRITE.contains(&subcommand) { BashClass::Write }
-            else { BashClass::Admin }
+            if GIT_READ.contains(&subcommand) {
+                BashClass::Read
+            } else if GIT_WRITE.contains(&subcommand) {
+                BashClass::Write
+            } else {
+                BashClass::Admin
+            }
         }
         "cargo" => {
-            if CARGO_READ.contains(&subcommand) { BashClass::Read }
-            else if CARGO_WRITE.contains(&subcommand) { BashClass::Write }
-            else { BashClass::Admin }
+            if CARGO_READ.contains(&subcommand) {
+                BashClass::Read
+            } else if CARGO_WRITE.contains(&subcommand) {
+                BashClass::Write
+            } else {
+                BashClass::Admin
+            }
         }
         "npm" | "npx" | "yarn" | "pnpm" => {
-            if NPM_READ.contains(&subcommand) { BashClass::Read }
-            else if NPM_WRITE.contains(&subcommand) { BashClass::Write }
-            else { BashClass::Admin }
+            if NPM_READ.contains(&subcommand) {
+                BashClass::Read
+            } else if NPM_WRITE.contains(&subcommand) {
+                BashClass::Write
+            } else {
+                BashClass::Admin
+            }
         }
         "pip" | "pip3" => {
-            if PIP_READ.contains(&subcommand) { BashClass::Read }
-            else if PIP_WRITE.contains(&subcommand) { BashClass::Write }
-            else { BashClass::Admin }
+            if PIP_READ.contains(&subcommand) {
+                BashClass::Read
+            } else if PIP_WRITE.contains(&subcommand) {
+                BashClass::Write
+            } else {
+                BashClass::Admin
+            }
         }
         "go" => {
-            if GO_READ.contains(&subcommand) { BashClass::Read }
-            else if GO_WRITE.contains(&subcommand) { BashClass::Write }
-            else { BashClass::Admin }
+            if GO_READ.contains(&subcommand) {
+                BashClass::Read
+            } else if GO_WRITE.contains(&subcommand) {
+                BashClass::Write
+            } else {
+                BashClass::Admin
+            }
         }
         "python" | "python3" | "node" => {
             if subcommand == "--version" || subcommand == "--help" || subcommand == "-V" {
@@ -402,16 +569,28 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
             }
         }
         "wget" => {
-            if subcommand == "--spider" { BashClass::Read } else { BashClass::Admin }
+            if subcommand == "--spider" {
+                BashClass::Read
+            } else {
+                BashClass::Admin
+            }
         }
         "make" | "cmake" | "ninja" | "mvn" | "gradle" | "pytest" | "jest" | "vitest" => {
             BashClass::Write
         }
         "brew" => {
-            if BREW_READ.contains(&subcommand) { BashClass::Read } else { BashClass::Admin }
+            if BREW_READ.contains(&subcommand) {
+                BashClass::Read
+            } else {
+                BashClass::Admin
+            }
         }
         "docker" | "podman" => {
-            if DOCKER_READ.contains(&subcommand) { BashClass::Read } else { BashClass::Admin }
+            if DOCKER_READ.contains(&subcommand) {
+                BashClass::Read
+            } else {
+                BashClass::Admin
+            }
         }
         _ => BashClass::Admin,
     }
@@ -724,7 +903,11 @@ pub fn check_permission(
                     .unwrap_or_else(|| PathBuf::from(fp))
             } else {
                 let p = PathBuf::from(fp);
-                if p.is_absolute() { p } else { session_cwd.join(p) }
+                if p.is_absolute() {
+                    p
+                } else {
+                    session_cwd.join(p)
+                }
             }
         })
         .unwrap_or_else(|| session_cwd.to_path_buf());
@@ -780,11 +963,20 @@ pub(super) fn extract_command_paths(cmd: &str) -> Vec<String> {
             let quoted = t.len() >= 2
                 && ((t.starts_with('"') && t.ends_with('"'))
                     || (t.starts_with('\'') && t.ends_with('\'')));
-            if quoted { t[1..t.len() - 1].to_string() } else { t.to_string() }
+            if quoted {
+                t[1..t.len() - 1].to_string()
+            } else {
+                t.to_string()
+            }
         })
         .filter(|t| t.starts_with('/') || t.starts_with("~/") || t == "~" || is_upward_relative(t))
         // Strip trailing punctuation from compound shell syntax.
-        .map(|t| t.trim_end_matches(';').trim_end_matches('&').trim_end_matches('|').to_string())
+        .map(|t| {
+            t.trim_end_matches(';')
+                .trim_end_matches('&')
+                .trim_end_matches('|')
+                .to_string()
+        })
         .filter(|t| !t.is_empty())
         // Reject all-slash tokens (`/`, `//`, `///`) — e.g. an unquoted jq
         // `//` operator — which would otherwise demand admin on `//`.
@@ -881,7 +1073,10 @@ fn grant_path_for_prompt(tool: &str, target: &Path, session_cwd: &Path) -> PathB
     } else if target.is_dir() {
         target.to_path_buf()
     } else {
-        target.parent().map(Path::to_path_buf).unwrap_or_else(|| target.to_path_buf())
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| target.to_path_buf())
     }
 }
 

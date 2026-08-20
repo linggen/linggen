@@ -56,7 +56,10 @@ async fn stop_process_by_pid_file(pid_path: &Path, label: &str) -> Result<()> {
     };
 
     if !is_process_running(pid) {
-        println!("{}: process {} is not running. Cleaning up PID file.", label, pid);
+        println!(
+            "{}: process {} is not running. Cleaning up PID file.",
+            label, pid
+        );
         let _ = fs::remove_file(pid_path);
         return Ok(());
     }
@@ -143,7 +146,10 @@ pub async fn start_agent(
 
     let display_host = host_override.as_deref().unwrap_or("localhost");
     if ready {
-        println!("Agent server started on http://{}:{} (PID {})", display_host, port, pid);
+        println!(
+            "Agent server started on http://{}:{} (PID {})",
+            display_host, port, pid
+        );
     } else {
         println!(
             "Agent server spawned (PID {}) but not yet reachable on port {}",
@@ -158,4 +164,3 @@ pub async fn start_agent(
 pub async fn stop_agent() -> Result<()> {
     stop_process_by_pid_file(&agent_pid_file(), "Agent server").await
 }
-

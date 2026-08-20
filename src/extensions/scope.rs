@@ -26,7 +26,12 @@ pub fn compute_tool_scope(allowed_tools: &[String]) -> Option<HashSet<String>> {
     if allowed_tools.is_empty() {
         return None;
     }
-    Some(allowed_tools.iter().flat_map(|e| expand_declaration(e)).collect())
+    Some(
+        allowed_tools
+            .iter()
+            .flat_map(|e| expand_declaration(e))
+            .collect(),
+    )
 }
 
 /// One `allowed-tools` / `tools:` entry, expanded to the names the engine will

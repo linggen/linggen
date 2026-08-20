@@ -119,7 +119,10 @@ mod tests {
     #[test]
     fn test_classify_bash_write() {
         assert_eq!(classify_bash_command("mkdir -p src/new"), BashClass::Write);
-        assert_eq!(classify_bash_command("git push origin main"), BashClass::Write);
+        assert_eq!(
+            classify_bash_command("git push origin main"),
+            BashClass::Write
+        );
         assert_eq!(classify_bash_command("cargo build"), BashClass::Write);
     }
 
@@ -150,7 +153,10 @@ mod tests {
         // Mutations stay admin.
         assert_eq!(classify_bash_command("brew install foo"), BashClass::Admin);
         assert_eq!(classify_bash_command("docker run nginx"), BashClass::Admin);
-        assert_eq!(classify_bash_command("docker rm container"), BashClass::Admin);
+        assert_eq!(
+            classify_bash_command("docker rm container"),
+            BashClass::Admin
+        );
     }
 
     #[test]
@@ -164,7 +170,10 @@ mod tests {
     fn test_classify_bash_redirect() {
         assert_eq!(classify_bash_command("echo hi > out.txt"), BashClass::Write);
         assert_eq!(classify_bash_command("ls > files.txt"), BashClass::Write);
-        assert_eq!(classify_bash_command("du -sh ~/Desktop 2>/dev/null"), BashClass::Read);
+        assert_eq!(
+            classify_bash_command("du -sh ~/Desktop 2>/dev/null"),
+            BashClass::Read
+        );
     }
 
     #[test]
@@ -189,7 +198,9 @@ mod tests {
         assert!(is_hardcoded_deny("dd if=/dev/zero of=/dev/sda"));
         assert!(is_hardcoded_deny("dd of=/dev/disk2 if=foo.iso"));
         assert!(is_hardcoded_deny("dd if=foo of=/dev/nvme0n1"));
-        assert!(!is_hardcoded_deny("dd if=/dev/zero of=/tmp/blob bs=1M count=10"));
+        assert!(!is_hardcoded_deny(
+            "dd if=/dev/zero of=/tmp/blob bs=1M count=10"
+        ));
     }
 
     #[test]
@@ -223,8 +234,14 @@ mod tests {
     #[test]
     fn test_effective_mode_for_path_basic() {
         let modes = vec![
-            PathMode { path: "~/workspace/linggen".to_string(), mode: PermissionMode::Edit },
-            PathMode { path: "~/workspace/other".to_string(), mode: PermissionMode::Read },
+            PathMode {
+                path: "~/workspace/linggen".to_string(),
+                mode: PermissionMode::Edit,
+            },
+            PathMode {
+                path: "~/workspace/other".to_string(),
+                mode: PermissionMode::Read,
+            },
         ];
 
         if let Some(home) = dirs::home_dir() {
@@ -248,14 +265,23 @@ mod tests {
         // Critical: /tmp no longer auto-grants edit.
         let modes: Vec<PathMode> = vec![];
         assert_eq!(effective_mode_for_path(&modes, Path::new("/tmp/x")), None);
-        assert_eq!(effective_mode_for_path(&modes, Path::new("/var/tmp/x")), None);
+        assert_eq!(
+            effective_mode_for_path(&modes, Path::new("/var/tmp/x")),
+            None
+        );
     }
 
     #[test]
     fn test_effective_mode_most_specific_wins() {
         let modes = vec![
-            PathMode { path: "~/workspace".to_string(), mode: PermissionMode::Read },
-            PathMode { path: "~/workspace/linggen".to_string(), mode: PermissionMode::Admin },
+            PathMode {
+                path: "~/workspace".to_string(),
+                mode: PermissionMode::Read,
+            },
+            PathMode {
+                path: "~/workspace/linggen".to_string(),
+                mode: PermissionMode::Admin,
+            },
         ];
         if let Some(home) = dirs::home_dir() {
             assert_eq!(
@@ -288,14 +314,20 @@ mod tests {
             sp.interactive = true;
             let r1 = check_permission("Read", None, Some(target_s), &cwd, &sp, None);
             assert!(
-                matches!(r1, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
+                matches!(
+                    r1,
+                    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })
+                ),
                 "owner case: expected NeedsPrompt, got {r1:?}",
             );
 
             sp.interactive = false;
             let r2 = check_permission("Read", None, Some(target_s), &cwd, &sp, None);
             assert!(
-                matches!(r2, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
+                matches!(
+                    r2,
+                    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })
+                ),
                 "non-interactive case: expected NeedsPrompt, got {r2:?}",
             );
         }
@@ -315,14 +347,22 @@ mod tests {
             sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
 
             let result = check_permission(
-                "Read", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, None,
+                "Read",
+                None,
+                Some(cwd.join("src/main.rs").to_str().unwrap()),
+                &cwd,
+                &sp,
+                None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
 
             let result = check_permission(
-                "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, None,
+                "Write",
+                None,
+                Some(cwd.join("src/main.rs").to_str().unwrap()),
+                &cwd,
+                &sp,
+                None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed));
         }
@@ -336,8 +376,12 @@ mod tests {
             sp.set_path_mode("~/workspace/linggen", PermissionMode::Read);
 
             let result = check_permission(
-                "Write", None, Some(cwd.join("src/main.rs").to_str().unwrap()),
-                &cwd, &sp, None,
+                "Write",
+                None,
+                Some(cwd.join("src/main.rs").to_str().unwrap()),
+                &cwd,
+                &sp,
+                None,
             );
             assert!(matches!(
                 result,
@@ -354,10 +398,7 @@ mod tests {
             sp.set_path_mode("~/workspace/linggen", PermissionMode::Edit);
 
             // Read /etc/hosts — outside any grant, must prompt.
-            let result = check_permission(
-                "Read", None, Some("/etc/hosts"),
-                &cwd, &sp, None,
-            );
+            let result = check_permission("Read", None, Some("/etc/hosts"), &cwd, &sp, None);
             assert!(matches!(
                 result,
                 PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })
@@ -381,22 +422,35 @@ mod tests {
             // Use a non-temp path: temp dirs are always-allowed scratch, so
             // they wouldn't exercise the arg-path gate this test covers.
             let result = check_permission(
-                "Bash", Some(&format!("ls {other_str}")), None,
-                &cwd, &sp, None,
+                "Bash",
+                Some(&format!("ls {other_str}")),
+                None,
+                &cwd,
+                &sp,
+                None,
             );
             assert!(
-                matches!(result, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
+                matches!(
+                    result,
+                    PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })
+                ),
                 "ls {other_str} from cwd {} should prompt — arg path not covered. got {result:?}",
                 cwd.display(),
             );
 
             sp.set_path_mode(&home.join("b").to_string_lossy(), PermissionMode::Read);
             let result = check_permission(
-                "Bash", Some(&format!("ls {other_str}")), None,
-                &cwd, &sp, None,
+                "Bash",
+                Some(&format!("ls {other_str}")),
+                None,
+                &cwd,
+                &sp,
+                None,
             );
-            assert!(matches!(result, PermissionCheckResult::Allowed),
-                "ls {other_str} with read on ~/b should be allowed. got {result:?}");
+            assert!(
+                matches!(result, PermissionCheckResult::Allowed),
+                "ls {other_str} with read on ~/b should be allowed. got {result:?}"
+            );
         }
     }
 
@@ -409,12 +463,11 @@ mod tests {
             let mut sp = SessionPermissions::default();
             sp.set_path_mode(&cwd.to_string_lossy(), PermissionMode::Edit);
 
-            let result = check_permission(
-                "Bash", Some("cargo build"), None,
-                &cwd, &sp, None,
+            let result = check_permission("Bash", Some("cargo build"), None, &cwd, &sp, None);
+            assert!(
+                matches!(result, PermissionCheckResult::Allowed),
+                "cargo build in edit-mode cwd should be allowed. got {result:?}"
             );
-            assert!(matches!(result, PermissionCheckResult::Allowed),
-                "cargo build in edit-mode cwd should be allowed. got {result:?}");
         }
     }
 
@@ -430,8 +483,12 @@ mod tests {
             sp.set_path_mode("~/.linggen/skills", PermissionMode::Admin);
 
             let result = check_permission(
-                "Bash", Some("bash ~/.linggen/skills/foo/run.sh"), None,
-                &cwd, &sp, None,
+                "Bash",
+                Some("bash ~/.linggen/skills/foo/run.sh"),
+                None,
+                &cwd,
+                &sp,
+                None,
             );
             assert!(matches!(result, PermissionCheckResult::Allowed),
                 "bash on a granted path should be allowed even if cwd is lower-tier. got {result:?}");
@@ -469,7 +526,12 @@ mod tests {
             sp.set_path_mode(&home.to_string_lossy(), PermissionMode::Read);
 
             let escape = check_permission(
-                "Bash", Some("cat ../other-xyz/id_rsa"), None, &home, &sp, None,
+                "Bash",
+                Some("cat ../other-xyz/id_rsa"),
+                None,
+                &home,
+                &sp,
+                None,
             );
             assert!(
                 matches!(escape, PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling { .. })),
@@ -479,10 +541,17 @@ mod tests {
             if let Some(parent) = home.parent() {
                 sp.set_path_mode(&parent.to_string_lossy(), PermissionMode::Read);
                 let granted = check_permission(
-                    "Bash", Some("cat ../other-xyz/id_rsa"), None, &home, &sp, None,
+                    "Bash",
+                    Some("cat ../other-xyz/id_rsa"),
+                    None,
+                    &home,
+                    &sp,
+                    None,
                 );
-                assert!(matches!(granted, PermissionCheckResult::Allowed),
-                    "with read on the parent, the escaped read should pass. got {granted:?}");
+                assert!(
+                    matches!(granted, PermissionCheckResult::Allowed),
+                    "with read on the parent, the escaped read should pass. got {granted:?}"
+                );
             }
         }
     }
@@ -494,7 +563,10 @@ mod tests {
         let cmd = "ling-mem list --episodic --older-than \"7d\" --format json \
                    | jq -r '.data.episodic_ttl_days // env.X // 7'";
         let paths = extract_command_paths(cmd);
-        assert!(paths.is_empty(), "jq // should not be extracted; got {paths:?}");
+        assert!(
+            paths.is_empty(),
+            "jq // should not be extracted; got {paths:?}"
+        );
 
         // Real paths still come through; bare-slash junk is dropped.
         let mixed = extract_command_paths("cat ~/.linggen/x.json / // ///");
@@ -505,7 +577,10 @@ mod tests {
         let q = extract_command_paths(
             "ling-mem search \"binary path /usr/local/bin ~/.local/bin state ~/.linggen\" --limit 8",
         );
-        assert!(q.is_empty(), "quoted search query must not yield path args; got {q:?}");
+        assert!(
+            q.is_empty(),
+            "quoted search query must not yield path args; got {q:?}"
+        );
 
         // But a genuinely quoted path ARG still counts.
         assert_eq!(
@@ -528,8 +603,10 @@ mod tests {
 
         let scan = "bash ~/.linggen/skills/shared-memory/scripts/scan.sh 2026-05-29";
         assert!(
-            matches!(check_permission("Bash", Some(scan), None, &cwd, &sp, None),
-                     PermissionCheckResult::Allowed),
+            matches!(
+                check_permission("Bash", Some(scan), None, &cwd, &sp, None),
+                PermissionCheckResult::Allowed
+            ),
             "scan.sh under admin ~/.linggen should be allowed",
         );
 
@@ -538,8 +615,10 @@ mod tests {
                    ling-mem list --episodic --older-than \"${TTL_DAYS}d\" --format json \
                    | jq -c 'del(.vector)'";
         assert!(
-            matches!(check_permission("Bash", Some(ttl), None, &cwd, &sp, None),
-                     PermissionCheckResult::Allowed),
+            matches!(
+                check_permission("Bash", Some(ttl), None, &cwd, &sp, None),
+                PermissionCheckResult::Allowed
+            ),
             "Phase 3 TTL command (with jq //) should be allowed, not re-prompt for admin on //",
         );
     }
@@ -555,10 +634,15 @@ mod tests {
                    > /tmp/dream_users.txt && wc -l /tmp/dream_users.txt";
         // (~/.linggen still needs its own grant; grant it so only /tmp is at issue.)
         let mut sp2 = SessionPermissions::default();
-        sp2.set_path_mode(&dirs::home_dir().unwrap().join(".linggen").to_string_lossy(), PermissionMode::Admin);
+        sp2.set_path_mode(
+            &dirs::home_dir().unwrap().join(".linggen").to_string_lossy(),
+            PermissionMode::Admin,
+        );
         assert!(
-            matches!(check_permission("Bash", Some(cmd), None, &cwd, &sp2, None),
-                     PermissionCheckResult::Allowed),
+            matches!(
+                check_permission("Bash", Some(cmd), None, &cwd, &sp2, None),
+                PermissionCheckResult::Allowed
+            ),
             "admin-class bash writing to /tmp should be allowed as scratch",
         );
 
@@ -581,10 +665,7 @@ mod tests {
         sp.set_path_mode("~", PermissionMode::Admin);
         let cwd = dirs::home_dir().unwrap_or_default();
 
-        let result = check_permission(
-            "Bash", Some("sudo rm -rf /"), None,
-            &cwd, &sp, None,
-        );
+        let result = check_permission("Bash", Some("sudo rm -rf /"), None, &cwd, &sp, None);
         assert!(matches!(result, PermissionCheckResult::Blocked(_)));
     }
 
@@ -600,7 +681,10 @@ mod tests {
             tool_action_tier("mcp__github__create_issue"),
             PermissionMode::Admin
         );
-        assert_eq!(tool_action_tier("mcp__ling-mem__memory_search"), PermissionMode::Admin);
+        assert_eq!(
+            tool_action_tier("mcp__ling-mem__memory_search"),
+            PermissionMode::Admin
+        );
         // The contrast that makes the point.
         assert_eq!(tool_action_tier("AskUser"), PermissionMode::Chat);
     }
@@ -654,12 +738,18 @@ mod tests {
             parse_exceeds_ceiling_answer("Allow once", &mode),
             PermissionAction::AllowOnce,
         );
-        assert_eq!(parse_exceeds_ceiling_answer("Deny", &mode), PermissionAction::Deny);
+        assert_eq!(
+            parse_exceeds_ceiling_answer("Deny", &mode),
+            PermissionAction::Deny
+        );
     }
 
     #[test]
     fn test_permission_target_summary_bash() {
         let args = serde_json::json!({ "cmd": "cargo build" });
-        assert_eq!(permission_target_summary("Bash", &args, Path::new("/tmp")), "cargo build");
+        assert_eq!(
+            permission_target_summary("Bash", &args, Path::new("/tmp")),
+            "cargo build"
+        );
     }
 }

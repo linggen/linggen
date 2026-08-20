@@ -1,8 +1,8 @@
-use crate::provider::anthropic::AnthropicClient;
-use crate::provider::codex_auth;
 use crate::config::ModelConfig;
 use crate::credentials::{self, Credentials};
 use crate::message::ChatMessage;
+use crate::provider::anthropic::AnthropicClient;
+use crate::provider::codex_auth;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
 use anyhow::Result;
@@ -140,7 +140,9 @@ impl ModelHealthTracker {
 
 /// Check if an error message string indicates a rate limit (HTTP 429).
 fn is_rate_limit_error_str(msg: &str) -> bool {
-    msg.contains("(429)") || msg.to_lowercase().contains("rate limit") || msg.to_lowercase().contains("quota")
+    msg.contains("(429)")
+        || msg.to_lowercase().contains("rate limit")
+        || msg.to_lowercase().contains("quota")
 }
 
 /// Provider-specific client variant.
@@ -232,10 +234,16 @@ impl ModelManager {
 
         // Load ChatGPT OAuth tokens if any model uses chatgpt_oauth
         let codex_tokens = {
-            let needs_oauth = configs.iter().any(|c| c.auth_mode.as_deref() == Some("chatgpt_oauth"));
+            let needs_oauth = configs
+                .iter()
+                .any(|c| c.auth_mode.as_deref() == Some("chatgpt_oauth"));
             if needs_oauth {
                 let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
-                if tokens.is_valid() { Some(tokens) } else { None }
+                if tokens.is_valid() {
+                    Some(tokens)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -243,11 +251,11 @@ impl ModelManager {
 
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
-            let is_chatgpt_oauth = cfg.auth_mode.as_deref() == Some("chatgpt_oauth")
-                || cfg.provider == "chatgpt";
+            let is_chatgpt_oauth =
+                cfg.auth_mode.as_deref() == Some("chatgpt_oauth") || cfg.provider == "chatgpt";
             // Anthropic with Claude Code OAuth (CC Max subscription).
-            let is_claude_oauth = cfg.provider == "anthropic"
-                && cfg.auth_mode.as_deref() == Some("claude_oauth");
+            let is_claude_oauth =
+                cfg.provider == "anthropic" && cfg.auth_mode.as_deref() == Some("claude_oauth");
 
             if !is_chatgpt_oauth && !is_claude_oauth {
                 // Standard: resolve API key from TOML > credentials.json > env var
@@ -259,29 +267,28 @@ impl ModelManager {
             let is_linggen_account = cfg.auth_mode.as_deref() == Some("linggen_account");
 
             let client = match cfg.provider.as_str() {
-                _ if is_linggen_account => ProviderClient::OpenAi(
-                    OpenAiClient::new_linggen_account(cfg.url.clone()),
-                ),
+                _ if is_linggen_account => {
+                    ProviderClient::OpenAi(OpenAiClient::new_linggen_account(cfg.url.clone()))
+                }
                 "ollama" => {
                     ProviderClient::Ollama(OllamaClient::new(cfg.url.clone(), cfg.api_key.clone()))
                 }
                 "anthropic" if is_claude_oauth => {
                     ProviderClient::Anthropic(AnthropicClient::new_claude_oauth(cfg.url.clone()))
                 }
-                "anthropic" => {
-                    ProviderClient::Anthropic(AnthropicClient::new(
-                        cfg.url.clone(),
-                        cfg.api_key.clone(),
-                    ))
-                }
+                "anthropic" => ProviderClient::Anthropic(AnthropicClient::new(
+                    cfg.url.clone(),
+                    cfg.api_key.clone(),
+                )),
                 _ if is_chatgpt_oauth => {
                     // ChatGPT OAuth: use subscription tokens
                     if let Some(ref tokens) = codex_tokens {
-                        let base_url = if cfg.url.is_empty() || cfg.url == "https://api.openai.com/v1" {
-                            codex_auth::CHATGPT_API_BASE.to_string()
-                        } else {
-                            cfg.url.clone()
-                        };
+                        let base_url =
+                            if cfg.url.is_empty() || cfg.url == "https://api.openai.com/v1" {
+                                codex_auth::CHATGPT_API_BASE.to_string()
+                            } else {
+                                cfg.url.clone()
+                            };
                         ProviderClient::OpenAi(OpenAiClient::new_chatgpt_oauth(
                             base_url,
                             tokens.access_token.clone().unwrap_or_default(),
@@ -362,61 +369,63 @@ impl ModelManager {
                 // Try streaming first; auto-fallback to non-streaming on 503
                 // (e.g. Ollama cloud-proxied models that don't support streaming).
                 // Retry up to 3 times with backoff for 503 errors (model loading).
-                let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> = match client
-                    .chat_text_stream_with_keep_alive(
-                        &instance.config.model,
-                        messages,
-                        keep_alive.clone(),
-                    )
-                    .await
-                {
-                    Ok(stream) => Box::pin(stream),
-                    Err(e) if e.to_string().contains("503") => {
-                        tracing::info!(
+                let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
+                    match client
+                        .chat_text_stream_with_keep_alive(
+                            &instance.config.model,
+                            messages,
+                            keep_alive.clone(),
+                        )
+                        .await
+                    {
+                        Ok(stream) => Box::pin(stream),
+                        Err(e) if e.to_string().contains("503") => {
+                            tracing::info!(
                             "Streaming returned 503 for model '{}', falling back to non-streaming with retry",
                             instance.config.model
                         );
-                        let mut last_err = e;
-                        let mut result = None;
-                        for attempt in 0..3u32 {
-                            if attempt > 0 {
-                                let delay = std::time::Duration::from_millis(1000 * (1 << attempt));
-                                tracing::info!(
-                                    "Retry {}/3 for model '{}' after 503 (waiting {}ms)",
-                                    attempt + 1,
-                                    instance.config.model,
-                                    delay.as_millis()
-                                );
-                                tokio::time::sleep(delay).await;
+                            let mut last_err = e;
+                            let mut result = None;
+                            for attempt in 0..3u32 {
+                                if attempt > 0 {
+                                    let delay =
+                                        std::time::Duration::from_millis(1000 * (1 << attempt));
+                                    tracing::info!(
+                                        "Retry {}/3 for model '{}' after 503 (waiting {}ms)",
+                                        attempt + 1,
+                                        instance.config.model,
+                                        delay.as_millis()
+                                    );
+                                    tokio::time::sleep(delay).await;
+                                }
+                                match client
+                                    .chat_text_with_keep_alive(
+                                        &instance.config.model,
+                                        messages,
+                                        keep_alive.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok(msg) => {
+                                        result = Some(msg);
+                                        break;
+                                    }
+                                    Err(e) if e.to_string().contains("503") => {
+                                        last_err = e;
+                                        continue;
+                                    }
+                                    Err(e) => return Err(e),
+                                }
                             }
-                            match client
-                                .chat_text_with_keep_alive(
-                                    &instance.config.model,
-                                    messages,
-                                    keep_alive.clone(),
-                                )
-                                .await
-                            {
-                                Ok(msg) => {
-                                    result = Some(msg);
-                                    break;
-                                }
-                                Err(e) if e.to_string().contains("503") => {
-                                    last_err = e;
-                                    continue;
-                                }
-                                Err(e) => return Err(e),
+                            match result {
+                                Some(msg) => Box::pin(futures_util::stream::once(async move {
+                                    Ok(StreamChunk::Token(msg))
+                                })),
+                                None => return Err(last_err),
                             }
                         }
-                        match result {
-                            Some(msg) => {
-                                Box::pin(futures_util::stream::once(async move { Ok(StreamChunk::Token(msg)) }))
-                            }
-                            None => return Err(last_err),
-                        }
-                    }
-                    Err(e) => return Err(e),
-                };
+                        Err(e) => return Err(e),
+                    };
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
@@ -429,7 +438,12 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_text_stream(&instance.config.model, messages, effort_override.or(instance.config.reasoning_effort.as_deref()), app)
+                    .chat_text_stream(
+                        &instance.config.model,
+                        messages,
+                        effort_override.or(instance.config.reasoning_effort.as_deref()),
+                        app,
+                    )
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -460,7 +474,9 @@ impl ModelManager {
                 )))
             }
             ProviderClient::Proxy(client) => {
-                let stream = client.inference_stream(&instance.config.model, messages, None).await?;
+                let stream = client
+                    .inference_stream(&instance.config.model, messages, None)
+                    .await?;
                 Ok(Box::pin(futures_util::stream::unfold(
                     (stream, _permit),
                     |(mut stream, permit)| async move {
@@ -498,13 +514,17 @@ impl ModelManager {
                 // Retry up to 3 times with backoff for 503 errors (model loading),
                 // matching the retry logic in chat_text_stream.
                 let mut last_err = None;
-                let mut boxed_stream: Option<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> = None;
+                let mut boxed_stream: Option<
+                    Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>,
+                > = None;
                 for attempt in 0..3u32 {
                     if attempt > 0 {
                         let delay = std::time::Duration::from_millis(1000 * (1 << attempt));
                         tracing::info!(
                             "Retry {}/3 for tool stream model '{}' after 503 (waiting {}ms)",
-                            attempt + 1, instance.config.model, delay.as_millis()
+                            attempt + 1,
+                            instance.config.model,
+                            delay.as_millis()
                         );
                         tokio::time::sleep(delay).await;
                     }
@@ -534,7 +554,9 @@ impl ModelManager {
                 }
                 let boxed_stream = match boxed_stream {
                     Some(s) => s,
-                    None => return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("503 after retries"))),
+                    None => {
+                        return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("503 after retries")))
+                    }
                 };
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
@@ -548,7 +570,13 @@ impl ModelManager {
             }
             ProviderClient::OpenAi(client) => {
                 let stream = client
-                    .chat_tool_stream(&instance.config.model, messages, tools, effort_override.or(instance.config.reasoning_effort.as_deref()), app)
+                    .chat_tool_stream(
+                        &instance.config.model,
+                        messages,
+                        tools,
+                        effort_override.or(instance.config.reasoning_effort.as_deref()),
+                        app,
+                    )
                     .await?;
                 let boxed_stream: Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>> =
                     Box::pin(stream);
@@ -579,7 +607,9 @@ impl ModelManager {
                 )))
             }
             ProviderClient::Proxy(client) => {
-                let stream = client.inference_stream(&instance.config.model, messages, Some(tools)).await?;
+                let stream = client
+                    .inference_stream(&instance.config.model, messages, Some(tools))
+                    .await?;
                 Ok(Box::pin(futures_util::stream::unfold(
                     (stream, _permit),
                     |(mut stream, permit)| async move {
@@ -607,13 +637,29 @@ impl ModelManager {
     ) -> Vec<String> {
         let mut registered = Vec::new();
         for model_info in remote_models {
-            let id = model_info.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let model_name = model_info.get("model").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
-            let supports_tools = model_info.get("supports_tools").and_then(|v| v.as_bool()).unwrap_or(true);
-            if id.is_empty() { continue; }
+            let id = model_info
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model_name = model_info
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+            let supports_tools = model_info
+                .get("supports_tools")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if id.is_empty() {
+                continue;
+            }
 
             let proxy_id = format!("proxy:{id}");
-            tracing::info!("Registering proxy model: {proxy_id} (remote: {model_name}, by: {:?})", owner_name);
+            tracing::info!(
+                "Registering proxy model: {proxy_id} (remote: {model_name}, by: {:?})",
+                owner_name
+            );
 
             let config = crate::config::ModelConfig {
                 id: proxy_id.clone(),
@@ -631,13 +677,16 @@ impl ModelManager {
                 is_builtin: false,
             };
 
-            self.models.insert(proxy_id.clone(), ModelInstance {
-                config,
-                client: ProviderClient::Proxy(proxy_client.clone()),
-                semaphore: Arc::new(Semaphore::new(1)),
-                context_window: OnceCell::new(),
-                has_vision: OnceCell::new(),
-            });
+            self.models.insert(
+                proxy_id.clone(),
+                ModelInstance {
+                    config,
+                    client: ProviderClient::Proxy(proxy_client.clone()),
+                    semaphore: Arc::new(Semaphore::new(1)),
+                    context_window: OnceCell::new(),
+                    has_vision: OnceCell::new(),
+                },
+            );
             registered.push(proxy_id);
         }
         registered
@@ -674,7 +723,9 @@ impl ModelManager {
                 // Don't cache: Ollama's effective num_ctx changes when the user
                 // (re)loads the model with a different size. /api/ps is cheap
                 // (local HTTP) and this is not on a hot path.
-                client.get_model_context_window(&instance.config.model).await
+                client
+                    .get_model_context_window(&instance.config.model)
+                    .await
             }
             ProviderClient::OpenAi(client) => {
                 let model_name = instance.config.model.clone();
@@ -694,11 +745,15 @@ impl ModelManager {
                             }
                             // Try dynamic API query first, fall back to guess.
                             if let Some(cw) = client.get_context_window(&model_name).await {
-                                tracing::debug!("Got context window from API for {model_name}: {cw}");
+                                tracing::debug!(
+                                    "Got context window from API for {model_name}: {cw}"
+                                );
                                 Ok::<_, anyhow::Error>(Some(cw))
                             } else {
                                 let guess = Self::guess_context_window(&model_name);
-                                tracing::debug!("Using guessed context window for {model_name}: {guess}");
+                                tracing::debug!(
+                                    "Using guessed context window for {model_name}: {guess}"
+                                );
                                 Ok(Some(guess))
                             }
                         }
@@ -732,8 +787,12 @@ impl ModelManager {
         let m = model_name.to_lowercase();
         // Gemini models
         if m.contains("gemini") {
-            if m.contains("flash") { return 1_048_576; } // 1M
-            if m.contains("pro") { return 1_048_576; }
+            if m.contains("flash") {
+                return 1_048_576;
+            } // 1M
+            if m.contains("pro") {
+                return 1_048_576;
+            }
             return 1_048_576;
         }
         // Claude models
@@ -780,9 +839,9 @@ impl ModelManager {
                 let client = client.clone();
                 let value = instance
                     .has_vision
-                    .get_or_try_init(|| async move {
-                        client.get_model_has_vision(&model_name).await
-                    })
+                    .get_or_try_init(
+                        || async move { client.get_model_has_vision(&model_name).await },
+                    )
                     .await;
                 Ok(*value?)
             }
@@ -791,13 +850,22 @@ impl ModelManager {
                 if instance.config.tags.is_empty() {
                     Ok(true)
                 } else {
-                    Ok(instance.config.tags.iter().any(|t| t.eq_ignore_ascii_case("vision")))
+                    Ok(instance
+                        .config
+                        .tags
+                        .iter()
+                        .any(|t| t.eq_ignore_ascii_case("vision")))
                 }
             }
             ProviderClient::Anthropic(_) => {
                 // All Claude 3.5+ / 4.x models support vision. Respect an
                 // explicit opt-out via `tags = ["no-vision"]` if configured.
-                if instance.config.tags.iter().any(|t| t.eq_ignore_ascii_case("no-vision")) {
+                if instance
+                    .config
+                    .tags
+                    .iter()
+                    .any(|t| t.eq_ignore_ascii_case("no-vision"))
+                {
                     Ok(false)
                 } else {
                     Ok(true)
@@ -844,7 +912,9 @@ impl ModelManager {
     /// model's provider actually receives — so what you copy from the
     /// system-prompt panel matches what gets sent on the wire.
     pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
-        self.models.get(model_id).map(|m| m.config.provider.as_str())
+        self.models
+            .get(model_id)
+            .map(|m| m.config.provider.as_str())
     }
 
     /// Return the first OllamaClient found among configured models.
@@ -921,8 +991,7 @@ pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.6-terra";
 /// rendered as a raw editable duplicate — sign in and star one, nothing to
 /// configure. A user wanting a different/custom ChatGPT-backed model
 /// should give it a different id.
-pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] =
-    &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
 /// Previous ChatGPT built-in ids. Config::load migrates these: stale
 /// persisted copies of the old built-in are dropped and starred routing
@@ -1002,7 +1071,9 @@ mod tests {
 
     #[test]
     fn test_rate_limit() {
-        assert!(is_fallback_worthy_error(&err("HTTP error (429) Too Many Requests")));
+        assert!(is_fallback_worthy_error(&err(
+            "HTTP error (429) Too Many Requests"
+        )));
         assert!(is_fallback_worthy_error(&err("rate limit exceeded")));
         // The live openai.rs shape — StatusCode Display puts the reason
         // INSIDE the parens; "(429)" alone never occurs. Regression for the
@@ -1029,18 +1100,28 @@ mod tests {
             "Model streaming timed out after 60s (no data received)"
         )));
         assert!(is_fallback_worthy_error(&err("request timeout")));
-        assert!(is_fallback_worthy_error(&err("HTTP error (502) Bad Gateway")));
-        assert!(is_fallback_worthy_error(&err("HTTP error (503) after retries")));
+        assert!(is_fallback_worthy_error(&err(
+            "HTTP error (502) Bad Gateway"
+        )));
+        assert!(is_fallback_worthy_error(&err(
+            "HTTP error (503) after retries"
+        )));
         assert!(is_fallback_worthy_error(&err("connection refused")));
         assert!(is_fallback_worthy_error(&err("connection reset by peer")));
-        assert!(is_fallback_worthy_error(&err("dns error: name resolution failed")));
-        assert!(is_fallback_worthy_error(&err("connect error: network unreachable")));
+        assert!(is_fallback_worthy_error(&err(
+            "dns error: name resolution failed"
+        )));
+        assert!(is_fallback_worthy_error(&err(
+            "connect error: network unreachable"
+        )));
     }
 
     #[test]
     fn test_non_fallback_errors() {
         assert!(!is_fallback_worthy_error(&err("invalid JSON in response")));
-        assert!(!is_fallback_worthy_error(&err("HTTP error (401) Unauthorized")));
+        assert!(!is_fallback_worthy_error(&err(
+            "HTTP error (401) Unauthorized"
+        )));
         assert!(!is_fallback_worthy_error(&err("unknown model")));
     }
 }

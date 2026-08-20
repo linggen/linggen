@@ -59,13 +59,14 @@ pub async fn connect_to_room(
     // Add inference data channel and create offer
     let mut changes = rtc.sdp_api();
     let _channel_id = changes.add_channel("inference".to_string());
-    let (offer, pending) = changes.apply()
+    let (offer, pending) = changes
+        .apply()
         .context("Failed to create SDP offer (no changes?)")?;
     let offer_sdp = offer.to_sdp_string();
 
     // Add local candidate
-    let local_ip = super::peer::get_local_ip()
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let local_ip =
+        super::peer::get_local_ip().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     rtc.add_local_candidate(Candidate::host(
         (local_ip, local_addr.port()).into(),
         Protocol::Udp,
@@ -92,7 +93,8 @@ pub async fn connect_to_room(
     }
 
     let offer_resp: serde_json::Value = resp.json().await?;
-    let nonce = offer_resp["nonce"].as_str()
+    let nonce = offer_resp["nonce"]
+        .as_str()
         .context("No nonce in offer response")?
         .to_string();
     info!("Offer posted, nonce: {nonce}");
@@ -107,7 +109,9 @@ pub async fn connect_to_room(
             .bearer_auth(api_token)
             .send()
             .await?;
-        if resp.status() == 204 { continue; }
+        if resp.status() == 204 {
+            continue;
+        }
         if resp.status().is_success() {
             let data: serde_json::Value = resp.json().await?;
             if let Some(sdp) = data["sdp"].as_str() {
@@ -121,9 +125,9 @@ pub async fn connect_to_room(
     }
 
     // Accept the answer
-    let answer = SdpAnswer::from_sdp_string(&answer_sdp)
-        .context("Failed to parse SDP answer")?;
-    rtc.sdp_api().accept_answer(pending, answer)
+    let answer = SdpAnswer::from_sdp_string(&answer_sdp).context("Failed to parse SDP answer")?;
+    rtc.sdp_api()
+        .accept_answer(pending, answer)
         .context("Failed to accept SDP answer")?;
     info!("SDP answer accepted, starting peer connection");
 
@@ -137,7 +141,16 @@ pub async fn connect_to_room(
 
     // Spawn the peer connection event loop
     tokio::spawn(async move {
-        run_proxy_client_loop(&mut rtc, &socket, &mut request_rx, &response_tx, Some(ready_tx), &mut events_rx, events_broadcast_tx).await;
+        run_proxy_client_loop(
+            &mut rtc,
+            &socket,
+            &mut request_rx,
+            &response_tx,
+            Some(ready_tx),
+            &mut events_rx,
+            events_broadcast_tx,
+        )
+        .await;
         info!("Proxy client peer connection closed");
         let _ = disconnect_tx.send(());
     });
@@ -180,7 +193,9 @@ async fn run_proxy_client_loop(
         // Drain str0m outputs (STUN, DTLS, SCTP packets)
         let timeout = match rtc.poll_output().unwrap_or(Output::Timeout(Instant::now())) {
             Output::Transmit(transmit) => {
-                let _ = socket.send_to(&transmit.contents, transmit.destination).await;
+                let _ = socket
+                    .send_to(&transmit.contents, transmit.destination)
+                    .await;
                 continue;
             }
             Output::Timeout(t) => t,
@@ -205,13 +220,28 @@ async fn run_proxy_client_loop(
                             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text) {
                                 if msg.get("type").and_then(|v| v.as_str()) == Some("room_chat") {
                                     if let Some(chat_data) = msg.get("data") {
-                                        let sender_id = chat_data.get("sender_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let sender_id = chat_data
+                                            .get("sender_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
                                         // Skip echoes — don't re-broadcast our own messages
                                         if sender_id != local_user_id {
                                             remote_sender_ids.insert(sender_id.clone());
-                                            let sender_name = chat_data.get("sender_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            let avatar_url = chat_data.get("avatar_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            let chat_text = chat_data.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                            let sender_name = chat_data
+                                                .get("sender_name")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let avatar_url = chat_data
+                                                .get("avatar_url")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string());
+                                            let chat_text = chat_data
+                                                .get("text")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
                                             if !chat_text.is_empty() {
                                                 if let Some(ref etx) = events_broadcast_tx {
                                                     tracing::info!(
@@ -219,9 +249,14 @@ async fn run_proxy_client_loop(
                                                         sender_id,
                                                         chat_text.len()
                                                     );
-                                                    let _ = etx.send(crate::server::ServerEvent::RoomChat {
-                                                        sender_id, sender_name, avatar_url, text: chat_text,
-                                                    });
+                                                    let _ = etx.send(
+                                                        crate::server::ServerEvent::RoomChat {
+                                                            sender_id,
+                                                            sender_name,
+                                                            avatar_url,
+                                                            text: chat_text,
+                                                        },
+                                                    );
                                                 }
                                             }
                                         }

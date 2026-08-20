@@ -1,4 +1,6 @@
-use crate::server::chat::helpers::{emit_outcome_event, persist_and_emit_message, persist_message_only};
+use crate::server::chat::helpers::{
+    emit_outcome_event, persist_and_emit_message, persist_message_only,
+};
 use crate::server::ServerEvent;
 
 use super::plan_flow::{run_plan_dispatch, run_plan_execution};
@@ -10,10 +12,7 @@ use super::runtime::{
 use super::ChatRunCtx;
 
 /// Dispatch the structured (auto) mode agent loop.
-pub(super) async fn run_structured_loop(
-    ctx: &ChatRunCtx,
-    engine: &mut crate::engine::AgentEngine,
-) {
+pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::engine::AgentEngine) {
     // Vision gate: reject images if the model doesn't support vision.
     if !ctx.images.is_empty() {
         let has_vision = engine
@@ -27,8 +26,15 @@ pub(super) async fn run_structured_loop(
                 engine.model_id
             );
             persist_and_emit_message(
-                &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-                &ctx.agent_id, "user", &err_msg, ctx.session_id.as_deref(), false,
+                &ctx.manager,
+                &ctx.events_tx,
+                &ctx.root,
+                &ctx.agent_id,
+                &ctx.agent_id,
+                "user",
+                &err_msg,
+                ctx.session_id.as_deref(),
+                false,
             )
             .await;
             let _ = ctx.events_tx.send(ServerEvent::StateUpdated);
@@ -64,8 +70,13 @@ pub(super) async fn run_structured_loop(
     );
 
     let outcome = run_loop_with_tracking(
-        &ctx.manager, &ctx.root, engine, &ctx.agent_id,
-        ctx.session_id.as_deref(), "chat:structured-loop", &ctx.events_tx,
+        &ctx.manager,
+        &ctx.root,
+        engine,
+        &ctx.agent_id,
+        ctx.session_id.as_deref(),
+        "chat:structured-loop",
+        &ctx.events_tx,
     )
     .await;
 
@@ -87,11 +98,22 @@ pub(super) async fn run_structured_loop(
         // The UI renders it as a PlanBlock via tryRenderSpecialBlock.
         let plan_json = serde_json::json!({ "type": "plan", "plan": plan }).to_string();
         persist_message_only(
-            &ctx.manager, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &plan_json,
-            ctx.session_id.as_deref(), false,
-        ).await;
-        emit_outcome_event(ok_outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+            &ctx.manager,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &plan_json,
+            ctx.session_id.as_deref(),
+            false,
+        )
+        .await;
+        emit_outcome_event(
+            ok_outcome,
+            &ctx.events_tx,
+            &ctx.agent_id,
+            ctx.session_id.as_deref(),
+        );
         ctx.manager
             .set_pending_plan(
                 &ctx.root.to_string_lossy(),
@@ -107,7 +129,12 @@ pub(super) async fn run_structured_loop(
     // Agent plan was approved inline — start execution immediately.
     if let Ok(crate::engine::AgentOutcome::PlanApproved(ref plan)) = outcome {
         persist_and_emit_last_assistant_text(ctx, engine).await;
-        emit_outcome_event(outcome.as_ref().unwrap(), &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+        emit_outcome_event(
+            outcome.as_ref().unwrap(),
+            &ctx.events_tx,
+            &ctx.agent_id,
+            ctx.session_id.as_deref(),
+        );
         engine.plan = Some(plan.clone());
         engine.plan_mode = false;
         engine.observations.clear();
@@ -119,15 +146,27 @@ pub(super) async fn run_structured_loop(
     }
 
     if let Ok(outcome) = &outcome {
-        emit_outcome_event(outcome, &ctx.events_tx, &ctx.agent_id, ctx.session_id.as_deref());
+        emit_outcome_event(
+            outcome,
+            &ctx.events_tx,
+            &ctx.agent_id,
+            ctx.session_id.as_deref(),
+        );
         // persist_assistant_message() (engine/context.rs) already emits
         // AgentEvent::Message which the bridge converts to ServerEvent::Message.
         // Emitting one here would duplicate the assistant response for WebRTC consumers.
     } else if let Err(err) = outcome {
         let error_msg = super::helpers::format_turn_error(&err.to_string());
         persist_and_emit_message(
-            &ctx.manager, &ctx.events_tx, &ctx.root, &ctx.agent_id,
-            &ctx.agent_id, "user", &error_msg, ctx.session_id.as_deref(), false,
+            &ctx.manager,
+            &ctx.events_tx,
+            &ctx.root,
+            &ctx.agent_id,
+            &ctx.agent_id,
+            "user",
+            &error_msg,
+            ctx.session_id.as_deref(),
+            false,
         )
         .await;
     }

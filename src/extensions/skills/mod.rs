@@ -22,11 +22,10 @@ fn page_update_tool_def() -> SkillToolDef {
             param_type: "array".to_string(),
             required: false,
             default: None,
-            description:
-                "Array of body widgets stacked vertically (main content). \
+            description: "Array of body widgets stacked vertically (main content). \
                  Widget shapes are defined in the skill's SKILL.md (e.g. `info`, \
                  `table`, `action-cards`, `progress`)."
-                    .to_string(),
+                .to_string(),
             items: None,
         },
     );
@@ -38,10 +37,9 @@ fn page_update_tool_def() -> SkillToolDef {
             param_type: "array".to_string(),
             required: false,
             default: None,
-            description:
-                "Optional top-of-dashboard section. Shape is defined by the active \
+            description: "Optional top-of-dashboard section. Shape is defined by the active \
                  skill's SKILL.md."
-                    .to_string(),
+                .to_string(),
             items: None,
         },
     );
@@ -51,10 +49,9 @@ fn page_update_tool_def() -> SkillToolDef {
             param_type: "object".to_string(),
             required: false,
             default: None,
-            description:
-                "Optional footer section. Shape is defined by the active skill's \
+            description: "Optional footer section. Shape is defined by the active skill's \
                  SKILL.md."
-                    .to_string(),
+                .to_string(),
             items: None,
         },
     );
@@ -68,18 +65,16 @@ fn page_update_tool_def() -> SkillToolDef {
             param_type: "array".to_string(),
             required: false,
             default: None,
-            description:
-                "Partial body update — preserves widgets the patch doesn't touch. \
+            description: "Partial body update — preserves widgets the patch doesn't touch. \
                  Shape is defined by the active skill's SKILL.md (some skills use \
                  selector patches, others key by section)."
-                    .to_string(),
+                .to_string(),
             items: None,
         },
     );
     SkillToolDef {
         name: "PageUpdate".to_string(),
-        description:
-            "Refresh the skill's dashboard UI. Pass `top_bar`, `body`, `footer`, \
+        description: "Refresh the skill's dashboard UI. Pass `top_bar`, `body`, `footer`, \
              and/or `body_patch` as top-level arguments — omit any section you \
              don't want to change (previous values persist). At least one must be \
              provided and non-empty. **All payload shapes (widgets, patch entries, \
@@ -88,7 +83,7 @@ fn page_update_tool_def() -> SkillToolDef {
              when your tools measure or change anything, surface the outcome here \
              in the SAME turn — the user watches the page, and a result that only \
              lands in chat leaves it stale. Never wait to be asked to show it."
-                .to_string(),
+            .to_string(),
         cmd: String::new(),
         endpoint: None,
         tier: None,
@@ -143,7 +138,10 @@ fn project_installed(remotes: &[BuiltInRemote]) -> Vec<BuiltInSkillInfo> {
         .map(|r| BuiltInSkillInfo {
             name: r.name.clone(),
             description: r.description.clone(),
-            installed: global_skills_dir.join(&r.dir_name).join("SKILL.md").exists(),
+            installed: global_skills_dir
+                .join(&r.dir_name)
+                .join("SKILL.md")
+                .exists(),
         })
         .collect()
 }
@@ -218,7 +216,11 @@ async fn fetch_builtin_skills_inner() -> Result<Vec<BuiltInRemote>> {
             }
             let text = resp.text().await.ok()?;
             let (name, description) = parse_frontmatter_meta(&text)?;
-            Some(BuiltInRemote { dir_name: entry.name.clone(), name, description })
+            Some(BuiltInRemote {
+                dir_name: entry.name.clone(),
+                name,
+                description,
+            })
         }
     });
     let results = futures_util::future::join_all(fetches).await;
@@ -254,10 +256,7 @@ pub fn run_install_script(skill_dir: &Path) -> Result<Option<String>> {
     };
 
     if !script_path.exists() {
-        anyhow::bail!(
-            "Install script not found: {}",
-            script_path.display()
-        );
+        anyhow::bail!("Install script not found: {}", script_path.display());
     }
 
     tracing::info!(skill_dir = %skill_dir.display(), script = %script_path.display(), "Running skill install script");
@@ -311,14 +310,26 @@ struct SkillFrontmatter {
     disable_model_invocation: bool,
     #[serde(default = "default_user_invocable", rename = "user-invocable")]
     user_invocable: bool,
-    #[serde(default, rename = "allowed-tools", deserialize_with = "deserialize_string_or_vec")]
+    #[serde(
+        default,
+        rename = "allowed-tools",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
     allowed_tools: Option<Vec<String>>,
-    #[serde(default, rename = "allow-skills", deserialize_with = "deserialize_string_or_vec")]
+    #[serde(
+        default,
+        rename = "allow-skills",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
     allow_skills: Option<Vec<String>>,
     /// Slugs this skill used to be called. An install still carrying one of
     /// them gets its `data/` moved across on load, so a rename never resets
     /// the user's state. Oldest last: `renamed-from: [mac-shifu, sys-doctor]`.
-    #[serde(default, rename = "renamed-from", deserialize_with = "deserialize_string_or_vec")]
+    #[serde(
+        default,
+        rename = "renamed-from",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
     renamed_from: Option<Vec<String>>,
     #[serde(default)]
     model: Option<String>,
@@ -383,7 +394,9 @@ impl SkillLoader {
 
         // 2. Load Compat Skills (~/.claude/skills/, ~/.codex/skills/)
         for (compat_dir, label) in crate::paths::compat_skills_dirs() {
-            let source = SkillSource::Compat { label: label.to_string() };
+            let source = SkillSource::Compat {
+                label: label.to_string(),
+            };
             let _ = self
                 .load_from_dir_nested(&compat_dir, source, &mut *skills)
                 .await;
@@ -537,7 +550,6 @@ impl SkillLoader {
     pub(crate) async fn insert_for_test(&self, skill: Skill) {
         self.skills.lock().await.insert(skill.name.clone(), skill);
     }
-
 }
 
 /// `SkillRegistry` impl — the engine reaches `SkillLoader` only through
@@ -668,15 +680,23 @@ fn attach_skill_dir(skill: &mut Skill, dir: PathBuf) {
 /// A chain still works — apple-shifu declares `[mac-shifu, sys-doctor]`, and
 /// whichever slug an old install actually has is the one that migrates.
 fn migrate_declared_renames(skills_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(skills_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(skills_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let dir = entry.path();
         let Some(current) = dir.file_name().and_then(|n| n.to_str()).map(String::from) else {
             continue;
         };
-        let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) else { continue };
-        let (Some(yaml), _) = crate::extensions::frontmatter::split(&text) else { continue };
-        let Ok(fm) = serde_yml::from_str::<SkillFrontmatter>(yaml) else { continue };
+        let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) else {
+            continue;
+        };
+        let (Some(yaml), _) = crate::extensions::frontmatter::split(&text) else {
+            continue;
+        };
+        let Ok(fm) = serde_yml::from_str::<SkillFrontmatter>(yaml) else {
+            continue;
+        };
         for old in fm.renamed_from.into_iter().flatten() {
             if old == current {
                 continue; // a skill can't be renamed from itself
@@ -733,7 +753,9 @@ fn rewrite_slug_paths(data_dir: &Path, old: &str, new: &str) {
 
     let mut stack = vec![data_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
@@ -752,7 +774,9 @@ fn rewrite_slug_paths(data_dir: &Path, old: &str, new: &str) {
             if !is_text || meta.len() > MAX_BYTES {
                 continue;
             }
-            let Ok(body) = std::fs::read_to_string(&path) else { continue };
+            let Ok(body) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             if !body.contains(&from) {
                 continue;
             }
@@ -793,8 +817,8 @@ This is the skill content."#;
 
     #[test]
     fn test_parse_skill_missing_closing() {
-        let err = parse_skill_text("---\nname: x\ndescription: y\n", SkillSource::Global)
-            .unwrap_err();
+        let err =
+            parse_skill_text("---\nname: x\ndescription: y\n", SkillSource::Global).unwrap_err();
         assert!(err.to_string().contains("closing frontmatter"));
     }
 
@@ -828,7 +852,10 @@ Content."#;
         assert!(!skill.user_invocable);
         assert!(skill.disable_model_invocation);
         assert_eq!(skill.argument_hint.as_deref(), Some("project name"));
-        assert_eq!(skill.allowed_tools, Some(vec!["Read".to_string(), "Write".to_string()]));
+        assert_eq!(
+            skill.allowed_tools,
+            Some(vec!["Read".to_string(), "Write".to_string()])
+        );
         assert_eq!(skill.model.as_deref(), Some("gpt-4"));
         assert_eq!(skill.context.as_deref(), Some("my-context"));
         assert_eq!(skill.agent.as_deref(), Some("coder"));
@@ -972,13 +999,19 @@ No app."#;
     #[test]
     fn test_migrate_renamed_skill_moves_data_and_removes_old() {
         let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), &[
-            ("sys-doctor/SKILL.md", "---\nname: sys-doctor\n---\n"),
-            ("sys-doctor/data/media/removals.jsonl", "{}\n"),
-        ]);
+        seed(
+            tmp.path(),
+            &[
+                ("sys-doctor/SKILL.md", "---\nname: sys-doctor\n---\n"),
+                ("sys-doctor/data/media/removals.jsonl", "{}\n"),
+            ],
+        );
         migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(!tmp.path().join("sys-doctor").exists());
-        assert!(tmp.path().join("apple-shifu/data/media/removals.jsonl").exists());
+        assert!(tmp
+            .path()
+            .join("apple-shifu/data/media/removals.jsonl")
+            .exists());
     }
 
     #[test]
@@ -992,11 +1025,14 @@ No app."#;
     #[test]
     fn test_migrate_renamed_skill_keeps_old_when_both_have_data() {
         let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), &[
-            ("sys-doctor/SKILL.md", "x"),
-            ("sys-doctor/data/a.txt", "old"),
-            ("apple-shifu/data/b.txt", "new"),
-        ]);
+        seed(
+            tmp.path(),
+            &[
+                ("sys-doctor/SKILL.md", "x"),
+                ("sys-doctor/data/a.txt", "old"),
+                ("apple-shifu/data/b.txt", "new"),
+            ],
+        );
         migrate_renamed_skill_data(tmp.path(), "sys-doctor", "apple-shifu");
         assert!(tmp.path().join("sys-doctor/data/a.txt").exists());
         assert!(tmp.path().join("apple-shifu/data/b.txt").exists());
@@ -1016,14 +1052,20 @@ No app."#;
     #[test]
     fn test_migrate_rewrites_absolute_paths_in_state_files() {
         let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), &[
-            ("old/SKILL.md", "x"),
-            (
-                "old/data/media/removals.jsonl",
-                "{\"trash\":\"/home/u/.linggen/skills/old/data/media/trash/a.HEIC\"}\n",
-            ),
-            ("old/data/media/notes.bin", "/home/u/.linggen/skills/old/keep"),
-        ]);
+        seed(
+            tmp.path(),
+            &[
+                ("old/SKILL.md", "x"),
+                (
+                    "old/data/media/removals.jsonl",
+                    "{\"trash\":\"/home/u/.linggen/skills/old/data/media/trash/a.HEIC\"}\n",
+                ),
+                (
+                    "old/data/media/notes.bin",
+                    "/home/u/.linggen/skills/old/keep",
+                ),
+            ],
+        );
         migrate_renamed_skill_data(tmp.path(), "old", "new");
 
         let moved =
@@ -1033,7 +1075,8 @@ No app."#;
 
         // Non-text extensions are left byte-identical — thumbnails and venv
         // binaries must never be rewritten.
-        let untouched = std::fs::read_to_string(tmp.path().join("new/data/media/notes.bin")).unwrap();
+        let untouched =
+            std::fs::read_to_string(tmp.path().join("new/data/media/notes.bin")).unwrap();
         assert!(untouched.contains("skills/old/keep"));
     }
 
@@ -1049,21 +1092,30 @@ No app."#;
             ),
         ]);
         migrate_declared_renames(tmp.path());
-        assert!(!tmp.path().join("mac-shifu").exists(), "old slug should be gone");
-        assert!(tmp.path().join("apple-shifu/data/media/archive.jsonl").exists());
+        assert!(
+            !tmp.path().join("mac-shifu").exists(),
+            "old slug should be gone"
+        );
+        assert!(tmp
+            .path()
+            .join("apple-shifu/data/media/archive.jsonl")
+            .exists());
     }
 
     #[test]
     fn test_declared_rename_leaves_unrelated_skills_alone() {
         let tmp = tempfile::tempdir().unwrap();
-        seed(tmp.path(), &[
-            ("cfo/SKILL.md", "---\nname: cfo\ndescription: d\n---\n"),
-            ("cfo/data/ledger.json", "{}\n"),
-            (
-                "apple-shifu/SKILL.md",
-                "---\nname: apple-shifu\ndescription: d\nrenamed-from: mac-shifu\n---\n",
-            ),
-        ]);
+        seed(
+            tmp.path(),
+            &[
+                ("cfo/SKILL.md", "---\nname: cfo\ndescription: d\n---\n"),
+                ("cfo/data/ledger.json", "{}\n"),
+                (
+                    "apple-shifu/SKILL.md",
+                    "---\nname: apple-shifu\ndescription: d\nrenamed-from: mac-shifu\n---\n",
+                ),
+            ],
+        );
         migrate_declared_renames(tmp.path());
         assert!(tmp.path().join("cfo/data/ledger.json").exists());
     }

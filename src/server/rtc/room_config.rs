@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Default allowed tools for consumers — safe, no filesystem access.
 fn default_allowed_tools() -> Vec<String> {
-    vec![
-        "WebSearch".to_string(),
-        "WebFetch".to_string(),
-    ]
+    vec!["WebSearch".to_string(), "WebFetch".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +49,9 @@ pub struct RoomConfig {
     pub token_budget_consumer_daily: Option<i64>,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl Default for RoomConfig {
     fn default() -> Self {
@@ -86,12 +85,24 @@ pub fn load_room_config() -> RoomConfig {
 /// Derive UserPermission from the allowed tools list.
 /// Maps the tool preset pattern to a permission level.
 pub fn tools_to_permission(tools: &[String]) -> super::UserPermission {
-    let has_write = tools.iter().any(|t| matches!(t.as_str(), "Write" | "Edit" | "Bash"));
-    let has_read = tools.iter().any(|t| matches!(t.as_str(), "WebSearch" | "WebFetch" | "Read" | "Glob" | "Grep"));
-    if has_write { super::UserPermission::Edit }
-    else if has_read { super::UserPermission::Read }
-    else if tools.is_empty() { super::UserPermission::Chat }
-    else { super::UserPermission::Read }
+    let has_write = tools
+        .iter()
+        .any(|t| matches!(t.as_str(), "Write" | "Edit" | "Bash"));
+    let has_read = tools.iter().any(|t| {
+        matches!(
+            t.as_str(),
+            "WebSearch" | "WebFetch" | "Read" | "Glob" | "Grep"
+        )
+    });
+    if has_write {
+        super::UserPermission::Edit
+    } else if has_read {
+        super::UserPermission::Read
+    } else if tools.is_empty() {
+        super::UserPermission::Chat
+    } else {
+        super::UserPermission::Read
+    }
 }
 
 pub fn save_room_config(config: &RoomConfig) -> anyhow::Result<()> {

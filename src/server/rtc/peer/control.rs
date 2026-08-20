@@ -64,7 +64,10 @@ pub(super) fn handle_control_message(
         // bound once per connection and works the same over relay, where no
         // token rides the handshake at all.
         "identify" => {
-            let token = msg.get("device_token").and_then(|v| v.as_str()).unwrap_or("");
+            let token = msg
+                .get("device_token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let account = msg
                 .get("account")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
@@ -87,7 +90,8 @@ pub(super) fn handle_control_message(
             // knows, so it says so — the peer is told rather than left holding
             // a label the rest of this connection contradicts.
             if now_identified != was_identified
-                && user_ctx.effective_kind(now_identified) != user_ctx.effective_kind(was_identified)
+                && user_ctx.effective_kind(now_identified)
+                    != user_ctx.effective_kind(was_identified)
             {
                 if let Some(mut ch) = rtc.channel(channel_id) {
                     let msg = super::user_info_msg(user_ctx, now_identified);
@@ -165,18 +169,26 @@ pub(super) fn handle_control_message(
             // changed — asks for the value to be kept, because the surfaces
             // that want it (skill pages) have no peer to receive it live.
             if msg.get("retain").and_then(|v| v.as_bool()).unwrap_or(false) {
-                let payload = msg.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+                let payload = msg
+                    .get("payload")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 crate::server::api::topic::retain(topic, op, &payload);
             }
-            let _ = state.events_tx.send(crate::server::ServerEvent::DeviceTopic {
-                topic: topic.to_string(),
-                op: op.to_string(),
-                payload: msg.get("payload").cloned().unwrap_or(serde_json::Value::Null),
-                from_device: msg
-                    .get("from_device")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-            });
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::DeviceTopic {
+                    topic: topic.to_string(),
+                    op: op.to_string(),
+                    payload: msg
+                        .get("payload")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                    from_device: msg
+                        .get("from_device")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                });
             None
         }
 

@@ -41,7 +41,9 @@ impl TokenUsageStore {
 
     /// Save to disk if dirty.
     pub fn flush(&mut self) {
-        if !self.dirty { return; }
+        if !self.dirty {
+            return;
+        }
         let path = usage_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -62,11 +64,15 @@ impl TokenUsageStore {
     ) -> bool {
         self.maybe_reset();
         if let Some(rb) = room_budget {
-            if self.data.room_total >= rb { return false; }
+            if self.data.room_total >= rb {
+                return false;
+            }
         }
         if let Some(cb) = consumer_budget {
             let used = self.data.consumers.get(user_id).copied().unwrap_or(0);
-            if used >= cb { return false; }
+            if used >= cb {
+                return false;
+            }
         }
         true
     }

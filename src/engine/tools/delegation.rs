@@ -112,35 +112,43 @@ impl Tools {
                         let url = format!("/apps/{}/{}", skill.name, app.entry);
                         // Emit AppLaunched event if we have the bridge.
                         if let Some(bridge) = &self.ask_user_bridge {
-                            let _ = bridge.events_tx.send(crate::server::ServerEvent::AppLaunched {
-                                skill: skill.name.clone(),
-                                launcher: "web".to_string(),
-                                url: url.clone(),
-                                title: skill.description.clone(),
-                                width: app.width,
-                                height: app.height,
-                                session_id: bridge.session_id.clone(),
-                            });
+                            let _ =
+                                bridge
+                                    .events_tx
+                                    .send(crate::server::ServerEvent::AppLaunched {
+                                        skill: skill.name.clone(),
+                                        launcher: "web".to_string(),
+                                        url: url.clone(),
+                                        title: skill.description.clone(),
+                                        width: app.width,
+                                        height: app.height,
+                                        session_id: bridge.session_id.clone(),
+                                    });
                         }
                         Ok(ToolResult::Success(format!(
-                            "Launched web app '{}' at {}", skill.name, url
+                            "Launched web app '{}' at {}",
+                            skill.name, url
                         )))
                     }
                     "url" => {
                         let url = app.entry.clone();
                         if let Some(bridge) = &self.ask_user_bridge {
-                            let _ = bridge.events_tx.send(crate::server::ServerEvent::AppLaunched {
-                                skill: skill.name.clone(),
-                                launcher: "url".to_string(),
-                                url: url.clone(),
-                                title: skill.description.clone(),
-                                width: app.width,
-                                height: app.height,
-                                session_id: bridge.session_id.clone(),
-                            });
+                            let _ =
+                                bridge
+                                    .events_tx
+                                    .send(crate::server::ServerEvent::AppLaunched {
+                                        skill: skill.name.clone(),
+                                        launcher: "url".to_string(),
+                                        url: url.clone(),
+                                        title: skill.description.clone(),
+                                        width: app.width,
+                                        height: app.height,
+                                        session_id: bridge.session_id.clone(),
+                                    });
                         }
                         Ok(ToolResult::Success(format!(
-                            "Launched URL app '{}': {}", skill.name, url
+                            "Launched URL app '{}': {}",
+                            skill.name, url
                         )))
                     }
                     "bash" => {
@@ -150,10 +158,7 @@ impl Tools {
                         })?;
                         let script = skill_dir.join(&app.entry);
                         if !script.exists() {
-                            anyhow::bail!(
-                                "App script not found: {}",
-                                script.display()
-                            );
+                            anyhow::bail!("App script not found: {}", script.display());
                         }
                         let mut cmd = std::process::Command::new("sh");
                         cmd.arg(script.as_os_str());
@@ -164,7 +169,8 @@ impl Tools {
                         }
                         cmd.current_dir(&self.root);
                         cmd.env("PATH", crate::util::shell_path());
-                        let output = cmd.output()
+                        let output = cmd
+                            .output()
                             .map_err(|e| anyhow::anyhow!("Failed to run app script: {}", e))?;
                         Ok(ToolResult::CommandOutput {
                             exit_code: output.status.code(),
@@ -275,27 +281,33 @@ pub(crate) async fn run_delegation(
         .await?;
 
     manager
-        .send_event(crate::engine::agent::AgentEvent::Message {
-            from: caller_id.clone(),
-            to: target_agent_id.clone(),
-            content: format!("Delegated task: {}", task),
-            // This synthetic "delegated" message comes from the caller
-            // (depth-0 in the typical path), so it routes to main chat
-            // as before. Subagent-originated terminal messages are the
-            // ones that needed routing — they come from context.rs.
-            run_id: None,
-            parent_id: None,
-        }, session_id.clone())
+        .send_event(
+            crate::engine::agent::AgentEvent::Message {
+                from: caller_id.clone(),
+                to: target_agent_id.clone(),
+                content: format!("Delegated task: {}", task),
+                // This synthetic "delegated" message comes from the caller
+                // (depth-0 in the typical path), so it routes to main chat
+                // as before. Subagent-originated terminal messages are the
+                // ones that needed routing — they come from context.rs.
+                run_id: None,
+                parent_id: None,
+            },
+            session_id.clone(),
+        )
         .await;
 
     manager
-        .send_event(crate::engine::agent::AgentEvent::SubagentSpawned {
-            parent_id: caller_id.clone(),
-            subagent_id: target_agent_id.clone(),
-            task: task.clone(),
-            subagent_run_id: Some(run_id.clone()),
-            parent_run_id: parent_run_id.clone(),
-        }, session_id.clone())
+        .send_event(
+            crate::engine::agent::AgentEvent::SubagentSpawned {
+                parent_id: caller_id.clone(),
+                subagent_id: target_agent_id.clone(),
+                task: task.clone(),
+                subagent_run_id: Some(run_id.clone()),
+                parent_run_id: parent_run_id.clone(),
+            },
+            session_id.clone(),
+        )
         .await;
 
     let engine_result = manager
@@ -352,7 +364,11 @@ pub(crate) async fn run_delegation(
     let last_text = engine.last_assistant_text.take();
 
     let (outcome, status, detail) = match run_result {
-        Ok(outcome) => (outcome, crate::engine::agent::AgentRunStatus::Completed, None),
+        Ok(outcome) => (
+            outcome,
+            crate::engine::agent::AgentRunStatus::Completed,
+            None,
+        ),
         Err(err) => {
             let msg = err.to_string();
             let status = if msg.to_lowercase().contains("cancel") {
@@ -369,13 +385,16 @@ pub(crate) async fn run_delegation(
     let _ = manager.finish_agent_run(&run_id, status, detail).await;
 
     manager
-        .send_event(crate::engine::agent::AgentEvent::SubagentResult {
-            parent_id: caller_id,
-            subagent_id: target_agent_id,
-            outcome: outcome.clone(),
-            subagent_run_id: Some(run_id.clone()),
-            parent_run_id: parent_run_id.clone(),
-        }, session_id.clone())
+        .send_event(
+            crate::engine::agent::AgentEvent::SubagentResult {
+                parent_id: caller_id,
+                subagent_id: target_agent_id,
+                outcome: outcome.clone(),
+                subagent_run_id: Some(run_id.clone()),
+                parent_run_id: parent_run_id.clone(),
+            },
+            session_id.clone(),
+        )
         .await;
 
     // When the sub-agent finished normally (AgentOutcome::None), surface its

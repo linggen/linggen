@@ -23,9 +23,7 @@ impl AgentEngine {
         use crate::engine::agent::AgentManager;
 
         // Helper to get the tc_id for a given action index.
-        let tc_id_for = |idx: usize| -> Option<String> {
-            tc_ids.get(batch_start + idx).cloned()
-        };
+        let tc_id_for = |idx: usize| -> Option<String> { tc_ids.get(batch_start + idx).cloned() };
         let tool_msg = |this: &Self, content: String, idx: usize| -> ChatMessage {
             this.tool_result_msg_for(content, &tc_id_for(idx), "Task")
         };
@@ -37,7 +35,8 @@ impl AgentEngine {
             match serde_json::from_value::<tools::TaskArgs>(normalized) {
                 Ok(da) => delegation_args.push((i, da)),
                 Err(e) => {
-                    messages.push(tool_msg(self,
+                    messages.push(tool_msg(
+                        self,
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::INVALID_TASK_ARGS,
                             &[("error", &e.to_string())],
@@ -56,7 +55,8 @@ impl AgentEngine {
         if let Some(allowed) = allowed_tools {
             if !self.is_tool_allowed(allowed, "Task") {
                 for (i, da) in &delegation_args {
-                    messages.push(tool_msg(self,
+                    messages.push(tool_msg(
+                        self,
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_BLOCKED,
                             &[("target", &da.target_agent_id)],
@@ -104,7 +104,8 @@ impl AgentEngine {
                     });
                 }
                 Err(e) => {
-                    messages.push(tool_msg(self,
+                    messages.push(tool_msg(
+                        self,
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_VALIDATION_FAILED,
                             &[("target", &da.target_agent_id), ("error", &e.to_string())],
@@ -146,15 +147,31 @@ impl AgentEngine {
                     Ok(rt) => rt,
                     Err(e) => {
                         let target = spawn.target_agent_id.clone();
-                        return (action_idx, target, Err(anyhow::anyhow!("failed to create delegation runtime: {}", e)));
+                        return (
+                            action_idx,
+                            target,
+                            Err(anyhow::anyhow!(
+                                "failed to create delegation runtime: {}",
+                                e
+                            )),
+                        );
                     }
                 };
                 let target = spawn.target_agent_id.clone();
                 let result = rt.block_on(async move {
                     tools::run_delegation(
-                        spawn.manager, ws, spawn.caller_id, spawn.target_agent_id,
-                        spawn.task, spawn.parent_run_id, spawn.depth, spawn.max_depth,
-                        bridge, spawn.session_id, spawn.policy, spawn.path_modes,
+                        spawn.manager,
+                        ws,
+                        spawn.caller_id,
+                        spawn.target_agent_id,
+                        spawn.task,
+                        spawn.parent_run_id,
+                        spawn.depth,
+                        spawn.max_depth,
+                        bridge,
+                        spawn.session_id,
+                        spawn.policy,
+                        spawn.path_modes,
                         spawn.interactive,
                     )
                     .await
@@ -170,8 +187,11 @@ impl AgentEngine {
                 Ok((idx, target, result)) => results.push((idx, target, result)),
                 Err(join_err) => {
                     warn!("Delegation task panicked: {}", join_err);
-                    results.push((usize::MAX, "unknown".to_string(),
-                        Err(anyhow::anyhow!("delegation task panicked: {}", join_err))));
+                    results.push((
+                        usize::MAX,
+                        "unknown".to_string(),
+                        Err(anyhow::anyhow!("delegation task panicked: {}", join_err)),
+                    ));
                 }
             }
             // Check cancellation after each delegation completes so we
@@ -191,24 +211,20 @@ impl AgentEngine {
                     let _ = self
                         .persist_observation("Task", &rendered, session_id)
                         .await;
-                    messages.push(tool_msg(self,
-                        self.observation_text(
-                            "tool",
-                            &format!("Task({})", target),
-                            &rendered,
-                        ),
+                    messages.push(tool_msg(
+                        self,
+                        self.observation_text("tool", &format!("Task({})", target), &rendered),
                         idx,
                     ));
                     self.upsert_observation("tool", "Task", rendered);
                 }
                 Err(e) => {
-                    let rendered = format!(
-                        "tool_error: tool=Task target={} error={}", target, e
-                    );
+                    let rendered = format!("tool_error: tool=Task target={} error={}", target, e);
                     let _ = self
                         .persist_observation("Task", &rendered, session_id)
                         .await;
-                    messages.push(tool_msg(self,
+                    messages.push(tool_msg(
+                        self,
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::DELEGATION_FAILED,
                             &[("target", &target), ("error", &e.to_string())],
@@ -238,10 +254,16 @@ impl AgentEngine {
             let tc_id = tc_ids.get(action_idx_start + idx).cloned();
             match self
                 .pre_execute_tool(
-                    action.tool, action.args, &state.allowed_tools, &mut state.messages,
-                    &mut state.tool_cache, &mut state.read_paths,
-                    &mut state.last_tool_sig, &mut state.redundant_tool_streak,
-                    session_id, tc_id,
+                    action.tool,
+                    action.args,
+                    &state.allowed_tools,
+                    &mut state.messages,
+                    &mut state.tool_cache,
+                    &mut state.read_paths,
+                    &mut state.last_tool_sig,
+                    &mut state.redundant_tool_streak,
+                    session_id,
+                    tc_id,
                 )
                 .await
             {
@@ -292,7 +314,8 @@ impl AgentEngine {
             });
             if !state.messages.is_empty() {
                 let mut sys = new_stable;
-                if let Some(dyn_start) = state.messages[0].content.find("\n\nYou are in PLAN MODE") {
+                if let Some(dyn_start) = state.messages[0].content.find("\n\nYou are in PLAN MODE")
+                {
                     sys.push_str(&state.messages[0].content[dyn_start..]);
                 }
                 state.messages[0] = ChatMessage::new("system", sys);
@@ -308,8 +331,12 @@ impl AgentEngine {
             }
             match self
                 .post_execute_tool(
-                    exec, result, &mut state.messages,
-                    &mut state.tool_cache, &mut state.empty_search_streak, session_id,
+                    exec,
+                    result,
+                    &mut state.messages,
+                    &mut state.tool_cache,
+                    &mut state.empty_search_streak,
+                    session_id,
                 )
                 .await
             {
@@ -342,7 +369,9 @@ impl AgentEngine {
                     // plan as response content but only put a truncated version
                     // in the ExitPlanMode plan_text argument.  Pick whichever
                     // source is more complete so the PlanBlock shows the full plan.
-                    let arg_text = action.args.get("plan_text")
+                    let arg_text = action
+                        .args
+                        .get("plan_text")
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.trim().is_empty())
                         .map(|s| s.to_string())
@@ -350,13 +379,14 @@ impl AgentEngine {
                     let response_text = crate::engine::actions::text_before_first_json(
                         &state.last_assistant_response,
                     );
-                    let plan_text = if !response_text.is_empty() && response_text.len() > arg_text.len() {
-                        response_text
-                    } else if !arg_text.is_empty() {
-                        arg_text
-                    } else {
-                        response_text
-                    };
+                    let plan_text =
+                        if !response_text.is_empty() && response_text.len() > arg_text.len() {
+                            response_text
+                        } else if !arg_text.is_empty() {
+                            arg_text
+                        } else {
+                            response_text
+                        };
                     if !plan_text.is_empty() {
                         self.last_assistant_text = Some(plan_text.clone());
                     }
@@ -364,9 +394,21 @@ impl AgentEngine {
                     if let Some(items_arr) = action.args.get("items").and_then(|v| v.as_array()) {
                         let mut plan_items = Vec::new();
                         for item in items_arr {
-                            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                            let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+                            let id = item
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let title = item
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .to_string();
+                            let status = item
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("pending")
+                                .to_string();
                             plan_items.push(PlanItem { id, title, status });
                         }
                         if !plan_items.is_empty() {
@@ -378,36 +420,47 @@ impl AgentEngine {
                                 items: Vec::new(),
                             });
                             plan.items = plan_items;
-                            tracing::info!("[plan] ExitPlanMode: merged {} items from args", plan.items.len());
+                            tracing::info!(
+                                "[plan] ExitPlanMode: merged {} items from args",
+                                plan.items.len()
+                            );
                         }
                     }
-                    state.messages.push(self.tool_result_msg_for(
-                        self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::PLAN_SUBMITTED, &[],
+                    state.messages.push(
+                        self.tool_result_msg_for(
+                            self.prompt_store
+                                .render_or_fallback(crate::prompts::keys::PLAN_SUBMITTED, &[]),
+                            &tc_id,
+                            "ExitPlanMode",
                         ),
-                        &tc_id, "ExitPlanMode",
-                    ));
+                    );
                     let outcome = self.finalize_plan_mode(plan_text).await;
                     return Some(outcome);
                 } else {
                     state.messages.push(self.tool_result_msg_for(
                         self.prompt_store.render_or_fallback(
-                            crate::prompts::keys::EXIT_PLAN_MODE_OUTSIDE_PLAN, &[],
+                            crate::prompts::keys::EXIT_PLAN_MODE_OUTSIDE_PLAN,
+                            &[],
                         ),
-                        &tc_id, "ExitPlanMode",
+                        &tc_id,
+                        "ExitPlanMode",
                     ));
                 }
                 return None;
             }
             "EnterPlanMode" => {
-                let reason = action.args.get("reason")
+                let reason = action
+                    .args
+                    .get("reason")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 tracing::info!("[plan] EnterPlanMode: {:?}", reason);
                 // If already in plan mode, treat as a no-op so the model
                 // continues researching instead of exiting the loop.
                 if self.plan_mode {
-                    tracing::warn!("[plan] EnterPlanMode called while already in plan mode — ignoring");
+                    tracing::warn!(
+                        "[plan] EnterPlanMode called while already in plan mode — ignoring"
+                    );
                     state.messages.push(self.tool_result_msg_for(
                         "You are already in plan mode. Continue researching and produce your plan text directly — do not call EnterPlanMode again.".to_string(),
                         &tc_id, "EnterPlanMode",
@@ -417,15 +470,20 @@ impl AgentEngine {
                 // Push tool result so native tool calling APIs see a matching response.
                 state.messages.push(self.tool_result_msg_for(
                     "Entering plan mode.".to_string(),
-                    &tc_id, "EnterPlanMode",
+                    &tc_id,
+                    "EnterPlanMode",
                 ));
                 return Some(AgentOutcome::PlanModeRequested { reason });
             }
             "UpdatePlan" => {
-                let plan_text = action.args.get("plan_text")
+                let plan_text = action
+                    .args
+                    .get("plan_text")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let items = action.args.get("items")
+                let items = action
+                    .args
+                    .get("items")
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
@@ -433,12 +491,30 @@ impl AgentEngine {
                 // without emitting PlanUpdate to the UI. The PlanBlock is
                 // only created when ExitPlanMode fires. This avoids the
                 // premature PlanBlock + duplicate content bug.
-                if self.plan_mode && self.plan.as_ref().map(|p| p.status == PlanStatus::Planned).unwrap_or(true) {
+                if self.plan_mode
+                    && self
+                        .plan
+                        .as_ref()
+                        .map(|p| p.status == PlanStatus::Planned)
+                        .unwrap_or(true)
+                {
                     let mut plan_items = Vec::new();
                     for item in &items {
-                        let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                        let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+                        let id = item
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let title = item
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_string();
+                        let status = item
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("pending")
+                            .to_string();
                         plan_items.push(PlanItem { id, title, status });
                     }
                     let plan = self.plan.get_or_insert_with(|| Plan {
@@ -453,16 +529,27 @@ impl AgentEngine {
                     if let Some(text) = plan_text.filter(|s| !s.trim().is_empty()) {
                         plan.plan_text = text;
                     }
-                    info!("[plan] UpdatePlan (planning phase): stored {} items silently, no event", plan.items.len());
+                    info!(
+                        "[plan] UpdatePlan (planning phase): stored {} items silently, no event",
+                        plan.items.len()
+                    );
                     state.messages.push(self.tool_result_msg_for(
                         self.prompt_store.render_or_fallback(
                             crate::prompts::keys::PLAN_UPDATED,
                             &[("count", &items.len().to_string())],
                         ),
-                        &tc_id, "UpdatePlan",
+                        &tc_id,
+                        "UpdatePlan",
                     ));
                 } else {
-                    self.handle_update_plan_action(plan_text, items, &mut state.messages, session_id, &tc_id).await;
+                    self.handle_update_plan_action(
+                        plan_text,
+                        items,
+                        &mut state.messages,
+                        session_id,
+                        &tc_id,
+                    )
+                    .await;
                 }
                 return None;
             }
@@ -472,10 +559,17 @@ impl AgentEngine {
         // Regular tool dispatch.
         match self
             .handle_tool_action(
-                action.tool, action.args, &state.allowed_tools, &mut state.messages,
-                &mut state.tool_cache, &mut state.read_paths,
-                &mut state.last_tool_sig, &mut state.redundant_tool_streak,
-                &mut state.empty_search_streak, &mut state.progress_rx, session_id,
+                action.tool,
+                action.args,
+                &state.allowed_tools,
+                &mut state.messages,
+                &mut state.tool_cache,
+                &mut state.read_paths,
+                &mut state.last_tool_sig,
+                &mut state.redundant_tool_streak,
+                &mut state.empty_search_streak,
+                &mut state.progress_rx,
+                session_id,
                 tc_id,
             )
             .await
@@ -499,9 +593,21 @@ impl AgentEngine {
         let mut plan_items = Vec::new();
         let mut lines = Vec::new();
         for item in &items {
-            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-            let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+            let id = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let status = item
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending")
+                .to_string();
             let checkbox = match status.as_str() {
                 "completed" | "done" => "- [x]",
                 "in_progress" | "working" => "- [~]",
@@ -519,12 +625,21 @@ impl AgentEngine {
         // phase). Only replace if the model provides something longer, or if
         // no existing plan_text exists. This prevents execution UpdatePlan
         // calls from overwriting the full plan with a short summary.
-        let existing_text = self.plan.as_ref()
+        let existing_text = self
+            .plan
+            .as_ref()
             .map(|p| p.plan_text.clone())
             .filter(|s| !s.trim().is_empty());
-        let plan_text = match (explicit_plan_text.filter(|s| !s.trim().is_empty()), existing_text) {
+        let plan_text = match (
+            explicit_plan_text.filter(|s| !s.trim().is_empty()),
+            existing_text,
+        ) {
             (Some(explicit), Some(existing)) => {
-                if explicit.len() > existing.len() { explicit } else { existing }
+                if explicit.len() > existing.len() {
+                    explicit
+                } else {
+                    existing
+                }
             }
             (Some(explicit), None) => explicit,
             (None, Some(existing)) => existing,
@@ -538,15 +653,18 @@ impl AgentEngine {
         let status = if self.plan_mode && self.plan.is_none() {
             PlanStatus::Planned
         } else {
-            self.plan.as_ref()
+            self.plan
+                .as_ref()
                 .map(|p| p.status.clone())
                 .filter(|s| *s == PlanStatus::Planned || *s == PlanStatus::Approved)
                 .unwrap_or(PlanStatus::Executing)
         };
-        info!("[plan] UpdatePlan: plan_mode={} existing_status={:?} → new_status={:?}",
+        info!(
+            "[plan] UpdatePlan: plan_mode={} existing_status={:?} → new_status={:?}",
             self.plan_mode,
             self.plan.as_ref().map(|p| &p.status),
-            status);
+            status
+        );
         let plan = Plan {
             summary,
             status,

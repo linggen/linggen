@@ -418,7 +418,9 @@ pub fn record_from(
         device: Some(device.unwrap_or_else(super::host_name)),
         app: clean(app, SLUG_MAX),
         verb: clean(verb, SLUG_MAX),
-        object: object.map(|o| clean(&o, OBJECT_MAX)).filter(|o| !o.is_empty()),
+        object: object
+            .map(|o| clean(&o, OBJECT_MAX))
+            .filter(|o| !o.is_empty()),
         detail,
     });
 }
@@ -487,7 +489,10 @@ mod tests {
         assert_eq!(aged.len(), 1, "the aged-out day is offered");
         assert_eq!(aged[0].day, old_day);
         assert_eq!(aged[0].rows.len(), 1);
-        assert!(old_file.exists(), "and still held — nobody has taken it yet");
+        assert!(
+            old_file.exists(),
+            "and still held — nobody has taken it yet"
+        );
 
         // A handoff that failed and a day that never existed must not look the
         // same next hour: the day is offered again until someone takes it.
@@ -588,7 +593,11 @@ mod tests {
         writer.add(activity(at(0), "sync", "12 songs"));
 
         let restarted = ActivityLog::new(dir.clone());
-        assert_eq!(restarted.revision(), 0, "a fresh process has looked at nothing");
+        assert_eq!(
+            restarted.revision(),
+            0,
+            "a fresh process has looked at nothing"
+        );
         restarted.restore();
         assert_eq!(restarted.revision(), 2, "both rows count as unseen");
 

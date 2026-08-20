@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::engine::agent::locks::LockManager;
-use crate::engine::agent::registry::AgentRegistry;
 use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
+use crate::engine::agent::registry::AgentRegistry;
 use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
 use crate::extensions::agents::AgentLoader;
 use crate::extensions::skills::SkillLoader;
@@ -165,11 +165,16 @@ impl AgentManager {
             config.models.iter().map(|m| m.id.as_str()).collect();
 
         // 1. Config agent override
-        if let Some(choice) = Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id)) {
+        if let Some(choice) =
+            Self::normalize_model_choice(Self::model_override_for_agent(config, agent_id))
+        {
             if models.has_model(&choice) {
                 return Ok(choice);
             }
-            warn!("Agent override model '{}' not found in configured models; falling through", choice);
+            warn!(
+                "Agent override model '{}' not found in configured models; falling through",
+                choice
+            );
         }
 
         // 2. Frontmatter model
@@ -177,7 +182,10 @@ impl AgentManager {
             if models.has_model(&choice) {
                 return Ok(choice);
             }
-            warn!("Agent frontmatter model '{}' not found in configured models; falling through", choice);
+            warn!(
+                "Agent frontmatter model '{}' not found in configured models; falling through",
+                choice
+            );
         }
 
         // 3. First model in routing.default_models. Checked against the
@@ -197,7 +205,10 @@ impl AgentManager {
                 if auth_dead_default.is_none() {
                     auth_dead_default = Some(dm.clone());
                 }
-                warn!("Default model '{}' has no usable credentials right now; falling through", dm);
+                warn!(
+                    "Default model '{}' has no usable credentials right now; falling through",
+                    dm
+                );
             }
         }
 
@@ -292,7 +303,9 @@ impl AgentManager {
             engine.set_delegation_depth(0, config.agent.max_delegation_depth);
         }
         engine.load_skill_tools(self.skills.as_ref()).await;
-        engine.load_available_skills_metadata(self.skills.as_ref()).await;
+        engine
+            .load_available_skills_metadata(self.skills.as_ref())
+            .await;
         engine
             .load_available_agents_metadata(self.agents.as_ref(), project_root)
             .await;
@@ -305,7 +318,10 @@ impl AgentManager {
         skills: Arc<SkillLoader>,
         agents: Arc<AgentLoader>,
         interface_mode: InterfaceMode,
-    ) -> (Arc<Self>, mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>) {
+    ) -> (
+        Arc<Self>,
+        mpsc::UnboundedReceiver<(AgentEvent, Option<String>)>,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel();
         let models = Arc::new(ModelManager::new(config.models.clone()));
         (
@@ -326,7 +342,9 @@ impl AgentManager {
                 run_store: Arc::new(crate::engine::agent::RunStore::new()),
                 last_activity: Mutex::new(HashMap::new()),
                 interface_mode,
-                global_sessions: SessionStore::with_sessions_dir(crate::paths::global_sessions_dir()),
+                global_sessions: SessionStore::with_sessions_dir(
+                    crate::paths::global_sessions_dir(),
+                ),
                 session_engines: Mutex::new(HashMap::new()),
                 run_id_counters: std::sync::Mutex::new(HashMap::new()),
                 presence: std::sync::Mutex::new(Presence::default()),
@@ -392,7 +410,10 @@ impl AgentManager {
     /// True while this session's current turn was woken by an `agent_chat` — the
     /// `agent_chat` tool refuses to relay onward, so the chain stops at one hop.
     pub fn is_agent_chat_session(&self, session_id: &str) -> bool {
-        self.agent_chat_sessions.lock().unwrap().contains(session_id)
+        self.agent_chat_sessions
+            .lock()
+            .unwrap()
+            .contains(session_id)
     }
 
     /// Record the agent's current top-level session (for `agent_chat` delivery).
@@ -476,7 +497,11 @@ impl AgentManager {
         // whoever touches the session first builds the engine everyone
         // else reuses. Without the pin, that engine could carry the
         // wrong agent spec and workspace root for the session's life.
-        let meta = self.global_sessions.get_session_meta(session_id).ok().flatten();
+        let meta = self
+            .global_sessions
+            .get_session_meta(session_id)
+            .ok()
+            .flatten();
         let pinned_agent = meta
             .as_ref()
             .and_then(|m| m.agent_id.as_deref())
@@ -555,7 +580,9 @@ impl AgentManager {
             let engines = self.session_engines.lock().await;
             engines.get(session_id).cloned()
         };
-        let Some(engine_arc) = engine_arc else { return false };
+        let Some(engine_arc) = engine_arc else {
+            return false;
+        };
         let mut engine = engine_arc.lock().await;
         engine.session_permissions.set_path_mode(path, mode);
         true
@@ -606,11 +633,7 @@ impl AgentManager {
         Ok(out)
     }
 
-    pub async fn agent_exists(
-        &self,
-        project_root: &PathBuf,
-        agent_id: &str,
-    ) -> bool {
+    pub async fn agent_exists(&self, project_root: &PathBuf, agent_id: &str) -> bool {
         matches!(self.agents.find(project_root, agent_id).await, Ok(Some(_)))
     }
 
@@ -755,7 +778,10 @@ impl AgentManager {
         session_id: &str,
         msg: &crate::state_fs::sessions::ChatMsg,
     ) -> bool {
-        match self.global_sessions.update_last_plan_message(session_id, msg) {
+        match self
+            .global_sessions
+            .update_last_plan_message(session_id, msg)
+        {
             Ok(updated) => updated,
             Err(e) => {
                 tracing::warn!("Failed to update plan message: {}", e);
@@ -768,13 +794,24 @@ impl AgentManager {
         let _ = self.events.send((event, session_id));
     }
 
-    pub async fn set_pending_plan(&self, project_root: &str, agent_id: &str, session_id: Option<&str>, plan: Plan) {
+    pub async fn set_pending_plan(
+        &self,
+        project_root: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+        plan: Plan,
+    ) {
         let sid = session_id.unwrap_or("default");
         let key = format!("{}|{}|{}", project_root, sid, agent_id);
         self.pending_plans.lock().await.insert(key, plan);
     }
 
-    pub async fn take_pending_plan(&self, project_root: &str, agent_id: &str, session_id: Option<&str>) -> Option<Plan> {
+    pub async fn take_pending_plan(
+        &self,
+        project_root: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+    ) -> Option<Plan> {
         let sid = session_id.unwrap_or("default");
         let key = format!("{}|{}|{}", project_root, sid, agent_id);
         self.pending_plans.lock().await.remove(&key)
@@ -846,17 +883,19 @@ impl AgentManager {
                 if current_task.as_deref() != Some(body) {
                     tracing::info!("Syncing active task {} to {} agent", id, patch_agent_id);
                     engine.set_task(body.clone());
-                    let _ = self.events.send((AgentEvent::TaskUpdate {
-                        agent_id: patch_agent_id,
-                        task: body.clone(),
-                    }, None));
+                    let _ = self.events.send((
+                        AgentEvent::TaskUpdate {
+                            agent_id: patch_agent_id,
+                            task: body.clone(),
+                        },
+                        None,
+                    ));
                 }
             }
         }
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]

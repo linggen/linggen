@@ -70,7 +70,10 @@ impl HttpTransport {
         if let Some(sid) = self.session.lock().await.as_deref() {
             req = req.header("mcp-session-id", sid);
         }
-        req.json(body).send().await.context("posting to the MCP server")
+        req.json(body)
+            .send()
+            .await
+            .context("posting to the MCP server")
     }
 }
 
@@ -79,12 +82,19 @@ impl Transport for HttpTransport {
     async fn request(&self, body: Value) -> Result<Value> {
         let res = self.post(&body).await?;
         let status = res.status();
-        if let Some(sid) = res.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        if let Some(sid) = res
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+        {
             *self.session.lock().await = Some(sid.to_string());
         }
         let text = res.text().await.context("reading the MCP response")?;
         if !status.is_success() {
-            bail!("HTTP {status}: {}", text.chars().take(200).collect::<String>());
+            bail!(
+                "HTTP {status}: {}",
+                text.chars().take(200).collect::<String>()
+            );
         }
         unwrap_result(parse_maybe_sse(&text)?)
     }
@@ -113,7 +123,10 @@ fn parse_maybe_sse(text: &str) -> Result<Value> {
             return serde_json::from_str(data).context("parsing the MCP SSE frame");
         }
     }
-    bail!("unrecognised MCP reply: {}", text.chars().take(200).collect::<String>())
+    bail!(
+        "unrecognised MCP reply: {}",
+        text.chars().take(200).collect::<String>()
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +170,10 @@ impl StdioTransport {
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
         Ok(Self {
-            io: Mutex::new(StdioPipes { stdin, stdout: BufReader::new(stdout) }),
+            io: Mutex::new(StdioPipes {
+                stdin,
+                stdout: BufReader::new(stdout),
+            }),
             _child: Arc::new(Mutex::new(child)),
         })
     }
@@ -165,8 +181,16 @@ impl StdioTransport {
     async fn write_line(pipes: &mut StdioPipes, body: &Value) -> Result<()> {
         let mut line = serde_json::to_vec(body)?;
         line.push(b'\n');
-        pipes.stdin.write_all(&line).await.context("writing to the MCP server")?;
-        pipes.stdin.flush().await.context("flushing to the MCP server")?;
+        pipes
+            .stdin
+            .write_all(&line)
+            .await
+            .context("writing to the MCP server")?;
+        pipes
+            .stdin
+            .flush()
+            .await
+            .context("flushing to the MCP server")?;
         Ok(())
     }
 }
@@ -194,7 +218,9 @@ impl Transport for StdioTransport {
             if line.is_empty() {
                 continue;
             }
-            let Ok(msg) = serde_json::from_str::<Value>(line) else { continue };
+            let Ok(msg) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
             if msg.get("id") == want.as_ref() {
                 return unwrap_result(msg);
             }
@@ -230,9 +256,15 @@ mod tests {
     #[test]
     fn plain_json_and_sse_both_parse() {
         let want = json!({"jsonrpc":"2.0","id":1,"result":{"ok":true}});
-        assert_eq!(parse_maybe_sse(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#).unwrap(), want);
         assert_eq!(
-            parse_maybe_sse("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n").unwrap(),
+            parse_maybe_sse(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#).unwrap(),
+            want
+        );
+        assert_eq!(
+            parse_maybe_sse(
+                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n"
+            )
+            .unwrap(),
             want
         );
     }
@@ -249,6 +281,9 @@ mod tests {
     #[test]
     fn a_missing_result_is_null_not_a_failure() {
         // Notifications and empty acks are legal; they must not read as errors.
-        assert_eq!(unwrap_result(json!({"jsonrpc":"2.0","id":1})).unwrap(), Value::Null);
+        assert_eq!(
+            unwrap_result(json!({"jsonrpc":"2.0","id":1})).unwrap(),
+            Value::Null
+        );
     }
 }

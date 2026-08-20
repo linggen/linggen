@@ -36,7 +36,11 @@ fn table() -> std::sync::MutexGuard<'static, Option<HashMap<String, HashSet<u64>
 pub fn arrived(device: &str, peer: u64) {
     let first = {
         let mut g = table();
-        let peers = g.as_mut().expect("seeded").entry(device.to_string()).or_default();
+        let peers = g
+            .as_mut()
+            .expect("seeded")
+            .entry(device.to_string())
+            .or_default();
         peers.insert(peer);
         peers.len() == 1
     };
@@ -177,8 +181,7 @@ mod tests {
                 .recent()
                 .into_iter()
                 .filter(|a| {
-                    a.verb == "restart"
-                        && a.object.as_deref().is_some_and(|o| o.contains(ORPHAN))
+                    a.verb == "restart" && a.object.as_deref().is_some_and(|o| o.contains(ORPHAN))
                 })
                 .count()
         };

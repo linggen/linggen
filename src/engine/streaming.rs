@@ -25,7 +25,10 @@ fn unescape_json_str(s: &str) -> String {
                 Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
                 Some('/') => out.push('/'),
-                Some(other) => { out.push('\\'); out.push(other); }
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
                 None => out.push('\\'), // trailing backslash
             }
         } else {
@@ -91,18 +94,22 @@ fn extract_first_json_object(s: &str) -> Option<serde_json::Value> {
 pub(crate) fn can_parallel_tool(tool: &str) -> bool {
     matches!(
         tool,
-        "Read" | "Glob" | "Grep" | "WebSearch" | "WebFetch"
-            | "capture_screenshot" | "Skill" | "Write" | "Edit"
+        "Read"
+            | "Glob"
+            | "Grep"
+            | "WebSearch"
+            | "WebFetch"
+            | "capture_screenshot"
+            | "Skill"
+            | "Write"
+            | "Edit"
     )
 }
 
 /// Check if a batch of parallelizable actions has write-path conflicts
 /// (multiple Write/Edit targeting the same file). Returns true if conflicts
 /// exist, meaning the batch must fall back to sequential execution.
-pub(crate) fn has_write_path_conflicts(
-    actions: &[(&str, &serde_json::Value)],
-    cwd: &Path,
-) -> bool {
+pub(crate) fn has_write_path_conflicts(actions: &[(&str, &serde_json::Value)], cwd: &Path) -> bool {
     let mut write_paths: HashSet<String> = HashSet::new();
     for (tool, args) in actions {
         if matches!(*tool, "Write" | "Edit") {
@@ -122,11 +129,10 @@ pub(crate) fn has_write_path_conflicts(
 /// Check if context files (CLAUDE.md, ~/.linggen/memory/*.md, etc.) have changed
 /// by comparing a content hash against the previous hash.
 /// Runs on a background thread during tool execution.
-pub(crate) fn check_context_staleness(
-    prev_hash: Option<u64>,
-    ws_root: &Path,
-) -> bool {
-    let Some(prev_hash) = prev_hash else { return false };
+pub(crate) fn check_context_staleness(prev_hash: Option<u64>, ws_root: &Path) -> bool {
+    let Some(prev_hash) = prev_hash else {
+        return false;
+    };
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -175,7 +181,12 @@ impl AgentEngine {
         use crate::provider::models::StreamChunk;
         let mut stream = self
             .model_manager
-            .chat_text_stream(model_id, messages, self.reasoning_effort.as_deref(), self.app_product())
+            .chat_text_stream(
+                model_id,
+                messages,
+                self.reasoning_effort.as_deref(),
+                self.app_product(),
+            )
             .await?;
         let mut accumulated = String::new();
         let mut thinking_ended = false;
@@ -267,7 +278,13 @@ impl AgentEngine {
 
         let mut stream = self
             .model_manager
-            .chat_tool_stream(model_id, messages, tools, self.reasoning_effort.as_deref(), self.app_product())
+            .chat_tool_stream(
+                model_id,
+                messages,
+                tools,
+                self.reasoning_effort.as_deref(),
+                self.app_product(),
+            )
             .await?;
 
         let mut accumulated_text = String::new();
@@ -371,10 +388,15 @@ impl AgentEngine {
             let name = tc_names[i].clone().unwrap_or_default();
             let args_str = &tc_args[i];
             if name.is_empty() && args_str.is_empty() {
-                tracing::debug!("Skipping phantom tool call at index {} (empty name and args)", i);
+                tracing::debug!(
+                    "Skipping phantom tool call at index {} (empty name and args)",
+                    i
+                );
                 continue;
             }
-            let id = tc_ids[i].clone().unwrap_or_else(|| format!("fc_fallback_{}", i));
+            let id = tc_ids[i]
+                .clone()
+                .unwrap_or_else(|| format!("fc_fallback_{}", i));
             let arguments = if args_str.is_empty() {
                 serde_json::json!({})
             } else {
@@ -454,8 +476,7 @@ impl AgentEngine {
                 }
                 Err(e) => {
                     tried.push(model_id.clone());
-                    if !self.auto_fallback
-                        || !crate::provider::models::is_fallback_worthy_error(&e)
+                    if !self.auto_fallback || !crate::provider::models::is_fallback_worthy_error(&e)
                     {
                         return Err(e);
                     }
@@ -493,16 +514,29 @@ impl AgentEngine {
     }
 
     /// Emit a ModelFallback event via the agent manager.
-    pub(crate) async fn emit_model_fallback_event(&self, preferred: &str, actual: &str, reason: &str) {
-        let Some(manager) = self.tools.get_manager() else { return };
-        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
+    pub(crate) async fn emit_model_fallback_event(
+        &self,
+        preferred: &str,
+        actual: &str,
+        reason: &str,
+    ) {
+        let Some(manager) = self.tools.get_manager() else {
+            return;
+        };
+        let agent_id = self
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         manager
-            .send_event(crate::engine::agent::AgentEvent::ModelFallback {
-                agent_id,
-                preferred_model: preferred.to_string(),
-                actual_model: actual.to_string(),
-                reason: reason.to_string(),
-            }, self.session_id.clone())
+            .send_event(
+                crate::engine::agent::AgentEvent::ModelFallback {
+                    agent_id,
+                    preferred_model: preferred.to_string(),
+                    actual_model: actual.to_string(),
+                    reason: reason.to_string(),
+                },
+                self.session_id.clone(),
+            )
             .await;
     }
 
@@ -512,16 +546,24 @@ impl AgentEngine {
         &self,
         progress_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(String, String, String)>,
     ) {
-        let Some(manager) = self.tools.get_manager() else { return };
-        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
+        let Some(manager) = self.tools.get_manager() else {
+            return;
+        };
+        let agent_id = self
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         while let Ok((tool, stream, line)) = progress_rx.try_recv() {
             manager
-                .send_event(crate::engine::agent::AgentEvent::ToolProgress {
-                    agent_id: agent_id.clone(),
-                    tool,
-                    line,
-                    stream,
-                }, self.session_id.clone())
+                .send_event(
+                    crate::engine::agent::AgentEvent::ToolProgress {
+                        agent_id: agent_id.clone(),
+                        tool,
+                        line,
+                        stream,
+                    },
+                    self.session_id.clone(),
+                )
                 .await;
         }
     }

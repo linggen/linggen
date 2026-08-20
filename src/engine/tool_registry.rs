@@ -53,7 +53,8 @@ impl ToolRegistry {
             );
             return match skill_tool.kind() {
                 SkillToolKind::Http => {
-                    self.dispatch_via_skill_http(&skill_tool.name, &call.args).await
+                    self.dispatch_via_skill_http(&skill_tool.name, &call.args)
+                        .await
                 }
                 _ => skill_tool.execute(&call.args, &self.builtins.cwd()),
             };
@@ -146,7 +147,10 @@ impl ToolRegistry {
     /// Build OpenAI-compatible tool definitions for native function
     /// calling. Built-ins (incl. Memory_*) + skill-unique tools, filtered
     /// by the allowed set.
-    pub fn oai_tool_definitions(&self, allowed: Option<&HashSet<String>>) -> Vec<serde_json::Value> {
+    pub fn oai_tool_definitions(
+        &self,
+        allowed: Option<&HashSet<String>>,
+    ) -> Vec<serde_json::Value> {
         let mut defs = tools::json_schema::oai_tool_definitions(allowed);
 
         for (name, def) in &self.skill_tools {
@@ -164,11 +168,7 @@ impl ToolRegistry {
 
     // --- Passthrough methods to builtins ---
 
-    pub fn set_context(
-        &mut self,
-        manager: Arc<AgentManager>,
-        agent_id: String,
-    ) {
+    pub fn set_context(&mut self, manager: Arc<AgentManager>, agent_id: String) {
         self.builtins.set_context(manager, agent_id);
     }
 

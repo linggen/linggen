@@ -77,8 +77,8 @@ pub(crate) fn watch_dir(
     tokio::spawn(async move {
         use notify::Watcher;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut watcher = match notify::recommended_watcher(
-            move |res: notify::Result<notify::Event>| {
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 let Ok(ev) = res else { return };
                 if !(ev.kind.is_create() || ev.kind.is_remove() || ev.kind.is_modify()) {
                     return;
@@ -90,14 +90,13 @@ pub(crate) fn watch_dir(
                 if relevant {
                     let _ = tx.send(());
                 }
-            },
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!("[topic] watcher for {topic}/{op} unavailable: {e}");
-                return;
-            }
-        };
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!("[topic] watcher for {topic}/{op} unavailable: {e}");
+                    return;
+                }
+            };
         if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::Recursive) {
             tracing::warn!("[topic] watching {} failed: {e}", dir.display());
             return;
@@ -128,7 +127,11 @@ fn retained_path(topic: &str, op: &str) -> Option<PathBuf> {
     if !safe(topic) || !safe(op) {
         return None;
     }
-    Some(crate::paths::topics_dir().join(topic).join(format!("{op}.json")))
+    Some(
+        crate::paths::topics_dir()
+            .join(topic)
+            .join(format!("{op}.json")),
+    )
 }
 
 /// Keep the newest payload for a topic, so a surface that was not listening —

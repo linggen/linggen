@@ -120,8 +120,8 @@ fn value_to_action(value: serde_json::Value) -> Option<ModelAction> {
     // check at line 102 fires first), so we don't need a "tool" arm here.
     let tool_name = match action_type {
         "Read" | "Grep" | "Write" | "Edit" | "Glob" | "Bash" | "capture_screenshot"
-        | "lock_paths" | "unlock_paths" | "Task" | "delegate_to_agent"
-        | "EnterPlanMode" | "enter_plan_mode" | "UpdatePlan" | "update_plan" => {
+        | "lock_paths" | "unlock_paths" | "Task" | "delegate_to_agent" | "EnterPlanMode"
+        | "enter_plan_mode" | "UpdatePlan" | "update_plan" => {
             // Normalize legacy snake_case action types to PascalCase tool names.
             match action_type {
                 "enter_plan_mode" => "EnterPlanMode",
@@ -337,7 +337,9 @@ mod tests {
 
         let action = parse_first_action(raw).expect("expected tool action");
         assert_eq!(action.tool, "Write");
-        let content = action.args["content"].as_str().expect("content should be a string");
+        let content = action.args["content"]
+            .as_str()
+            .expect("content should be a string");
         assert!(content.contains("OnceLock<WorkerGuard>"));
         assert!(content.contains("Option<&'a str>"));
         assert!(content.contains("Option<u64>"));
@@ -551,7 +553,10 @@ Now let me also search:
 
     #[test]
     fn looks_like_final_answer_long_substantive_text_is_final() {
-        let review = format!("## Code Review\n\nThe logging module is well-structured. {}", "Details here. ".repeat(30));
+        let review = format!(
+            "## Code Review\n\nThe logging module is well-structured. {}",
+            "Details here. ".repeat(30)
+        );
         assert!(looks_like_final_answer(&review));
     }
 

@@ -6,8 +6,8 @@
 //! grants?" rules into one place ([`ActivationMode`]).
 
 use crate::engine::permission::effective_mode_for_path;
-use crate::engine::AgentEngine;
 use crate::engine::skill::Skill;
+use crate::engine::AgentEngine;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +83,9 @@ impl AgentEngine {
             apply_skill_app_scope(self, &skill);
             apply_skill_tool_scope(self, &skill);
             self.active_skill = Some(skill);
-            return ActivationOutcome::Activated { grants_changed: false };
+            return ActivationOutcome::Activated {
+                grants_changed: false,
+            };
         }
 
         // ToolInvocation: agent-driven Skill tool call. Tools-only mode —
@@ -95,7 +97,9 @@ impl AgentEngine {
             register_skill_tools(self, &skill);
             apply_skill_app_scope(self, &skill);
             self.active_skill = Some(skill);
-            return ActivationOutcome::Activated { grants_changed: false };
+            return ActivationOutcome::Activated {
+                grants_changed: false,
+            };
         }
 
         // All remaining real activations (SessionBound, Trigger, and
@@ -164,7 +168,10 @@ fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
 /// skill's own SKILL.md grant already covers its actual workspace.
 fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
     let Some(cwd_str) = skill.cwd.as_deref() else {
-        tracing::debug!("[skill-activate] {} has no cwd declared — skipping seed", skill.name);
+        tracing::debug!(
+            "[skill-activate] {} has no cwd declared — skipping seed",
+            skill.name
+        );
         return;
     };
     let trimmed = cwd_str.trim();
@@ -181,7 +188,10 @@ fn seed_session_cwd_from_skill(engine: &AgentEngine, skill: &Skill) {
         PathBuf::from(trimmed)
     };
     let prev_cwd = engine.tools.builtins.cwd();
-    engine.tools.builtins.seed_session_cwd_if_unset(expanded.clone());
+    engine
+        .tools
+        .builtins
+        .seed_session_cwd_if_unset(expanded.clone());
     let post_cwd = engine.tools.builtins.cwd();
     tracing::info!(
         "[skill-activate] {} cwd seed: declared={} expanded={} prev={} post={}",
@@ -248,13 +258,13 @@ fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
 /// declared paths (e.g. cwd=~ + paths=[~/.linggen] → admin on whole
 /// home).
 fn write_skill_grants(engine: &mut AgentEngine, skill: &Skill) -> bool {
-    let Some(perm) = skill.permission.as_ref() else { return false };
+    let Some(perm) = skill.permission.as_ref() else {
+        return false;
+    };
     let mut changed = false;
     for (path, mode) in perm.iter_grants() {
-        let current = effective_mode_for_path(
-            &engine.session_permissions.path_modes,
-            Path::new(path),
-        );
+        let current =
+            effective_mode_for_path(&engine.session_permissions.path_modes, Path::new(path));
         if current != Some(mode) {
             engine.session_permissions.set_path_mode(path, mode);
             changed = true;
@@ -267,4 +277,3 @@ fn write_skill_grants(engine: &mut AgentEngine, skill: &Skill) -> bool {
     }
     changed
 }
-

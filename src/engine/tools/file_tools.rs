@@ -56,15 +56,23 @@ pub(super) struct CaptureScreenshotArgs {
 
 impl Tools {
     pub(super) async fn list_files(&self, args: ListFilesArgs) -> Result<ToolResult> {
-        self.run_blocking("list_files", move |tools| tools.list_files_inner(args)).await
+        self.run_blocking("list_files", move |tools| tools.list_files_inner(args))
+            .await
     }
 
     pub(super) async fn read_file(&self, args: ReadFileArgs) -> Result<ToolResult> {
-        self.run_blocking("read_file", move |tools| tools.read_file_inner(args)).await
+        self.run_blocking("read_file", move |tools| tools.read_file_inner(args))
+            .await
     }
 
-    pub(super) async fn capture_screenshot(&self, args: CaptureScreenshotArgs) -> Result<ToolResult> {
-        self.run_blocking("capture_screenshot", move |tools| tools.capture_screenshot_inner(args)).await
+    pub(super) async fn capture_screenshot(
+        &self,
+        args: CaptureScreenshotArgs,
+    ) -> Result<ToolResult> {
+        self.run_blocking("capture_screenshot", move |tools| {
+            tools.capture_screenshot_inner(args)
+        })
+        .await
     }
 
     fn list_files_inner(&self, args: ListFilesArgs) -> Result<ToolResult> {
@@ -189,10 +197,7 @@ impl Tools {
         if path.exists() && path.is_dir() {
             anyhow::bail!(
                 "{}",
-                self.prompt(
-                    crate::prompts::keys::READ_IS_DIRECTORY,
-                    &[("path", &rel)],
-                )
+                self.prompt(crate::prompts::keys::READ_IS_DIRECTORY, &[("path", &rel)],)
             );
         }
 
@@ -237,7 +242,11 @@ impl Tools {
         )))
     }
 
-    pub(super) fn smart_search_candidates(&self, query: &str, max_results: usize) -> Result<Vec<String>> {
+    pub(super) fn smart_search_candidates(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let limit = max_results.max(1);
@@ -419,10 +428,7 @@ impl Tools {
                 || host.starts_with("192.168.")
                 || host.ends_with(".local");
             if is_private {
-                anyhow::bail!(
-                    "Disallowed URL host (private/internal address): {}",
-                    host
-                );
+                anyhow::bail!("Disallowed URL host (private/internal address): {}", host);
             }
         }
 

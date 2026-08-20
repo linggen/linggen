@@ -76,11 +76,20 @@ pub(crate) async fn persist_and_emit_message(
         to: to.to_string(),
         content: content.to_string(),
         session_id: session_id.map(|s| s.to_string()),
-                run_id: None,
-                parent_agent_id: None,
-            });
-    persist_message_only(manager, root, agent_id, from, to, content, session_id, is_observation)
-        .await;
+        run_id: None,
+        parent_agent_id: None,
+    });
+    persist_message_only(
+        manager,
+        root,
+        agent_id,
+        from,
+        to,
+        content,
+        session_id,
+        is_observation,
+    )
+    .await;
 }
 
 /// Emit a `ServerEvent::Message` and persist directly to a `SessionStore`.
@@ -100,9 +109,9 @@ pub(crate) async fn persist_and_emit_to_store(
         to: to.to_string(),
         content: content.to_string(),
         session_id: session_id.map(|s| s.to_string()),
-                run_id: None,
-                parent_agent_id: None,
-            });
+        run_id: None,
+        parent_agent_id: None,
+    });
     let sid = session_id.unwrap_or("default");
     let msg = crate::state_fs::sessions::ChatMsg {
         agent_id: agent_id.to_string(),

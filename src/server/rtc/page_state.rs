@@ -26,7 +26,6 @@ pub struct ViewContext {
 #[derive(Debug, Clone, Serialize)]
 pub struct PageState {
     // -- User context (always included) --
-
     /// User type: "owner" or "consumer". Set at connection time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_type: Option<String>,
@@ -44,7 +43,6 @@ pub struct PageState {
     pub room_enabled: Option<bool>,
 
     // -- Global (always included unless compact mode) --
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_sessions: Option<Vec<serde_json::Value>>,
 
@@ -71,7 +69,6 @@ pub struct PageState {
     pub busy_sessions: Option<std::collections::HashMap<String, String>>,
 
     // -- Scoped (based on ViewContext, Admin only) --
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<serde_json::Value>>,
 
@@ -154,7 +151,11 @@ pub async fn build_page_state(
         user_type: Some(user.user_type_for(identified).to_string()),
         permission: Some(user.permission.as_str().to_string()),
         room_name: user.room_name.clone(),
-        room_enabled: if !user.is_consumer() { Some(room_cfg.room_enabled) } else { None },
+        room_enabled: if !user.is_consumer() {
+            Some(room_cfg.room_enabled)
+        } else {
+            None
+        },
         all_sessions: None,
         models: None,
         default_models: None,
@@ -174,7 +175,8 @@ pub async fn build_page_state(
     // Collect user's session IDs for filtering busy_sessions and pending_ask_user
     let user_session_ids: std::collections::HashSet<String> =
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
-            sessions.iter()
+            sessions
+                .iter()
                 .filter(|s| match (&s.user_id, user_id.as_str()) {
                     (Some(sid), uid) => sid == uid,
                     (None, "__local__") => true, // legacy sessions belong to local owner
@@ -188,7 +190,11 @@ pub async fn build_page_state(
         };
 
     // Wrap room config for consumer filtering
-    let room_cfg = if user.is_consumer() { Some(room_cfg) } else { None };
+    let room_cfg = if user.is_consumer() {
+        Some(room_cfg)
+    } else {
+        None
+    };
 
     // -- Global data (skip for embed peers — they're pinned to one session
     // and don't render the sidebar/mission list that these fields feed) --
@@ -197,7 +203,8 @@ pub async fn build_page_state(
         // All sessions — filtered by user_id
         if let Ok(sessions) = state.manager.global_sessions.list_sessions() {
             ps.all_sessions = Some(
-                sessions.into_iter()
+                sessions
+                    .into_iter()
                     .filter(|s| user_session_ids.contains(&s.id))
                     .filter_map(|s| serde_json::to_value(s).ok())
                     .collect(),
@@ -208,7 +215,8 @@ pub async fn build_page_state(
         if is_admin {
             if let Ok(missions) = state.manager.missions.list_all_missions() {
                 ps.missions = Some(
-                    missions.into_iter()
+                    missions
+                        .into_iter()
                         .filter_map(|m| serde_json::to_value(m).ok())
                         .collect(),
                 );
@@ -230,25 +238,34 @@ pub async fn build_page_state(
             .collect();
         drop(models_guard);
         let models = if let Some(ref cfg) = room_cfg {
-            let shared: std::collections::HashSet<&str> = cfg.shared_models.iter().map(|s| s.as_str()).collect();
-            all_models.into_iter().filter(|(m, _)| shared.contains(m.id.as_str())).collect::<Vec<_>>()
+            let shared: std::collections::HashSet<&str> =
+                cfg.shared_models.iter().map(|s| s.as_str()).collect();
+            all_models
+                .into_iter()
+                .filter(|(m, _)| shared.contains(m.id.as_str()))
+                .collect::<Vec<_>>()
         } else {
             all_models
         };
-        ps.models = Some(models.into_iter().map(|(m, auth_ok)| {
-            // Only send metadata — strip sensitive fields (api_key, url).
-            // auth_ok is a runtime reading (credentials present now) so the
-            // pickers can mark a model that would only bail AUTH_REQUIRED.
-            serde_json::json!({
-                "id": m.id,
-                "provider": m.provider,
-                "model": m.model,
-                "tags": m.tags,
-                "supports_tools": m.supports_tools,
-                "provided_by": m.provided_by,
-                "auth_ok": auth_ok,
-            })
-        }).collect());
+        ps.models = Some(
+            models
+                .into_iter()
+                .map(|(m, auth_ok)| {
+                    // Only send metadata — strip sensitive fields (api_key, url).
+                    // auth_ok is a runtime reading (credentials present now) so the
+                    // pickers can mark a model that would only bail AUTH_REQUIRED.
+                    serde_json::json!({
+                        "id": m.id,
+                        "provider": m.provider,
+                        "model": m.model,
+                        "tags": m.tags,
+                        "supports_tools": m.supports_tools,
+                        "provided_by": m.provided_by,
+                        "auth_ok": auth_ok,
+                    })
+                })
+                .collect(),
+        );
 
         // Default models — admin only
         if is_admin {
@@ -260,26 +277,39 @@ pub async fn build_page_state(
         // Skills — admin sees all, others see allowed_skills only
         let skills = state.skills.list_skills().await;
         let skills = if let Some(ref cfg) = room_cfg {
-            let allowed: std::collections::HashSet<&str> = cfg.allowed_skills.iter().map(|s| s.as_str()).collect();
-            skills.into_iter().filter(|s| allowed.contains(s.name.as_str())).collect::<Vec<_>>()
+            let allowed: std::collections::HashSet<&str> =
+                cfg.allowed_skills.iter().map(|s| s.as_str()).collect();
+            skills
+                .into_iter()
+                .filter(|s| allowed.contains(s.name.as_str()))
+                .collect::<Vec<_>>()
         } else {
             skills
         };
-        ps.skills = Some(skills.into_iter().filter_map(|s| {
-            let mut v = serde_json::to_value(s).ok()?;
-            // Strip large fields — UI only needs metadata for sidebar cards
-            v.as_object_mut().map(|m| {
-                m.remove("content");
-                m.remove("context");
-            });
-            Some(v)
-        }).collect());
+        ps.skills = Some(
+            skills
+                .into_iter()
+                .filter_map(|s| {
+                    let mut v = serde_json::to_value(s).ok()?;
+                    // Strip large fields — UI only needs metadata for sidebar cards
+                    v.as_object_mut().map(|m| {
+                        m.remove("content");
+                        m.remove("context");
+                    });
+                    Some(v)
+                })
+                .collect(),
+        );
 
         // Embed peers are pinned to one session — narrow user_session_ids to
         // just that session so pending_ask_user and busy_sessions can't leak
         // across sessions owned by the same user.
         let is_embed = ctx.view.as_deref() == Some("embed");
-        let pinned = if is_embed { ctx.session_id.as_deref() } else { None };
+        let pinned = if is_embed {
+            ctx.session_id.as_deref()
+        } else {
+            None
+        };
         let scope_check = |sid: &str| -> bool {
             if let Some(pin) = pinned {
                 sid == pin
@@ -290,9 +320,12 @@ pub async fn build_page_state(
 
         // Pending ask-user — filtered to user's sessions (+ pinned for embed)
         let pending = state.pending_ask_user.lock().await;
-        let items: Vec<serde_json::Value> = pending.iter()
+        let items: Vec<serde_json::Value> = pending
+            .iter()
             .filter(|(_, entry)| {
-                entry.session_id.as_deref()
+                entry
+                    .session_id
+                    .as_deref()
                     .map_or(is_admin && pinned.is_none(), |sid| scope_check(sid))
             })
             .map(|(qid, entry)| {
@@ -327,12 +360,21 @@ pub async fn build_page_state(
             let root_buf = PathBuf::from(root);
 
             if let Ok(agents) = state.manager.list_agents(&root_buf).await {
-                ps.agents = Some(agents.into_iter().filter_map(|a| serde_json::to_value(a).ok()).collect());
+                ps.agents = Some(
+                    agents
+                        .into_iter()
+                        .filter_map(|a| serde_json::to_value(a).ok())
+                        .collect(),
+                );
             }
 
             if let Ok(all) = state.manager.global_sessions.list_sessions() {
-                let project_sessions: Vec<_> = all.into_iter()
-                    .filter(|s| s.project.as_deref() == Some(root.as_str()) || s.cwd.as_deref() == Some(root.as_str()))
+                let project_sessions: Vec<_> = all
+                    .into_iter()
+                    .filter(|s| {
+                        s.project.as_deref() == Some(root.as_str())
+                            || s.cwd.as_deref() == Some(root.as_str())
+                    })
                     .take(50)
                     .filter_map(|s| serde_json::to_value(s).ok())
                     .collect();
@@ -342,8 +384,16 @@ pub async fn build_page_state(
 
         if let Some(ref session_id) = ctx.session_id {
             let root_buf = PathBuf::from(ctx.project_root.as_deref().unwrap_or(""));
-            if let Ok(runs) = state.manager.list_agent_runs(&root_buf, Some(session_id.as_str())).await {
-                ps.agent_runs = Some(runs.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect());
+            if let Ok(runs) = state
+                .manager
+                .list_agent_runs(&root_buf, Some(session_id.as_str()))
+                .await
+            {
+                ps.agent_runs = Some(
+                    runs.into_iter()
+                        .filter_map(|r| serde_json::to_value(r).ok())
+                        .collect(),
+                );
             }
 
             let queued = {
@@ -376,9 +426,17 @@ pub async fn build_page_state(
                 // than omitting the field: the UI keeps the last value it saw,
                 // so an absent field would leave the previous folder's mode on
                 // the chip after the agent cd's into an ungranted folder.
-                let mode = crate::engine::permission::effective_mode_for_path(&perms.path_modes, std::path::Path::new(root))
-                    .unwrap_or(crate::engine::permission::PermissionMode::Chat);
-                perm_val.as_object_mut().map(|m| m.insert("effective_mode".to_string(), serde_json::Value::String(mode.to_string())));
+                let mode = crate::engine::permission::effective_mode_for_path(
+                    &perms.path_modes,
+                    std::path::Path::new(root),
+                )
+                .unwrap_or(crate::engine::permission::PermissionMode::Chat);
+                perm_val.as_object_mut().map(|m| {
+                    m.insert(
+                        "effective_mode".to_string(),
+                        serde_json::Value::String(mode.to_string()),
+                    )
+                });
             }
             ps.session_permission = Some(perm_val);
         }
@@ -386,7 +444,6 @@ pub async fn build_page_state(
 
     ps
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -10,9 +10,7 @@
 //! Method bodies were moved verbatim from `agent/mod.rs`; the only
 //! change is the surrounding `impl AgentManager` block.
 
-use crate::engine::agent::{
-    AgentEvent, AgentManager, AgentRunRecord, AgentRunStatus,
-};
+use crate::engine::agent::{AgentEvent, AgentManager, AgentRunRecord, AgentRunStatus};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -83,13 +81,15 @@ impl AgentManager {
             status
         };
         let ended_at = Some(crate::util::now_ts_secs());
-        self.run_store.update_run(run_id, status, detail.clone(), ended_at);
+        self.run_store
+            .update_run(run_id, status, detail.clone(), ended_at);
         self.clear_working_place_for_run(run_id).await;
         let _ = self.events.send((AgentEvent::StateUpdated, None));
         self.cancelled_runs.lock().await.remove(run_id);
         let run_snapshot = self.run_store.get_run(run_id);
         if let Some(ref run) = run_snapshot {
-            self.update_agent_activity(&run.repo_path, &run.agent_id).await;
+            self.update_agent_activity(&run.repo_path, &run.agent_id)
+                .await;
         }
         self.run_store.remove_run(run_id);
         tracing::info!(
@@ -123,10 +123,7 @@ impl AgentManager {
         self.cancelled_runs.lock().await.contains(run_id)
     }
 
-    pub async fn cancel_run_tree(
-        &self,
-        run_id: &str,
-    ) -> Result<Vec<AgentRunRecord>> {
+    pub async fn cancel_run_tree(&self, run_id: &str) -> Result<Vec<AgentRunRecord>> {
         let mut stack = vec![run_id.to_string()];
         let mut seen = HashSet::new();
         let mut runs = Vec::new();

@@ -52,11 +52,20 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             format!("lock_result: acquired={:?}, denied={:?}", acquired, denied)
         }
         ToolResult::AgentOutcome(outcome) => match outcome {
-            crate::engine::AgentOutcome::None => "agent completed (no structured result)".to_string(),
-            crate::engine::AgentOutcome::Plan(p) => format!("agent produced plan: {}, status={:?}", p.summary, p.status),
-            crate::engine::AgentOutcome::PlanApproved(p) => format!("agent plan approved: {}", p.summary),
-            crate::engine::AgentOutcome::PlanModeRequested { reason } => format!("agent requested plan mode: {}", reason.as_deref().unwrap_or("(no reason)")),
-        }
+            crate::engine::AgentOutcome::None => {
+                "agent completed (no structured result)".to_string()
+            }
+            crate::engine::AgentOutcome::Plan(p) => {
+                format!("agent produced plan: {}, status={:?}", p.summary, p.status)
+            }
+            crate::engine::AgentOutcome::PlanApproved(p) => {
+                format!("agent plan approved: {}", p.summary)
+            }
+            crate::engine::AgentOutcome::PlanModeRequested { reason } => format!(
+                "agent requested plan mode: {}",
+                reason.as_deref().unwrap_or("(no reason)")
+            ),
+        },
         ToolResult::WebSearchResults { query, results } => {
             let mut out = format!("WebSearch: \"{}\" ({} results)\n", query, results.len());
             for (i, r) in results.iter().enumerate() {
@@ -86,7 +95,10 @@ pub fn render_tool_result(r: &ToolResult) -> String {
             for a in answers {
                 let selected = a.selected.join(", ");
                 if let Some(ref custom) = a.custom_text {
-                    out.push_str(&format!("  Q{}: custom: \"{}\"\n", a.question_index, custom));
+                    out.push_str(&format!(
+                        "  Q{}: custom: \"{}\"\n",
+                        a.question_index, custom
+                    ));
                 } else {
                     out.push_str(&format!("  Q{}: {}\n", a.question_index, selected));
                 }
@@ -126,9 +138,7 @@ fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, b
 pub fn render_tool_result_public(r: &ToolResult) -> String {
     match r {
         ToolResult::FileContent {
-            path,
-            truncated,
-            ..
+            path, truncated, ..
         } => {
             format!(
                 "Read: {} (truncated: {})\n(content omitted in chat; open the file viewer for full text)",
@@ -193,7 +203,20 @@ pub fn sanitize_tool_args_for_display(tool: &str, args: &serde_json::Value) -> s
                 );
             }
         } else if matches!(tool, "Edit") {
-            for key in ["old_string", "new_string", "old", "new", "old_text", "new_text", "oldText", "newText", "search", "replace", "from", "to"] {
+            for key in [
+                "old_string",
+                "new_string",
+                "old",
+                "new",
+                "old_text",
+                "new_text",
+                "oldText",
+                "newText",
+                "search",
+                "replace",
+                "from",
+                "to",
+            ] {
                 if let Some(content) = obj.get(key).and_then(|v| v.as_str()) {
                     let bytes = content.len();
                     let lines = content.lines().count();

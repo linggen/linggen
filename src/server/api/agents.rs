@@ -93,7 +93,11 @@ pub(crate) async fn run_agent(
 
     match state
         .manager
-        .get_or_create_session_agent(req.session_id.as_deref().unwrap_or("default"), &root, &req.agent_id)
+        .get_or_create_session_agent(
+            req.session_id.as_deref().unwrap_or("default"),
+            &root,
+            &req.agent_id,
+        )
         .await
     {
         Ok(agent) => {
@@ -210,8 +214,9 @@ pub(crate) async fn cancel_agent_run(
                 let mut pending = state.pending_ask_user.lock().await;
                 pending.retain(|qid, entry| {
                     let hit = match entry.session_id.as_ref() {
-                        Some(sid) => cancelled_sessions
-                            .contains(&(entry.agent_id.clone(), sid.clone())),
+                        Some(sid) => {
+                            cancelled_sessions.contains(&(entry.agent_id.clone(), sid.clone()))
+                        }
                         None => cancelled_agents.contains(&entry.agent_id),
                     };
                     if hit {
@@ -221,9 +226,10 @@ pub(crate) async fn cancel_agent_run(
                 });
                 drop(pending);
                 for (widget_id, session_id) in resolved {
-                    let _ = state
-                        .events_tx
-                        .send(ServerEvent::WidgetResolved { widget_id, session_id });
+                    let _ = state.events_tx.send(ServerEvent::WidgetResolved {
+                        widget_id,
+                        session_id,
+                    });
                 }
             }
 
@@ -449,9 +455,7 @@ pub(crate) async fn list_agent_files_api(
     }
 }
 
-pub(crate) async fn get_agent_file_api(
-    Query(query): Query<AgentFileQuery>,
-) -> impl IntoResponse {
+pub(crate) async fn get_agent_file_api(Query(query): Query<AgentFileQuery>) -> impl IntoResponse {
     let root = canonical_project_root(&query.project_root);
     let rel = match normalize_agent_md_path(&query.path) {
         Ok(path) => path,
@@ -562,4 +566,3 @@ pub(crate) async fn reload_agents(
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     Json(serde_json::json!({ "ok": true })).into_response()
 }
-

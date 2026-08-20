@@ -29,9 +29,7 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     let latest = fetch_latest_version().await;
     match &latest {
         Some(v) if v != current => {
-            println!(
-                "  Version:     v{current}  {DIM}(latest: v{v} — run `ling update`){RESET}"
-            );
+            println!("  Version:     v{current}  {DIM}(latest: v{v} — run `ling update`){RESET}");
         }
         Some(_) => {
             println!("  Version:     v{current}  {DIM}(up to date){RESET}");
@@ -98,7 +96,10 @@ async fn check_ling_mem() {
             let ver = ling_mem_version(path).unwrap_or_else(|| "unknown".to_string());
             ok("Binary    ", &format!("{} (v{})", path.display(), ver));
         }
-        None => fail("Binary    ", "ling-mem not on PATH (auto-installs on first memory op; or see linggen.dev/memory)"),
+        None => fail(
+            "Binary    ",
+            "ling-mem not on PATH (auto-installs on first memory op; or see linggen.dev/memory)",
+        ),
     }
 
     // Daemon on the default port. Check the standard port; users running
@@ -107,10 +108,16 @@ async fn check_ling_mem() {
     if is_port_listening(port).await {
         match fetch_ling_mem_health(port).await {
             Some(v) => ok("Daemon    ", &format!(":{port} healthy (v{v})")),
-            None    => fail("Daemon    ", &format!(":{port} listening but /api/health did not respond")),
+            None => fail(
+                "Daemon    ",
+                &format!(":{port} listening but /api/health did not respond"),
+            ),
         }
     } else {
-        info("Daemon    ", &format!(":{port} not running (start with `ling-mem start`)"));
+        info(
+            "Daemon    ",
+            &format!(":{port} not running (start with `ling-mem start`)"),
+        );
     }
 
     // Store. Memory rows live under ~/.linggen/memory/memory.lancedb/
@@ -120,7 +127,10 @@ async fn check_ling_mem() {
     if store.exists() {
         ok("Store     ", &format!("{}", store.display()));
     } else {
-        info("Store     ", &format!("{} (will be created on first write)", store.display()));
+        info(
+            "Store     ",
+            &format!("{} (will be created on first write)", store.display()),
+        );
     }
 
     // Canonical shared-memory skill bundle. Per-host SKILL.md stubs
@@ -130,7 +140,13 @@ async fn check_ling_mem() {
     if skill.join("SKILL.md").is_file() {
         ok("Skill     ", &format!("{}", skill.display()));
     } else {
-        info("Skill     ", &format!("{} (run install-shared-memory.sh to install)", skill.display()));
+        info(
+            "Skill     ",
+            &format!(
+                "{} (run install-shared-memory.sh to install)",
+                skill.display()
+            ),
+        );
     }
 }
 
@@ -140,30 +156,55 @@ fn which_path(bin: &str) -> Option<PathBuf> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(PathBuf::from(s)) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(s))
+    }
 }
 
 fn ling_mem_version(bin: &Path) -> Option<String> {
     // `ling-mem --version` prints `ling-mem <ver>` — pick the 2nd token.
-    let out = std::process::Command::new(bin).arg("--version").output().ok()?;
-    if !out.status.success() { return None; }
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
     let s = String::from_utf8_lossy(&out.stdout);
     s.split_whitespace().nth(1).map(|v| v.to_string())
 }
 
 async fn fetch_ling_mem_health(port: u16) -> Option<String> {
     #[derive(serde::Deserialize)]
-    struct Envelope { ok: bool, data: Option<HealthData> }
+    struct Envelope {
+        ok: bool,
+        data: Option<HealthData>,
+    }
     #[derive(serde::Deserialize)]
-    struct HealthData { #[allow(dead_code)] status: String, version: String }
+    struct HealthData {
+        #[allow(dead_code)]
+        status: String,
+        version: String,
+    }
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
-        .build().ok()?;
-    let resp = client.get(format!("http://127.0.0.1:{port}/api/health")).send().await.ok()?;
-    if !resp.status().is_success() { return None; }
+        .build()
+        .ok()?;
+    let resp = client
+        .get(format!("http://127.0.0.1:{port}/api/health"))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
     let env: Envelope = resp.json().await.ok()?;
-    if !env.ok { return None; }
+    if !env.ok {
+        return None;
+    }
     env.data.map(|d| d.version)
 }
 
@@ -175,7 +216,10 @@ fn print_server_status(port: u16, listening: bool, pid: Option<u32>) {
             if is_process_running(pid) {
                 (
                     "\u{274c}",
-                    format!("port {} process alive (PID {}) but port not listening", port, pid),
+                    format!(
+                        "port {} process alive (PID {}) but port not listening",
+                        port, pid
+                    ),
                 )
             } else {
                 ("\u{274c}", format!("port {} not running (stale PID)", port))
@@ -365,7 +409,10 @@ fn check_log_dir(config: &Config) {
                     let _ = std::fs::remove_file(&test_path);
                     println!("  Logs:        {}", dir.display());
                 }
-                Err(_) => println!("  Logs:        {} {RED}(not writable){RESET}", dir.display()),
+                Err(_) => println!(
+                    "  Logs:        {} {RED}(not writable){RESET}",
+                    dir.display()
+                ),
             }
         }
         Some(dir) => println!("  Logs:        {} {CYAN}(not found){RESET}", dir.display()),

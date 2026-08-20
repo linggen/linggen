@@ -27,9 +27,9 @@
 //!   { arguments_delta }`, keyed by the same `chunk_index` as the opener.
 //! - `message_start` / `message_delta` usage → `StreamChunk::Usage`.
 
-use crate::provider::models::{StreamChunk, ToolCallChunk, TokenUsage};
-use crate::provider::claude_auth::{self, ANTHROPIC_OAUTH_BETA, ANTHROPIC_VERSION};
 use crate::message::ChatMessage;
+use crate::provider::claude_auth::{self, ANTHROPIC_OAUTH_BETA, ANTHROPIC_VERSION};
+use crate::provider::models::{StreamChunk, TokenUsage, ToolCallChunk};
 use anyhow::{Context, Result};
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
@@ -161,10 +161,7 @@ impl AnthropicClient {
         messages: &[ChatMessage],
         tools: Vec<serde_json::Value>,
     ) -> Result<impl Stream<Item = Result<StreamChunk>> + Send> {
-        let anthro_tools: Vec<serde_json::Value> = tools
-            .iter()
-            .filter_map(wire_tool_def)
-            .collect();
+        let anthro_tools: Vec<serde_json::Value> = tools.iter().filter_map(wire_tool_def).collect();
         self.stream_messages(model, messages, anthro_tools).await
     }
 
@@ -204,7 +201,10 @@ impl AnthropicClient {
             "Anthropic stream: model={} msgs={} tools={} chars={}",
             model,
             messages.len(),
-            req.get("tools").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+            req.get("tools")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
             messages.iter().map(|m| m.content.len()).sum::<usize>(),
         );
 
@@ -267,10 +267,7 @@ fn find_event_terminator(buf: &[u8]) -> Option<usize> {
 /// event OR if the event doesn't map to a user-visible chunk (e.g. `ping`,
 /// `content_block_stop`). The caller is expected to loop until either it
 /// gets an item or the byte stream is drained.
-fn try_next_event(
-    buf: &mut Vec<u8>,
-    state: &mut BlockState,
-) -> Option<Result<StreamChunk>> {
+fn try_next_event(buf: &mut Vec<u8>, state: &mut BlockState) -> Option<Result<StreamChunk>> {
     loop {
         let idx = find_event_terminator(buf)?;
         // Whole events are always UTF-8-clean (codepoint boundaries align
@@ -313,7 +310,10 @@ struct Translated {
 /// the caller asked for it. Anthropic supports caching on `text`, `image`,
 /// `tool_use`, and `tool_result` blocks — keeping this helper small lets
 /// us reuse it across them.
-fn text_block_with_cache(text: &str, cache_control: Option<&serde_json::Value>) -> serde_json::Value {
+fn text_block_with_cache(
+    text: &str,
+    cache_control: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let mut obj = serde_json::json!({ "type": "text", "text": text });
     if let Some(cc) = cache_control {
         obj["cache_control"] = cc.clone();
@@ -362,8 +362,10 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
                     // Arguments may be a JSON string (OpenAI-style accumulator
                     // output) or an already-parsed object. Accept both.
                     let input = match &tc.function.arguments {
-                        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s)
-                            .unwrap_or_else(|_| serde_json::json!({})),
+                        serde_json::Value::String(s) => {
+                            serde_json::from_str::<serde_json::Value>(s)
+                                .unwrap_or_else(|_| serde_json::json!({}))
+                        }
                         other => other.clone(),
                     };
                     let mut tu = serde_json::json!({
@@ -513,7 +515,11 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
             if block_type != "tool_use" {
                 return None;
             }
-            let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = block
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let name = block
                 .get("name")
                 .and_then(|v| v.as_str())

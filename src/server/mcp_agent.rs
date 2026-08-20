@@ -23,15 +23,25 @@ use crate::server::ServerState;
 /// around (e.g. `echo > file` via Bash). Browser mutations still pass the
 /// extension's own permission prompt. Widening to write is a future opt-in.
 const AGENT_RUN_TOOLS: &[&str] = &[
-    "Read", "Grep", "Glob",
-    "WebSearch", "WebFetch",
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch",
+    "WebFetch",
     // The memory server by name, expanded to the tools it advertises — so
     // this list doesn't have to be re-edited when ling-mem gains a verb.
     "mcp__memory",
     "Skill",
-    "Browser_navigate", "Browser_readPage", "Browser_screenshot", "Browser_click",
-    "Browser_type", "Browser_key", "Browser_scroll", "Browser_wait",
-    "Browser_readConsole", "Browser_tabs",
+    "Browser_navigate",
+    "Browser_readPage",
+    "Browser_screenshot",
+    "Browser_click",
+    "Browser_type",
+    "Browser_key",
+    "Browser_scroll",
+    "Browser_wait",
+    "Browser_readConsole",
+    "Browser_tabs",
 ];
 
 /// Truncate a prompt to a session title.
@@ -58,9 +68,8 @@ fn workspace_root() -> PathBuf {
 /// Read the final assistant reply from a finished session — the last
 /// non-observation message not authored by "user".
 fn final_reply(session_id: &str) -> Option<String> {
-    let store = crate::state_fs::SessionStore::with_sessions_dir(
-        crate::paths::global_sessions_dir(),
-    );
+    let store =
+        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let msgs = store.get_chat_history(session_id).ok()?;
     msgs.into_iter()
         .rev()
@@ -70,14 +79,20 @@ fn final_reply(session_id: &str) -> Option<String> {
 
 /// Run one delegated agent turn. `Ok(text)` is the agent's final reply;
 /// `Err(msg)` is a model-readable failure (unknown agent, run error).
-pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) -> Result<String, String> {
+pub async fn run(
+    state: &Arc<ServerState>,
+    agent: Option<&str>,
+    prompt: &str,
+) -> Result<String, String> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
         return Err("agent_run requires a non-empty prompt".to_string());
     }
 
     let root = workspace_root();
-    let agent_id = agent.map(|a| a.trim().to_lowercase()).unwrap_or_else(|| "ling".to_string());
+    let agent_id = agent
+        .map(|a| a.trim().to_lowercase())
+        .unwrap_or_else(|| "ling".to_string());
 
     // Validate the agent up front so an unknown name is a clean error, not a
     // half-created session — and list the real options for the caller.
@@ -92,7 +107,11 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
             .collect();
         return Err(format!(
             "unknown agent '{agent_id}'. Available: {}",
-            if names.is_empty() { "(none)".into() } else { names.join(", ") }
+            if names.is_empty() {
+                "(none)".into()
+            } else {
+                names.join(", ")
+            }
         ));
     }
 
@@ -105,9 +124,8 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
     );
     let title = title_from_prompt(prompt);
     let root_str = root.to_string_lossy().to_string();
-    let store = crate::state_fs::SessionStore::with_sessions_dir(
-        crate::paths::global_sessions_dir(),
-    );
+    let store =
+        crate::state_fs::SessionStore::with_sessions_dir(crate::paths::global_sessions_dir());
     let meta = crate::state_fs::sessions::SessionMeta {
         id: session_id.clone(),
         title: title.clone(),
@@ -141,15 +159,17 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
         perms.set_path_mode(&root_str, PermissionMode::Read);
         perms.save(&crate::paths::global_sessions_dir().join(&session_id));
     }
-    let _ = state.events_tx.send(crate::server::ServerEvent::SessionCreated {
-        session_id: session_id.clone(),
-        title,
-        creator: "agent".into(),
-        project: Some(root_str.clone()),
-        project_name: root.file_name().map(|n| n.to_string_lossy().to_string()),
-        skill: None,
-        mission_id: None,
-    });
+    let _ = state
+        .events_tx
+        .send(crate::server::ServerEvent::SessionCreated {
+            session_id: session_id.clone(),
+            title,
+            creator: "agent".into(),
+            project: Some(root_str.clone()),
+            project_name: root.file_name().map(|n| n.to_string_lossy().to_string()),
+            skill: None,
+            mission_id: None,
+        });
 
     // Persist the prompt as the first user turn so the session reads naturally.
     let _ = store.add_chat_message(
@@ -173,7 +193,13 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
 
     let run_id = state
         .manager
-        .begin_agent_run(&root, Some(&session_id), &agent_id, None, Some("agent_run".into()))
+        .begin_agent_run(
+            &root,
+            Some(&session_id),
+            &agent_id,
+            None,
+            Some("agent_run".into()),
+        )
         .await
         .map_err(|e| format!("failed to begin run: {e}"))?;
 
@@ -204,16 +230,26 @@ pub async fn run(state: &Arc<ServerState>, agent: Option<&str>, prompt: &str) ->
         Ok(_) => {
             let _ = state
                 .manager
-                .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Completed, None)
+                .finish_agent_run(
+                    &run_id,
+                    crate::engine::agent::AgentRunStatus::Completed,
+                    None,
+                )
                 .await;
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
             Ok(final_reply(&session_id)
                 .unwrap_or_else(|| "(the agent finished without a textual reply)".to_string()))
         }
         Err(e) => {
             let _ = state
                 .manager
-                .finish_agent_run(&run_id, crate::engine::agent::AgentRunStatus::Failed, Some(e.to_string()))
+                .finish_agent_run(
+                    &run_id,
+                    crate::engine::agent::AgentRunStatus::Failed,
+                    Some(e.to_string()),
+                )
                 .await;
             Err(format!("agent run failed: {e}"))
         }

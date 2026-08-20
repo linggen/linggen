@@ -84,7 +84,20 @@ pub(crate) fn summarize_tool_args(tool: &str, args: &Value) -> String {
                 }
             }
             "Edit" => {
-                for key in ["old_string", "new_string", "old", "new", "old_text", "new_text", "oldText", "newText", "search", "replace", "from", "to"] {
+                for key in [
+                    "old_string",
+                    "new_string",
+                    "old",
+                    "new",
+                    "old_text",
+                    "new_text",
+                    "oldText",
+                    "newText",
+                    "search",
+                    "replace",
+                    "from",
+                    "to",
+                ] {
                     if let Some(content) = obj.get(key).and_then(|v| v.as_str()) {
                         let byte_len = content.len();
                         let line_count = content.lines().count();
@@ -187,11 +200,7 @@ pub(crate) fn normalize_tool_args(tool: &str, args: Value) -> Value {
         // Normalize "pattern" → "globs" for Glob tool. Models often emit
         // {"pattern":"**/*.rs"} instead of {"globs":["**/*.rs"]}.
         if matches!(tool, "Glob") && !obj.contains_key("globs") {
-            if let Some(pat) = obj
-                .get("pattern")
-                .or_else(|| obj.get("glob"))
-                .cloned()
-            {
+            if let Some(pat) = obj.get("pattern").or_else(|| obj.get("glob")).cloned() {
                 if let Some(s) = pat.as_str() {
                     obj.insert("globs".to_string(), serde_json::json!([s]));
                 } else if pat.is_array() {

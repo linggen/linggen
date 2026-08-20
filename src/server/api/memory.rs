@@ -72,7 +72,9 @@ pub async fn passthrough(
     // user's, and this line is not where it should turn up.
     tracing::info!(
         "memory passthrough → {verb} {:?}",
-        args.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+        args.as_object()
+            .map(|o| o.keys().collect::<Vec<_>>())
+            .unwrap_or_default()
     );
 
     match crate::engine::tools::memory_http::post_memory_verb(&ling_mem_url, &verb, &args).await {
@@ -142,9 +144,24 @@ mod tests {
     #[test]
     fn every_verb_ling_mem_serves_is_accepted() {
         for verb in [
-            "search", "list", "get", "add", "add_batch", "count", "update", "delete", "forget",
-            "days", "remember_day", "harvest_day", "sweep", "chains", "issues", "issue_add",
-            "issue_resolve", "stats",
+            "search",
+            "list",
+            "get",
+            "add",
+            "add_batch",
+            "count",
+            "update",
+            "delete",
+            "forget",
+            "days",
+            "remember_day",
+            "harvest_day",
+            "sweep",
+            "chains",
+            "issues",
+            "issue_add",
+            "issue_resolve",
+            "stats",
         ] {
             assert!(is_safe_verb(verb), "{verb} should be forwardable");
         }
@@ -157,9 +174,24 @@ mod tests {
     #[test]
     fn every_forwardable_verb_is_classified_as_read_or_write() {
         for verb in [
-            "search", "list", "get", "count", "days", "chains", "issues", "stats", "add",
-            "add_batch", "update", "delete", "forget", "sweep", "remember_day", "harvest_day",
-            "issue_add", "issue_resolve",
+            "search",
+            "list",
+            "get",
+            "count",
+            "days",
+            "chains",
+            "issues",
+            "stats",
+            "add",
+            "add_batch",
+            "update",
+            "delete",
+            "forget",
+            "sweep",
+            "remember_day",
+            "harvest_day",
+            "issue_add",
+            "issue_resolve",
         ] {
             assert!(is_safe_verb(verb), "{verb} should be forwardable");
             assert!(verb_mutates(verb).is_some(), "{verb} should be classified");
@@ -170,10 +202,19 @@ mod tests {
     /// dispatching a delete is the bug this encodes.
     #[test]
     fn reads_and_writes_are_told_apart() {
-        for verb in ["search", "list", "get", "count", "days", "chains", "issues", "stats"] {
+        for verb in [
+            "search", "list", "get", "count", "days", "chains", "issues", "stats",
+        ] {
             assert_eq!(verb_mutates(verb), Some(false), "{verb} does not mutate");
         }
-        for verb in ["add", "update", "delete", "forget", "sweep", "issue_resolve"] {
+        for verb in [
+            "add",
+            "update",
+            "delete",
+            "forget",
+            "sweep",
+            "issue_resolve",
+        ] {
             assert_eq!(verb_mutates(verb), Some(true), "{verb} mutates");
         }
         assert_eq!(verb_mutates("wat"), None);
@@ -184,7 +225,16 @@ mod tests {
     /// are what the guard actually has to stop.
     #[test]
     fn a_verb_that_could_leave_the_namespace_is_refused() {
-        for verb in ["", "../health", "..", "a/b", "search?x=1", "search#f", "sea rch", "s\\b"] {
+        for verb in [
+            "",
+            "../health",
+            "..",
+            "a/b",
+            "search?x=1",
+            "search#f",
+            "sea rch",
+            "s\\b",
+        ] {
             assert!(!is_safe_verb(verb), "{verb:?} should be refused");
         }
     }

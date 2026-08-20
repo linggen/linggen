@@ -54,13 +54,17 @@ impl Tools {
             if !manager.is_path_allowed(&self.cwd(), agent_id, rel).await {
                 anyhow::bail!(
                     "Path {} is outside the allowed WorkScope for agent {}",
-                    rel, agent_id
+                    rel,
+                    agent_id
                 );
             }
 
             // 2. Check locks
-            let locked_by_other =
-                manager.locks.lock().await.is_locked_by_other(agent_id, &rel);
+            let locked_by_other = manager
+                .locks
+                .lock()
+                .await
+                .is_locked_by_other(agent_id, &rel);
             if locked_by_other {
                 anyhow::bail!("Path {} is locked by another agent", rel);
             }
@@ -107,7 +111,7 @@ impl Tools {
                         display
                     )));
                 }
-                Ok(_) => {} // content differs, proceed to write
+                Ok(_) => {}  // content differs, proceed to write
                 Err(_) => {} // file unreadable (e.g. binary), proceed to overwrite
             }
         }
@@ -194,7 +198,11 @@ impl Tools {
         };
 
         let ttl = Duration::from_millis(args.ttl_ms.unwrap_or(300_000)); // Default 5 min
-        let res = manager.locks.lock().await.acquire(agent_id, args.globs, ttl);
+        let res = manager
+            .locks
+            .lock()
+            .await
+            .acquire(agent_id, args.globs, ttl);
 
         Ok(ToolResult::LockResult {
             acquired: res.acquired,

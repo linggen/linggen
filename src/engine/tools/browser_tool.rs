@@ -27,17 +27,23 @@ const GATED_TIMEOUT_MS: u64 = 150_000;
 impl Tools {
     /// Broker one control op over the bridge. `Ok(data)` on success; a
     /// model-readable error otherwise (`no_bridge` gets install guidance).
-    pub(crate) async fn browser_call(&self, op: &str, params: Value, timeout_ms: u64) -> Result<Value> {
+    pub(crate) async fn browser_call(
+        &self,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> Result<Value> {
         let Some(hub) = &self.browser_bridge else {
-            anyhow::bail!(
-                "browser control is unavailable in this context (no daemon bridge)"
-            );
+            anyhow::bail!("browser control is unavailable in this context (no daemon bridge)");
         };
         let res = hub.call_value("control", op, params, timeout_ms).await;
         if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             return Ok(res.get("data").cloned().unwrap_or(Value::Null));
         }
-        let code = res.get("code").and_then(Value::as_str).unwrap_or("upstream_error");
+        let code = res
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("upstream_error");
         let message = res.get("message").and_then(Value::as_str).unwrap_or("");
         match code {
             "no_bridge" | "module_unavailable" => anyhow::bail!(
@@ -52,7 +58,6 @@ impl Tools {
             _ => anyhow::bail!("{code}: {message}"),
         }
     }
-
 }
 
 fn opt_str(args: &Value, key: &str) -> Option<String> {
@@ -60,7 +65,10 @@ fn opt_str(args: &Value, key: &str) -> Option<String> {
 }
 
 fn data_str(data: &Value, key: &str) -> String {
-    data.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    data.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -70,13 +78,21 @@ fn data_str(data: &Value, key: &str) -> String {
 pub struct BrowserNavigateTool;
 #[async_trait]
 impl Tool for BrowserNavigateTool {
-    fn name(&self) -> &'static str { "Browser_navigate" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_navigate"] }
+    fn name(&self) -> &'static str {
+        "Browser_navigate"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_navigate"]
+    }
     fn description(&self) -> &'static str {
         "Load a URL (or go \"back\"/\"forward\") in the controlled browser tab. The tab is visible to the user. Resolves after the page load settles. Follow with Browser_readPage to see the result."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -111,13 +127,21 @@ impl Tool for BrowserNavigateTool {
 pub struct BrowserReadPageTool;
 #[async_trait]
 impl Tool for BrowserReadPageTool {
-    fn name(&self) -> &'static str { "Browser_readPage" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_read_page", "Browser_read_page"] }
+    fn name(&self) -> &'static str {
+        "Browser_readPage"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_read_page", "Browser_read_page"]
+    }
     fn description(&self) -> &'static str {
         "Read the controlled tab as an accessibility tree. Actionable nodes carry a ref like [n42] — pass that ref to Browser_click / Browser_type. Re-read after any action that changes the page; old refs go stale."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -143,13 +167,22 @@ impl Tool for BrowserReadPageTool {
         if let Some(filter) = opt_str(&call.args, "filter") {
             params["filter"] = json!(filter);
         }
-        let data = tools.browser_call("read_page", params, CALL_TIMEOUT_MS).await?;
-        let truncated = data.get("truncated").and_then(Value::as_bool).unwrap_or(false);
+        let data = tools
+            .browser_call("read_page", params, CALL_TIMEOUT_MS)
+            .await?;
+        let truncated = data
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Ok(ToolResult::Success(format!(
             "{} — \"{}\"{}\n\n{}",
             data_str(&data, "url"),
             data_str(&data, "title"),
-            if truncated { " (tree truncated — scroll or filter to see more)" } else { "" },
+            if truncated {
+                " (tree truncated — scroll or filter to see more)"
+            } else {
+                ""
+            },
             data_str(&data, "tree"),
         )))
     }
@@ -158,13 +191,21 @@ impl Tool for BrowserReadPageTool {
 pub struct BrowserScreenshotTool;
 #[async_trait]
 impl Tool for BrowserScreenshotTool {
-    fn name(&self) -> &'static str { "Browser_screenshot" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_screenshot"] }
+    fn name(&self) -> &'static str {
+        "Browser_screenshot"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_screenshot"]
+    }
     fn description(&self) -> &'static str {
         "Capture the controlled tab as an image (attached to the conversation). Fallback for visual/canvas content the accessibility tree can't express — prefer Browser_readPage for normal pages."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -193,7 +234,9 @@ impl Tool for BrowserScreenshotTool {
         if let Some(region) = call.args.get("region") {
             params["region"] = region.clone();
         }
-        let data = tools.browser_call("screenshot", params, CALL_TIMEOUT_MS).await?;
+        let data = tools
+            .browser_call("screenshot", params, CALL_TIMEOUT_MS)
+            .await?;
         Ok(ToolResult::Screenshot {
             url: data_str(&data, "url"),
             base64: data_str(&data, "base64"),
@@ -204,13 +247,21 @@ impl Tool for BrowserScreenshotTool {
 pub struct BrowserClickTool;
 #[async_trait]
 impl Tool for BrowserClickTool {
-    fn name(&self) -> &'static str { "Browser_click" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_click"] }
+    fn name(&self) -> &'static str {
+        "Browser_click"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_click"]
+    }
     fn description(&self) -> &'static str {
         "Click a node by ref (from Browser_readPage) or a viewport coordinate. Prefer refs — coordinates are the screenshot fallback."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -235,7 +286,9 @@ impl Tool for BrowserClickTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("click", call.args, GATED_TIMEOUT_MS).await?;
+        let data = tools
+            .browser_call("click", call.args, GATED_TIMEOUT_MS)
+            .await?;
         Ok(ToolResult::Success(format!(
             "clicked {} — page is now {}",
             data_str(&data, "target"),
@@ -247,13 +300,21 @@ impl Tool for BrowserClickTool {
 pub struct BrowserTypeTool;
 #[async_trait]
 impl Tool for BrowserTypeTool {
-    fn name(&self) -> &'static str { "Browser_type" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_type"] }
+    fn name(&self) -> &'static str {
+        "Browser_type"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_type"]
+    }
     fn description(&self) -> &'static str {
         "Type text into a field: pass ref to focus it first (clear:true to empty it), or omit ref to type into the currently focused element."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -274,7 +335,9 @@ impl Tool for BrowserTypeTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("type", call.args, GATED_TIMEOUT_MS).await?;
+        let data = tools
+            .browser_call("type", call.args, GATED_TIMEOUT_MS)
+            .await?;
         Ok(ToolResult::Success(format!(
             "typed {} characters",
             data.get("typed").and_then(Value::as_u64).unwrap_or(0),
@@ -285,13 +348,21 @@ impl Tool for BrowserTypeTool {
 pub struct BrowserKeyTool;
 #[async_trait]
 impl Tool for BrowserKeyTool {
-    fn name(&self) -> &'static str { "Browser_key" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_key"] }
+    fn name(&self) -> &'static str {
+        "Browser_key"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_key"]
+    }
     fn description(&self) -> &'static str {
         "Press a key or chord in the controlled tab, e.g. \"Enter\", \"Escape\", \"Ctrl+a\", \"Meta+Enter\"."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -311,21 +382,34 @@ impl Tool for BrowserKeyTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("key", call.args, GATED_TIMEOUT_MS).await?;
-        Ok(ToolResult::Success(format!("pressed {}", data_str(&data, "pressed"))))
+        let data = tools
+            .browser_call("key", call.args, GATED_TIMEOUT_MS)
+            .await?;
+        Ok(ToolResult::Success(format!(
+            "pressed {}",
+            data_str(&data, "pressed")
+        )))
     }
 }
 
 pub struct BrowserScrollTool;
 #[async_trait]
 impl Tool for BrowserScrollTool {
-    fn name(&self) -> &'static str { "Browser_scroll" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_scroll"] }
+    fn name(&self) -> &'static str {
+        "Browser_scroll"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_scroll"]
+    }
     fn description(&self) -> &'static str {
         "Scroll the page (or the element under ref) in the controlled tab."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -346,7 +430,9 @@ impl Tool for BrowserScrollTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("scroll", call.args, CALL_TIMEOUT_MS).await?;
+        let data = tools
+            .browser_call("scroll", call.args, CALL_TIMEOUT_MS)
+            .await?;
         Ok(ToolResult::Success(format!(
             "scrolled {} by {}px",
             data_str(&data, "scrolled"),
@@ -358,13 +444,21 @@ impl Tool for BrowserScrollTool {
 pub struct BrowserWaitTool;
 #[async_trait]
 impl Tool for BrowserWaitTool {
-    fn name(&self) -> &'static str { "Browser_wait" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_wait"] }
+    fn name(&self) -> &'static str {
+        "Browser_wait"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_wait"]
+    }
     fn description(&self) -> &'static str {
         "Wait for the controlled tab to settle before the next read: for \"load\" (page load), \"selector\" (a CSS selector appears, value required), or \"ms\" (fixed delay, max 10000)."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -384,21 +478,34 @@ impl Tool for BrowserWaitTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("wait", call.args, NAVIGATE_TIMEOUT_MS).await?;
-        Ok(ToolResult::Success(format!("waited for {}", data_str(&data, "waited"))))
+        let data = tools
+            .browser_call("wait", call.args, NAVIGATE_TIMEOUT_MS)
+            .await?;
+        Ok(ToolResult::Success(format!(
+            "waited for {}",
+            data_str(&data, "waited")
+        )))
     }
 }
 
 pub struct BrowserReadConsoleTool;
 #[async_trait]
 impl Tool for BrowserReadConsoleTool {
-    fn name(&self) -> &'static str { "Browser_readConsole" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_read_console", "Browser_read_console"] }
+    fn name(&self) -> &'static str {
+        "Browser_readConsole"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_read_console", "Browser_read_console"]
+    }
     fn description(&self) -> &'static str {
         "Read recent console messages from the controlled tab (debugging)."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -416,8 +523,14 @@ impl Tool for BrowserReadConsoleTool {
         })
     }
     async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
-        let data = tools.browser_call("read_console", call.args, CALL_TIMEOUT_MS).await?;
-        let messages = data.get("messages").and_then(Value::as_array).cloned().unwrap_or_default();
+        let data = tools
+            .browser_call("read_console", call.args, CALL_TIMEOUT_MS)
+            .await?;
+        let messages = data
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         if messages.is_empty() {
             return Ok(ToolResult::Success("console is empty".to_string()));
         }
@@ -438,13 +551,21 @@ impl Tool for BrowserReadConsoleTool {
 pub struct BrowserTabsTool;
 #[async_trait]
 impl Tool for BrowserTabsTool {
-    fn name(&self) -> &'static str { "Browser_tabs" }
-    fn aliases(&self) -> &'static [&'static str] { &["browser_tabs"] }
+    fn name(&self) -> &'static str {
+        "Browser_tabs"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["browser_tabs"]
+    }
     fn description(&self) -> &'static str {
         "Manage the controlled tab: list (current state), open (a URL, creating the tab if needed), switch (bring it to front), close."
     }
-    fn tier(&self) -> PermissionMode { PermissionMode::Read }
-    fn cacheable(&self) -> bool { false }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn cacheable(&self) -> bool {
+        false
+    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",

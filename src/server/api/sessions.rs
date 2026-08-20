@@ -202,9 +202,15 @@ pub(crate) async fn remove_session_api(
     Json(req): Json<RemoveSessionRequest>,
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
-    match state.manager.global_sessions.remove_session(&req.session_id) {
+    match state
+        .manager
+        .global_sessions
+        .remove_session(&req.session_id)
+    {
         Ok(_) => {
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
             StatusCode::OK
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -311,9 +317,15 @@ pub(crate) async fn remove_skill_session_api(
     Json(req): Json<RemoveSkillSessionRequest>,
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
-    match state.manager.global_sessions.remove_session(&req.session_id) {
+    match state
+        .manager
+        .global_sessions
+        .remove_session(&req.session_id)
+    {
         Ok(_) => {
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
             StatusCode::OK
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -391,9 +403,15 @@ pub(crate) async fn delete_unified_session(
     Json(req): Json<DeleteUnifiedSessionRequest>,
 ) -> impl IntoResponse {
     state.manager.remove_session_engine(&req.session_id).await;
-    match state.manager.global_sessions.remove_session(&req.session_id) {
+    match state
+        .manager
+        .global_sessions
+        .remove_session(&req.session_id)
+    {
         Ok(_) => {
-            let _ = state.events_tx.send(crate::server::ServerEvent::StateUpdated);
+            let _ = state
+                .events_tx
+                .send(crate::server::ServerEvent::StateUpdated);
             StatusCode::OK.into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -401,9 +419,7 @@ pub(crate) async fn delete_unified_session(
 }
 
 /// GET /api/sessions/all — return all sessions from the global flat store.
-pub(crate) async fn list_all_sessions(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+pub(crate) async fn list_all_sessions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     match state.manager.global_sessions.list_sessions() {
         Ok(sessions) => {
             let all: Vec<serde_json::Value> = sessions

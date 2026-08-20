@@ -134,7 +134,10 @@ pub(super) fn spawn_get(
     tracing::info!("[media] get {url}");
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let resp = client.get(format!("http://127.0.0.1:{port}{url}")).send().await;
+        let resp = client
+            .get(format!("http://127.0.0.1:{port}{url}"))
+            .send()
+            .await;
         let (status, bytes) = match resp {
             Ok(r) => {
                 let s = r.status().as_u16();
@@ -269,7 +272,8 @@ async fn begin(
 }
 
 async fn finish(mut t: MediaTransfer) -> String {
-    let reply_err = |id: &str, e: String| json!({"type": "put_err", "id": id, "error": e}).to_string();
+    let reply_err =
+        |id: &str, e: String| json!({"type": "put_err", "id": id, "error": e}).to_string();
 
     if let Err(e) = t.file.flush().await {
         let _ = tokio::fs::remove_file(&t.tmp).await;
@@ -281,7 +285,10 @@ async fn finish(mut t: MediaTransfer) -> String {
         let _ = tokio::fs::remove_file(&t.tmp).await;
         return reply_err(
             &t.id,
-            format!("size mismatch: declared {}, got {}", t.declared_size, t.received),
+            format!(
+                "size mismatch: declared {}, got {}",
+                t.declared_size, t.received
+            ),
         );
     }
     let computed = format!("{:x}", t.hasher.finalize());
@@ -291,8 +298,13 @@ async fn finish(mut t: MediaTransfer) -> String {
     }
 
     // Same landing as the HTTP upload — one definition of "ingested".
-    let (local_id, name, tmp, size, created_ms) =
-        (t.local_id.clone(), t.name.clone(), t.tmp.clone(), t.received, t.created_ms);
+    let (local_id, name, tmp, size, created_ms) = (
+        t.local_id.clone(),
+        t.name.clone(),
+        t.tmp.clone(),
+        t.received,
+        t.created_ms,
+    );
     let sha = computed.clone();
     let by = t.by.clone();
     let placed = tokio::task::spawn_blocking(move || {

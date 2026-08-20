@@ -57,13 +57,13 @@ pub struct EvalConfig {
     pub agent_override: Option<String>,
 }
 
-fn discover_tasks(evals_dir: &PathBuf, filter: Option<&str>) -> Result<Vec<(PathBuf, EvalTaskDef)>> {
+fn discover_tasks(
+    evals_dir: &PathBuf,
+    filter: Option<&str>,
+) -> Result<Vec<(PathBuf, EvalTaskDef)>> {
     let tasks_dir = evals_dir.join("tasks");
     if !tasks_dir.exists() {
-        anyhow::bail!(
-            "Eval tasks directory not found: {}",
-            tasks_dir.display()
-        );
+        anyhow::bail!("Eval tasks directory not found: {}", tasks_dir.display());
     }
 
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&tasks_dir)?
@@ -130,12 +130,7 @@ pub async fn run_eval(eval_cfg: EvalConfig) -> Result<EvalSummary> {
             task_def.max_iters = Some(iters);
         }
 
-        let result = runner::run_single_task(
-            &eval_cfg,
-            &task_dir,
-            &task_def,
-        )
-        .await;
+        let result = runner::run_single_task(&eval_cfg, &task_dir, &task_def).await;
 
         match result {
             Ok(r) => results.push(r),

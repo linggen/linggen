@@ -1,6 +1,6 @@
-use crate::server::{ServerEvent, ServerState};
-use crate::extensions::skills::marketplace::{self, SkillScope};
 use crate::extensions::skills;
+use crate::extensions::skills::marketplace::{self, SkillScope};
+use crate::server::{ServerEvent, ServerState};
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -43,9 +43,7 @@ pub(crate) struct UninstallRequest {
 // Handlers
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn community_search(
-    Query(query): Query<SearchQuery>,
-) -> impl IntoResponse {
+pub(crate) async fn community_search(Query(query): Query<SearchQuery>) -> impl IntoResponse {
     let q = query.q.unwrap_or_default();
     if q.is_empty() {
         return (StatusCode::BAD_REQUEST, "Missing query parameter 'q'").into_response();
@@ -170,7 +168,10 @@ pub(crate) async fn marketplace_move_to_global(
 pub(crate) async fn builtin_skills_list(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    if params.get("refresh").is_some_and(|v| v == "true" || v == "1") {
+    if params
+        .get("refresh")
+        .is_some_and(|v| v == "true" || v == "1")
+    {
         skills::clear_builtin_cache().await;
     }
     axum::Json(skills::fetch_builtin_skills().await)
@@ -223,9 +224,7 @@ pub(crate) struct ClawHubScanQuery {
     slug: Option<String>,
 }
 
-pub(crate) async fn clawhub_scan(
-    Query(query): Query<ClawHubScanQuery>,
-) -> impl IntoResponse {
+pub(crate) async fn clawhub_scan(Query(query): Query<ClawHubScanQuery>) -> impl IntoResponse {
     let slug = match query.slug {
         Some(s) if !s.is_empty() => s,
         _ => return (StatusCode::BAD_REQUEST, "Missing query parameter 'slug'").into_response(),
