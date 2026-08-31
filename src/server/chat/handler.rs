@@ -692,6 +692,57 @@ async fn dispatch_turn(
 /// each turn re-process a huge, ever-growing context. Her older context lives on
 /// disk and in recalled memory, so trimming the prompt costs nothing she can't
 /// recall — and keeps every turn fast.
+/// Re-bind the session's mission context (session meta `mission_id`) so a
+/// chat turn in a mission session sees what the mission run saw: the mission
+/// body via `active_mission`, its allowed-tools, and the mission prompt
+/// profile. The scheduler sets all of this on the engine it dispatches, but
+/// that engine is in-memory — after a daemon restart,
+/// `get_or_create_session_agent` hands the turn a fresh engine and the
+/// mission context silently vanished (observed 2026-08-31: a chat turn in an
+/// attended dream session built its prompt with `active_mission=false,
+/// include_memory=true`).
+async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ctx: &ChatRunCtx) {
+    if engine.active_mission.is_some() {
+        return;
+    }
+    let Some(sid) = ctx.session_id.as_deref() else {
+        return;
+    };
+    let mission_id = match ctx.manager.global_sessions.get_session_meta(sid) {
+        Ok(meta) => meta.and_then(|m| m.mission_id),
+        Err(e) => {
+            tracing::warn!("Failed to read session meta for {}: {}", sid, e);
+            return;
+        }
+    };
+    let Some(mission_id) = mission_id else {
+        return;
+    };
+    let mission = ctx
+        .manager
+        .missions
+        .reload_one(&mission_id)
+        .or_else(|| ctx.manager.missions.get_mission(&mission_id).ok().flatten());
+    let Some(mission) = mission else {
+        tracing::warn!("Session {} bound to unknown mission '{}'", sid, mission_id);
+        return;
+    };
+    tracing::info!("Session-bound mission activated: {}", mission_id);
+    engine.active_mission = Some(crate::engine::ActiveMission {
+        name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
+        description: mission.description.clone(),
+        body: mission.prompt.clone(),
+        mission_dir: Some(ctx.manager.missions.mission_dir(&mission.id)),
+    });
+    if !mission.allowed_tools.is_empty() {
+        engine.cfg.mission_allowed_tools = Some(mission.allowed_tools.iter().cloned().collect());
+    }
+    // Mirror scheduler dispatch: mission sessions strip the biographical
+    // memory blocks, and any cached prompt predates the mission body.
+    engine.prompt_profile.include_memory = false;
+    engine.cached_system_prompt = None;
+}
+
 pub(crate) async fn run_session_turn(
     ctx: &ChatRunCtx,
     engine: &mut crate::engine::AgentEngine,
@@ -716,6 +767,7 @@ pub(crate) async fn run_session_turn(
         }
     }
     apply_session_bound_skill(engine, ctx).await;
+    apply_session_bound_mission(engine, ctx).await;
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
 }
 

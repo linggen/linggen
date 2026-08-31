@@ -23,6 +23,12 @@ import { useOpenMissionEditor } from '../hooks/useOpenMissionEditor';
 
 type CreatorFilter = 'all' | 'user' | 'mission' | 'skill';
 
+/** A row's identity. `creator` records who opened the session, but a session
+ *  bound to a mission is a mission session regardless of opener — an attended
+ *  dream session has creator 'user' and still lives in the mission's world. */
+const sessionKind = (s: { creator?: string | null; mission_id?: string | null }): string =>
+  s.mission_id ? 'mission' : (s.creator || 'user');
+
 const creatorIcon = (creator?: string) => {
   switch (creator) {
     case 'mission': return <Bot size={13} className="text-amber-500 shrink-0" />;
@@ -194,8 +200,9 @@ export const SessionList: React.FC<{
   const counts = useMemo(() => {
     let user = 0, mission = 0, skill = 0;
     for (const s of allSessions) {
-      if (s.creator === 'mission') mission++;
-      else if (s.creator === 'skill') skill++;
+      const k = sessionKind(s);
+      if (k === 'mission') mission++;
+      else if (k === 'skill') skill++;
       else user++;
     }
     return { user, mission, skill, all: allSessions.length };
@@ -234,8 +241,8 @@ export const SessionList: React.FC<{
   // Filter and search
   const filtered = useMemo(() => {
     let list = allSessions;
-    if (filter === 'user') list = list.filter((s) => !s.creator || s.creator === 'user');
-    else if (filter !== 'all') list = list.filter((s) => s.creator === filter);
+    if (filter === 'user') list = list.filter((s) => sessionKind(s) === 'user');
+    else if (filter !== 'all') list = list.filter((s) => sessionKind(s) === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((s) =>
@@ -533,7 +540,7 @@ export const SessionList: React.FC<{
                     <div className="mt-0.5">
                       {runningSessionIds.has(session.id)
                         ? <div className="w-[13px] h-[13px] rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
-                        : creatorIcon(session.creator)}
+                        : creatorIcon(sessionKind(session))}
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
@@ -564,9 +571,9 @@ export const SessionList: React.FC<{
                           {session.project_name}
                         </span>
                       )}
-                      {session.creator && session.creator !== 'user' && (
-                        <span className={cn('text-[10px] px-1 py-px rounded font-medium', creatorBadge(session.creator))}>
-                          {session.creator}
+                      {sessionKind(session) !== 'user' && (
+                        <span className={cn('text-[10px] px-1 py-px rounded font-medium', creatorBadge(sessionKind(session)))}>
+                          {sessionKind(session)}
                         </span>
                       )}
                     </div>

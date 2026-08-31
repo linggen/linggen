@@ -256,7 +256,11 @@ export const MainApp: React.FC = () => {
   }
 
   const selectSession = (session: any, closeMenu?: () => void) => {
-    const isMission = session.creator === 'mission';
+    // A session bound to a mission is a mission session regardless of who
+    // opened it — an attended dream session has creator 'user' and still
+    // lives in the mission's world (its transcript is served by the mission
+    // state endpoint, its chat turns carry the mission body).
+    const isMission = session.creator === 'mission' || !!session.mission_id;
     const isSkill = session.creator === 'skill' || (!session.project && session.skill);
     projectStore.setActiveSessionId(session.id);
     projectStore.setIsMissionSession(isMission);

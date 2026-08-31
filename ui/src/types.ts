@@ -235,7 +235,7 @@ export interface SessionInfo {
   project?: string;         // full project path
   project_name?: string;    // short name (last path segment)
   skill?: string | null;    // bound skill name
-  mission_id?: string | null; // mission ID if creator is "mission"
+  mission_id?: string | null; // set when the session is bound to a mission (creator "mission", or a user-opened attended session)
   cwd?: string;             // current working directory
   model_id?: string | null; // session-level model override
   permission_mode?: string | null; // effective permission mode (read/edit/admin)

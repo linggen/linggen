@@ -2,6 +2,7 @@ import type { UiEvent } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useUserStore, type UserType } from '../../stores/userStore';
+import { useChatStore } from '../../stores/chatStore';
 import { useRoomChatStore } from '../../stores/roomChatStore';
 
 // ---------------------------------------------------------------------------
@@ -98,7 +99,17 @@ export function handleUserInfo(item: UiEvent): void {
   const perm = userType === 'consumer' ? (room?.permission || 'read') : 'admin';
   const roomName = room?.room_name ?? null;
   const tokenBudget = room?.token_budget_daily ?? null;
+  const permWasPending = userStore.userPermission === 'pending';
   userStore.setUserInfo(perm, roomName, tokenBudget);
+
+  // fetchSessionState refuses to run while permission is 'pending', and on a
+  // cold page load user_info always lands AFTER the transport's onReconnect
+  // fetch — so the restored session's history was silently never loaded (an
+  // open transcript rendered empty until the user clicked something). The
+  // first permission arrival re-runs the fetch.
+  if (permWasPending) {
+    void useChatStore.getState().fetchSessionState();
+  }
 
   useUiStore.getState().setCurrentPage(userType === 'consumer' ? 'consumer' : 'main');
 }

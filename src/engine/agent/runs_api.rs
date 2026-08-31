@@ -90,6 +90,27 @@ impl AgentManager {
         if let Some(ref run) = run_snapshot {
             self.update_agent_activity(&run.repo_path, &run.agent_id)
                 .await;
+            // A finished top-level run retires its busy status here, at the
+            // choke point. Chat and mission turns send Idle from their own
+            // paths, but a run that ends anywhere else (agent_chat, watcher
+            // heralds) used to leave its last status in `active_statuses`
+            // forever — the session list kept spinning on a run that ended
+            // days ago. A duplicate Idle is a no-op. Subagent runs are
+            // excluded: they share `sid|agent_id` with their parent, and
+            // clearing that key mid-run would blank the parent's live status.
+            if run.parent_run_id.is_none() {
+                let _ = self.events.send((
+                    AgentEvent::AgentStatus {
+                        agent_id: run.agent_id.clone(),
+                        status: "idle".to_string(),
+                        detail: None,
+                        parent_id: None,
+                        run_id: Some(run_id.to_string()),
+                        parent_run_id: None,
+                    },
+                    Some(run.session_id.clone()),
+                ));
+            }
         }
         self.run_store.remove_run(run_id);
         tracing::info!(
