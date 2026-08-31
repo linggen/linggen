@@ -1,5 +1,87 @@
 # Changelog
 
+## [1.8.0] - 2026-08-31
+
+### The engine brings its own runtime — and a voice
+
+1.7.0 made the phone a full peer. 1.8.0 turns inward: the engine carries
+a managed Python, Yinyue speaks with a real voice, every prompt shares one
+human voice layer, and a stop actually stops.
+
+- **A managed runtime** — a pinned, relocatable CPython lives under
+  `~/.linggen/runtime`, fetched and repaired on boot (SHA-256 verified,
+  resumable, GitHub → linggen.dev mirror fallback) with named venvs:
+  `tools` (yt-dlp nightly) and `tts`. Skill scripts get a deterministic
+  interpreter via `${LINGGEN_PY:-python3}`; a Mac with no python3 at all
+  now has one. Progress rides the retained `tasks` topic; low disk stops
+  the prewarm cleanly until next boot.
+- **Yinyue has a voice** — Qwen3-TTS (Apache-2.0) through a resident MLX
+  sidecar on Apple Silicon, with Kokoro and then `say` as automatic
+  fallbacks — proven by killing the sidecar mid-session. Warm synthesis
+  ~650ms; a degraded GPU gives up in seconds instead of a minute, and the
+  sidecar respawns in the background. `pet.voice` picks her speaker
+  (default vivian) from Settings, live on her next line; her bubble stays
+  up until the audio ends. The model download gates on the pet being on.
+- **One voice for every agent** — `agents/shared/voice.md` is embedded
+  and injected into every system prompt (user, skill, mission), and the
+  full humanize catalog ships built-in under `~/.linggen/agents/shared/`.
+  Agent specs resolve mdBook-style `{{#include}}`. The two "format with
+  Markdown" lines that were overriding it are gone.
+- **Stop stops now** — model streams poll cancel every 250ms, in-flight
+  tools abort the way a timeout does, a cancelled run can never finish
+  Completed, and queued messages survive the cancel and run as the next
+  turns.
+- **Memory doctrine from one source** — the engine injects every
+  connected MCP server's `instructions`; ling-mem's are the canonical
+  memory protocol, so the hand-copied `[memory_protocol]` is deleted
+  (~5k tokens saved per turn). The nightly dream audit merges the
+  provable, queues the rest, and digests quiet clusters (≤5 a night);
+  `replace_ids` archives its losers instead of deleting them.
+- **Chat can carry an image again** — client→server control messages
+  are chunked (the one direction that wasn't; a 256 KB SCTP cap tore the
+  channel down), and images downscale to 1568px before upload. A 29 MB
+  PNG now arrives.
+- **Shell children see your PATH** — a GUI-launched daemon inherited
+  launchd's bare PATH; every shell lane (Bash tool, `/api/bash`, skill
+  `cmd:` tools, both launchers) now appends the user bin dirs and the
+  runtime, so `ling-mem` in `~/.local/bin` and Homebrew resolve however
+  `ling` was started.
+
+### Also
+
+- Telemetry ships one daily digest row (turn/error/update counts, coarse
+  error codes only, never text); the audit header enumerates every `via`
+  value; the ling-mem auto-install declares itself as the channel and
+  falls back to the linggen.dev mirror.
+- Browser bridge: the call timeout ceiling is 180s (x targets legitimately
+  runs ~2 minutes); the spec records the bridge's single write — `post`,
+  reachable only from a human's click — and the two ways reads fail
+  quietly.
+- A pending AskUser survives not being watched — entering the session
+  backfills its question; `/?session=` deep-links in normal mode.
+- `keep_alive` validates as a Go duration at save, inline next to the
+  field.
+- Yinyue's task-finished herald quotes the run's last words and reports
+  only what they support.
+- `resolve_ling_mem` stops probing `/usr/local/bin`; `~/.local/bin` is
+  the singleton.
+- `build.rs` watches `agents/`, `missions/` and `ui/dist/` — a new file in
+  an embedded folder rebuilds the crate.
+- Canonical Apache-2.0 license text restored (GitHub had classified the
+  repo NOASSERTION).
+
+### Fixed
+
+- Reject on a plan did nothing: the handlers keyed by the raw project
+  root while chat stored the canonical one, recovery bailed on the first
+  non-JSON message, and the RTC control channel returned a 404 as
+  success. All three fixed; failures now surface as toasts.
+- IME composition Enter no longer submits half-composed text in any
+  Enter-to-submit input.
+- A daemon killed mid-turn now says "No response — the run was
+  interrupted" instead of leaving "Musing for 3m 5s" on screen.
+- The keep_alive error in Settings no longer truncates.
+
 ## [1.7.0] - 2026-08-12
 
 ### The phone can find you anywhere
