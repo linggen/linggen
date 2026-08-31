@@ -206,7 +206,15 @@ pub async fn build_page_state(
                 sessions
                     .into_iter()
                     .filter(|s| user_session_ids.contains(&s.id))
-                    .filter_map(|s| serde_json::to_value(s).ok())
+                    .filter_map(|s| {
+                        // `updated_at` is #[serde(skip)] so it never lands in
+                        // session.yaml — inject the derived value by hand for
+                        // the UI (grouping/sort key on last activity).
+                        let updated_at = s.updated_at;
+                        let mut v = serde_json::to_value(s).ok()?;
+                        v["updated_at"] = serde_json::Value::from(updated_at);
+                        Some(v)
+                    })
                     .collect(),
             );
         }

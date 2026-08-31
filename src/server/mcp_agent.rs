@@ -130,6 +130,7 @@ pub async fn run(
         id: session_id.clone(),
         title: title.clone(),
         created_at: crate::util::now_ts_secs(),
+        updated_at: 0,
         skill: None,
         creator: "agent".into(),
         cwd: Some(root_str.clone()),

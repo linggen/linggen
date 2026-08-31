@@ -30,6 +30,10 @@ pub struct ServerState {
     /// peers AND no activity, so a daemon never quits while a window is open
     /// even when the WebRTC peer has transiently dropped.
     pub last_activity: Arc<AtomicU64>,
+    /// Last user-initiated chat turn (anything posting /api/chat). Seeded
+    /// with boot time so background catch-up work waits out a fresh daemon's
+    /// first quiet window instead of firing one tick after start.
+    pub last_user_turn_at: Arc<AtomicU64>,
     pub events_tx: broadcast::Sender<ServerEvent>,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,
@@ -158,6 +162,18 @@ impl ServerState {
     /// Full variant that carries the emitting agent's run_id and its
     /// parent's run_id so the UI can route status to the right subagent
     /// even when multiple subagents share the same `agent_id`.
+    /// True when no user chat turn landed within `window_secs` and no
+    /// top-level agent run is executing — the moment background model work
+    /// (mission catch-up) can run without competing with the user for the
+    /// model.
+    pub fn quiet_for_background(&self, window_secs: u64) -> bool {
+        let now = crate::util::now_ts_secs();
+        let last = self
+            .last_user_turn_at
+            .load(std::sync::atomic::Ordering::Relaxed);
+        now.saturating_sub(last) >= window_secs && !self.manager.has_active_top_level_runs()
+    }
+
     pub async fn send_agent_status_with_ids(
         &self,
         agent_id: String,

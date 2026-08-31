@@ -556,6 +556,7 @@ fn session_for_skill(
         id: sid.clone(),
         title: skill.to_string(),
         created_at: now,
+        updated_at: 0,
         skill: Some(skill.to_string()),
         creator: "agent".to_string(),
         cwd: Some(home.to_string_lossy().to_string()),

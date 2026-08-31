@@ -124,6 +124,16 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Any top-level (user-visible) run currently executing. Cheap sync
+    /// scan; the mission scheduler's quiet gate asks this before starting
+    /// background model work.
+    pub fn has_active_top_level_runs(&self) -> bool {
+        self.run_store
+            .list_runs(None)
+            .iter()
+            .any(|r| r.parent_run_id.is_none() && r.status == AgentRunStatus::Running)
+    }
+
     pub async fn list_agent_runs(
         &self,
         _project_root: &PathBuf,

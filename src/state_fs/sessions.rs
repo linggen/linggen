@@ -28,6 +28,10 @@ pub struct SessionMeta {
     pub id: String,
     pub title: String,
     pub created_at: u64,
+    /// Last-activity timestamp (mtime of the session's messages.jsonl),
+    /// derived at list time — never persisted to session.yaml.
+    #[serde(skip)]
+    pub updated_at: u64,
     /// When set, this skill is bound to the session and activated on every message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill: Option<String>,
@@ -164,7 +168,18 @@ impl SessionStore {
             if yaml_path.exists() {
                 let content = fs::read_to_string(&yaml_path)?;
                 match serde_yml::from_str::<SessionMeta>(&content) {
-                    Ok(meta) => sessions.push(meta),
+                    Ok(mut meta) => {
+                        // Last activity = when the transcript last grew. A
+                        // session touched today should surface as today's,
+                        // however old its creation date.
+                        meta.updated_at = fs::metadata(entry.path().join("messages.jsonl"))
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(meta.created_at);
+                        sessions.push(meta)
+                    }
                     Err(e) => {
                         tracing::warn!(
                             "Skipping corrupt session.yaml at {}: {}",
@@ -175,7 +190,7 @@ impl SessionStore {
                 }
             }
         }
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         let off = offset.unwrap_or(0);
         if off > 0 {
             sessions = sessions.into_iter().skip(off).collect();
@@ -438,6 +453,7 @@ mod tests {
             id: "sess-1000-abcd1234".into(),
             title: "Test Session".into(),
             created_at: 1000,
+            updated_at: 0,
             skill: None,
             creator: "user".into(),
             cwd: None,
@@ -484,6 +500,7 @@ mod tests {
                     id: id.into(),
                     title: id.into(),
                     created_at: ts,
+                    updated_at: 0,
                     skill: None,
                     creator: "user".into(),
                     cwd: None,
@@ -511,6 +528,7 @@ mod tests {
             id: "s1".into(),
             title: "t".into(),
             created_at: 1000,
+            updated_at: 0,
             skill: None,
             creator: "user".into(),
             cwd: None,
@@ -559,6 +577,7 @@ mod tests {
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,
@@ -616,6 +635,7 @@ mod tests {
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,
@@ -657,6 +677,7 @@ mod tests {
                 id: "s1".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,
@@ -698,6 +719,7 @@ mod tests {
                 id: "../escape".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,
@@ -717,6 +739,7 @@ mod tests {
                 id: "a/b".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,
@@ -736,6 +759,7 @@ mod tests {
                 id: "".into(),
                 title: "t".into(),
                 created_at: 1000,
+                updated_at: 0,
                 skill: None,
                 creator: "user".into(),
                 cwd: None,

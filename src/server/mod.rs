@@ -873,6 +873,7 @@ async fn prepare_server(
         bound_host: host.to_string(),
         active_peer_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         last_activity: Arc::new(AtomicU64::new(unix_secs_now())),
+        last_user_turn_at: Arc::new(AtomicU64::new(unix_secs_now())),
         events_tx,
         skills,
         prompt_store,

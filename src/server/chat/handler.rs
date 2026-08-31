@@ -185,6 +185,7 @@ async fn ensure_session(
         id,
         title: title.clone(),
         created_at: now,
+        updated_at: 0,
         skill: req.skill_name.clone(),
         creator: session_creator.into(),
         cwd: Some(project_root_str.to_string()),
@@ -778,6 +779,14 @@ pub(crate) async fn chat_handler(
     let root = resolve_request_root(&req.project_root);
     let project_root_str = root.to_string_lossy().to_string();
 
+    // Any user chat turn stamps the quiet clock — background mission work
+    // (catch-up, deferrable cron fires) waits for a quiet window instead of
+    // competing with the user for the model. See quiet_for_background.
+    state.last_user_turn_at.store(
+        crate::util::now_ts_secs(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     let session_creator: &str = if req.mission_id.is_some() {
         "mission"
     } else if req.skill_name.is_some() {
@@ -956,14 +965,6 @@ pub(crate) async fn chat_handler(
             parent_run_id: None,
         });
 
-        // Owner turns also catch up any mission whose `catchup_hours` is set
-        // and whose last run is older than that threshold (e.g. the `dream`
-        // consolidate+evict mission, when its daily cron was missed because
-        // the machine was off/asleep). Cheap, non-blocking, guarded; no-op
-        // unless something is overdue.
-        if engine.prompt_profile.include_memory {
-            crate::extensions::missions::scheduler::maybe_fire_catchup_missions(ctx.state.clone());
-        }
         state_clone
             .send_agent_status(
                 target_id_clone,

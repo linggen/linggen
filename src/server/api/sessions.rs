@@ -46,6 +46,7 @@ pub(crate) async fn list_sessions(
                         "repo_path": s.cwd.as_deref().unwrap_or(&query.project_root),
                         "title": s.title,
                         "created_at": s.created_at,
+                        "updated_at": s.updated_at,
                         "skill": s.skill,
                         "creator": s.creator,
                         "project": s.project,
@@ -109,6 +110,7 @@ pub(crate) async fn create_session(
         id: id.clone(),
         title: req.title,
         created_at: crate::util::now_ts_secs(),
+        updated_at: 0,
         skill: req.skill.clone(),
         creator: if is_skill {
             "skill".into()
@@ -167,6 +169,7 @@ pub(crate) async fn resolve_session_api(
         id: new_id.clone(),
         title: "New Chat".to_string(),
         created_at: now,
+        updated_at: 0,
         skill: None,
         creator: "user".into(),
         cwd: Some(req.project_root.clone()),
@@ -240,6 +243,7 @@ pub(crate) async fn list_skill_sessions(
                         "id": s.id,
                         "title": s.title,
                         "created_at": s.created_at,
+                        "updated_at": s.updated_at,
                         "skill": s.skill,
                         "creator": s.creator,
                     })
@@ -429,6 +433,7 @@ pub(crate) async fn list_all_sessions(State(state): State<Arc<ServerState>>) -> 
                         "id": s.id,
                         "title": s.title,
                         "created_at": s.created_at,
+                        "updated_at": s.updated_at,
                         "creator": s.creator,
                         "project": s.project,
                         "project_name": s.project_name,

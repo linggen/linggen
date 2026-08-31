@@ -20,6 +20,13 @@ const MAX_TRIGGERS_PER_DAY: u32 = 100;
 /// manual triggers are not counted against this cap.
 const CATCHUP_MAX_ATTEMPTS_PER_DAY: usize = 3;
 
+/// Background mission work — the catch-up sweep, and cron fires of missions
+/// that can catch up later — runs only after this much user-quiet: no chat
+/// turn in the window and no top-level run in flight. The quiet clock is
+/// seeded at boot, so a fresh daemon also waits this long before its first
+/// catch-up (model prewarm and the user's first look at the UI win).
+const QUIET_WINDOW_SECS: u64 = 600;
+
 /// In-flight guard shared by **every** dispatch path — cron tick,
 /// turn-seam catch-up, and the manual trigger API. The tick keeps its own
 /// per-mission `running` flag, but catch-up and manual runs used to
@@ -99,6 +106,7 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
 
     let mut interval = time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     let mut mission_states: HashMap<String, MissionState> = HashMap::new();
+    let mut last_catchup_minute: i64 = -1;
 
     loop {
         interval.tick().await;
@@ -106,6 +114,15 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
         let now = Local::now();
         let today = now.date_naive();
         let current_minute = now.timestamp() / 60;
+
+        // The catch-up sweep rides the tick, once a minute. It no-ops unless
+        // a mission is overdue AND the machine is quiet (gate inside) — this
+        // replaced the fire-right-after-a-chat-turn hook, which started
+        // background mission runs exactly when they contend with the user.
+        if current_minute != last_catchup_minute {
+            last_catchup_minute = current_minute;
+            maybe_fire_catchup_missions(state.clone());
+        }
 
         let enabled_missions = match state.manager.missions.list_enabled_missions() {
             Ok(m) => m,
@@ -158,6 +175,20 @@ pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
                     &uuid::Uuid::new_v4().to_string()[..8]
                 );
                 record_mission_run(&state, mission, &skip_id, None, "skipped", true);
+                ms.last_fire_minute = Some(current_minute);
+                continue;
+            }
+
+            // Contention guard: a cron-due mission that can catch up later
+            // defers while the user is active — same model, the user's chat
+            // wins; the catch-up sweep re-fires it in the next quiet window.
+            // Missions without catchup_hours fire anyway: deferring those
+            // would silently lose the day's run.
+            if mission.catchup_hours.is_some() && !state.quiet_for_background(QUIET_WINDOW_SECS) {
+                info!(
+                    "Mission scheduler: '{}' due but user is active — deferring to catch-up",
+                    mission.id
+                );
                 ms.last_fire_minute = Some(current_minute);
                 continue;
             }
@@ -294,6 +325,7 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
         id: session_id.clone(),
         title: mission_session_title(mission),
         created_at: crate::util::now_ts_secs(),
+        updated_at: 0,
         // Missions are a first-class subsystem; they don't bind a skill.
         // `creator: "mission"` alone distinguishes mission sessions.
         skill: None,
@@ -377,7 +409,10 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 /// Scans all enabled missions whose `catchup_hours` is set, and fires any
 /// whose last non-skipped run is older than that threshold (or which has
 /// never run). Used to recover from missed cron fires when the machine was
-/// off/asleep — the user's next turn re-triggers the work opportunistically.
+/// off/asleep — the scheduler tick re-triggers the work in the next quiet
+/// window (see `QUIET_WINDOW_SECS`): no user chat turn for the window, no
+/// top-level run in flight. Background runs never race the user's chat for
+/// the model.
 ///
 /// Per mission, opt in by setting `catchup_hours: <n>` in the mission's
 /// frontmatter. Omit the field to leave the mission cron-only.
@@ -387,6 +422,9 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 /// regular cron fire is prevented by the generic mission busy-skip in the
 /// scheduler tick.
 pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
+    if !state.quiet_for_background(QUIET_WINDOW_SECS) {
+        return;
+    }
     tokio::spawn(async move {
         let missions = match state.manager.missions.list_enabled_missions() {
             Ok(m) => m,

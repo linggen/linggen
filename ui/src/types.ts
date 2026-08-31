@@ -231,6 +231,7 @@ export interface SessionInfo {
   repo_path: string;
   title: string;
   created_at: number;
+  updated_at?: number; // last transcript activity (server-derived); created_at fallback
   creator?: string;         // "user" | "mission" | "skill"
   project?: string;         // full project path
   project_name?: string;    // short name (last path segment)

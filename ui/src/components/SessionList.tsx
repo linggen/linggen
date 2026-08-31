@@ -54,21 +54,30 @@ const relativeTime = (epochSecs: number): string => {
   return `${Math.floor(diff / 86400)}d`;
 };
 
-type TimeGroup = 'Today' | 'Yesterday' | 'This Week' | 'Older';
+type TimeGroup = 'Today' | 'This Week' | 'This Month' | 'This Year' | 'Older';
+
+/** A session's recency for grouping, sorting, and the row's relative time:
+ *  last activity (transcript mtime, server-derived) with creation as the
+ *  fallback — a 2-week-old session touched today belongs under Today. */
+const lastActive = (s: { updated_at?: number | null; created_at: number }): number =>
+  s.updated_at || s.created_at;
 
 const timeGroup = (epochSecs: number): TimeGroup => {
   const now = new Date();
   const d = new Date(epochSecs * 1000);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
   const weekAgo = new Date(today.getTime() - 7 * 86400000);
+  const monthAgo = new Date(today.getTime() - 30 * 86400000);
+  const yearAgo = new Date(today.getTime() - 365 * 86400000);
   if (d >= today) return 'Today';
-  if (d >= yesterday) return 'Yesterday';
   if (d >= weekAgo) return 'This Week';
+  if (d >= monthAgo) return 'This Month';
+  if (d >= yearAgo) return 'This Year';
   return 'Older';
 };
 
-const groupOrder: Record<TimeGroup, number> = { Today: 0, Yesterday: 1, 'This Week': 2, Older: 3 };
+const groupOrder: Record<TimeGroup, number> =
+  { Today: 0, 'This Week': 1, 'This Month': 2, 'This Year': 3, Older: 4 };
 
 // ---------------------------------------------------------------------------
 // Section Header (collapsible)
@@ -258,10 +267,13 @@ export const SessionList: React.FC<{
   const groups = useMemo(() => {
     const map = new Map<TimeGroup, SessionInfo[]>();
     for (const s of filtered) {
-      const g = timeGroup(s.created_at);
+      const g = timeGroup(lastActive(s));
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(s);
     }
+    // Most recently active first within each group (the server sorts by
+    // updated_at too, but /api/sessions/all consumers shouldn't rely on it).
+    for (const [, list] of map) list.sort((a, b) => lastActive(b) - lastActive(a));
     return [...map.entries()].sort((a, b) => groupOrder[a[0]] - groupOrder[b[0]]);
   }, [filtered]);
 
@@ -579,7 +591,7 @@ export const SessionList: React.FC<{
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 relative">
-                    <span className="text-[11px] text-slate-400 tabular-nums">{relativeTime(session.created_at)}</span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{relativeTime(lastActive(session))}</span>
                     {!selectMode && renamingId !== session.id && (
                       <button
                         onClick={(e) => {
