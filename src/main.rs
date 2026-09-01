@@ -410,6 +410,14 @@ async fn main() -> Result<()> {
 
             if cli.web {
                 // Web UI foreground
+                // One pidfile whichever way the server was launched: `ling
+                // daemon` records the child it spawned, and the child records
+                // itself here — so `ling status` never reads a pid from a
+                // previous life (it showed a July pid on 2026-09-01).
+                let pid_file = cli::daemon::agent_pid_file();
+                if let Err(e) = std::fs::write(&pid_file, std::process::id().to_string()) {
+                    tracing::warn!("Could not write {}: {e}", pid_file.display());
+                }
                 tracing::info!("--- Linggen Agent Startup ---");
                 if let Some(path) = config_path.as_ref() {
                     tracing::info!("Config File: {}", path.display());
@@ -463,6 +471,7 @@ async fn main() -> Result<()> {
                     rx,
                 )
                 .await?;
+                let _ = std::fs::remove_file(&pid_file);
             }
         }
 

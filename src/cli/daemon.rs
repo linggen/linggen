@@ -11,7 +11,7 @@ use std::os::unix::process::CommandExt;
 // Path helpers
 // ---------------------------------------------------------------------------
 
-fn agent_pid_file() -> PathBuf {
+pub(crate) fn agent_pid_file() -> PathBuf {
     crate::paths::linggen_home().join("ling.pid")
 }
 

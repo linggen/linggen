@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::provider::{claude_auth, codex_auth};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -54,10 +55,13 @@ pub async fn run(config: &Config, config_path: Option<&Path>) -> Result<()> {
     // 4. Agent server
     let port = config.server.port();
     let listening = is_port_listening(port).await;
-    let pid = std::fs::read_to_string(crate::paths::linggen_home().join("ling.pid"))
+    let recorded = std::fs::read_to_string(crate::paths::linggen_home().join("ling.pid"))
         .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    print_server_status(port, listening, pid);
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .map(|pid| (pid, is_process_running(pid)));
+    let listener = if listening { listener_pid(port) } else { None };
+    let (icon, detail) = server_verdict(port, listening, recorded, listener);
+    println!("  Agent:       {} {}", icon, detail);
 
     // 5. Logs
     check_log_dir(config);
@@ -208,26 +212,63 @@ async fn fetch_ling_mem_health(port: u16) -> Option<String> {
     env.data.map(|d| d.version)
 }
 
-fn print_server_status(port: u16, listening: bool, pid: Option<u32>) {
-    let (icon, detail) = match (listening, pid) {
-        (true, Some(pid)) => ("\u{2705}", format!("port {} running (PID {})", port, pid)),
-        (true, None) => ("\u{2705}", format!("port {} running", port)),
-        (false, Some(pid)) => {
-            if is_process_running(pid) {
-                (
-                    "\u{274c}",
-                    format!(
-                        "port {} process alive (PID {}) but port not listening",
-                        port, pid
-                    ),
-                )
-            } else {
-                ("\u{274c}", format!("port {} not running (stale PID)", port))
-            }
+/// The Agent line. `recorded` is what `ling.pid` says and whether that
+/// process is alive; `listener` is who actually holds the port. A pid is
+/// only printed when it is alive — a listening port with a dead pidfile
+/// shows the real listener (or "unknown") and names the stale file, never
+/// a pid from a previous life.
+fn server_verdict(
+    port: u16,
+    listening: bool,
+    recorded: Option<(u32, bool)>,
+    listener: Option<u32>,
+) -> (&'static str, String) {
+    match (listening, recorded) {
+        (true, Some((pid, true))) => ("\u{2705}", format!("port {} running (PID {})", port, pid)),
+        (true, stale) => {
+            let who = listener
+                .map(|p| format!("PID {p}"))
+                .unwrap_or_else(|| "PID unknown".to_string());
+            let note = match stale {
+                Some((pid, false)) => format!(" \u{b7} ling.pid is stale ({pid})"),
+                _ => String::new(),
+            };
+            (
+                "\u{2705}",
+                format!("port {} running ({}){}", port, who, note),
+            )
         }
+        (false, Some((pid, true))) => (
+            "\u{274c}",
+            format!(
+                "port {} process alive (PID {}) but port not listening",
+                port, pid
+            ),
+        ),
+        (false, Some((pid, false))) => (
+            "\u{274c}",
+            format!("port {} not running (stale PID {})", port, pid),
+        ),
         (false, None) => ("\u{274c}", format!("port {} not running", port)),
-    };
-    println!("  Agent:       {} {}", icon, detail);
+    }
+}
+
+/// Who holds the port right now, via lsof (macOS and most Linux). None when
+/// lsof is absent or finds nothing — the caller prints "PID unknown".
+#[cfg(unix)]
+fn listener_pid(port: u16) -> Option<u32> {
+    let out = std::process::Command::new("lsof")
+        .args(["-ti", &format!("TCP:{port}"), "-sTCP:LISTEN"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.trim().parse::<u32>().ok())
+}
+
+#[cfg(not(unix))]
+fn listener_pid(_port: u16) -> Option<u32> {
+    None
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -296,25 +337,103 @@ async fn check_models(config: &Config) {
         }
     };
 
+    // Keys come from where the engine gets them (TOML > credentials.json >
+    // env) — the old probe only saw the TOML field, so a key kept in
+    // credentials.json looked like a 401.
+    let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
+
     for m in &config.models {
         let label = format!("Model [{}]", m.id);
-        let check_url = match m.provider.as_str() {
-            "ollama" => format!("{}/api/tags", m.url.trim_end_matches('/')),
-            "openai" => format!("{}/models", m.url.trim_end_matches('/')),
-            _ => {
-                info(&label, &format!("unknown provider '{}'", m.provider));
-                continue;
-            }
-        };
+        let base = m.url.trim_end_matches('/');
+        let auth = m.auth_mode.as_deref().unwrap_or("");
 
-        let mut req = client.get(&check_url);
-        if let Some(key) = &m.api_key {
-            req = req.header("Authorization", format!("Bearer {}", key));
+        // OAuth-backed models have no key to send and nothing to ping
+        // anonymously — the honest check is the sign-in state.
+        if auth == "chatgpt_oauth" || m.provider == "chatgpt" {
+            let tokens = codex_auth::CodexAuthTokens::load(&codex_auth::codex_auth_file());
+            if tokens.is_valid() {
+                ok(
+                    &label,
+                    &format!("{} via ChatGPT OAuth (signed in)", m.model),
+                );
+            } else {
+                fail(
+                    &label,
+                    &format!(
+                        "{} via ChatGPT OAuth (not signed in \u{2014} run `ling auth login`)",
+                        m.model
+                    ),
+                );
+            }
+            continue;
+        }
+        if m.provider == "anthropic" && auth == "claude_oauth" {
+            match claude_auth::load() {
+                Ok(t) if t.can_do_inference() => {
+                    ok(&label, &format!("{} via Claude OAuth (signed in)", m.model));
+                }
+                _ => fail(
+                    &label,
+                    &format!("{} via Claude OAuth (not signed in)", m.model),
+                ),
+            }
+            continue;
+        }
+        if auth == "linggen_account" {
+            info(
+                &label,
+                &format!("{} via Linggen account (checked at run time)", m.model),
+            );
+            continue;
+        }
+
+        let key = crate::credentials::resolve_api_key(&m.id, m.api_key.as_deref(), &creds);
+        // Mirror the engine's own routing (provider/models.rs): ollama and
+        // anthropic speak their own wire; every other provider — openai,
+        // deepseek, gemini, groq, … — is OpenAI-compatible, so `/models` is
+        // the probe for all of them.
+        let mut req = match m.provider.as_str() {
+            "ollama" => client.get(format!("{base}/api/tags")),
+            "anthropic" => {
+                let url = if base.ends_with("/v1") {
+                    format!("{base}/models")
+                } else {
+                    format!("{base}/v1/models")
+                };
+                let mut r = client.get(url).header("anthropic-version", "2023-06-01");
+                if let Some(k) = &key {
+                    r = r.header("x-api-key", k);
+                }
+                r
+            }
+            _ => client.get(format!("{base}/models")),
+        };
+        if m.provider != "anthropic" {
+            if let Some(k) = &key {
+                req = req.header("Authorization", format!("Bearer {k}"));
+            }
         }
 
         match req.send().await {
             Ok(resp) if resp.status().is_success() => {
                 ok(&label, &format!("{} @ {} (reachable)", m.model, m.url));
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                let why = if key.is_some() {
+                    "key rejected"
+                } else {
+                    "no API key in credentials.json or TOML"
+                };
+                fail(
+                    &label,
+                    &format!(
+                        "{} @ {} (HTTP {} \u{2014} {})",
+                        m.model,
+                        m.url,
+                        resp.status(),
+                        why
+                    ),
+                );
             }
             Ok(resp) => {
                 fail(
@@ -326,6 +445,51 @@ async fn check_models(config: &Config) {
                 fail(&label, &format!("{} @ {} ({})", m.model, m.url, e));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_verdict;
+
+    #[test]
+    fn live_pidfile_is_printed() {
+        let (icon, s) = server_verdict(9527, true, Some((4724, true)), Some(4724));
+        assert_eq!(icon, "\u{2705}");
+        assert_eq!(s, "port 9527 running (PID 4724)");
+    }
+
+    #[test]
+    fn dead_pidfile_never_shown_as_the_server() {
+        // The 2026-09-01 case: ling.pid from July, real listener elsewhere.
+        let (_, s) = server_verdict(9527, true, Some((45747, false)), Some(71972));
+        assert_eq!(
+            s,
+            "port 9527 running (PID 71972) \u{b7} ling.pid is stale (45747)"
+        );
+    }
+
+    #[test]
+    fn listening_without_any_pid_is_still_running() {
+        let (icon, s) = server_verdict(9527, true, None, None);
+        assert_eq!(icon, "\u{2705}");
+        assert_eq!(s, "port 9527 running (PID unknown)");
+    }
+
+    #[test]
+    fn not_listening_verdicts() {
+        assert_eq!(
+            server_verdict(9527, false, Some((7, true)), None).1,
+            "port 9527 process alive (PID 7) but port not listening"
+        );
+        assert_eq!(
+            server_verdict(9527, false, Some((7, false)), None).1,
+            "port 9527 not running (stale PID 7)"
+        );
+        assert_eq!(
+            server_verdict(9527, false, None, None).1,
+            "port 9527 not running"
+        );
     }
 }
 

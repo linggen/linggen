@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+- **`ling status` tells the truth about the daemon** — the Agent line only
+  prints a PID that is alive; a listening port with a dead `ling.pid` shows
+  the real listener (via lsof) and names the stale file. `ling --web` now
+  writes `ling.pid` itself, so the file is right however the server was
+  launched (it had been showing a pid from July).
+- **Model probe mirrors the engine's routing** — every OpenAI-compatible
+  provider (deepseek, gemini, groq, …) is pinged at `/models` with the key
+  resolved the way the engine resolves it (TOML › credentials.json),
+  Anthropic at `/v1/models`, OAuth-backed models report their sign-in
+  state. No more "unknown provider" for providers the engine runs every
+  day.
+
 ## [1.8.1] - 2026-09-01
 
 ### Session surfaces, fixed from one browse of the list
