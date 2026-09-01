@@ -285,6 +285,20 @@ const TOOLS: &[McpTool] = &[
         }),
         timeout_ms: READ_MODULE_TIMEOUT_MS,
     },
+    McpTool {
+        name: "x_mentions",
+        backend: Backend::Bridge { module: "x", op: "mentions" },
+        description: "Recent mentions of, and replies to, the signed-in user on x.com — read from their Mentions notifications tab. Each item says whether it is a reply to one of their posts or a bare mention, and carries the post it answers when x.com sent it along.",
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "username": {"type": "string", "description": "The user's x.com handle — tells a reply to them apart from a bare mention"},
+                "max": {"type": "integer", "description": "Max items (default 15, max 100)"}
+            },
+            "required": ["username"]
+        }),
+        timeout_ms: READ_MODULE_TIMEOUT_MS,
+    },
     // --- memory: served by ling-mem, NOT here -------------------------------
     //
     // The `memory_*` proxies lived here from 1.4.0 (2026-07-10), when
@@ -753,9 +767,10 @@ mod tests {
         let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
         let res = handle_rpc(&deps(&hub()), &msg).await.unwrap();
         let tools = res["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 19);
         assert!(tools.iter().any(|t| t["name"] == "browser_navigate"));
         assert!(tools.iter().any(|t| t["name"] == "x_search"));
+        assert!(tools.iter().any(|t| t["name"] == "x_mentions"));
         assert!(tools.iter().any(|t| t["name"] == "agent_run"));
         assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
     }

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- **`x_mentions` on the MCP front door** — an MCP client now gets the same
+  mentions read the Pulse skill does: recent mentions of, and replies to, the
+  signed-in user, from their x.com Mentions tab. Needs linggen-browser 0.4.7,
+  where the op became real.
 - **No tool observation can blow the context** — stdout and stderr from a
   command now come back capped at 64 KB per stream, head and tail kept, the
   dropped middle replaced by a marker naming how much went missing. Applies
