@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.8.1] - 2026-09-01
+
+### Session surfaces, fixed from one browse of the list
+
+Five defects found by using the session list the day 1.8.0 shipped —
+all root-caused, none patched around.
+
+- **Cold load shows the transcript** — a restored session rendered empty
+  on a fresh page load: the connect-time state fetch was gated on user
+  permission, still `pending` when the reconnect fired, and nothing
+  retried once it arrived. The first permission arrival now re-runs the
+  fetch.
+- **Attended mission sessions stay missions** — a session you started
+  from a mission was classified as plain chat everywhere: no mission
+  badge, the wrong state endpoint, and after a daemon restart a chat
+  turn ran with no mission context at all. The UI classifies by
+  `mission_id`, and chat turns re-bind the session's mission from meta
+  the way skill sessions already do (body, allowed tools, no memory,
+  prompt cache invalidated).
+- **Spinners die when runs end** — runs that finish outside the chat
+  path (agent chat, watcher heralds) never emitted `Idle`, so the list
+  showed them busy forever. `finish_agent_run` emits `Idle` for every
+  top-level run at the one choke point; subagent runs are excluded since
+  they share the parent's session.
+- **Catch-up waits for quiet** — background mission catch-up moved off
+  the after-every-chat-turn hook onto the scheduler tick: once a minute,
+  gated on a 10-minute quiet window (no user chat turn, no top-level run
+  in flight), so mission work never competes with you for the model. The
+  quiet clock seeds at boot, so a fresh daemon waits out its first
+  window. Cron fires of catch-up-capable missions defer the same way;
+  missions without `catchup_hours` still fire on schedule.
+- **Session list groups by last activity** — Today / This Week / This
+  Month / This Year / Older. The group, the order within it, and the
+  row's relative time all key on the transcript's last write
+  (`updated_at`, derived at list time, never persisted), so a two-week-old
+  session touched today sits under Today.
+
 ## [1.8.0] - 2026-08-31
 
 ### The engine brings its own runtime — and a voice
