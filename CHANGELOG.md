@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **A skill page can tell "the agent is quiet" from "we went deaf"** — the
+  embed iframe now relays its transport status to the page hosting it
+  (`connection` event, alongside the existing token/content_block relay). A
+  skill app has no transport of its own, so it could not distinguish the two:
+  Pulse called a healthy 5-minute gather a failed run because its data
+  channel spent 3 minutes reconnecting after a page reload and the events
+  arrived, correctly buffered, only after its watchdog had given up.
 - **`x_mentions` on the MCP front door** — an MCP client now gets the same
   mentions read the Pulse skill does: recent mentions of, and replies to, the
   signed-in user, from their x.com Mentions tab. Needs linggen-browser 0.4.7,

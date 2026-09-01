@@ -11,7 +11,7 @@ import { getTransport, setTransport, type Transport, type TransportCallbacks, ty
 import { useUiStore } from '../stores/uiStore';
 import { RtcTransport } from '../lib/rtcTransport';
 import { RelaySignaling } from '../lib/signaling';
-import { dispatchEvent } from '../lib/eventDispatcher';
+import { dispatchEvent, relayConnectionToSkillIframe } from '../lib/eventDispatcher';
 import { useUserStore } from '../stores/userStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -127,7 +127,10 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         dispatchEvent(event, sessionIdRef.current ?? undefined);
       },
       onStatusChange: (status) => {
-        useUserStore.getState().setConnectionStatus(mapStatus(status));
+        const mapped = mapStatus(status);
+        useUserStore.getState().setConnectionStatus(mapped);
+        // A skill page embedding this iframe has no transport of its own.
+        relayConnectionToSkillIframe(mapped);
       },
       onReconnect: () => {
         // Send view context to trigger server-pushed page_state

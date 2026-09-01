@@ -61,6 +61,23 @@ function passesSessionFilter(item: UiEvent, sessionIdOverride?: string): boolean
 // Skill-iframe bridge — forward key events to parent page when embedded
 // ---------------------------------------------------------------------------
 
+/** Tell the parent skill page whether we can still hear the server.
+ *
+ *  A skill page has no transport of its own — it sees the agent only through
+ *  this iframe. Without this it cannot tell "the agent went quiet" from "the
+ *  data channel is down", and on 2026-09-01 Pulse called a 3-minute channel
+ *  reconnect a failed gather while the run was healthy underneath. */
+export function relayConnectionToSkillIframe(
+  status: 'connected' | 'reconnecting' | 'disconnected',
+): void {
+  if (window.parent === window) return;
+  window.parent.postMessage({
+    type: 'linggen-skill-event',
+    event: 'connection',
+    payload: { status },
+  }, '*');
+}
+
 function relayToSkillIframe(item: UiEvent): void {
   if (window.parent === window) return;
 
