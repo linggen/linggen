@@ -262,27 +262,31 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
             }
             let state = state.clone();
             tokio::spawn(async move {
-                // Her line must be grounded in what the run actually said —
-                // a content-free "task finished" once let her announce a
-                // deletion that never happened (the run had ended on an
-                // unanswered confirmation question).
-                let outcome = session_id
+                // A notification, not a summary: she has NOT read the reply.
+                // The kickoff carries the user's own request (for the topic)
+                // and says so, so all she can announce is that a reply is
+                // ready — never what it did. Quoting Ling's last words was
+                // tried and misfired both ways: a 300-char head read as a
+                // reply that "broke off" (2026-09-01), and a content-free
+                // "finished" once let her announce a deletion that never
+                // happened. "They need you" is the AskUser hook's job.
+                let asked = session_id
                     .as_deref()
-                    .and_then(|sid| last_agent_line(&state, sid, &agent_id))
+                    .and_then(|sid| last_user_line(&state, sid))
                     .unwrap_or_default();
-                let outcome_block = if outcome.is_empty() {
+                let topic_block = if asked.is_empty() {
                     String::new()
                 } else {
-                    format!(" Its last words were: \"{outcome}\".")
+                    format!(" The user had asked: \"{asked}\".")
                 };
                 let kickoff = format!(
-                    "A task by the agent \"{agent_id}\" just finished while the user was away \
-                     from Linggen.{outcome_block} Report only what those words support — if the \
-                     task ended on a question or an unconfirmed action, relay the question; never \
-                     say something was done (especially deleted or changed) unless the words say \
-                     it was. If it's worth telling them when they're back, say one brief line in \
-                     your voice — Right now says whether they're back. If it's routine, reply with \
-                     exactly SILENT. Spoken aloud: plain prose, no markdown. Never nag."
+                    "The agent \"{agent_id}\" just finished a reply while the user was away from \
+                     Linggen.{topic_block} You have NOT read the reply. If it's worth telling them \
+                     when they're back, say one brief line in your voice that their reply is ready \
+                     — name the topic in a few words taken from what they asked; never say what \
+                     the reply did, found, or changed, and never judge it. Right now says whether \
+                     they're back. If it's routine, reply with exactly SILENT. Spoken aloud: plain \
+                     prose, no markdown. Never nag."
                 );
                 wake_herald(state, kickoff, "happy").await;
             });
@@ -290,10 +294,10 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
     }
 }
 
-/// The last visible line the agent said in a session — tool calls, tool
-/// results and hidden prompts skipped, truncated for a kickoff. `None`
-/// when the session has nothing quotable.
-fn last_agent_line(state: &Arc<ServerState>, session_id: &str, agent_id: &str) -> Option<String> {
+/// The user's most recent message in a session — the topic of the reply
+/// Yinyue announces — trimmed to a short quote. Hidden prompts and tool
+/// payloads are skipped. `None` when the session has nothing quotable.
+fn last_user_line(state: &Arc<ServerState>, session_id: &str) -> Option<String> {
     let history = state
         .manager
         .global_sessions
@@ -302,13 +306,11 @@ fn last_agent_line(state: &Arc<ServerState>, session_id: &str, agent_id: &str) -
     let line = history
         .iter()
         .rev()
-        .filter(|m| m.from_id == agent_id)
+        .filter(|m| m.from_id == "user")
         .map(|m| m.content.trim())
-        .find(|c| {
-            !c.is_empty() && !c.starts_with("{\"type\":\"tool\"") && !c.contains("[HIDDEN]")
-        })?;
-    let mut out: String = line.chars().take(300).collect();
-    if line.chars().count() > 300 {
+        .find(|c| !c.is_empty() && !c.starts_with('{') && !c.contains("[HIDDEN]"))?;
+    let mut out: String = line.chars().take(80).collect();
+    if line.chars().count() > 80 {
         out.push('…');
     }
     Some(out)

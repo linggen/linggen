@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **Yinyue's "reply is ready" is a notification, not a summary** — the
+  run-finished herald used to quote the first 300 characters of Ling's reply,
+  and she read the cut as the reply breaking off. She now gets the user's own
+  question for the topic and is told she has not read the reply: one line
+  that it's ready, never what it did. "Ling needs you" keeps its own AskUser
+  hook.
 - **`ling status` tells the truth about the daemon** — the Agent line only
   prints a PID that is alive; a listening port with a dead `ling.pid` shows
   the real listener (via lsof) and names the stale file. `ling --web` now
