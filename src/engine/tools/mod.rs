@@ -17,6 +17,7 @@ mod write_tools;
 
 pub(crate) use delegation::{run_delegation, TaskArgs};
 pub use search_exec::find_git_root as search_exec_find_git_root;
+pub(crate) use search_exec::kill_process_group;
 pub use tool_helpers::canonical_tool_name;
 pub(crate) use tool_helpers::full_tool_schema_entries;
 pub(crate) use tool_helpers::{normalize_tool_args, summarize_tool_args};
@@ -92,6 +93,69 @@ pub enum ToolResult {
     AskUserResponse {
         answers: Vec<AskUserAnswer>,
     },
+}
+
+/// Byte budget for one stream of process output handed back to the model.
+/// Matches `Read`'s default so no command can quietly dominate the context;
+/// skill tools raise or lower it with `max_output_bytes:` in frontmatter.
+pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Trim one output stream to `max_bytes`, keeping the head and the tail — a
+/// command's first lines say what it did, its last lines say how it ended.
+/// The dropped middle becomes a marker naming the original size, so the model
+/// knows it did not see everything and can narrow the command instead of
+/// reasoning from a silent cut. The result is `max_bytes` of payload plus
+/// that one marker line.
+pub fn cap_stream(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let head_end = floor_char_boundary(s, max_bytes * 2 / 3);
+    let tail_start = ceil_char_boundary(s, s.len() - (max_bytes - head_end));
+    format!(
+        "{}\n[linggen: {} bytes omitted — output was {} bytes, capped at {}. \
+Narrow the command (filter, grep, head) to see the rest.]\n{}",
+        &s[..head_end],
+        tail_start - head_end,
+        s.len(),
+        max_bytes,
+        &s[tail_start..],
+    )
+}
+
+impl ToolResult {
+    /// Build a `CommandOutput` with both streams capped. Every producer of
+    /// process output goes through here so none of them can forget: an
+    /// unbounded stdout is a context blowup, not a big answer.
+    pub fn command_output(
+        exit_code: Option<i32>,
+        stdout: &str,
+        stderr: &str,
+        max_bytes: usize,
+    ) -> Self {
+        ToolResult::CommandOutput {
+            exit_code,
+            stdout: cap_stream(stdout, max_bytes),
+            stderr: cap_stream(stderr, max_bytes),
+        }
+    }
 }
 
 // ── AskUser types ───────────────────────────────────────────────────────
@@ -464,5 +528,51 @@ impl Tools {
                 self.prompt(crate::prompts::keys::ASKUSER_TIMEOUT, &[]),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_stream_passes_short_output_through() {
+        let s = "all of it\n";
+        assert_eq!(cap_stream(s, 1024), s);
+        // Exactly at the budget is still whole.
+        let exact = "x".repeat(64);
+        assert_eq!(cap_stream(&exact, 64), exact);
+    }
+
+    #[test]
+    fn cap_stream_keeps_head_and_tail_and_names_the_gap() {
+        let s = format!("HEAD{}TAIL", "x".repeat(2000));
+        let out = cap_stream(&s, 300);
+        assert!(out.starts_with("HEAD"), "head survives");
+        assert!(out.ends_with("TAIL"), "tail survives");
+        assert!(out.contains("bytes omitted"), "the gap is named");
+        assert!(out.contains(&format!("output was {} bytes", s.len())));
+        // Payload stays within budget; only the marker line is extra.
+        assert!(out.len() < 300 + 200);
+    }
+
+    #[test]
+    fn cap_stream_cuts_on_char_boundaries() {
+        // Every char is three bytes, so a byte-indexed cut lands mid-char.
+        let s = "日".repeat(1000);
+        let out = cap_stream(&s, 100);
+        assert!(out.contains("bytes omitted"));
+        assert!(out.starts_with('日') && out.ends_with('日'));
+    }
+
+    #[test]
+    fn command_output_caps_both_streams() {
+        let big = "y".repeat(200_000);
+        let result = ToolResult::command_output(Some(0), &big, &big, 1024);
+        let ToolResult::CommandOutput { stdout, stderr, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert!(stdout.len() < 2048, "stdout capped: {}", stdout.len());
+        assert!(stderr.len() < 2048, "stderr capped: {}", stderr.len());
     }
 }

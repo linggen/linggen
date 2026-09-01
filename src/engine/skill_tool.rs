@@ -34,6 +34,10 @@ fn default_timeout() -> u64 {
     30000
 }
 
+fn default_max_output_bytes() -> usize {
+    super::tools::DEFAULT_MAX_TOOL_OUTPUT_BYTES
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillParamDef {
     #[serde(rename = "type", default = "default_param_type")]
@@ -90,6 +94,12 @@ pub struct SkillToolDef {
     pub returns: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    /// Byte budget for each output stream returned to the model. A skill
+    /// whose tool legitimately reports more raises it; one whose script can
+    /// spill (a raw page dump, a shape probe) lowers it. Past the budget the
+    /// head and tail survive with a marker naming what was dropped.
+    #[serde(default = "default_max_output_bytes")]
+    pub max_output_bytes: usize,
     /// Name of the skill that declared this tool. Set at skill-load time so
     /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
@@ -208,16 +218,31 @@ impl SkillToolDef {
 
         info!("Skill tool '{}' rendered command: {}", self.name, rendered);
 
-        // Execute via sh -c.
+        // Execute via sh -c. Own the process group so a timeout kills the
+        // whole pipeline, not just the shell.
         let timeout = Duration::from_millis(self.timeout_ms);
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&rendered)
-            .current_dir(workspace_root)
-            .env("PATH", crate::util::shell_path())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut child = {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c")
+                .arg(&rendered)
+                .current_dir(workspace_root)
+                .env("PATH", crate::util::shell_path())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            cmd.spawn()?
+        };
+
+        // Drain both pipes while we wait. The OS pipe buffer is ~64 KB: a
+        // command that writes more than that blocks on the write until
+        // someone reads, so a poll loop that only watches for exit would see
+        // a working command as a timeout.
+        let stdout_handle = std::thread::spawn(drain(child.stdout.take()));
+        let stderr_handle = std::thread::spawn(drain(child.stderr.take()));
 
         let start = Instant::now();
         let mut timed_out = false;
@@ -227,14 +252,15 @@ impl SkillToolDef {
             }
             if start.elapsed() >= timeout {
                 timed_out = true;
-                let _ = child.kill();
+                crate::engine::tools::kill_process_group(&child);
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
         }
 
-        let output = child.wait_with_output()?;
-        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let status = child.wait()?;
+        let stdout = stdout_handle.join().unwrap_or_default();
+        let mut stderr = stderr_handle.join().unwrap_or_default();
         if timed_out {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
@@ -245,11 +271,12 @@ impl SkillToolDef {
             ));
         }
 
-        Ok(ToolResult::CommandOutput {
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr,
-        })
+        Ok(ToolResult::command_output(
+            status.code(),
+            &stdout,
+            &stderr,
+            self.max_output_bytes,
+        ))
     }
 
     /// Convert this skill tool definition to an OpenAI-compatible tool schema.
@@ -317,6 +344,18 @@ impl SkillToolDef {
     }
 }
 
+/// Reader closure for one of a child's pipes: read it to EOF on its own
+/// thread so the child is never blocked writing.
+fn drain<R: std::io::Read + Send + 'static>(stream: Option<R>) -> impl FnOnce() -> String + Send {
+    move || {
+        let mut buf = Vec::new();
+        if let Some(mut stream) = stream {
+            let _ = stream.read_to_end(&mut buf);
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    }
+}
+
 fn shell_escape_arg(s: &str) -> String {
     if s.contains('\'') {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -365,6 +404,79 @@ mod tests {
         assert!(!is_effectively_empty(&json!([{}, {"real": 1}])));
     }
 
+    fn shell_tool(cmd: &str, max_output_bytes: usize) -> SkillToolDef {
+        SkillToolDef {
+            name: "spill".to_string(),
+            description: "Spills a lot".to_string(),
+            cmd: cmd.to_string(),
+            endpoint: None,
+            tier: None,
+            args: HashMap::new(),
+            returns: None,
+            timeout_ms: 30000,
+            max_output_bytes,
+            skill_name: None,
+            skill_dir: None,
+        }
+    }
+
+    #[test]
+    fn a_spilling_shell_tool_comes_back_capped() {
+        let tool = shell_tool("head -c 200000 /dev/zero | tr '\\0' 'x'", 64 * 1024);
+        let result = tool
+            .execute(&serde_json::json!({}), Path::new("."))
+            .expect("tool runs");
+        let ToolResult::CommandOutput { stdout, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert!(
+            stdout.len() < 66 * 1024,
+            "200 KB of stdout capped to {} bytes",
+            stdout.len()
+        );
+        assert!(stdout.contains("bytes omitted"), "the model is told");
+        assert!(stdout.contains("output was 200000 bytes"));
+    }
+
+    #[test]
+    fn a_skill_can_declare_its_own_budget() {
+        let tool = shell_tool("head -c 200000 /dev/zero | tr '\\0' 'x'", 4096);
+        let result = tool
+            .execute(&serde_json::json!({}), Path::new("."))
+            .expect("tool runs");
+        let ToolResult::CommandOutput { stdout, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert!(
+            stdout.len() < 5 * 1024,
+            "declared budget wins: {}",
+            stdout.len()
+        );
+    }
+
+    #[test]
+    fn a_timeout_kills_the_pipeline_and_says_so() {
+        let mut tool = shell_tool("sleep 30 | cat", 64 * 1024);
+        tool.timeout_ms = 300;
+        let start = Instant::now();
+        let result = tool
+            .execute(&serde_json::json!({}), Path::new("."))
+            .expect("tool returns");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "returned in {:?}, not after the sleep",
+            start.elapsed()
+        );
+        let ToolResult::CommandOutput { stderr, .. } = result else {
+            panic!("expected CommandOutput");
+        };
+        assert!(
+            stderr.contains("timed out after 300ms"),
+            "stderr: {}",
+            stderr
+        );
+    }
+
     #[test]
     fn to_schema_json_includes_all_fields() {
         let tool = SkillToolDef {
@@ -385,6 +497,7 @@ mod tests {
             )]),
             returns: Some("stdout text".to_string()),
             timeout_ms: 30000,
+            max_output_bytes: default_max_output_bytes(),
             skill_name: None,
             skill_dir: None,
         };

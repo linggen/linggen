@@ -175,6 +175,7 @@ tools:
     cmd: "$SKILL_DIR/scripts/scan-disk.sh"  # Shell tool
     tier: read                              # read | edit | admin (default: admin)
     timeout_ms: 30000                       # default: 30000
+    max_output_bytes: 65536                 # default: 65536 (64 KB) per stream
     args:
       target:
         type: string                        # string | object | array | number | boolean
@@ -184,6 +185,16 @@ tools:
         items: { type: object }             # for arrays only
     returns: "Sectioned text output."       # Optional, hint for the model
 ```
+
+### Output budget
+
+`max_output_bytes` caps each of stdout and stderr at 64 KB by default. Past
+the budget the head and tail survive and the dropped middle becomes a marker
+line naming how much went missing, so the model narrows its next call instead
+of reasoning from a silent cut. Raise it for a tool that legitimately reports
+more; lower it for one whose script can spill. A tool that returns a page
+dump or a raw probe payload should return a summary instead — the budget is a
+backstop, not a licence.
 
 ### Permission tier
 

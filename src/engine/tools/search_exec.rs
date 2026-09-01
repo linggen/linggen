@@ -46,7 +46,10 @@ pub(super) struct RunCommandArgs {
     pub(super) cancel_flag: Option<Arc<AtomicBool>>,
 }
 
-fn kill_process_group(child: &std::process::Child) {
+/// SIGTERM then SIGKILL the child's whole process group. A shell command is
+/// a pipeline, not one process — killing only the shell leaves its children
+/// running and holding the output pipes open.
+pub(crate) fn kill_process_group(child: &std::process::Child) {
     #[cfg(unix)]
     {
         let pid = child.id() as i32;
@@ -352,10 +355,11 @@ impl Tools {
             stderr.push_str("linggen: command interrupted by user\n");
         }
 
-        Ok(ToolResult::CommandOutput {
-            exit_code: exit_status.code(),
-            stdout,
-            stderr,
-        })
+        Ok(ToolResult::command_output(
+            exit_status.code(),
+            &stdout,
+            &stderr,
+            super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+        ))
     }
 }

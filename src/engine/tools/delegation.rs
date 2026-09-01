@@ -172,11 +172,12 @@ impl Tools {
                         let output = cmd
                             .output()
                             .map_err(|e| anyhow::anyhow!("Failed to run app script: {}", e))?;
-                        Ok(ToolResult::CommandOutput {
-                            exit_code: output.status.code(),
-                            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                        })
+                        Ok(ToolResult::command_output(
+                            output.status.code(),
+                            &String::from_utf8_lossy(&output.stdout),
+                            &String::from_utf8_lossy(&output.stderr),
+                            super::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+                        ))
                     }
                     other => {
                         anyhow::bail!(

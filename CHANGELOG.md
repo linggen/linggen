@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+- **No tool observation can blow the context** — stdout and stderr from a
+  command now come back capped at 64 KB per stream, head and tail kept, the
+  dropped middle replaced by a marker naming how much went missing. Applies
+  everywhere a process's output reaches the model: `Bash`, skill shell tools,
+  app launcher scripts. Skill tools declare their own budget with
+  `max_output_bytes:` beside `timeout_ms:`. A Pulse shape probe had dumped
+  198 KB into one observation and ended the run with a text-only exit.
+- **A talkative skill tool no longer stalls until its timeout** — skill tool
+  output sat in the pipe unread while the poll loop waited for the process to
+  exit, so anything writing past the ~64 KB pipe buffer blocked on the write
+  and was reported as a timeout after the full `timeout_ms`. Both pipes are
+  now drained on reader threads, the way `Bash` already did it. A 200 KB
+  skill tool went from 30s-and-"timed out" to 0.04s. Skill commands also run
+  in their own process group now, so a real timeout kills the whole pipeline
+  instead of just the shell.
 - **Yinyue's "reply is ready" is a notification, not a summary** — the
   run-finished herald used to quote the first 300 characters of Ling's reply,
   and she read the cut as the reply breaking off. She now gets the user's own
