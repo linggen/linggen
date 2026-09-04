@@ -21,10 +21,29 @@ pub(super) async fn run_structured_loop(ctx: &ChatRunCtx, engine: &mut crate::en
             .await
             .unwrap_or(false);
         if !has_vision {
-            let err_msg = format!(
-                "Model `{}` does not support vision/image input. Please use a vision-capable model (e.g. qwen3-vl, llava, llama3.2-vision).",
-                engine.model_id
-            );
+            // Say what this machine actually has, not a list of models the
+            // user may not run. An empty list is its own answer.
+            let mut able = Vec::new();
+            for id in engine.model_manager.model_ids() {
+                if engine.model_manager.has_vision(&id).await.unwrap_or(false) {
+                    able.push(id);
+                }
+            }
+            let err_msg = if able.is_empty() {
+                format!(
+                    "`{}` cannot read images, and no model here can. Connect a \
+                     ChatGPT account in Settings for one that sees, say what is \
+                     in the picture and I will work from that, or tag the model \
+                     `vision` in your config if you know it can.",
+                    engine.model_id
+                )
+            } else {
+                format!(
+                    "`{}` cannot read images. These can: {}.",
+                    engine.model_id,
+                    able.join(", ")
+                )
+            };
             persist_and_emit_message(
                 &ctx.manager,
                 &ctx.events_tx,

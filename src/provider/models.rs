@@ -845,18 +845,10 @@ impl ModelManager {
                     .await;
                 Ok(*value?)
             }
-            ProviderClient::OpenAi(_) => {
-                // If tags are configured, use them; otherwise default to true.
-                if instance.config.tags.is_empty() {
-                    Ok(true)
-                } else {
-                    Ok(instance
-                        .config
-                        .tags
-                        .iter()
-                        .any(|t| t.eq_ignore_ascii_case("vision")))
-                }
-            }
+            ProviderClient::OpenAi(_) => Ok(Self::declared_or_guessed_vision(
+                &instance.config.tags,
+                &instance.config.model,
+            )),
             ProviderClient::Anthropic(_) => {
                 // All Claude 3.5+ / 4.x models support vision. Respect an
                 // explicit opt-out via `tags = ["no-vision"]` if configured.
@@ -871,8 +863,46 @@ impl ModelManager {
                     Ok(true)
                 }
             }
-            ProviderClient::Proxy(_) => Ok(false),
+            // The cloud model Linggen supplies is text-only today. It is read
+            // the same way as any other, so the day a vision model is served
+            // here it is a tag or a name rather than a code change.
+            ProviderClient::Proxy(_) => Ok(Self::declared_or_guessed_vision(
+                &instance.config.tags,
+                &instance.config.model,
+            )),
         }
+    }
+
+    /// Whether a model can read an image: what the config declares, else what
+    /// the family is known for.
+    ///
+    /// The default matters more than it looks. "OpenAI-compatible" spans models
+    /// that see and models that cannot — DeepSeek's V4-Flash returns 400 on an
+    /// image and only its separate `-vision` build accepts one — and assuming
+    /// yes is how a caller comes to offer a camera that fails at send time,
+    /// which is the failure this check exists to prevent. So an unrecognised
+    /// model is treated as blind, and says so with the models that are not.
+    fn declared_or_guessed_vision(tags: &[String], model_name: &str) -> bool {
+        if tags.iter().any(|t| t.eq_ignore_ascii_case("no-vision")) {
+            return false;
+        }
+        if tags.iter().any(|t| t.eq_ignore_ascii_case("vision")) {
+            return true;
+        }
+        let m = model_name.to_lowercase();
+        // DeepSeek is the case that earned this function: text-only unless the
+        // name says otherwise.
+        if m.contains("deepseek") {
+            return m.contains("vision") || m.contains("-vl");
+        }
+        m.contains("gemini")
+            || m.contains("gpt-4o")
+            || m.contains("gpt-4.1")
+            || m.contains("gpt-5")
+            || m.contains("claude")
+            || m.contains("vision")
+            || m.contains("-vl")
+            || m.contains("llava")
     }
 
     /// Check if a model supports native tool calling.
@@ -1123,5 +1153,36 @@ mod tests {
             "HTTP error (401) Unauthorized"
         )));
         assert!(!is_fallback_worthy_error(&err("unknown model")));
+    }
+
+    #[test]
+    fn vision_is_declared_or_guessed_by_family() {
+        let v = |tags: &[&str], model: &str| {
+            let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+            ModelManager::declared_or_guessed_vision(&tags, model)
+        };
+
+        // The case that earned the function: DeepSeek's chat model 400s on an
+        // image, and only its separate vision build takes one. Assuming yes
+        // put a camera in front of a model that cannot see.
+        assert!(!v(&[], "deepseek-v4-flash"));
+        assert!(!v(&[], "deepseek-v4-pro"));
+        assert!(v(&[], "deepseek-v4-flash-vision-exp"));
+
+        // Families that do see keep seeing without anyone editing a config.
+        assert!(v(&[], "gemini-3.1-flash-lite-preview"));
+        assert!(v(&[], "gpt-5.6-terra"));
+        assert!(v(&[], "claude-sonnet-4-6"));
+        assert!(v(&[], "qwen3-vl"));
+        assert!(v(&[], "llava"));
+
+        // An unrecognised model is treated as blind: guessing yes fails at
+        // send time, guessing no says so and names what can.
+        assert!(!v(&[], "some-local-thing"));
+
+        // What the config says always wins, in both directions.
+        assert!(v(&["vision"], "some-local-thing"));
+        assert!(!v(&["no-vision"], "gpt-5.6-terra"));
+        assert!(!v(&["vision", "no-vision"], "anything"));
     }
 }
