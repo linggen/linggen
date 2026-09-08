@@ -115,6 +115,16 @@ fn locale_tag() -> String {
         .clone()
 }
 
+/// Did the chat runtime already append this turn to the conversation? It
+/// pushes the person's message labeled (`[Name]: text`), so the check is
+/// "last message is theirs and ends with the turn text".
+fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
+    messages
+        .last()
+        .map(|m| m.role == "user" && m.content.trim_end().ends_with(task.trim()))
+        .unwrap_or(false)
+}
+
 fn workspace_listing(ws_root: &std::path::Path) -> String {
     let entries = match std::fs::read_dir(ws_root) {
         Ok(e) => e,
@@ -506,9 +516,10 @@ impl AgentEngine {
         }
 
         // A conversational companion (e.g. Yinyue) declares none of the "doing"
-        // tools — no files, code, shell, delegation, or planning. It gets a lean
-        // prompt and a bare task message (not the coding-framed response format
-        // and autonomous-loop bootstrap), so it talks like a person, not a dev agent.
+        // tools — no files, code, shell, delegation, or planning. It gets the
+        // lean response block instead of the coding-framed one, so it talks
+        // like a person, not a dev agent. (Whether the turn itself is wrapped
+        // as a task is the profile's call — `task_bootstrap` — not the tool set's.)
         // Mission runs are never conversational, whatever their tool set: the
         // lean block's "just reply / never end with a status line" voice
         // countermands a mission's turn protocol (observed derailing the
@@ -753,47 +764,73 @@ impl AgentEngine {
             messages.push(ChatMessage::new("user", self.observation_for_model(obs)));
         }
 
-        // Provide workspace info + task (last user message).
-        // Owner gets full workspace listing; consumer gets task only.
-        let task_content = if conversational {
-            // A companion's "task" is just what the person said — no autonomous-
-            // loop framing, no workspace listing, no "explore the codebase / emit
-            // a done action" coda (all of which make her sound like a coding agent).
-            task.to_string()
-        } else if self.prompt_profile.include_workspace_listing {
-            let ws_listing = workspace_listing(&self.cfg.ws_root);
-            self.prompt_store.render(
-                crate::prompts::TASK_BOOTSTRAP,
-                &[
-                    ("ws_root", &self.cfg.ws_root.display().to_string()),
-                    ("platform", std::env::consts::OS),
-                    ("role", &format!("{:?}", self.role)),
-                    ("workspace_listing", &ws_listing),
-                    ("task", task),
-                ],
-            ).unwrap_or_else(|| format!(
-                "Autonomous agent loop started.\n\nWorkspace root: {}\nPlatform: {}\nCurrent Role: {:?}\n\nWorkspace contents:\n{}\n\nTask: {}",
-                self.cfg.ws_root.display(), std::env::consts::OS, self.role, ws_listing, task,
-            ))
-        } else {
-            task.to_string()
-        };
-        let task_msg = ChatMessage::new("user", task_content);
-        // Attach any pending images to the task message, then clear them.
+        // The turn's text reaches the model exactly once, as the final user
+        // message. An autonomous run (mission, subagent, headless run) gets
+        // its task framed as a task: the bootstrap wraps it with the
+        // workspace listing and the step-by-step coda. A person's session
+        // gets no wrapper at all — the chat runtime already appended their
+        // message, labeled, to `chat_history`. Wrapping it a second time as
+        // "Task: hi … explore the codebase before making changes" is what
+        // turned a greeting into a coding job for a model that took the
+        // wrapper literally (2026-09-08).
         let images = std::mem::take(&mut self.pending_images);
         if !images.is_empty() {
             tracing::info!(
-                "Attaching {} inline image(s) to task message ({} bytes total)",
+                "Attaching {} inline image(s) to the turn ({} bytes total)",
                 images.len(),
                 images.iter().map(|i| i.len()).sum::<usize>()
             );
         }
-        let task_msg = if images.is_empty() {
-            task_msg
+        let turn_content = if self.prompt_profile.task_bootstrap {
+            let ws_listing = workspace_listing(&self.cfg.ws_root);
+            Some(
+                self.prompt_store
+                    .render(
+                        crate::prompts::TASK_BOOTSTRAP,
+                        &[
+                            ("ws_root", &self.cfg.ws_root.display().to_string()),
+                            ("platform", std::env::consts::OS),
+                            ("role", &format!("{:?}", self.role)),
+                            ("workspace_listing", &ws_listing),
+                            ("task", task),
+                        ],
+                    )
+                    .unwrap_or_else(|| {
+                        format!(
+                            "Autonomous agent loop started.\n\nWorkspace root: {}\nPlatform: {}\nCurrent Role: {:?}\n\nWorkspace contents:\n{}\n\nTask: {}",
+                            self.cfg.ws_root.display(),
+                            std::env::consts::OS,
+                            self.role,
+                            ws_listing,
+                            task,
+                        )
+                    }),
+            )
+        } else if turn_already_delivered(&messages, task) {
+            None
         } else {
-            task_msg.with_images(images)
+            // A turn nobody appended: plan execution kicks off on a synthetic
+            // task, and a headless caller may set `task` directly.
+            Some(task.to_string())
         };
-        messages.push(task_msg);
+        match turn_content {
+            Some(content) => {
+                let msg = ChatMessage::new("user", content);
+                messages.push(if images.is_empty() {
+                    msg
+                } else {
+                    msg.with_images(images)
+                });
+            }
+            None if !images.is_empty() => {
+                // Images ride on the turn they came with. `messages` is this
+                // loop's copy, so history itself stays text-only as before.
+                if let Some(last) = messages.pop() {
+                    messages.push(last.with_images(images));
+                }
+            }
+            None => {}
+        }
         self.push_context_record(
             ContextType::UserInput,
             Some("structured_bootstrap".to_string()),

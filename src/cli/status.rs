@@ -387,7 +387,7 @@ async fn check_models(config: &Config) {
             continue;
         }
 
-        let key = crate::credentials::resolve_api_key(&m.id, m.api_key.as_deref(), &creds);
+        let key = crate::credentials::resolve_api_key_shared(m, &config.models, &creds);
         // Mirror the engine's own routing (provider/models.rs): ollama and
         // anthropic speak their own wire; every other provider — openai,
         // deepseek, gemini, groq, … — is OpenAI-compatible, so `/models` is

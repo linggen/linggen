@@ -249,6 +249,7 @@ impl ModelManager {
             }
         };
 
+        let all_configs = configs.clone();
         for mut cfg in configs {
             // Check if this model uses ChatGPT OAuth
             let is_chatgpt_oauth =
@@ -258,10 +259,9 @@ impl ModelManager {
                 cfg.provider == "anthropic" && cfg.auth_mode.as_deref() == Some("claude_oauth");
 
             if !is_chatgpt_oauth && !is_claude_oauth {
-                // Standard: resolve API key from TOML > credentials.json > env var
-                let effective_key =
-                    credentials::resolve_api_key(&cfg.id, cfg.api_key.as_deref(), creds);
-                cfg.api_key = effective_key;
+                // Standard: TOML > credentials.json > env var, else a sibling
+                // model's key on the same provider + URL.
+                cfg.api_key = credentials::resolve_api_key_shared(&cfg, &all_configs, creds);
             }
 
             let is_linggen_account = cfg.auth_mode.as_deref() == Some("linggen_account");

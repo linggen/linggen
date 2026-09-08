@@ -122,6 +122,7 @@ pub(crate) struct UpdateCredentialsRequest {
 }
 
 pub(crate) async fn update_credentials_api(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
     Json(body): Json<UpdateCredentialsRequest>,
 ) -> impl IntoResponse {
     let creds_file = credentials::credentials_file();
@@ -138,7 +139,17 @@ pub(crate) async fn update_credentials_api(
                 if api_key.as_deref() == Some("***") {
                     continue;
                 }
-                creds.set_api_key(model_id, api_key);
+                // The settings page sends the endpoint the key was entered
+                // for; the stamp keeps the key usable after the model row is
+                // renamed or replaced (credentials.rs).
+                let endpoint = match (
+                    obj.get("provider").and_then(|v| v.as_str()),
+                    obj.get("url").and_then(|v| v.as_str()),
+                ) {
+                    (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => Some((p, u)),
+                    _ => None,
+                };
+                creds.set_api_key_at(model_id, api_key, endpoint);
             }
             serde_json::Value::Null => {
                 creds.set_api_key(model_id, None);
@@ -147,10 +158,24 @@ pub(crate) async fn update_credentials_api(
         }
     }
 
-    match creds.save(&creds_file) {
-        Ok(()) => Json(serde_json::json!({ "status": "ok" })).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    if let Err(e) = creds.save(&creds_file) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+
+    // A saved key takes effect now. The model manager resolves keys when it
+    // is built, and the settings page saves config before credentials — so
+    // without this rebuild a freshly entered key stayed dead until the next
+    // config save or restart.
+    let config = state.manager.get_config_snapshot().await;
+    let new_models = std::sync::Arc::new(crate::provider::models::ModelManager::new(
+        config.models.clone(),
+    ));
+    *state.manager.models.write().await = new_models;
+    state.manager.session_engines.lock().await.clear();
+    crate::server::rtc::proxy_room::reapply_proxy_models(&state).await;
+    tracing::info!("Reloaded models after credentials update");
+
+    Json(serde_json::json!({ "status": "ok" })).into_response()
 }
 
 // ---------------------------------------------------------------------------

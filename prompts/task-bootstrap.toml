@@ -1,20 +1,18 @@
-# First user message that bootstraps the agent loop.
+# First user message of an autonomous run — a mission, a delegated subagent,
+# a headless agent run — where the input really is a task. A person's chat
+# turn never gets this wrapper: it reaches the model verbatim
+# (PromptProfile::task_bootstrap).
 # Category: environment snapshot (per Claude Code conventions)
 
 [default]
-description = "Initial user message with workspace info and task"
+description = "Initial user message of an autonomous run: workspace info and task"
 vars = ["ws_root", "platform", "role", "workspace_listing", "task"]
 text = '''
-Autonomous agent loop started. Ignore any prior greetings or small talk.
+Autonomous agent loop started.
 
 Workspace root: {ws_root}
 Platform: {platform}
 Current Role: {role}
-
-Environment notes:
-- Read and Glob accept absolute paths to access files anywhere on the system.
-- Bash working directory persists across calls — `cd /some/path` is remembered by subsequent Bash calls.
-- Write and Edit are restricted to the workspace root for safety.
 
 Workspace contents:
 {workspace_listing}

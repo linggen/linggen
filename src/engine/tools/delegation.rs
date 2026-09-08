@@ -339,6 +339,10 @@ pub(crate) async fn run_delegation(
     if let Some(ref policy) = parent_policy {
         policy.apply(&mut engine);
     }
+    // A delegated run is a task whatever the parent's session was: the
+    // parent's policy carries a person's-session profile (turns verbatim),
+    // but the bootstrap message is the subagent's only delivery of its task.
+    engine.prompt_profile.task_bootstrap = true;
 
     // Inherit parent's path-mode grants so skill-approved paths (e.g. `~/.linggen`,
     // `~/.claude` for the memory skill) don't re-prompt inside delegated runs. The

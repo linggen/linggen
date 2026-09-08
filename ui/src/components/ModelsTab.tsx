@@ -50,7 +50,8 @@ const emptyModel = (): ModelConfigUI => ({
   tags: [],
 });
 
-type CredentialsMap = Record<string, { api_key?: string | null }>;
+/** A stored key, stamped with the endpoint it was entered for (credentials.rs). */
+type CredentialsMap = Record<string, { api_key?: string | null; provider?: string | null; url?: string | null }>;
 
 const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: 'connected' | 'disconnected' | 'na' }> = ({ health, ollamaStatus }) => {
   // Priority: health tracker status > Ollama ps status
@@ -300,7 +301,7 @@ export const ModelsTab: React.FC<{
       if (!model.id) continue;
       const val = localKeys[model.id];
       if (val !== undefined && val !== '***') {
-        body[model.id] = { api_key: val || null };
+        body[model.id] = { api_key: val || null, provider: model.provider, url: model.url };
       }
     }
     try {
@@ -331,6 +332,21 @@ export const ModelsTab: React.FC<{
   };
 
   const hasKey = (modelId: string) => !!(credentials[modelId]?.api_key);
+
+  // A key belongs to an endpoint: a model without its own key uses a
+  // sibling's on the same provider + URL, or any stored key stamped for
+  // that endpoint (credentials.rs). Mirror that here so the row says so.
+  const keyInheritedFrom = (model: ModelConfigUI): string | null => {
+    const endpoint = (u: string) => u.replace(/\/+$/, '').toLowerCase();
+    const same = (provider: string | null | undefined, url: string | null | undefined) =>
+      (provider ?? '').toLowerCase() === model.provider.toLowerCase() && endpoint(url ?? '') === endpoint(model.url);
+    const sibling = config.models.find((o) => o.id !== model.id && same(o.provider, o.url) && hasKey(o.id));
+    if (sibling) return sibling.id;
+    const stamped = Object.entries(credentials)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .find(([id, e]) => id !== model.id && !!e.api_key && same(e.provider, e.url));
+    return stamped ? stamped[0] : null;
+  };
 
   // Default model selection helpers
   const isDefault = (modelId: string) => defaultModels.includes(modelId);
@@ -628,6 +644,9 @@ export const ModelsTab: React.FC<{
                         <label className={labelCls}>
                           API Key
                           {hasKey(model.id) && <span className="ml-1 text-green-500 text-[8px]">(set)</span>}
+                          {!hasKey(model.id) && keyInheritedFrom(model) && (
+                            <span className="ml-1 text-slate-400 text-[8px]">(inherited)</span>
+                          )}
                         </label>
                         <div className="relative">
                           <input
@@ -635,7 +654,13 @@ export const ModelsTab: React.FC<{
                             type={revealKeys[model.id] ? 'text' : 'password'}
                             value={localKeys[model.id] ?? ''}
                             onChange={(e) => updateLocalKey(model.id, e.target.value)}
-                            placeholder={hasKey(model.id) ? '(stored in ~/.linggen/credentials.json)' : '(optional)'}
+                            placeholder={
+                              hasKey(model.id)
+                                ? '(stored in ~/.linggen/credentials.json)'
+                                : keyInheritedFrom(model)
+                                  ? `(inherits ${keyInheritedFrom(model)}'s key)`
+                                  : '(optional)'
+                            }
                           />
                           <button
                             type="button"
