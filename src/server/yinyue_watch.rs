@@ -110,13 +110,13 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 if !ask_still_pending(&state, &question_id).await {
                     return;
                 }
-                let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
+                let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
                     return;
                 };
-                if line.eq_ignore_ascii_case("silent") {
+                let Some(line) = spoken_line(&reply) else {
                     tracing::info!("[yinyue-watch] Yinyue chose silence");
                     return;
-                }
+                };
                 if !ask_still_pending(&state, &question_id).await {
                     tracing::info!(
                         "[yinyue-watch] ask {question_id} answered while heralding — dropped"
@@ -156,10 +156,8 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                          • if nothing fits, reply with exactly SILENT.\n\
                          You're reached via agent_chat, so you can't pass it to a third agent."
                     );
-                    if let Some(line) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
-                        if line.eq_ignore_ascii_case("silent") {
-                            tracing::info!("[yinyue-watch] chose silence (agent_chat)");
-                        } else {
+                    if let Some(reply) = run_yinyue_turn(&state, kickoff, "agent_chat").await {
+                        if let Some(line) = spoken_line(&reply) {
                             tracing::info!(
                                 "[yinyue-watch] relays agent_chat ({} chars)",
                                 line.len()
@@ -169,6 +167,8 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                                 line,
                                 Some("neutral".to_string()),
                             );
+                        } else {
+                            tracing::info!("[yinyue-watch] chose silence (agent_chat)");
                         }
                     }
                 });
@@ -384,13 +384,13 @@ async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool 
 /// True when she actually spoke — a caller that bought silence with a notice
 /// needs to know whether anyone heard it.
 async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
-    let Some(line) = run_yinyue_turn(&state, kickoff, "event").await else {
+    let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
         return false; // run failed or she produced nothing
     };
-    if line.eq_ignore_ascii_case("silent") {
+    let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return false;
-    }
+    };
     tracing::info!(
         "[yinyue-watch] Yinyue heralds ({} chars, {emotion})",
         line.len()
@@ -637,6 +637,61 @@ async fn ambient_glance(state: &Arc<ServerState>) {
     wake_herald(state.clone(), kickoff, "neutral").await;
 }
 
+/// The spoken-line contract every engine-authored kickoff carries. A model
+/// that has to reason before it answers may do so above a blank line; what
+/// reaches her voice is the final paragraph alone. Stated to her, not
+/// inferred — so a model that thinks in its output (deepseek-v4-flash on the
+/// fallback chain, 2026-09-08) is following the rules, not leaking.
+const SPOKEN_CONTRACT: &str = "If you need to think first, do it above a blank line: only your \
+    final paragraph is spoken aloud, the rest is discarded. If nothing is worth saying, make \
+    that final paragraph exactly SILENT.";
+
+/// What a reply under [`SPOKEN_CONTRACT`] actually says: the final paragraph,
+/// unwrapped from quotes. `None` when it is — or ends in — SILENT.
+pub(crate) fn spoken_line(reply: &str) -> Option<String> {
+    let paragraphs: Vec<&str> = reply
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    let last = paragraphs.last()?;
+    let notes: usize = paragraphs[..paragraphs.len() - 1]
+        .iter()
+        .map(|p| p.len())
+        .sum();
+
+    let mut line = last
+        .split('\n')
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (open, close) in [
+        ('"', '"'),
+        ('\u{201c}', '\u{201d}'),
+        ('\u{2018}', '\u{2019}'),
+        ('\u{300c}', '\u{300d}'),
+    ] {
+        if line.starts_with(open) && line.ends_with(close) && line.chars().count() > 1 {
+            line = line[open.len_utf8()..line.len() - close.len_utf8()]
+                .trim()
+                .to_string();
+        }
+    }
+
+    let is_punct = |c: char| c.is_ascii_punctuation() || c == '\u{2026}';
+    let core = line.trim_end_matches(is_punct);
+    let last_word = core.split_whitespace().last().unwrap_or("");
+    if core.eq_ignore_ascii_case("silent") || last_word.trim_end_matches(is_punct) == "SILENT" {
+        return None;
+    }
+    if notes > 0 {
+        tracing::info!(
+            "[yinyue] spoke the final paragraph; {notes} chars of notes above it discarded"
+        );
+    }
+    Some(line)
+}
+
 /// Run one Yinyue turn on her current rolling session and return her final line
 /// (trimmed; `None` if she produced no text). The single place that drives the
 /// Yinyue agent — used by the event-reactive watch above and by the "talk to
@@ -687,6 +742,14 @@ pub(crate) async fn run_yinyue_turn(
         )
         .await
         .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
+
+    // Engine-authored kickoffs (heralds, agent_chat) carry the spoken-line
+    // contract; a person's own words ("user") are never appended to.
+    let task = if trigger_source == "user" {
+        task
+    } else {
+        format!("{task} {SPOKEN_CONTRACT}")
+    };
 
     // Persist the incoming message to the session store so it survives reload
     // and the turn-core's restore sees a complete thread. (The turn core only
@@ -921,4 +984,53 @@ fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> Option<Strin
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spoken_line;
+
+    #[test]
+    fn a_bare_silent_is_silence() {
+        assert_eq!(spoken_line("SILENT"), None);
+        assert_eq!(spoken_line("silent."), None);
+        assert_eq!(spoken_line("  SILENT\n"), None);
+    }
+
+    #[test]
+    fn notes_above_a_blank_line_are_discarded() {
+        // The three shapes deepseek-v4-flash produced on 2026-09-08.
+        let silent = "The user said just \"hi\" and ling has replied. That's a routine \
+                      greeting, not something worth pinging Hanli about. Silence.\n\nSILENT";
+        assert_eq!(spoken_line(silent), None);
+
+        let spoken = "They asked something real: checking on Marine Thinking's IPO progress. \
+                      Hanli is still away, but this is worth knowing.\n\n\
+                      \"Ling's looked into the Marine Thinking IPO — the answer's waiting for you.\"";
+        assert_eq!(
+            spoken_line(spoken).as_deref(),
+            Some("Ling's looked into the Marine Thinking IPO — the answer's waiting for you.")
+        );
+
+        // The marker glued to the last sentence still means silence.
+        assert_eq!(spoken_line("Routine greeting. Silence. SILENT"), None);
+    }
+
+    #[test]
+    fn a_plain_line_is_spoken_as_is() {
+        assert_eq!(
+            spoken_line("Ling's reply is ready, Hanli.").as_deref(),
+            Some("Ling's reply is ready, Hanli.")
+        );
+        // A natural sentence that merely ends in the word is not the marker.
+        assert_eq!(
+            spoken_line("The room has gone silent.").as_deref(),
+            Some("The room has gone silent.")
+        );
+        // A line broken across two lines is one line.
+        assert_eq!(
+            spoken_line("Ling's reply is ready —\nthe IPO question.").as_deref(),
+            Some("Ling's reply is ready — the IPO question.")
+        );
+    }
 }
