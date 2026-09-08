@@ -64,6 +64,24 @@ export const EmbedApp: React.FC = () => {
       const cs = useChatStore.getState();
       cs.setActiveSession(pinnedSession);
       cs.fetchSessionState();
+      // Echo the session's persisted model on every send. Given no model_id,
+      // the engine uses the global default — it does NOT fall back to the
+      // session's stored model — so a skill embed that never sets sessionModel
+      // silently runs every turn on the default, and when that default is
+      // rate-limited it thrashes through fallbacks. MainApp keeps sessionModel
+      // synced from page_state's all_sessions, but page_state omits that list
+      // for embed views, so read the model from the skill-sessions endpoint
+      // instead (the one list that reaches an embed and now carries model_id).
+      // A host-pinned ?model= still wins.
+      if (pinnedSkill && !pinnedModel) {
+        fetch(`/api/skill-sessions?skill=${encodeURIComponent(pinnedSkill)}`)
+          .then((r) => r.json())
+          .then((d) => {
+            const sess = (d?.sessions ?? []).find((s: { id: string; model_id?: string }) => s.id === pinnedSession);
+            if (sess?.model_id) useUiStore.getState().setSessionModel(sess.model_id);
+          })
+          .catch(() => {});
+      }
       return;
     }
 

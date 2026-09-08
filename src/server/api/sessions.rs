@@ -246,6 +246,12 @@ pub(crate) async fn list_skill_sessions(
                         "updated_at": s.updated_at,
                         "skill": s.skill,
                         "creator": s.creator,
+                        // A skill embed has no other way to learn its session's
+                        // model: page_state omits all_sessions for embed views,
+                        // and no GET returns a single session's meta. The embed
+                        // reads this to echo the model on every send — without
+                        // it the engine falls to the global default.
+                        "model_id": s.model_id,
                     })
                 })
                 .collect();

@@ -9,7 +9,7 @@ import { AuthRequiredBlock } from './AuthRequiredBlock';
 import { BillingRequiredBlock } from './BillingRequiredBlock';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
-import { stripEmbeddedStructuredJson, isPlanMessage } from '../../lib/messageUtils';
+import { stripEmbeddedStructuredJson, isPlanMessage, normalizeMessageTextForDedup } from '../../lib/messageUtils';
 
 /** Render the inline sign-in CTA when a turn fails on an expired OAuth session.
  *  Accepts both shapes: the legacy structured `{type:"auth_required",…}` JSON
@@ -96,12 +96,21 @@ export const AgentMessage: React.FC<{
         segments.push({ kind: 'tool', block });
       }
     }
-    // If no text content blocks exist but msg.text has content (set by FINALIZE_MESSAGE),
-    // inject it as a leading text segment so it renders alongside tool blocks.
-    const hasTextSegments = segments.some(s => s.kind === 'text');
-    if (!hasTextSegments) {
-      const msgText = visibleMessageText(msg);
-      if (msgText && !isTransientStatus(msgText) && !isToolStatusText(msgText)) {
+    // msg.text holds the finalized turn text (set by FINALIZE_MESSAGE). Render
+    // it whenever it isn't already shown by the text blocks — not only when
+    // there are none. A non-streaming fallback model, or a stream whose deltas
+    // were dropped while the data channel reconnected, delivers the answer as a
+    // single message: it lands in msg.text while msg.content still carries only
+    // an earlier pre-tool preamble block. Gating on "no text blocks" hid that
+    // answer behind the preamble; gate on "not already shown" instead.
+    const msgText = visibleMessageText(msg);
+    if (msgText && !isTransientStatus(msgText) && !isToolStatusText(msgText)) {
+      const shownText = segments
+        .filter((s): s is { kind: 'text'; text: string } => s.kind === 'text')
+        .map(s => s.text)
+        .join('\n');
+      const msgNorm = normalizeMessageTextForDedup(msgText);
+      if (msgNorm && !normalizeMessageTextForDedup(shownText).includes(msgNorm)) {
         segments.push({ kind: 'text', text: msgText });
       }
     }
