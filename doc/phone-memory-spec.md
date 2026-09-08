@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: designed 2026-09-08, not built; supersedes the "Memory" section of linggen-mobile/doc/yinyue.md
+status: designed and built 2026-09-08 (ling-mem 1.8.0, engine 6e331e9, phone); the dream's per-account iteration on the Mac is the one open piece
 ---
 
 # Phone Memory
@@ -14,9 +14,9 @@ What Yinyue remembers on the phone, how it stays short, and how it meets the
 Mac's memory when there is one. One logic for a phone-only user and a paired
 one: the Mac, when present, is a better judge, not a different design.
 
-Today the phone keeps one markdown file with an append-only Notes section that
-rides whole in every prompt, and a phone without a Mac never gets a core at
-all. Both are what this spec replaces.
+Before this, the phone kept one markdown file with an append-only Notes
+section that rode whole in every prompt, and a phone without a Mac never got a
+core at all. Both are what this spec replaced.
 
 ## Rules
 
@@ -40,9 +40,9 @@ all. Both are what this spec replaces.
 ## Tiers on the phone
 
 - **About them** — the core tier: name, language, place, family, routines.
-- **App facts** — long-term rows, one block per app: `dj`, `cfo`, `health`,
-  `shifu`, `yinyue`. This is the app tag on the row; the same field the Mac's
-  store already uses for scope, so nothing new is invented.
+- **App facts** — long-term rows, one block per app: `dj`, `cfo`, `photos`,
+  `health`, `shifu`, `yinyue`. This is the app tag on the row; the same field
+  the Mac's store already uses for scope, so nothing new is invented.
 
 All rows ride in every prompt, About them first, then one block per app, so
 the DJ facts sit together when she is picking music. No search on the phone.
@@ -63,12 +63,16 @@ Runs on the phone's own model, the one Yinyue uses, chosen in Settings. Rides
 the app's one background wake, the same wake Health already uses. Housekeeping
 only, since there is nothing to promote from a short-term tier: merge
 near-duplicates, lift a fact about the person into About them, expire a row a
-newer one contradicts, keep the store under the cap. The runbook is the Mac's
-dream runbook minus its short-term step, served from the same skill docs so
-there is one doctrine.
+newer one contradicts, keep the store under the cap. One doctrine with the
+Mac's dream, minus its short-term step.
 
-Then, if a Mac is reachable: push, then pull, in that order, so a note taken
-offline reaches the Mac before the phone asks what the Mac knows.
+Then, if a Mac is reachable: push, reap, then pull, in that order, so a note
+taken offline reaches the Mac before the phone asks what the Mac knows, and a
+delete made while the Mac was away reaches it before the pull could undo it.
+
+The pass's runbook ships inside the app rather than being fetched: a
+phone-only user has no Mac to serve it from. It is the Mac's dream doctrine
+minus the short-term step, and changes to one should be made to the other.
 
 ## With a Mac
 
@@ -79,10 +83,12 @@ sides, never a phone-side search before every note. The add's reply carries
 the Mac's row id, and the phone keeps it on its copy.
 
 **Down.** The pull returns everything the Mac holds for this account that this
-phone's apps can act on: the core tier, and long-term rows tagged with a phone
-app. This is why the app tag matters: "I like 90s Hong Kong songs" is a DJ
-fact, not a core one, and it must come back. The dream carries the tag through
-promotion, so a note tagged on the phone stays tagged on the Mac.
+phone's apps can act on: the core tier, long-term rows tagged with a phone
+app, and the ids of rows still staged short-term. This is why the app tag
+matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
+must come back. The dream carries the tag through promotion, so a note tagged
+on the phone stays tagged on the Mac. The staged ids are what let the phone
+tell "not judged yet" from "dropped".
 
 **Who wins.** A phone row with a Mac id follows the Mac: the pull's version
 replaces it, and a row the Mac dropped is dropped on the phone. A row without a
@@ -111,14 +117,16 @@ items, never raw markdown:
 
 - **About them** — tap to edit, item menu to delete.
 - Blocks per app — edit and delete alike.
-- **From the Mac** — shown when paired, labelled as the Mac's copy. Deleting
-  here deletes the Mac's row through the same door; the row is the user's.
-- Footer: when the last pass ran, how many rows she keeps, the cap.
+- The Mac's copies sit in the same blocks she reads them in, marked "From
+  your Mac", and take delete only. Deleting one deletes the Mac's row through
+  the same door; the row is the user's.
+- Footer: when the last pass ran, how many rows she keeps, the cap, the model.
 
 A delete stays deleted: it removes the row, and the Mac row behind it when
-there is one, so the next pull cannot bring it back. An edit is the user's
-voice: the dream keeps an edited row verbatim and never merges over it. Yinyue
-reads the same rows, so a change is in her next turn with nothing to sync.
+there is one. With the Mac away, a tombstone keeps the pull from bringing the
+row back until the next sync reaps it there. An edit is the user's voice: the
+dream keeps an edited row verbatim and never merges over it. Yinyue reads the
+same rows, so a change is in her next turn with nothing to sync.
 
 This screen shows her memory, not a memory browser. No search, no calendar,
 no tiers to pick between; those stay on the Mac console.
@@ -135,5 +143,9 @@ no tiers to pick between; those stay on the Mac console.
 
 ## Open
 
+- The Mac's dream still judges the owner's rows only. A second person's rows
+  land stamped and wait; the dream needs to walk the store's `accounts` and
+  run once per person.
 - Whether a phone-only user's About them should seed the Mac's core tier at
   first pairing, or wait for the Mac's dream to judge it like any other row.
+  Today it waits: the rows go up as short-term like any note.
