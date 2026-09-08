@@ -71,7 +71,20 @@ pub(super) fn handle_control_message(
             let account = msg
                 .get("account")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let resolved = crate::server::api::pair::set_device_account(token, account);
+            let identified = crate::server::api::pair::set_device_account(token, account);
+            // A phone that wrote memory while signed out did so under its
+            // device id; now that it is somebody, those rows become theirs.
+            // Once, here, because this is the only place a sign-in is seen.
+            if let Some(id) = identified.as_ref() {
+                if let Some(gained) = id.signed_in.clone() {
+                    let state = Arc::clone(state);
+                    let device = id.actor.device.clone();
+                    tokio::spawn(async move {
+                        crate::server::api::memory::restamp_device(&state, &device, &gained).await;
+                    });
+                }
+            }
+            let resolved = identified.map(|i| i.actor);
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }

@@ -237,6 +237,18 @@ pub fn person_label(account: &Option<AccountRef>) -> String {
         .to_string()
 }
 
+/// The paired device behind a request, whole — for a handler that needs more
+/// than the actor's ids (the device's name, the account's display name).
+/// Same two doors as [`actor_for_headers`]: the device token, or the id the
+/// WebRTC tunnel stamps for a peer it already identified.
+pub fn device_for_headers(headers: &axum::http::HeaderMap) -> Option<PairedDevice> {
+    if let Some(d) = device_token_from_headers(headers).and_then(|t| device_by_token(&t)) {
+        return Some(d);
+    }
+    let id = headers.get(ACTOR_DEVICE_HEADER)?.to_str().ok()?;
+    load_devices().into_iter().find(|d| d.id == id)
+}
+
 /// Which paired device is calling, if any — the id used to scope per-phone
 /// state like the delete queue.
 pub fn caller_device(headers: &axum::http::HeaderMap) -> Option<String> {
@@ -252,14 +264,27 @@ pub fn actor_for_token(token: &str) -> Option<Actor> {
     })
 }
 
+/// What a connect-time identity refresh found.
+pub struct Identified {
+    pub actor: Actor,
+    /// The account this device just gained — it had none before this call
+    /// and has one now. A sign-in, and the one moment its device-stamped
+    /// memory rows should be handed to the person.
+    pub signed_in: Option<AccountRef>,
+}
+
 /// Refresh the account a phone claims. Sign-in and sign-out both happen long
 /// after pairing, so the connect-time claim wins over the pair-time one —
 /// including `None`, which is how a sign-out is recorded.
-pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Actor> {
+pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Identified> {
     let mut devices = load_devices();
     let d = devices.iter_mut().find(|d| d.secret == token)?;
     let next = account.map(stamp_account);
     let changed = d.account.as_ref().map(|a| a.id.clone()) != next.as_ref().map(|a| a.id.clone());
+    let signed_in = match (&d.account, &next) {
+        (None, Some(a)) => Some(a.clone()),
+        _ => None,
+    };
     d.account = next;
     let actor = Actor {
         device: d.id.clone(),
@@ -273,7 +298,7 @@ pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Ac
         );
     }
     let _ = save_devices(&devices);
-    Some(actor)
+    Some(Identified { actor, signed_in })
 }
 
 /// The device that owns a token, if any — lets `/api/pair/me` identify the caller.
