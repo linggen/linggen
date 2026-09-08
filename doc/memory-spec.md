@@ -157,8 +157,9 @@ a real engine against a throwaway store and judges the end state.
 
 ## Future
 
-- Cross-device sync — exports + git first; real sync over Linggen's
-  P2P transport.
+- Cross-device sync — the phone's half is designed in
+  `phone-memory-spec.md` (2026-09-08, not built); a second Mac still
+  waits on exports + git first.
 - Soft-forget (archive): hidden from search but recoverable.
 
 ## Where the detail lives
@@ -167,4 +168,5 @@ Capture protocol: the engine system prompt + the skill's MCP
 instructions · offline judgment: `agents/memory.md` · dream/condense
 procedures: the linggen skill's runbooks · store schema and
 CLI: `linggen-memory` docs · layout: `storage-spec.md` · tool
-dispatch: `tool-spec.md`.
+dispatch: `tool-spec.md` · the phone's memory and the account stamp
+on rows from a phone: `phone-memory-spec.md`.
