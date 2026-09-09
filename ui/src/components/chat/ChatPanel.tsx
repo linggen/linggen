@@ -296,6 +296,7 @@ export const ChatPanel: React.FC<{
   mainAgents: AgentInfo[];
   subagents: SubagentInfo[];
   runningMainRunIds?: Record<string, string>;
+  runningRunIdBySession?: Record<string, string>;
   cancellingRunIds?: Record<string, boolean>;
   onCancelRun?: (runId: string) => void | Promise<void>;
   onSendMessage: (message: string, targetAgent?: string, images?: string[]) => void;
@@ -340,6 +341,7 @@ export const ChatPanel: React.FC<{
   mainAgents,
   subagents,
   runningMainRunIds,
+  runningRunIdBySession,
   cancellingRunIds,
   onCancelRun,
   onSendMessage,
@@ -524,7 +526,13 @@ export const ChatPanel: React.FC<{
     [subagents, openSubagentId]
   );
   const selectedAgentKey = normalizeAgentKey(selectedAgent);
-  const selectedMainRunningRunId = runningMainRunIds?.[selectedAgentKey];
+  // What "stop" acts on. The selected agent's run when there is one, else
+  // whatever is running in this session: the two disagree whenever the run
+  // belongs to an agent the surface never selected, and a stop button that
+  // vanishes exactly while something is running is worse than none.
+  const selectedMainRunningRunId =
+    runningMainRunIds?.[selectedAgentKey] ||
+    (sessionId ? runningRunIdBySession?.[sessionId] : undefined);
   const subagentMessages = useMemo(() => {
     if (!selectedSubagent) return [];
     const id = normalizeAgentKey(selectedSubagent.id);

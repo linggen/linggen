@@ -24,5 +24,21 @@ export function useRunInfo() {
     return out;
   }, [sortedAgentRuns]);
 
-  return { runningMainRunIds };
+  /** The top-level run in flight for each session.
+   *
+   *  "Stop" means the turn running in front of you, so the composer's stop
+   *  button keys on the session rather than on whichever agent happens to be
+   *  selected — an embedded skill chat has no reason to have selected the
+   *  agent that owns its run, and 2026-09-09 it had not: Pulse's chat ran on
+   *  `ling` and showed no stop button at all. */
+  const runningRunIdBySession = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const run of sortedAgentRuns) {
+      if (run.parent_run_id || run.status !== 'running' || !run.session_id) continue;
+      if (!out[run.session_id]) out[run.session_id] = run.run_id;
+    }
+    return out;
+  }, [sortedAgentRuns]);
+
+  return { runningMainRunIds, runningRunIdBySession };
 }
