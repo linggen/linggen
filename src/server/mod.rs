@@ -15,6 +15,7 @@ pub use state::ServerState;
 use events::*;
 
 use crate::engine::agent::AgentManager;
+use crate::mcp_client::McpServerConfig;
 use axum::{
     extract::State,
     http::Uri,
@@ -985,6 +986,7 @@ async fn prepare_server(
             let servers =
                 crate::mcp_client::with_builtin(&cfg.mcp_servers, &cfg.agent.ling_mem_url);
             crate::mcp_client::registry().connect_all(&servers).await;
+            watch_for_late_servers(servers).await;
         });
     }
 
@@ -1444,6 +1446,36 @@ async fn prepare_server(
         task,
         port: actual_port,
     })
+}
+
+/// Keep asking the MCP servers that weren't listening at boot.
+///
+/// `connect_all` is best-effort by design, which is right for a server the
+/// user configured and wrong for the one this engine depends on: the app
+/// starts `ling-mem` beside this process, so a few seconds of start order
+/// decided whether the daemon had memory at all for the rest of its life.
+/// A refused connect costs a syscall, so the loop is cheap; it backs off to
+/// minutes and stops as soon as everything enabled is connected.
+async fn watch_for_late_servers(servers: std::collections::BTreeMap<String, McpServerConfig>) {
+    const FIRST: std::time::Duration = std::time::Duration::from_secs(5);
+    const CEILING: std::time::Duration = std::time::Duration::from_secs(300);
+
+    let mut wait = FIRST;
+    loop {
+        tokio::time::sleep(wait).await;
+        let registry = crate::mcp_client::registry();
+        if registry.all_connected() {
+            return;
+        }
+        let arrived = registry.retry_failed(&servers).await;
+        if !arrived.is_empty() {
+            info!(
+                "MCP late arrival: {} — its tools are live for this daemon now",
+                arrived.join(", ")
+            );
+        }
+        wait = (wait * 2).min(CEILING);
+    }
 }
 
 /// The LAN trust gate (see `api::pair`). Loopback callers — the local web UI,

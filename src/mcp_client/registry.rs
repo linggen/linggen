@@ -185,6 +185,91 @@ impl McpRegistry {
         };
     }
 
+    /// Re-attempt the enabled servers that aren't connected, folding in
+    /// whichever came up. A connected server is never redialled.
+    ///
+    /// Boot is one moment and [`connect_all`](Self::connect_all) is a
+    /// snapshot of it — fine for a server the user runs, wrong for the one
+    /// this engine depends on. The memory daemon is started by the same app,
+    /// seconds either side of this process, so losing that race cost the
+    /// daemon its memory for the whole of its life: on 2026-09-09 `ling`
+    /// bound at 09:02:26 and `ling-mem` at 09:02:37, and every auto-recall
+    /// and the nightly dream that day found no `mcp__memory__*` at all — the
+    /// dream woke with no tools and still recorded a completed run.
+    ///
+    /// Returns the servers that came up, for the caller to log.
+    pub async fn retry_failed(&self, configs: &BTreeMap<String, McpServerConfig>) -> Vec<String> {
+        let pending: Vec<(String, McpServerConfig)> = {
+            let state = self.state.read().unwrap();
+            state
+                .servers
+                .iter()
+                .filter(|s| s.enabled && !s.connected)
+                .filter_map(|s| configs.get(&s.name).map(|c| (s.name.clone(), c.clone())))
+                .collect()
+        };
+        if pending.is_empty() {
+            return Vec::new();
+        }
+
+        let mut set = tokio::task::JoinSet::new();
+        for (name, cfg) in pending {
+            set.spawn(async move {
+                match tokio::time::timeout(DISCOVERY_TIMEOUT, discover(&name, &cfg)).await {
+                    Ok(Ok(found)) => (name, Some(found), None),
+                    Ok(Err(e)) => (name, None, Some(format!("{e:#}"))),
+                    Err(_) => (
+                        name,
+                        None,
+                        Some(format!("no answer in {DISCOVERY_TIMEOUT:?}")),
+                    ),
+                }
+            });
+        }
+
+        let mut arrived = Vec::new();
+        while let Some(joined) = set.join_next().await {
+            let Ok((name, found, error)) = joined else {
+                continue;
+            };
+            let mut state = self.state.write().unwrap();
+            let Some(i) = state.servers.iter().position(|s| s.name == name) else {
+                continue;
+            };
+            match found {
+                Some(found) => {
+                    info!("MCP `{name}` connected — {} tool(s)", found.tools.len());
+                    state.servers[i].connected = true;
+                    state.servers[i].error = None;
+                    state.servers[i].tools =
+                        found.tools.iter().map(|t| t.qualified.clone()).collect();
+                    state.tools.extend(found.tools);
+                    state.clients.insert(name.clone(), found.client);
+                    arrived.push(name);
+                }
+                // Still down, and for the same reason it was down at boot.
+                // Keep that first reason rather than restating it every
+                // few minutes: the log already carries it once.
+                None => {
+                    if state.servers[i].error.is_none() {
+                        state.servers[i].error = error;
+                    }
+                }
+            }
+        }
+        arrived
+    }
+
+    /// Is every enabled server connected? The retry watcher's stop condition.
+    pub fn all_connected(&self) -> bool {
+        self.state
+            .read()
+            .unwrap()
+            .servers
+            .iter()
+            .all(|s| !s.enabled || s.connected)
+    }
+
     /// Every configured server and what became of it — what the Settings tab
     /// renders, including the ones that failed.
     pub fn status(&self) -> Vec<ServerStatus> {
@@ -364,6 +449,69 @@ mod tests {
         );
         reg.connect_all(&cfgs).await;
         assert!(reg.advertised().is_empty());
+    }
+
+    /// A server that was down at boot is asked again, and its tools join the
+    /// set when it answers — the daemon does not spend its life without the
+    /// memory server because it lost a start-order race by seconds.
+    ///
+    /// Self-gating on a live ling-mem. The name stays put while the address
+    /// moves from a dead port to the real one: that is exactly what the
+    /// retry sees when a server that wasn't listening starts listening.
+    #[tokio::test]
+    async fn a_server_that_was_down_at_boot_is_picked_up_when_it_comes_up() {
+        let up = reqwest::Client::new()
+            .get("http://127.0.0.1:9528/api/health")
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !up {
+            eprintln!("skipped: no ling-mem on 9528");
+            return;
+        }
+
+        let reg = McpRegistry {
+            state: RwLock::new(State::default()),
+        };
+        let mut down = BTreeMap::new();
+        down.insert(
+            "memory".to_string(),
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9/mcp".into()),
+                ..Default::default()
+            },
+        );
+        reg.connect_all(&down).await;
+        assert!(reg.advertised().is_empty());
+        assert!(!reg.all_connected());
+        let first_error = reg.status()[0].error.clone().expect("a reason to be down");
+
+        // Still nothing there: the retry changes nothing and keeps the
+        // original reason rather than restating it.
+        assert!(reg.retry_failed(&down).await.is_empty());
+        assert_eq!(reg.status().len(), 1, "one server, not one row per attempt");
+        assert_eq!(reg.status()[0].error, Some(first_error));
+
+        let mut listening = BTreeMap::new();
+        listening.insert(
+            "memory".to_string(),
+            McpServerConfig {
+                url: Some("http://127.0.0.1:9528/mcp".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(reg.retry_failed(&listening).await, vec!["memory"]);
+        assert!(reg.all_connected());
+        assert!(reg.status()[0].connected);
+        assert!(reg.status()[0].error.is_none());
+        assert!(
+            reg.advertised()
+                .iter()
+                .any(|t| t.qualified == "mcp__memory__memory_search"),
+            "the dream and auto-recall both look this name up"
+        );
     }
 
     /// The whole chain in one process: config -> connect -> discover ->
