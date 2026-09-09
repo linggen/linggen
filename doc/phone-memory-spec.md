@@ -83,9 +83,12 @@ sides, never a phone-side search before every note. The add's reply carries
 the Mac's row id, and the phone keeps it on its copy.
 
 **Down.** The pull returns everything the Mac holds for this account that this
-phone's apps can act on: the core tier, long-term rows tagged with a phone
-app, and the ids of rows still staged short-term. This is why the app tag
-matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
+phone's apps can act on: the core tier, long-term facts and preferences
+tagged with a phone app, and the ids of rows still staged short-term. Only
+those two types come down: built, fixed, learned and decision rows are notes
+about work, and an app tag on them belongs to the project, not the person
+(settled 2026-09-09, when a developer's own phone filled with engineering
+notes tagged with the app names). This is why the app tag matters: "I like 90s Hong Kong songs" is a DJ fact, not a core one, and it
 must come back. The dream carries the tag through promotion, so a note tagged
 on the phone stays tagged on the Mac. The staged ids are what let the phone
 tell "not judged yet" from "dropped".
