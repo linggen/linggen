@@ -90,11 +90,14 @@ pub(crate) async fn post_account_login(State(state): State<Arc<ServerState>>) ->
         created: Instant::now(),
     });
     let callback = format!("http://127.0.0.1:{}/api/account/callback", state.port);
+    // Named so the account page shows this Mac as one device and can sign it
+    // out on its own — one token per device (2026-09-09).
     let url = format!(
-        "{}/auth/link?callback={}&state={}",
+        "{}/auth/link?callback={}&state={}&device={}",
         account::site_url(),
         urlencoding::encode(&callback),
         urlencoding::encode(&csrf),
+        urlencoding::encode(&account::instance_name()),
     );
     let opened = open::that(&url).is_ok();
     Json(serde_json::json!({ "ok": true, "opened": opened, "url": url }))
@@ -150,6 +153,9 @@ fn fail_page(reason: &str) -> Html<String> {
 /// remote.toml link is transport-only and left untouched; it no longer keeps
 /// the daemon signed in for billing.
 pub(crate) async fn post_account_logout() -> impl IntoResponse {
+    // This Mac's own key is revoked on linggen.dev first (best-effort: offline,
+    // the key dies unused), so a sign-out here never reaches another device.
+    account::revoke_own_token().await;
     let removed = account::delete_account().unwrap_or(false);
     Json(serde_json::json!({ "ok": true, "removed": removed }))
 }

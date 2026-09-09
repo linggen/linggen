@@ -179,6 +179,19 @@ pub enum TokenSource {
 
 /// Billing token resolution: the local `account.toml` only. A remote-access
 /// link is never a billing fallback (see module docs).
+/// DELETE /api/auth/token with this machine's own key: the site revokes that
+/// one device row and nothing else. Silent on any failure — a sign-out must
+/// not hang on the network, and a key that stays alive unused is harmless.
+pub async fn revoke_own_token() {
+    let Some((token, _)) = resolve_token() else { return };
+    let _ = http()
+        .delete(format!("{}/api/auth/token", site_url()))
+        .bearer_auth(token)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+}
+
 pub fn resolve_token() -> Option<(String, TokenSource)> {
     let acc = load_account()?;
     Some((acc.api_token, TokenSource::Account))
