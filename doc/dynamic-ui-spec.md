@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: designed 2026-09-09; step 1 built the same day on the phone (screen registry, one door, layout contract, Yinyue's four screen tools, Health Highlights as the first screen); the signals and the notice are designed, not built
+status: designed 2026-09-09; step 1 built the same day on the phone (screen registry, one door, layout contract, Yinyue's four screen tools, Health Highlights as the first screen); step 2 built the same evening — the signals diff the document and the one line reaches her thread, Health Highlights as proof
 ---
 
 # Dynamic UI
@@ -107,12 +107,17 @@ sections, so she can describe what the person is looking at.
 | the night's pass | the whole document | what moved, and the finding behind it |
 | the person's own hand | nothing recomposes; the hand is kept | nothing — they did it |
 
-On each, she reads the contract, may arrange further with a `why`, and says
-one line: *"I put steps and sleep on top of your Health page, since you
-asked about them. Say the word if you want it another way."* Silence when
-nothing moved. The line is hers, in the thread; the view stays quiet. Her
-reply to "put sleep back on top" goes through `screen_arrange`, and the
-thread shows the door to the screen.
+On each, the data layer diffs the document by card id — what is on top,
+what joined, what dropped off, the why — and the rules write the line from
+that diff: *"I put steps and sleep timing on your Health page, since you
+asked. Say the word if you want it another way."* Silence when nothing
+moved. The line is hers, in the thread, filed and delivered the way her
+morning report is, so it cannot depend on the chat being open or on the
+cloud being reachable; it goes into her context too, so she knows the page
+moved. The view stays quiet. Her reply to "put sleep back on top" goes
+through `screen_arrange`, and the thread shows the door to the screen. When
+she arranges a screen herself inside a turn, her reply is the line: what is
+on top now, why, and that they can ask for it another way.
 
 ## What must never happen
 
@@ -126,13 +131,15 @@ thread shows the door to the screen.
 ## Not yet
 
 Other screens' adjustable parts, when one earns it — a screen with none is
-fine; the DJ, CFO and Shifu page registries; the signal-to-notice wiring and
-the one-line notice; the Mac reading the contract rather than only the
-selection.
+fine; the DJ, CFO and Shifu page registries; a model turn on the signal, so
+she may arrange further before the line goes (today the rules write the
+line and she arranges only when asked); the Mac reading the contract rather
+than only the selection.
 
 ## Where the detail lives
 
-Health's document and validator: `linggen-mobile/lib/services/health/health_home.dart`
+Health's document, validator and diff: `linggen-mobile/lib/services/health/health_home.dart`;
+the line and its record: `linggen-mobile/lib/services/health/health_tell.dart`;
 and the Health design doc in the skills repo. The registry and the door:
 `linggen-mobile/lib/main.dart`. Her tools: `linggen-mobile/lib/services/yinyue/yinyue_tools.dart`.
 The phone-side manual: `linggen-mobile/doc/yinyue.md` (The screens, and
