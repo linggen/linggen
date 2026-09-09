@@ -458,6 +458,20 @@ impl AgentEngine {
         let mut tried: Vec<String> = Vec::new();
         let mut model_id = preferred.clone();
 
+        // A model that has already told us it is rate-limited is not worth a
+        // round trip: spend the turn on something that can answer. Only when
+        // the chain has an alternative — otherwise try it anyway and let the
+        // provider's own error be the one the user reads.
+        if self.auto_fallback && crate::provider::models::in_cooldown(&model_id) {
+            if let Some(next) = self.next_fallback_model(&[model_id.clone()]) {
+                warn!("model '{model_id}' is still rate-limited; starting on '{next}'");
+                self.emit_model_fallback_event(&model_id, &next, "still rate-limited")
+                    .await;
+                tried.push(model_id.clone());
+                model_id = next;
+            }
+        }
+
         loop {
             let result = if let Some(ref tool_defs) = tools {
                 self.stream_with_tool_calling(&model_id, messages, tool_defs.clone())
@@ -471,10 +485,15 @@ impl AgentEngine {
                     self.last_token_usage = result.token_usage.clone();
                     if model_id != preferred {
                         self.model_id = model_id.clone();
+                        // Show the model that actually answered. The picker is
+                        // the user's only view of which one is running, and a
+                        // switch it doesn't show is a switch they can't undo.
+                        self.pin_session_model(&model_id).await;
                     }
                     return Ok(result);
                 }
                 Err(e) => {
+                    crate::provider::models::note_unavailable(&model_id, &e);
                     tried.push(model_id.clone());
                     if !self.auto_fallback || !crate::provider::models::is_fallback_worthy_error(&e)
                     {
@@ -510,7 +529,25 @@ impl AgentEngine {
                 !tried.contains(m)
                     && self.model_manager.has_model(m)
                     && self.model_manager.model_auth_ok(m)
+                    && !crate::provider::models::in_cooldown(m)
             })
+    }
+
+    /// Record the model actually in use on this session, so the picker shows
+    /// it and the next turn starts there instead of walking the same failing
+    /// chain again.
+    async fn pin_session_model(&self, model_id: &str) {
+        let (Some(manager), Some(session_id)) = (self.tools.get_manager(), &self.session_id) else {
+            return;
+        };
+        let Ok(Some(mut meta)) = manager.global_sessions.get_session_meta(session_id) else {
+            return;
+        };
+        if meta.model_id.as_deref() == Some(model_id) {
+            return;
+        }
+        meta.model_id = Some(model_id.to_string());
+        let _ = manager.global_sessions.update_session_meta(&meta);
     }
 
     /// Emit a ModelFallback event via the agent manager.

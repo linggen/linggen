@@ -378,8 +378,22 @@ pub(crate) async fn rename_session_api(
                 Some(model_id.clone())
             };
             if meta.model_id != new_val {
-                meta.model_id = new_val;
+                meta.model_id = new_val.clone();
                 let _ = state.manager.global_sessions.update_session_meta(&meta);
+            }
+            // On a mission session the model picker is the only model control
+            // the user is shown, so it has to be the mission's model — not a
+            // per-session override the next scheduled run overwrites (the
+            // scheduler stamps `mission.model` onto every session it opens).
+            // Anything else is a knob that moves and changes nothing.
+            if let Some(mission_id) = meta.mission_id.clone() {
+                let draft = crate::extensions::missions::MissionDraft {
+                    model: Some(new_val),
+                    ..Default::default()
+                };
+                if let Err(e) = state.manager.missions.update_mission(&mission_id, draft) {
+                    tracing::warn!("mission '{mission_id}' model not updated: {e}");
+                }
             }
         }
     }

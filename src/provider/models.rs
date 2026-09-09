@@ -10,7 +10,8 @@ use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, SystemTime};
 use tokio::sync::OnceCell;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Instant;
@@ -1100,6 +1101,83 @@ pub fn is_fallback_worthy_error(err: &anyhow::Error) -> bool {
     is_rate_limit_error(err) || is_context_limit_error(err) || is_transient_error(err)
 }
 
+/// Models that told us they are unavailable, and when they said they'd be back.
+///
+/// A usage-limit error carries its own `resets_at`, and nothing read it until
+/// 2026-09-09: a dream run whose model returned one 503 hopped straight onto a
+/// sibling that had been 429ing for hours, spent its last candidate on a
+/// guaranteed failure, and died four minutes of work in — reporting the
+/// sibling's quota error, which had nothing to do with why it stopped.
+///
+/// Process-wide, because a quota belongs to the account and not to one
+/// session: a model that is out for the CFO is out for the dream too.
+static COOLDOWNS: LazyLock<Mutex<HashMap<String, SystemTime>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How long a model stays out when its error named no reset time. Long enough
+/// that the next hop of the same chain steps around it, short enough that a
+/// one-off blip costs almost nothing.
+const BLIND_COOLDOWN: Duration = Duration::from_secs(60);
+
+/// The reset time a provider named in its own error, as seconds from now.
+/// `resets_in_seconds` is preferred over `resets_at` — a relative figure
+/// cannot be wrong about our clock.
+fn named_reset(msg: &str) -> Option<Duration> {
+    fn number_after(msg: &str, key: &str) -> Option<u64> {
+        let at = msg.find(key)? + key.len();
+        let rest = msg[at..].trim_start_matches([':', ' ', '"']);
+        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        rest[..end].parse().ok()
+    }
+    if let Some(secs) = number_after(msg, "\"resets_in_seconds\"") {
+        return Some(Duration::from_secs(secs));
+    }
+    let at = number_after(msg, "\"resets_at\"")?;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    (at > now).then(|| Duration::from_secs(at - now))
+}
+
+/// Note that this model just refused, and for how long to leave it alone.
+///
+/// Only for errors we would fall back on: a bad request or a missing key is
+/// the caller's problem and benching the model would hide it.
+pub fn note_unavailable(model_id: &str, err: &anyhow::Error) {
+    if !is_fallback_worthy_error(err) {
+        return;
+    }
+    let wait = named_reset(&err.to_string()).unwrap_or(BLIND_COOLDOWN);
+    // Cap it: a provider that names a date far out should not bench a model
+    // for the life of the daemon, and the user can always pick it by hand.
+    let wait = wait.min(Duration::from_secs(60 * 60));
+    COOLDOWNS
+        .lock()
+        .unwrap()
+        .insert(model_id.to_string(), SystemTime::now() + wait);
+}
+
+/// Is this model still inside a refusal it told us about? Expired entries are
+/// dropped as they are read — nothing else sweeps this map.
+pub fn in_cooldown(model_id: &str) -> bool {
+    let mut map = COOLDOWNS.lock().unwrap();
+    match map.get(model_id) {
+        Some(until) if *until > SystemTime::now() => true,
+        Some(_) => {
+            map.remove(model_id);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Test seam — the map is process-wide and tests must not inherit each other.
+#[cfg(test)]
+pub(crate) fn clear_cooldowns() {
+    COOLDOWNS.lock().unwrap().clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,6 +1199,72 @@ mod tests {
             "openai error (429 Too Many Requests): {\"error\":{\"type\":\"usage_limit_reached\",\
              \"message\":\"The usage limit has been reached\",\"plan_type\":\"team\"}}"
         )));
+    }
+
+    /// The two shapes ChatGPT actually sent on 2026-09-09, verbatim from the
+    /// daemon log. Both name a reset; neither was read before this.
+    #[test]
+    fn a_usage_limit_names_when_it_lifts() {
+        let live = "openai error (429 Too Many Requests): {\"error\":{\"type\":\
+                    \"usage_limit_reached\",\"message\":\"The usage limit has been \
+                    reached\",\"plan_type\":\"team\",\"resets_at\":1788973633,\
+                    \"eligible_promo\":null,\"resets_in_seconds\":8973}}";
+        // The relative figure wins: it cannot be wrong about our clock.
+        assert_eq!(named_reset(live), Some(Duration::from_secs(8973)));
+
+        let absolute_only = format!(
+            "openai error (429): {{\"error\":{{\"resets_at\":{}}}}}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 600
+        );
+        let secs = named_reset(&absolute_only).expect("a reset in the future").as_secs();
+        assert!((595..=600).contains(&secs), "got {secs}s");
+
+        // A reset already past is no reset at all.
+        assert_eq!(named_reset("{\"resets_at\":1000}"), None);
+        assert_eq!(named_reset("openai error (503): error code: 1102"), None);
+    }
+
+    /// A model that refused is stepped around until it said it would be back —
+    /// the dream that died on 2026-09-09 hopped onto a sibling that had been
+    /// 429ing for hours, because nothing remembered the refusal.
+    #[test]
+    fn a_model_that_refused_is_benched_until_it_said_it_would_be_back() {
+        clear_cooldowns();
+        let quota = err(
+            "openai error (429 Too Many Requests): {\"error\":{\"type\":\
+             \"usage_limit_reached\",\"resets_in_seconds\":600}}",
+        );
+        assert!(!in_cooldown("bench-a"));
+        note_unavailable("bench-a", &quota);
+        assert!(in_cooldown("bench-a"));
+        // One model's quota says nothing about another's.
+        assert!(!in_cooldown("bench-b"));
+
+        // A blind failure still benches, so the next hop of the same chain
+        // steps around it rather than re-trying it immediately.
+        note_unavailable("bench-c", &err("openai error (503 Service Unavailable): error code: 1102"));
+        assert!(in_cooldown("bench-c"));
+
+        // Errors we would not fall back on are the caller's to see, not a
+        // reason to hide the model.
+        note_unavailable("bench-d", &err("openai error (400 Bad Request): malformed tool schema"));
+        assert!(!in_cooldown("bench-d"));
+    }
+
+    /// An expired bench clears itself on the next read — nothing sweeps the map.
+    #[test]
+    fn an_expired_bench_lets_the_model_back() {
+        clear_cooldowns();
+        COOLDOWNS
+            .lock()
+            .unwrap()
+            .insert("bench-e".to_string(), SystemTime::now() - Duration::from_secs(1));
+        assert!(!in_cooldown("bench-e"));
+        assert!(!COOLDOWNS.lock().unwrap().contains_key("bench-e"));
     }
 
     #[test]

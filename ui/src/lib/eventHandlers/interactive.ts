@@ -3,6 +3,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
+import { useUiStore } from '../../stores/uiStore';
 import { getSessionId } from './_shared';
 
 // ---------------------------------------------------------------------------
@@ -80,4 +81,12 @@ export function handleModelFallback(item: UiEvent): void {
     ...prev,
     [sid]: `Fallback: ${item.data?.actual_model || 'alternate model'}`,
   }));
+  // Move the picker onto the model that is actually running. The server has
+  // already pinned it to the session; a picker still naming the model that
+  // just refused is showing state the server no longer holds, and the user
+  // cannot undo a switch they cannot see.
+  const actual = item.data?.actual_model;
+  if (typeof actual === 'string' && actual && sid === useSessionStore.getState().activeSessionId) {
+    useUiStore.getState().setSessionModel(actual);
+  }
 }
