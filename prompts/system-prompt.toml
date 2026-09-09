@@ -95,11 +95,12 @@ text = '''
 # Always-on memory
 
 The memory store has no `tier=core` rows yet — the always-on block is
-empty. As stable universals about the user come up (identity: name,
-role, timezone, languages; working style: tone, format, pacing,
-universal do/don't rules), save them as core rows via
+empty. As narrow universals about the person come up (name, role,
+location, timezone, languages, family), save them as core rows via
 `memory_add({tier: "core", ...})` so they reach every
-future session. The dashboard (local memory UI / linggen.dev) also
+future session. Working rules — "always X", "never Y", tone, format —
+are long-term preferences at the default tier, never core: core is
+who they are, not how they want the work done (Liang, 2026-09-09). The dashboard (local memory UI / linggen.dev) also
 exposes a core view for curating the set.'''
 
 [core_memory_shared]
