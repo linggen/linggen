@@ -194,9 +194,18 @@ impl ModelManager {
                 }
             }
             Some("linggen_account") => {
-                if crate::account::resolve_token().is_none() {
+                let Some((token, _)) = crate::account::resolve_token() else {
                     anyhow::bail!(
                         "AUTH_REQUIRED: Not signed in to linggen.dev for model '{}'. Run `ling account login` or sign in from the app.",
+                        cfg.id
+                    );
+                };
+                // A key the site has refused is as good as none: the models
+                // page and the fallback chain must not read a dead key as
+                // signed in.
+                if crate::account::token_rejected(&token) {
+                    anyhow::bail!(
+                        "AUTH_REQUIRED: linggen.dev sign-in expired for model '{}'. Run `ling account login` or sign in from the app.",
                         cfg.id
                     );
                 }

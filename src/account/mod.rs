@@ -112,6 +112,8 @@ pub fn load_account() -> Option<AccountConfig> {
 }
 
 pub fn save_account(config: &AccountConfig) -> Result<()> {
+    // A freshly saved key is a new fact; the site has not judged it yet.
+    *TOKEN_REJECTED.lock().unwrap() = None;
     let path = account_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create ~/.linggen")?;
@@ -254,6 +256,37 @@ fn invalidate_entitlement_cache() {
     *ENT_CACHE.lock().unwrap() = None;
 }
 
+/// The token linggen.dev last refused with 401, if any. A key on disk is
+/// presence, not liveness: the site can revoke it (the account page, a
+/// device signing out) while the file stays. Every caller that hears a 401
+/// records it here, and the auth pre-flight reads it, so the models page and
+/// the fallback chain say "sign in" the minute the site does — not after a
+/// failed turn (2026-09-09: the page said signed in for two hours on a dead
+/// key). Cleared when a fetch succeeds or a new key is saved.
+static TOKEN_REJECTED: Mutex<Option<String>> = Mutex::new(None);
+
+/// linggen.dev answered 401 to [token].
+pub fn note_token_rejected(token: &str) {
+    let mut g = TOKEN_REJECTED.lock().unwrap();
+    if g.as_deref() != Some(token) {
+        tracing::warn!("linggen.dev refused the account key; sign in again to replace it");
+        *g = Some(token.to_string());
+    }
+}
+
+/// linggen.dev accepted [token]: any earlier refusal was of a key since replaced.
+pub fn note_token_accepted(token: &str) {
+    let mut g = TOKEN_REJECTED.lock().unwrap();
+    if g.as_deref() == Some(token) {
+        *g = None;
+    }
+}
+
+/// Whether the key on disk is one the site has refused since it was saved.
+pub fn token_rejected(token: &str) -> bool {
+    TOKEN_REJECTED.lock().unwrap().as_deref() == Some(token)
+}
+
 async fn fetch_entitlement(token: &str) -> Result<serde_json::Value> {
     let resp = http()
         .get(format!("{}/api/entitlement", site_url()))
@@ -261,9 +294,13 @@ async fn fetch_entitlement(token: &str) -> Result<serde_json::Value> {
         .send()
         .await
         .context("connect to linggen.dev")?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        note_token_rejected(token);
+    }
     if !resp.status().is_success() {
         bail!("entitlement failed: {}", resp.status());
     }
+    note_token_accepted(token);
     Ok(resp.json().await?)
 }
 
@@ -343,4 +380,30 @@ pub async fn create_checkout(token: &str, app: &str) -> Result<String> {
         .and_then(|u| u.as_str())
         .map(String::from)
         .ok_or_else(|| anyhow!("checkout response missing url"))
+}
+
+#[cfg(test)]
+mod token_verdict_tests {
+    use super::*;
+
+    /// The site's verdict is remembered per key, so a refused key reads as
+    /// dead until a fetch accepts it or a new key is saved.
+    #[test]
+    fn a_refused_key_is_dead_until_accepted_or_replaced() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        *TOKEN_REJECTED.lock().unwrap() = None;
+        assert!(!token_rejected("usr_a"));
+        note_token_rejected("usr_a");
+        assert!(token_rejected("usr_a"));
+        assert!(!token_rejected("usr_b"), "another key is not judged by this one's refusal");
+        note_token_accepted("usr_b");
+        assert!(token_rejected("usr_a"), "accepting a different key clears nothing");
+        note_token_accepted("usr_a");
+        assert!(!token_rejected("usr_a"));
+        note_token_rejected("usr_a");
+        *TOKEN_REJECTED.lock().unwrap() = None; // what save_account does
+        assert!(!token_rejected("usr_a"));
+    }
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 }

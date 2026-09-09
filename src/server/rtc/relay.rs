@@ -125,6 +125,9 @@ async fn heartbeat_loop(link: &Link) {
                     "Heartbeat auth rejected ({}). Will retry after credential reload.",
                     resp.status()
                 );
+                if resp.status() == 401 {
+                    crate::account::note_token_rejected(&link.token);
+                }
                 return;
             }
             Ok(resp) => {
@@ -224,6 +227,9 @@ async fn offer_poll_loop(link: &Link, state: Arc<ServerState>) {
                     "Relay auth rejected ({}). Re-run `ling login` to fix. Stopping relay.",
                     resp.status()
                 );
+                if resp.status() == 401 {
+                    crate::account::note_token_rejected(&link.token);
+                }
                 return;
             }
             Ok(resp) => {
