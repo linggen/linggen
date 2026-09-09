@@ -79,13 +79,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const resizeInput = () => {
     if (!inputRef.current) return;
     inputRef.current.style.height = '0px';
-    const next = Math.min(inputRef.current.scrollHeight, 220);
+    const full = inputRef.current.scrollHeight;
+    const next = Math.min(full, 220);
     inputRef.current.style.height = `${next}px`;
+    // The box grows to fit what's in it, so its own scrollbar is meaningless
+    // until it stops growing. Left on, a placeholder that wraps in a narrow
+    // composer draws a scrollbar beside an empty field.
+    inputRef.current.style.overflowY = full > 220 ? 'auto' : 'hidden';
   };
 
   useEffect(() => {
     resizeInput();
-  }, [chatInput]); // eslint-disable-line react-hooks/exhaustive-deps
+    // isRunning changes the button row, which changes the box's width — and a
+    // width the height was never re-measured for is a mis-sized box for the
+    // rest of the turn.
+  }, [chatInput, isRunning, selectedMainRunningRunId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
@@ -774,7 +782,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             placeholder={mobile ? "Message..." : "Message... (/ for skills, @ for files, Shift+Enter for newline)"}
             rows={1}
             className={cn(
-              "flex-1 bg-transparent border-none outline-none resize-none leading-5",
+              "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",
               mobile ? "px-2 py-2.5 text-[16px] min-h-[42px] max-h-[160px]" : "px-1.5 py-1.5 text-[14px] min-h-[34px] max-h-[200px]",
             )}
           />
