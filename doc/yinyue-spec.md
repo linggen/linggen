@@ -388,6 +388,7 @@ user's region and time without asking.
 | Pet coordination — lease + surface registry | `linggen/src/server/` (engine API, planned) |
 | Menubar tray + face animator | `linggen-app/shell/src/menubar.rs` (planned) |
 | Tray face frames + generator | `linggen-app/shell/pet-ui` capture tool → staged `tray/` (planned) |
+| Dynamic UI — screens as documents she may arrange, with a notice | `dynamic-ui-spec.md` (phone; step 1 built 2026-09-09) |
 
 ## Status
 
