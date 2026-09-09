@@ -143,6 +143,11 @@ items, never raw markdown:
 - The Mac's copies sit in the same blocks she reads them in, marked "From
   your Mac", and take delete only. Deleting one deletes the Mac's row through
   the same door; the row is the user's.
+- **From your Mac** — one line that says the truth (no Mac paired, not in
+  reach, when the copy last came down) and a *Sync now* button (2026-09-09,
+  Liang: the user must be able to sync from here). The run answers in words
+  either way — what came down, what went up, or "Your Mac isn't connected" —
+  and the rows are re-read so the screen matches the file. Never gated.
 - Footer: when the last pass ran, how many rows she keeps, the cap, the model.
 
 A delete stays deleted: it removes the row, and the Mac row behind it when
