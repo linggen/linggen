@@ -5,7 +5,7 @@ guide: |
   Product specification — describe what the system should do and why.
   Keep it brief. Aim to guide design and implementation, not document code.
   Avoid implementation details like function signatures, variable types, or code snippets.
-status: designed and built 2026-09-08 (ling-mem 1.8.0, engine 6e331e9, phone); the dream's per-account iteration on the Mac is the one open piece
+status: designed and built 2026-09-08 (ling-mem 1.8.0, engine 6e331e9, phone); per-person folders on the phone 2026-09-09; the dream's per-account iteration on the Mac is the one open piece
 ---
 
 # Phone Memory
@@ -107,8 +107,31 @@ back, after each turn she took a note in, and the nightly pass.
 - Recall, list, delete and the dream all see one account at a time.
 - A signed-out phone writes under its device id. At the first connect after
   sign-in, those rows are re-stamped to the account, once.
-- The account is what the phone told the Mac at pairing and on each connect. It
-  is a household ledger, not a security boundary.
+- The account is what the phone told the Mac at pairing and on each connect,
+  and again the moment it changes on a live channel. It is a household ledger,
+  not a security boundary.
+
+### On the phone (2026-09-09)
+
+The same rule holds on the phone: memory is kept per person. Under
+`yinyue/` there is one folder per signed-in account, named by its id, and a
+`device` folder for the stretches when nobody is. Her rows, the outbox and the
+tombstones live in that folder; `device.md`, where she is running, stays at
+the root because it is the phone's, not a person's.
+
+- Switching accounts switches what she remembers and what goes up. Sign-out
+  moves her to the device folder and leaves the account's folder on disk, out
+  of her prompt, for when that person returns.
+- Sign-in and sign-out are sync moments: the transport re-introduces the phone
+  to the Mac at once, so the Mac stamps the right person from then on, and the
+  sync pushes, reaps and pulls for the new person.
+- The device folder is adopted once: the first account to sign in after it was
+  written takes its rows and its queued notes, and the folder is left empty
+  for the next signed-out stretch. This is the phone's half of the Mac's
+  one-time re-stamp.
+- A build from before the folders kept everything at `yinyue/` itself. On the
+  first run, whoever is signed in takes it: there is no telling whose it was.
+- Settings → Memory says whose lines it shows.
 
 ## Settings → Memory
 
