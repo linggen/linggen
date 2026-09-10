@@ -74,7 +74,7 @@ chose, then what they asked about this week newest first, then the rules'
 pick — at most four, a week's hold on an ask, never a card the catalog
 cannot draw.
 
-## The composed screen — candidates and the pick (agreed 2026-09-10)
+## The composed screen — candidates and the pick (agreed 2026-09-10; Health Highlights built the same day)
 
 Highlights is a message centre she keeps. Not a section with hands on it: a
 whole screen written as one document, from candidates.
@@ -163,8 +163,9 @@ on top now, why, and that they can ask for it another way.
 
 ## Not yet
 
-`screen_compose` and the candidate schema on Highlights (agreed
-2026-09-10, above); the swipe-to-dismiss; Other screens' adjustable parts, when one earns it — a screen with none is
+the candidate schema on DJ, CFO and Shifu (Health Highlights has it:
+`candidates`, `highlights`, `dismissed` in its document, `screen_compose`
+and the swipe built 2026-09-10); Other screens' adjustable parts, when one earns it — a screen with none is
 fine; the DJ, CFO and Shifu page registries; a model turn on the signal, so
 she may arrange further before the line goes (today the rules write the
 line and she arranges only when asked); the Mac reading the contract rather
