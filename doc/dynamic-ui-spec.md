@@ -74,6 +74,40 @@ chose, then what they asked about this week newest first, then the rules'
 pick — at most four, a week's hold on an ask, never a card the catalog
 cannot draw.
 
+## The composed screen — candidates and the pick (agreed 2026-09-10)
+
+Highlights is a message centre she keeps. Not a section with hands on it: a
+whole screen written as one document, from candidates.
+
+- **Apps publish candidates.** Every card an app can draw is a candidate
+  with a schema: its kind, what earns it a place (`always`, `news`, or a
+  condition — a time, a signal, a message), its runtime facts, whether it
+  is a warning, whether it may be dismissed, when it expires. A finding, a
+  chart, the plan for today, the checklist, a nutrition or supplement line,
+  the Sunday letter, the doctor page are all candidates. Values ride the
+  entry for the renderer; the agent reads the schema and the facts.
+- **The rules write the default.** Warnings first, then what earns a place
+  today, at most six cards, under two screens. This is the page with no
+  model at all.
+- **On a signal she rewrites it.** First read, data changed, the person's
+  message, the night. She reads the schema and the candidates and returns
+  the document: an ordered list of candidate ids, a kind per card. One tool,
+  `screen_compose {route, cards:[{id, kind}], why}`, beside the four small
+  hands, which stay for one move.
+- **The screen validates.** Nothing outside the catalog; no warning
+  removed; the person's pins and dismissals kept; the cap held. A refused
+  document leaves the rules' page standing, and she is told why.
+- **A dismissed card is gone for that fact.** The person swipes it away —
+  the one screen where a swipe is allowed, dismiss only — and the next
+  candidate that earns a place takes the slot. The same card returns only
+  on a new fact, never the same one. A warning cannot be dismissed.
+- **She never authors a value.** Numbers, labels and charts are the data
+  layer's. She picks and orders; the one line in her thread says what moved.
+
+Open (Liang): the swipe — allowed here as dismiss only, against the
+no-swipe law of 2026-08-04; and whether the supplement and nutrition
+evidence lives as curated facts in the skill or is the model's to answer.
+
 ## The registry and the door
 
 Every screen declares itself: its sections, and its pages below them with a
@@ -130,7 +164,8 @@ on top now, why, and that they can ask for it another way.
 
 ## Not yet
 
-Other screens' adjustable parts, when one earns it — a screen with none is
+`screen_compose` and the candidate schema on Highlights (agreed
+2026-09-10, above); the swipe-to-dismiss; Other screens' adjustable parts, when one earns it — a screen with none is
 fine; the DJ, CFO and Shifu page registries; a model turn on the signal, so
 she may arrange further before the line goes (today the rules write the
 line and she arranges only when asked); the Mac reading the contract rather
