@@ -102,10 +102,21 @@ pub struct Presence {
     pub updated_at: u64,
 }
 
+/// How long a focused beat outranks an unfocused one from another surface.
+const FOCUS_HOLDS_SECS: u64 = 10;
+
 impl Presence {
     /// Derive the three-state read at `now` (unix secs): `"typing"` /
     /// `"present_reading"` / `"away"`. The single source of this logic — both the
     /// `sense` tool and Yinyue's herald watch read through it.
+    /// Whether a beat saying "not focused" must be ignored: another surface
+    /// said it WAS focused a moment ago. Every reporter beats on a 4s cadence,
+    /// so a focused reading older than [`FOCUS_HOLDS_SECS`] belongs to a
+    /// surface that has gone rather than one still in front of the user.
+    pub fn holds_focus(&self, now: u64) -> bool {
+        self.focused && now.saturating_sub(self.updated_at) < FOCUS_HOLDS_SECS
+    }
+
     pub fn state(&self, now: u64) -> &'static str {
         let beat_age = now.saturating_sub(self.updated_at);
         let idle = now.saturating_sub(self.last_input_at);
@@ -383,10 +394,31 @@ impl AgentManager {
     pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64) {
         let now = crate::util::now_ts_secs();
         let mut p = self.presence.lock().unwrap();
+        // Presence is one reading for the whole machine, and several surfaces
+        // report into it — the Linggen UI, every skill page, the app shell. Last
+        // writer wins would let a BLURRED tab erase the focused one beside it:
+        // with the Linggen tab open behind the DJ tab, the two would alternate
+        // every four seconds and the user would flicker between here and away.
+        // So a beat that says "not focused" never clears a fresh one that says
+        // otherwise; when that surface really goes, its reading ages out.
+        if !focused && p.holds_focus(now) {
+            return;
+        }
         p.last_input_at = now.saturating_sub(idle_ms / 1000);
         p.focused = focused;
         p.typing = typing;
         p.updated_at = now;
+    }
+
+    /// A person who just typed to an agent is present, wherever they typed it.
+    ///
+    /// The beat above is sent by browser surfaces only, so a turn from a skill
+    /// page, the phone, or any client that never beats used to read as "away" —
+    /// and Yinyue heralded "their reply is ready" at someone watching it arrive
+    /// (2026-09-10, chatting with Ling on the DJ page). A message is the least
+    /// deniable presence signal there is: they typed it a moment ago.
+    pub fn mark_user_turn_presence(&self) {
+        self.update_presence(true, true, 0);
     }
 
     /// Current presence snapshot, for the `sense` tool.
@@ -900,7 +932,50 @@ impl AgentManager {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentManager;
+    use super::{AgentManager, Presence};
+
+    fn beat(focused: bool, typing: bool, idle: u64, at: u64) -> Presence {
+        Presence {
+            last_input_at: at.saturating_sub(idle),
+            focused,
+            typing,
+            updated_at: at,
+        }
+    }
+
+    /// Several surfaces report into one reading — the Linggen UI, every skill
+    /// page, the app shell — and last-writer-wins let a blurred tab erase the
+    /// focused one beside it, four seconds at a time.
+    #[test]
+    fn a_blurred_surface_does_not_clear_a_fresh_focused_one() {
+        let now = 1_000;
+        assert!(beat(true, false, 0, now).holds_focus(now));
+        assert!(beat(true, false, 0, now - 9).holds_focus(now));
+        assert!(
+            !beat(true, false, 0, now - 11).holds_focus(now),
+            "a focused reading nobody has refreshed is a surface that has gone"
+        );
+        assert!(!beat(false, false, 0, now).holds_focus(now));
+    }
+
+    #[test]
+    fn presence_reads_typing_then_reading_then_away() {
+        let now = 1_000;
+        assert_eq!(beat(true, true, 0, now).state(now), "typing");
+        assert_eq!(beat(true, false, 2, now).state(now), "typing");
+        assert_eq!(beat(true, false, 30, now).state(now), "present_reading");
+        assert_eq!(beat(true, false, 300, now).state(now), "away");
+        assert_eq!(
+            beat(false, false, 0, now).state(now),
+            "away",
+            "a hidden or blurred surface is not somewhere they are"
+        );
+        assert_eq!(
+            beat(true, false, 0, now - 120).state(now),
+            "away",
+            "no beat for two minutes is no live surface at all"
+        );
+    }
 
     #[test]
     fn normalize_model_choice_treats_inherit_as_none() {

@@ -786,6 +786,11 @@ pub(crate) async fn chat_handler(
         crate::util::now_ts_secs(),
         std::sync::atomic::Ordering::Relaxed,
     );
+    // And it stamps presence. The beat that feeds presence comes from browser
+    // surfaces only, so a turn typed anywhere else — a skill page, the phone —
+    // read as "away" and Yinyue heralded "their reply is ready" at somebody
+    // watching it arrive.
+    state.manager.mark_user_turn_presence();
 
     let session_creator: &str = if req.mission_id.is_some() {
         "mission"
