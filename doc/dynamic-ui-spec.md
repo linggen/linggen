@@ -104,9 +104,8 @@ whole screen written as one document, from candidates.
 - **She never authors a value.** Numbers, labels and charts are the data
   layer's. She picks and orders; the one line in her thread says what moved.
 
-Open (Liang): the swipe — allowed here as dismiss only, against the
-no-swipe law of 2026-08-04; and whether the supplement and nutrition
-evidence lives as curated facts in the skill or is the model's to answer.
+Settled 2026-09-10: the swipe is allowed on Highlights, dismiss only — the
+one exception to the no-swipe law of 2026-08-04.
 
 ## The registry and the door
 
