@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-09-10 — a person's turn reaches the model verbatim
+
+- **A chat turn is no longer wrapped as a task** — every turn used to arrive
+  inside the autonomous-agent bootstrap ("Ignore any prior greetings…
+  Workspace contents… explore the codebase before making changes"), a second
+  copy of a message already in history, and a model that took it literally
+  answered "hi" by crawling the workspace. `PromptProfile.task_bootstrap` is
+  off for owner and consumer sessions and on only for missions, headless
+  runs, evals and delegated subagents.
+- **Keys belong to endpoints** — `credentials.json` was keyed by model id, so
+  replacing a model row orphaned its key ("Missing Authorization" on a model
+  configured in Settings). Entries are stamped with provider + url on save;
+  resolution is own key → configured sibling on the same endpoint → any
+  stamped row for it. Saving a key rebuilds the model manager, so it is live
+  at once; `ling status` and the models tab read the same resolver.
+- **Only Yinyue's final paragraph is spoken** — a reasoning model that
+  deliberates above its answer no longer has the deliberation read aloud.
+  Every engine-authored kickoff says so; one parser reads every reply: last
+  paragraph, quotes unwrapped, SILENT (bare or as the last word) means
+  silence. Discarded notes are logged.
+- **MCP servers that weren't listening at boot are dialled again** — the
+  engine pre-warms its own memory daemon seconds before connecting to it and
+  could lose that race for the daemon's whole life (a day of empty
+  auto-recall and a dream with no memory tools). A watcher re-dials only the
+  enabled, unconnected servers, backing off 5s → 5min until everything is up.
+- **The model picker steers a mission, and a refused model is benched** —
+  on a mission session the picker wrote a per-session override no mission
+  run read; it now sets the mission's own model. The fallback chain reads
+  `resets_at` from a usage-limit error and benches that model until then
+  (60s unnamed, an hour at most), so a turn never spends its last candidate
+  on a known failure. A successful fallback pins the model on the session
+  and the picker follows it.
+- **A key the site refused reads as signed out** — the models page said
+  signed in for two hours on a key linggen.dev had already rejected. The
+  site's 401 verdict is remembered on the current key and cleared by a
+  successful fetch or a newly saved key. This Mac signs in as one named
+  device and signs only itself out; the phone signing in never signs the
+  Mac out.
+- **Whose memory a row is** — a paired phone's verbs are stamped with the
+  person behind the pairing (read from the pairing record, never the body);
+  the Mac's own account is the owner and unstamped; a signed-out phone
+  writes as `device:<id>` and its rows are handed to the person at the next
+  signed-in connect. Needs ling-mem 1.8.0. Settings → Memory gains Sync now.
+- **A skill embed runs the session's model and never hides a finished
+  reply** — "Ask Ling" on a Health card ran on the global default (and
+  thrashed through fallbacks when it was rate-limited) because no list an
+  embed could fetch carried the session's model; and a non-streamed reply
+  stayed hidden behind an earlier preamble block under a stuck spinner.
+- **A model has vision when it says so, or when its family does** — DeepSeek
+  is text-only unless the name says vision; Gemini, GPT-4o/4.1/5, Claude and
+  the `-vl` / llava families keep seeing; an unknown model is treated as
+  blind. The gate names the models on this machine that can read an image.
+- **Chat: stop acts on the session** — the stop button was gated on the
+  selected agent's run, so an embedded skill chat streaming on `ling` showed
+  none. The composer draws no scrollbar of its own while it is still growing.
+- The empty-core hint no longer sends working rules to core. Screens as
+  documents Yinyue may arrange: `doc/dynamic-ui-spec.md`.
+
 - **A skill page can tell "the agent is quiet" from "we went deaf"** — the
   embed iframe now relays its transport status to the page hosting it
   (`connection` event, alongside the existing token/content_block relay). A
