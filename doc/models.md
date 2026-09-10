@@ -36,7 +36,7 @@ All cloud providers (except ChatGPT) use the OpenAI-compatible chat completions 
 
 ### Default: Linggen Cloud
 
-New installs default to `deepseek-v4-flash` via Linggen Cloud (the built-in
+New installs default to `deepseek-flash` (DeepSeek V4.1 Flash) via Linggen Cloud (the built-in
 proxy model, metered against the linggen.dev account). No API key needed —
 just sign in:
 

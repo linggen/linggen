@@ -42,7 +42,7 @@ const YINYUE_MAX_LIVE_MSGS: usize = 10;
 /// The metered Linggen Cloud model — Yinyue's default brain for signed-in
 /// (paid/free) users when `pet.model` is "auto". BYOK users keep the engine
 /// default unless they pick a model in settings.
-const CLOUD_DEFAULT_MODEL: &str = "deepseek-v4-flash";
+const CLOUD_DEFAULT_MODEL: &str = crate::provider::models::LINGGEN_CLOUD_MODEL_ID;
 
 pub async fn yinyue_watch_loop(state: Arc<ServerState>) {
     let mut rx = state.events_tx.subscribe();

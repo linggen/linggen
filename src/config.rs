@@ -462,6 +462,7 @@ impl Config {
                 let mut config: Config = toml::from_str(&content)?;
                 config.server.migrated_legacy_addr = config.server.migrate_legacy_fields();
                 config.migrate_retired_chatgpt_builtins();
+                config.migrate_retired_cloud_ids();
                 return Ok((config, Some(path)));
             }
         }
@@ -492,6 +493,28 @@ impl Config {
         self.routing
             .default_models
             .retain(|id| seen.insert(id.clone()));
+    }
+
+    /// Re-point persisted references to a retired Linggen Cloud id (routing
+    /// defaults, the pet's pin) at the current one. A user-defined model that
+    /// happens to reuse the retired id is theirs and is left alone.
+    fn migrate_retired_cloud_ids(&mut self) {
+        use crate::provider::models::{LINGGEN_CLOUD_MODEL_ID, LINGGEN_CLOUD_RETIRED_MODEL_IDS};
+        let retired = |id: &str| {
+            LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) && !self.models.iter().any(|m| m.id == id)
+        };
+        let mut defaults = std::mem::take(&mut self.routing.default_models);
+        for dm in &mut defaults {
+            if retired(dm) {
+                *dm = LINGGEN_CLOUD_MODEL_ID.to_string();
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        defaults.retain(|id| seen.insert(id.clone()));
+        self.routing.default_models = defaults;
+        if retired(&self.pet.model) {
+            self.pet.model = LINGGEN_CLOUD_MODEL_ID.to_string();
+        }
     }
 
     pub fn runtime_config_path(config_dir: Option<&Path>) -> PathBuf {
@@ -628,7 +651,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // No hardcoded models — the built-in Linggen Cloud (deepseek-v4-flash)
+            // No hardcoded models — the built-in Linggen Cloud (deepseek-flash)
             // and ChatGPT (CHATGPT_BUILTIN_MODEL_ID) models are always injected by ModelManager
             // at runtime (see inject_linggen_cloud / inject_chatgpt_builtin in
             // provider/models.rs), so a fresh install needs nothing here.
@@ -905,6 +928,30 @@ mod tests {
         assert_eq!(
             toml::to_string(&cfg).unwrap().trim(),
             "url = \"0.0.0.0:9600\""
+        );
+    }
+
+    /// A retired Linggen Cloud id persisted as a default or a pet pin follows
+    /// the rename; a user's own model under that id is theirs and stays.
+    #[test]
+    fn retired_cloud_ids_follow_the_rename() {
+        let mut cfg = Config::default();
+        cfg.routing.default_models = vec!["deepseek-v4-flash".into(), "deepseek-flash".into()];
+        cfg.pet.model = "deepseek-v4-flash".into();
+        cfg.migrate_retired_cloud_ids();
+        assert_eq!(
+            cfg.routing.default_models,
+            vec!["deepseek-flash".to_string()]
+        );
+        assert_eq!(cfg.pet.model, "deepseek-flash");
+
+        let mut own = valid_config();
+        own.models[0].id = "deepseek-v4-flash".into();
+        own.routing.default_models = vec!["deepseek-v4-flash".into()];
+        own.migrate_retired_cloud_ids();
+        assert_eq!(
+            own.routing.default_models,
+            vec!["deepseek-v4-flash".to_string()]
         );
     }
 

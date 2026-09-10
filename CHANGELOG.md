@@ -50,6 +50,13 @@
   thrashed through fallbacks when it was rate-limited) because no list an
   embed could fetch carried the session's model; and a non-streamed reply
   stayed hidden behind an earlier preamble block under a stuck spinner.
+- **Linggen Cloud is DeepSeek V4.1 Flash, under its own id** — the built-in
+  model is now `deepseek-flash`, the id DeepSeek gave V4.1 Flash (1M context,
+  ahead of V4 Pro, which DeepSeek routes to it from 2026-09-14). The retired
+  `deepseek-v4-flash` is still honoured everywhere a model id is looked up —
+  a saved session, a skill's `model:` pin, `pet.model` — and persisted
+  defaults and pins are rewritten on load, so nothing falls silently to the
+  default. Skills and the phone pin the new id; the proxy accepts both.
 - **A model has vision when it says so, or when its family does** — DeepSeek
   is text-only unless the name says vision; Gemini, GPT-4o/4.1/5, Claude and
   the `-vl` / llava families keep seeing; an unknown model is treated as

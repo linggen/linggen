@@ -344,7 +344,7 @@ impl ModelManager {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
         self.chat_text_stream_with_keep_alive(
             model_id,
@@ -366,7 +366,7 @@ impl ModelManager {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -512,7 +512,7 @@ impl ModelManager {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let instance = self
             .models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         Self::check_provider_auth(&instance.config)?;
@@ -712,7 +712,7 @@ impl ModelManager {
     pub async fn context_window(&self, model_id: &str) -> Result<Option<usize>> {
         let instance = self
             .models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         // Config override takes priority (useful for cloud/remote models).
@@ -840,7 +840,7 @@ impl ModelManager {
     pub async fn has_vision(&self, model_id: &str) -> Result<bool> {
         let instance = self
             .models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .ok_or_else(|| anyhow::anyhow!("Model {} not found", model_id))?;
 
         match &instance.client {
@@ -918,7 +918,7 @@ impl ModelManager {
     /// Check if a model supports native tool calling.
     /// Uses explicit config if set, otherwise auto-detects based on provider.
     pub fn supports_tools(&self, model_id: &str) -> bool {
-        let Some(instance) = self.models.get(model_id) else {
+        let Some(instance) = self.models.get(canonical_model_id(model_id)) else {
             tracing::warn!(
                 "supports_tools: model '{}' not found in configured models (have: {:?}), defaulting to true",
                 model_id,
@@ -933,7 +933,7 @@ impl ModelManager {
 
     /// Check if a model ID exists in the configured models.
     pub fn has_model(&self, model_id: &str) -> bool {
-        self.models.contains_key(model_id)
+        self.models.contains_key(canonical_model_id(model_id))
     }
 
     /// Whether [model_id]'s credentials are present right now — the same
@@ -942,7 +942,7 @@ impl ModelManager {
     /// instead of learning it from a failed turn.
     pub fn model_auth_ok(&self, model_id: &str) -> bool {
         self.models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .is_some_and(|m| Self::check_provider_auth(&m.config).is_ok())
     }
 
@@ -953,7 +953,7 @@ impl ModelManager {
     /// system-prompt panel matches what gets sent on the wire.
     pub fn provider_kind(&self, model_id: &str) -> Option<&str> {
         self.models
-            .get(model_id)
+            .get(canonical_model_id(model_id))
             .map(|m| m.config.provider.as_str())
     }
 
@@ -977,7 +977,26 @@ impl ModelManager {
 /// the linggen.dev/api/llm proxy with the account token resolved fresh per
 /// request (sign-in needs no restart). A user-defined model with the same id
 /// wins (BYOK-first), and injection never touches the default model choice.
-pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-v4-flash";
+pub const LINGGEN_CLOUD_MODEL_ID: &str = "deepseek-flash";
+
+/// Previous ids of the Linggen Cloud model. DeepSeek retired
+/// `deepseek-v4-flash` when V4.1 Flash shipped under the plain
+/// `deepseek-flash` id (2026-09); the proxy still accepts the old name, and
+/// so does every lookup here — a session, a skill's `model:` pin or a
+/// `pet.model` written against the old id resolves to the cloud model
+/// instead of failing silently into the default. Config::load rewrites
+/// persisted defaults and pins to the current id.
+pub const LINGGEN_CLOUD_RETIRED_MODEL_IDS: &[&str] = &["deepseek-v4-flash"];
+
+/// The id a model lookup should use: retired Linggen Cloud ids map to the
+/// current one, everything else is itself.
+pub fn canonical_model_id(id: &str) -> &str {
+    if LINGGEN_CLOUD_RETIRED_MODEL_IDS.contains(&id) {
+        LINGGEN_CLOUD_MODEL_ID
+    } else {
+        id
+    }
+}
 
 /// Branded-app product ids accepted by the Linggen Cloud proxy's
 /// X-Linggen-App header — mirrors KNOWN_APPS in linggensite's entitlement
@@ -1126,7 +1145,9 @@ fn named_reset(msg: &str) -> Option<Duration> {
     fn number_after(msg: &str, key: &str) -> Option<u64> {
         let at = msg.find(key)? + key.len();
         let rest = msg[at..].trim_start_matches([':', ' ', '"']);
-        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest[..end].parse().ok()
     }
     if let Some(secs) = number_after(msg, "\"resets_in_seconds\"") {
@@ -1220,7 +1241,9 @@ mod tests {
                 .as_secs()
                 + 600
         );
-        let secs = named_reset(&absolute_only).expect("a reset in the future").as_secs();
+        let secs = named_reset(&absolute_only)
+            .expect("a reset in the future")
+            .as_secs();
         assert!((595..=600).contains(&secs), "got {secs}s");
 
         // A reset already past is no reset at all.
@@ -1246,12 +1269,18 @@ mod tests {
 
         // A blind failure still benches, so the next hop of the same chain
         // steps around it rather than re-trying it immediately.
-        note_unavailable("bench-c", &err("openai error (503 Service Unavailable): error code: 1102"));
+        note_unavailable(
+            "bench-c",
+            &err("openai error (503 Service Unavailable): error code: 1102"),
+        );
         assert!(in_cooldown("bench-c"));
 
         // Errors we would not fall back on are the caller's to see, not a
         // reason to hide the model.
-        note_unavailable("bench-d", &err("openai error (400 Bad Request): malformed tool schema"));
+        note_unavailable(
+            "bench-d",
+            &err("openai error (400 Bad Request): malformed tool schema"),
+        );
         assert!(!in_cooldown("bench-d"));
     }
 
@@ -1259,10 +1288,10 @@ mod tests {
     #[test]
     fn an_expired_bench_lets_the_model_back() {
         clear_cooldowns();
-        COOLDOWNS
-            .lock()
-            .unwrap()
-            .insert("bench-e".to_string(), SystemTime::now() - Duration::from_secs(1));
+        COOLDOWNS.lock().unwrap().insert(
+            "bench-e".to_string(),
+            SystemTime::now() - Duration::from_secs(1),
+        );
         assert!(!in_cooldown("bench-e"));
         assert!(!COOLDOWNS.lock().unwrap().contains_key("bench-e"));
     }
@@ -1318,6 +1347,7 @@ mod tests {
         // The case that earned the function: DeepSeek's chat model 400s on an
         // image, and only its separate vision build takes one. Assuming yes
         // put a camera in front of a model that cannot see.
+        assert!(!v(&[], "deepseek-flash"));
         assert!(!v(&[], "deepseek-v4-flash"));
         assert!(!v(&[], "deepseek-v4-pro"));
         assert!(v(&[], "deepseek-v4-flash-vision-exp"));
