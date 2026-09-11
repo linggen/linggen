@@ -772,6 +772,26 @@ pub(crate) async fn run_session_turn(
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
 }
 
+/// Who a turn belongs to: "mission", "skill" or "user". The request names it
+/// for a new session; a session already bound to a skill stays the skill's
+/// whatever surface the turn came from. The main chat and the phone send no
+/// `skill_name`, and reading the request alone ran their turns in a skill
+/// session as the user's — the core block and a full biography recall landed
+/// in the skill's context.
+fn turn_creator(
+    mission_id: Option<&str>,
+    skill_name: Option<&str>,
+    bound_skill: Option<&str>,
+) -> &'static str {
+    if mission_id.is_some() {
+        return "mission";
+    }
+    if skill_name.or(bound_skill).is_some() {
+        return "skill";
+    }
+    "user"
+}
+
 pub(crate) async fn chat_handler(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<ChatRequest>,
@@ -792,13 +812,23 @@ pub(crate) async fn chat_handler(
     // watching it arrive.
     state.manager.mark_user_turn_presence();
 
-    let session_creator: &str = if req.mission_id.is_some() {
-        "mission"
-    } else if req.skill_name.is_some() {
-        "skill"
-    } else {
-        "user"
-    };
+    let bound_skill = req
+        .session_id
+        .as_deref()
+        .and_then(|sid| {
+            state
+                .manager
+                .global_sessions
+                .get_session_meta(sid)
+                .ok()
+                .flatten()
+        })
+        .and_then(|meta| meta.skill);
+    let session_creator = turn_creator(
+        req.mission_id.as_deref(),
+        req.skill_name.as_deref(),
+        bound_skill.as_deref(),
+    );
 
     let session_id = ensure_session(&state, &req, &project_root_str, session_creator).await;
     let effective_session_id = session_id.clone().unwrap_or_else(|| "default".to_string());
@@ -987,7 +1017,25 @@ pub(crate) async fn chat_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::{auto_session_title, parse_explicit_target_prefix};
+    use super::{auto_session_title, parse_explicit_target_prefix, turn_creator};
+
+    #[test]
+    fn turn_creator_follows_the_request_for_a_new_session() {
+        assert_eq!(turn_creator(Some("dream"), None, None), "mission");
+        assert_eq!(turn_creator(None, Some("health"), None), "skill");
+        assert_eq!(turn_creator(None, None, None), "user");
+    }
+
+    #[test]
+    fn turn_creator_keeps_a_skill_bound_session_the_skills() {
+        // A turn typed into a lingjing session from the main chat or the
+        // phone carries no skill_name — it is still the skill's turn.
+        assert_eq!(turn_creator(None, None, Some("lingjing")), "skill");
+        assert_eq!(
+            turn_creator(Some("dream"), None, Some("lingjing")),
+            "mission"
+        );
+    }
 
     #[test]
     fn parse_explicit_target_prefix_accepts_valid_mention() {
