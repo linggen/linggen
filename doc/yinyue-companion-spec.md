@@ -85,8 +85,11 @@ Hook set (terminal / "stops the chat"):
 | `Notification(MissionCompleted)` | background mission done | wired |
 | **new** `RunCompleted` | success completion — emit at `chat/runtime.rs:31` (mirror `RunFailed`) | **add** |
 
-Guards: skip her own events (no self-loop), skip `Cancelled`, presence-gate the
-noisy `RunCompleted` (only herald when away), always-look on `AskUser`/`RunFailed`.
+Guards: skip her own events (no self-loop), skip `Cancelled`, presence-gate
+`RunCompleted` and `AskUser` — herald only when away, checked again before she
+speaks: a finished reply or a question with its buttons is already on the
+screen the user is looking at (2026-09-11: she narrated every choice of a game
+being played). Always-look on `RunFailed`.
 
 ## Interactive loop-back — the approve case
 

@@ -75,6 +75,9 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
             if agent_id == YINYUE_AGENT {
                 return; // she's the one asking — not a herald
             }
+            if user_sees_screen(state) {
+                return; // the question is on the screen they're looking at
+            }
             let q0 = questions.first();
             let summary = q0
                 .map(|q| q.question.clone())
@@ -97,9 +100,8 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                 };
                 let kickoff = format!(
                     "The agent \"{agent_id}\" is blocked, waiting on the user to answer: \
-                     \"{summary}\".{opts} Tell the user in your voice — a gentle nudge if they're \
-                     here, more of a call-back if they've wandered off — the Right now block says which. One \
-                     brief line, spoken aloud, plain prose. When they give you their answer, relay \
+                     \"{summary}\".{opts} The user has stepped away from the screen. Call them \
+                     back in your voice — one brief line, spoken aloud, plain prose. When they give you their answer, relay \
                      it with `answer_prompt` (question_id \"{question_id}\") — only their actual \
                      words, never your own decision. If it truly doesn't warrant interrupting now, \
                      reply with exactly SILENT."
@@ -121,6 +123,10 @@ fn handle_event(state: &Arc<ServerState>, event: ServerEvent) {
                     tracing::info!(
                         "[yinyue-watch] ask {question_id} answered while heralding — dropped"
                     );
+                    return;
+                }
+                if user_sees_screen(&state) {
+                    tracing::info!("[yinyue-watch] user back at the screen — herald dropped");
                     return;
                 }
                 tracing::info!(
@@ -252,12 +258,7 @@ fn handle_notification(state: &Arc<ServerState>, payload: NotificationPayload) {
             if agent_id == YINYUE_AGENT {
                 return; // never herald her own turns
             }
-            if state
-                .manager
-                .presence_snapshot()
-                .state(crate::util::now_ts_secs())
-                != "away"
-            {
+            if user_sees_screen(state) {
                 return; // they're here; the reply is already on screen
             }
             let state = state.clone();
@@ -366,6 +367,17 @@ async fn wake_for_mission(state: Arc<ServerState>, mission_name: &str, status: &
             "neutral"
         };
     wake_herald(state, task, emotion).await;
+}
+
+/// Whether the user is at the screen right now. A herald of what they can
+/// already see — a finished reply, a question with its buttons — is noise: she
+/// speaks only when they have stepped away.
+fn user_sees_screen(state: &Arc<ServerState>) -> bool {
+    state
+        .manager
+        .presence_snapshot()
+        .state(crate::util::now_ts_secs())
+        != "away"
 }
 
 /// Whether an AskUser question (or permission prompt) is still awaiting the
