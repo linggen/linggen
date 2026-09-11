@@ -182,6 +182,7 @@ store of its own.
 |:--|:--|:--|
 | `ling` | provider APIs, `linggen.dev/api/llm`, local Ollama | inference |
 | `ling` | `linggen.dev` | register the instance, poll for SDP offers |
+| `ling` | `linggen.dev/api/saves`, `/api/meters` | a skill's declared cloud save and token meter (skill-spec § Cloud) |
 | Phone | `linggen.dev/api/llm`, `/api/search` | Yinyue's model and web search |
 
 Everything else the phone does — skills, memory, DJ files, photos, Ling's

@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod agent;
+pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
 pub mod mission;

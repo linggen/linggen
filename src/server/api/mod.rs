@@ -16,6 +16,7 @@ pub(crate) mod pair;
 pub(super) mod permissions;
 pub(super) mod rooms;
 pub(super) mod sessions;
+pub(super) mod skill_cloud;
 pub(super) mod skill_sync;
 pub(super) mod skills;
 pub(super) mod status;

@@ -21,7 +21,7 @@ pub(super) async fn run_loop_with_tracking(
         .ok();
 
     engine.set_run_id(run_id.clone());
-    let result = engine.run_agent_loop(session_id).await;
+    let result = super::cloud_gate::run_gated(engine, session_id).await;
     engine.set_run_id(None);
 
     if let Some(run_id) = run_id {

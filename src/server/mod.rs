@@ -1293,6 +1293,14 @@ async fn prepare_server(
             "/api/skill-sync/{skill}/have",
             post(api::skill_sync::post_have),
         )
+        .route(
+            "/api/skill-cloud/{skill}",
+            get(api::skill_cloud::get_cloud),
+        )
+        .route(
+            "/api/skill-cloud/{skill}/sync",
+            post(api::skill_cloud::post_sync),
+        )
         .route("/api/account/checkout", post(post_account_checkout))
         .route("/api/rooms", axum::routing::any(proxy_rooms))
         .route("/api/rooms/", axum::routing::any(proxy_rooms))

@@ -73,6 +73,22 @@ pub struct SyncConfig {
     pub topic: Option<String>,
 }
 
+/// What a skill keeps on linggen.dev for the signed-in account. Declaring it
+/// makes the skill need an account: a session bound to it refuses a turn when
+/// signed out. The engine does all the talking — a skill never calls out.
+/// See `doc/skill-spec.md` § Cloud.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CloudConfig {
+    /// A file under the skill directory kept in step across the account's
+    /// devices: pulled before a turn, pushed after one that changed it.
+    #[serde(default)]
+    pub save: Option<String>,
+    /// A rolling token window on linggen.dev, named by the site. Each turn's
+    /// tokens are reported to it; a spent window refuses the next turn.
+    #[serde(default)]
+    pub meter: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum SkillSource {
@@ -146,6 +162,10 @@ pub struct Skill {
     /// generic file-sync surface from it — see `SyncConfig`.
     #[serde(default)]
     pub sync: Option<SyncConfig>,
+    /// What this skill keeps on linggen.dev for the signed-in account — see
+    /// `CloudConfig`.
+    #[serde(default)]
+    pub cloud: Option<CloudConfig>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

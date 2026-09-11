@@ -133,6 +133,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `cwd` | Starting cwd for sessions invoking this skill |
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
+| `cloud` | A save and/or a token meter kept on linggen.dev for the account (see "Cloud") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -239,6 +240,21 @@ The engine then serves four generic routes, keyed by skill name — it never lea
 The ledger lives at `~/.linggen/sync/{skill}.json` and tracks only primary items — companions are extras, not coverage. Serving is read-only and plain-name-only: anything path-like is rejected, and subdirs are chosen by parameter, never by a path inside the name. `topic` additionally starts a debounced watcher so devices are pushed to instead of polling.
 
 Ingest (a device writing *into* the Mac) is not covered — that still needs a skill's own server half.
+
+## Cloud
+
+A skill that wants the account behind it — a game played on the Mac and the phone, with a pace — **declares** what linggen.dev keeps for it. The engine does all the talking; a skill bundle never calls out.
+
+```yaml
+cloud:
+  save: data/state.json   # a file in the skill dir, kept in step across devices
+  meter: lingjing         # a rolling token window, sized by linggen.dev
+```
+
+- **Declaring `cloud` makes the skill need an account.** A turn in a session bound to it is refused with `AUTH_REQUIRED:` when signed out.
+- **`save`** — pulled before a turn, synced after every model call and at the turn's end. The site versions it; a stale write is refused and the account's copy replaces the file. Ledger: `~/.linggen/sync/cloud-{skill}.json`. The path must stay inside the skill directory.
+- **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
+- The page reads `GET /api/skill-cloud/{skill}` (signed in, the meter's reading) and calls `POST /api/skill-cloud/{skill}/sync` on open and after a change it made itself.
 
 ## App skills
 

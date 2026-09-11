@@ -21,6 +21,7 @@
 //! and per-turn auto-recall.
 
 mod admin;
+mod cloud_gate;
 mod handler;
 pub(super) mod helpers;
 mod plan_flow;

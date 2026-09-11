@@ -454,6 +454,7 @@ impl AgentEngine {
         messages: &[ChatMessage],
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<StreamResult> {
+        crate::engine::cloud_meter::before_call(self).await?;
         let preferred = self.model_id.clone();
         let mut tried: Vec<String> = Vec::new();
         let mut model_id = preferred.clone();
@@ -483,6 +484,7 @@ impl AgentEngine {
             match result {
                 Ok(result) => {
                     self.last_token_usage = result.token_usage.clone();
+                    crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
                         self.model_id = model_id.clone();
                         // Show the model that actually answered. The picker is

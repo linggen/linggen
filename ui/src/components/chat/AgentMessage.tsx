@@ -7,6 +7,7 @@ import { ContentBlockView, TurnSummaryFooter } from './ContentBlockView';
 import { tryRenderSpecialBlock } from './SpecialBlocks';
 import { AuthRequiredBlock } from './AuthRequiredBlock';
 import { BillingRequiredBlock } from './BillingRequiredBlock';
+import { BudgetEmptyBlock, parseBudgetEmpty } from './BudgetEmptyBlock';
 import { getMessagePhase, isTransientStatus, isToolStatusText } from './MessagePhase';
 import { visibleMessageText } from './MessageHelpers';
 import { stripEmbeddedStructuredJson, isPlanMessage, normalizeMessageTextForDedup } from '../../lib/messageUtils';
@@ -130,6 +131,10 @@ export const AgentMessage: React.FC<{
   // A spent-allowance turn (trial/monthly 402) surfaces a subscribe card.
   const billingBlock = renderBillingRequired(msg.text);
   if (billingBlock) return <>{billingBlock}</>;
+
+  // A skill's play window is spent: say when it frees up, not "error".
+  const refillAt = parseBudgetEmpty(msg.text);
+  if (refillAt !== null) return <BudgetEmptyBlock refillAt={refillAt} />;
 
   // Error messages get a prominent banner style.
   if (msg.isError) {
