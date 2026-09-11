@@ -310,7 +310,7 @@ impl AgentEngine {
         // straight through as a content block — they don't read files, run
         // commands, or reach outside the process. Running them through the
         // path/tier permission gate produces nonsense prompts like
-        // "PageUpdate /Users/lianghuang — switch to admin?" because the gate
+        // "PageUpdate /Users/<you> — switch to admin?" because the gate
         // synthesizes cwd as the file_path_arg and classifies unknown tools
         // as Admin tier. Skip the gate entirely for pure data tools.
         let skip_permission_gate = self.tools.is_skill_data_tool(&canonical_tool);

@@ -148,7 +148,7 @@ items, never raw markdown:
   the same door; the row is the user's.
 - **From your Mac** — one line that says the truth (no Mac paired, not in
   reach, when the copy last came down) and a *Sync now* button (2026-09-09,
-  Liang: the user must be able to sync from here). The run answers in words
+  Hanli: the user must be able to sync from here). The run answers in words
   either way — what came down, what went up, or "Your Mac isn't connected" —
   and the rows are re-read so the screen matches the file. Never gated.
 - Footer: when the last pass ran, how many rows she keeps, the cap, the model.

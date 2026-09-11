@@ -44,7 +44,7 @@ can't run the dream missions, which is still true, but that is an argument
 for shipping both binaries — which the plugin already does — not for hiding
 one behind the other.
 
-**Cut, not a long window** (2026-07-30, Liang's call). The group went out in
+**Cut, not a long window** (2026-07-30, Hanli's call). The group went out in
 the same release that gave the plugin its second MCP entry. The plugin was the
 only channel that ever wired this door for memory, so it migrates its users
 atomically; leaving both would have put two `memory_search` tools with

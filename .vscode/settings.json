@@ -6,6 +6,6 @@
     "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
   },
   "lldb.adapterEnv": {
-    "PATH": "/Users/lianghuang/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+    "PATH": "${env:HOME}/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
   }
 }

@@ -37,3 +37,6 @@ pkg/
 
 # VS Code
 .vscode/chrome-debug/
+
+# Wrangler's local cache (carries the signed-in account's name)
+.wrangler/

@@ -289,7 +289,7 @@ mod tests {
     fn device(account: Option<(&str, Option<&str>)>) -> PairedDevice {
         PairedDevice {
             id: "dev-1".into(),
-            name: "Liang's iPhone".into(),
+            name: "Alex's iPhone".into(),
             secret: "s".into(),
             created_at: 0,
             account: account.map(|(id, name)| AccountRef {
@@ -309,7 +309,7 @@ mod tests {
     fn owner_phone_is_nobody_special() {
         // Signed in to the Mac's own account: unstamped, like the Mac itself.
         assert_eq!(
-            person_for(&device(Some(("u-owner", Some("Liang")))), Some("u-owner")),
+            person_for(&device(Some(("u-owner", Some("Alex")))), Some("u-owner")),
             None
         );
     }
@@ -328,7 +328,7 @@ mod tests {
     fn signed_out_phone_is_its_device() {
         let p = person_for(&device(None), Some("u-owner")).unwrap();
         assert_eq!(p.id, "device:dev-1");
-        assert_eq!(p.name.as_deref(), Some("Liang's iPhone"));
+        assert_eq!(p.name.as_deref(), Some("Alex's iPhone"));
         // A Mac with no account of its own still tells a guest from itself.
         assert_eq!(person_for(&device(None), None).unwrap().id, "device:dev-1");
     }

@@ -311,7 +311,7 @@ fn device_by_token(token: &str) -> Option<PairedDevice> {
 /// What the user calls this device. `None` when the id belongs to nothing —
 /// a device unpaired mid-connection, say.
 ///
-/// Ids are for matching; a person hears "Liang's iPhone", so anything the
+/// Ids are for matching; a person hears "Alex's iPhone", so anything the
 /// agent says out loud resolves through here first.
 pub fn device_name(id: &str) -> Option<String> {
     load_devices()

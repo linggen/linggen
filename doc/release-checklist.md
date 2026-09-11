@@ -8,7 +8,7 @@ that does it; the script is the truth, this page is the order.
 - `git status` clean and `HEAD == origin/main`. Tags are created at the
   remote head when a draft is published, never before.
 - `CHANGELOG.md` entry written and committed.
-- The release candidate is already running on Liang's Mac (deploy-first:
+- The release candidate is already running on Hanli's Mac (deploy-first:
   swap, restart, use it — "on main" is not "tried").
 - Engine Linux dry run, no upload:
   `gh workflow run build-linux.yml --repo linggen/linggen -f ref=$(git rev-parse HEAD)`

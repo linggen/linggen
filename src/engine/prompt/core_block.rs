@@ -124,7 +124,7 @@ fn user_name_from_rows(rows: &[CoreRow]) -> Option<String> {
             }
         }
     }
-    // The identity-dash row: "Liang — sole founder …". Agent names are not
+    // The identity-dash row: "Alex — sole founder …". Agent names are not
     // the user, however their rows are phrased.
     for r in rows {
         if let Some((head, _)) = r.content.trim().split_once(" — ") {
@@ -282,9 +282,9 @@ mod tests {
     fn name_from_identity_dash_row() {
         let rows = [
             row("Prefers terse replies over long ones."),
-            row("Liang — sole founder and developer of Linggen; the builder."),
+            row("Alex — sole founder and developer of Linggen; the builder."),
         ];
-        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Liang"));
+        assert_eq!(user_name_from_rows(&rows).as_deref(), Some("Alex"));
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn prose_dash_rows_do_not_look_like_names() {
         let rows = [row(
-            "Liang is in the ATLANTIC time zone (ADT/AST, UTC-3 in summer) — NOT Eastern.",
+            "Alex is in the ATLANTIC time zone (ADT/AST, UTC-3 in summer) — NOT Eastern.",
         )];
         assert_eq!(user_name_from_rows(&rows), None);
     }

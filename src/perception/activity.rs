@@ -528,13 +528,13 @@ mod tests {
         // `/api/activity` lands in this Mac's file, and a line that reads the
         // same as the Mac's own throws the attribution away at the last step.
         let mut a = activity(at(0), "import", "42 transactions");
-        a.device = Some("Liang's iPhone".into());
+        a.device = Some("Alex's iPhone".into());
         assert_eq!(
             a.line_on("test-mac"),
-            "you imported 42 transactions (on Liang's iPhone)"
+            "you imported 42 transactions (on Alex's iPhone)"
         );
         assert_eq!(
-            a.line_on("Liang's iPhone"),
+            a.line_on("Alex's iPhone"),
             "you imported 42 transactions",
             "never on the machine doing the reading"
         );

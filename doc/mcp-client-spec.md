@@ -210,7 +210,7 @@ them arbitrarily. That is exactly the duplication `mcp-spec.md` warned about,
 self-inflicted.
 
 **Breaking change, deliberately.** `memory_*` had been on the engine's `/mcp`
-since 1.4.0 (2026-07-10). **Cut 2026-07-30** (Liang's call), in the same
+since 1.4.0 (2026-07-10). **Cut 2026-07-30** (Hanli's call), in the same
 release that gave the plugin its second entry: the plugin was the only channel
 that wired that door for memory, so it migrates its users atomically, and
 keeping both would have put two identical `memory_search` tools in front of one
