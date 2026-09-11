@@ -513,44 +513,12 @@ impl AgentEngine {
 
             // --- Native tool calling path ---
             if !native_tool_calls.is_empty() {
-                // Emit visible text content (strip any embedded JSON actions).
-                // In plan mode, suppress text content blocks — plan text reaches
-                // the UI via PlanUpdate events instead.  Emitting it here
-                // would create a duplicate text message that hides the PlanBlock.
-                let visible_text = text_before_first_json(&raw);
-                if !visible_text.is_empty() && !self.plan_mode {
-                    if let Some(manager) = self.tools.get_manager() {
-                        let agent_id = self
-                            .agent_id
-                            .clone()
-                            .unwrap_or_else(|| "unknown".to_string());
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::TextSegment {
-                                    agent_id: agent_id.clone(),
-                                    text: visible_text.clone(),
-                                    parent_id: self.parent_agent_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::ContentBlockStart {
-                                    agent_id,
-                                    block_id: uuid::Uuid::new_v4().to_string(),
-                                    block_type: "text".to_string(),
-                                    tool: None,
-                                    args: Some(visible_text),
-                                    parent_id: self.parent_agent_id.clone(),
-                                    run_id: self.run_id.clone(),
-                                    parent_run_id: self.parent_run_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
-                    }
-                }
+                // Visible text beside the calls (any embedded JSON actions
+                // stripped): shown and saved. Plan mode suppresses it — plan
+                // text reaches the UI via PlanUpdate, and a duplicate text
+                // message would hide the PlanBlock.
+                self.emit_text_segment(text_before_first_json(&raw), session_id)
+                    .await;
 
                 // Record the assistant message with tool_calls in chat history.
                 // Preserve id/call_type so OpenAI-compatible APIs (Gemini, etc.)
@@ -692,46 +660,10 @@ impl AgentEngine {
 
             // --- Legacy path: parse JSON actions from free-form text ---
 
-            // Emit text segment event for text before the first JSON object.
-            // Suppress in plan mode — plan text is delivered via PlanUpdate events.
-            {
-                let text_before = text_before_first_json(&raw);
-                if !text_before.is_empty() && !self.plan_mode {
-                    if let Some(manager) = self.tools.get_manager() {
-                        let agent_id = self
-                            .agent_id
-                            .clone()
-                            .unwrap_or_else(|| "unknown".to_string());
-                        // Emit TextSegment for streaming display in UI.
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::TextSegment {
-                                    agent_id: agent_id.clone(),
-                                    text: text_before.clone(),
-                                    parent_id: self.parent_agent_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
-                        // Also emit structured ContentBlockStart(text) for Web UI.
-                        manager
-                            .send_event(
-                                crate::engine::agent::AgentEvent::ContentBlockStart {
-                                    agent_id,
-                                    block_id: uuid::Uuid::new_v4().to_string(),
-                                    block_type: "text".to_string(),
-                                    tool: None,
-                                    args: Some(text_before),
-                                    parent_id: self.parent_agent_id.clone(),
-                                    run_id: self.run_id.clone(),
-                                    parent_run_id: self.parent_run_id.clone(),
-                                },
-                                self.session_id.clone(),
-                            )
-                            .await;
-                    }
-                }
-            }
+            // Text before the first JSON object: shown and saved (not in plan
+            // mode — plan text is delivered via PlanUpdate events).
+            self.emit_text_segment(text_before_first_json(&raw), session_id)
+                .await;
 
             // Repetition check
             if let Some(ctrl) = self

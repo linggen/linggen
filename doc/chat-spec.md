@@ -156,6 +156,13 @@ A session is a single conversation thread scoped to a project. Each session has 
 - **Creation**: auto-created on first chat when `session_id` is not provided. Format: `sess-{timestamp}-{uuid8}`.
 - **Storage**: each session lives at `<project>/.linggen/sessions/<session_id>/` with `session.yaml` (metadata) and `messages.jsonl` (chat history).
 - **Persistence**: sessions survive server restarts. The web UI lists all sessions per project.
+- **What a turn saves**: every piece of text the agent writes — the final reply
+  and the text it writes between tool calls — is its own `messages.jsonl` row;
+  tool calls and results are observation rows. A reload shows the whole
+  conversation. Live, the turn's bubble already holds the between-calls text as
+  segments, so the UI's merge drops a saved row whose words are on screen that
+  way. (Until 2026-09-11 only the final reply was saved, and a long tool-using
+  turn — a Lingjing game day — reloaded as an empty chat.)
 
 ### Multi-session architecture
 

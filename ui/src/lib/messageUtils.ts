@@ -700,6 +700,24 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
     return transferRichContent(msg, live[frozenIdx]);
   });
 
+  // Text the agent wrote between tool calls is saved as its own row, and a
+  // live bubble already shows it as one of its segments. A plain saved row
+  // whose words are on screen that way is the same text — drop it, or the
+  // turn renders twice. With no live bubble (a reload), every row shows.
+  const onScreen = new Set(
+    live.flatMap((m) => [
+      ...(m.segments || []).map((s) => (s.type === 'text' ? s.text : '')),
+      ...(m.content || []).map((b) => (b.type === 'text' ? b.text : '')),
+    ])
+      .map((t) => normalizeMessageTextForDedup(t || ''))
+      .filter(Boolean),
+  );
+  const unshown = claimed.filter((msg) => {
+    if (msg.role === 'user' || msg.from === 'user' || isPlanMessage(msg)) return true;
+    if (hasRichContent(msg)) return true; // this row IS the live bubble now
+    return !onScreen.has(normalizeMessageTextForDedup(msg.text));
+  });
+
   const now = Date.now();
   const uniqueExtras = live.filter(
     (m, idx) => {
@@ -711,8 +729,8 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       // renders the reply twice, permanently (no later pass re-merges).
       // likelySameMessage requires identical text within 2 minutes, so a
       // half-streamed prefix can't false-match an older identical reply.
-      if (m.isGenerating) return !claimed.some((p) => likelySameMessage(p, m));
-      if (claimed.some((p) => likelySameMessage(p, m))) return false;
+      if (m.isGenerating) return !unshown.some((p) => likelySameMessage(p, m));
+      if (unshown.some((p) => likelySameMessage(p, m))) return false;
       if (m.role === 'user' || m.from === 'user') return true;
       // Keep client-side-only messages (e.g. `! bash` results) — they are never
       // persisted on the server, so dropping them loses them permanently.
@@ -724,7 +742,7 @@ export const mergeChatMessages = (persisted: ChatMessage[], live: ChatMessage[])
       return now - ts <= LIVE_MESSAGE_GRACE_MS;
     }
   );
-  const merged = [...claimed, ...uniqueExtras];
+  const merged = [...unshown, ...uniqueExtras];
 
   // Final content-based dedup: remove consecutive messages with identical
   // content from the same sender.  This catches duplicates that slip through

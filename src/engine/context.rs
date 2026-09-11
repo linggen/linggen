@@ -86,6 +86,68 @@ impl AgentEngine {
         Ok(())
     }
 
+    /// Text the model wrote alongside its tool calls: shown live as a segment
+    /// of the turn's bubble, and saved as its own row so a reload shows it
+    /// too. Only a turn's final reply used to be saved, so a long tool-using
+    /// turn — a game day is narration and AskUser in a loop — reloaded as an
+    /// empty chat. No Message event: the live bubble already holds the text,
+    /// and the UI's merge drops a saved row it can already see. Plan text
+    /// travels by PlanUpdate instead; subagents never write the parent's log.
+    pub(crate) async fn emit_text_segment(&self, text: String, session_id: Option<&str>) {
+        if text.is_empty() || self.plan_mode {
+            return;
+        }
+        let Some(manager) = self.tools.get_manager() else {
+            return;
+        };
+        let agent_id = self
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        manager
+            .send_event(
+                crate::engine::agent::AgentEvent::TextSegment {
+                    agent_id: agent_id.clone(),
+                    text: text.clone(),
+                    parent_id: self.parent_agent_id.clone(),
+                },
+                self.session_id.clone(),
+            )
+            .await;
+        manager
+            .send_event(
+                crate::engine::agent::AgentEvent::ContentBlockStart {
+                    agent_id: agent_id.clone(),
+                    block_id: uuid::Uuid::new_v4().to_string(),
+                    block_type: "text".to_string(),
+                    tool: None,
+                    args: Some(text.clone()),
+                    parent_id: self.parent_agent_id.clone(),
+                    run_id: self.run_id.clone(),
+                    parent_run_id: self.parent_run_id.clone(),
+                },
+                self.session_id.clone(),
+            )
+            .await;
+        if self.tools.builtins.delegation_depth() > 0 {
+            return;
+        }
+        manager
+            .add_chat_message(
+                &self.cfg.ws_root,
+                session_id.unwrap_or("default"),
+                &crate::state_fs::sessions::ChatMsg {
+                    agent_id: agent_id.clone(),
+                    from_id: agent_id,
+                    to_id: self.outbound_target(),
+                    content: text,
+                    timestamp: crate::util::now_ts_secs(),
+                    is_observation: false,
+                },
+            )
+            .await;
+    }
+
     pub async fn persist_assistant_message(
         &self,
         content: &str,
