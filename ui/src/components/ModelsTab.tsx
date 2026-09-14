@@ -660,7 +660,9 @@ export const ModelsTab: React.FC<{
                             placeholder={
                               hasKey(model)
                                 ? '(stored in ~/.linggen/credentials.json)'
-                                : `(the ${model.provider} key for this endpoint)`
+                                : model.provider === 'ollama'
+                                  ? '(optional)'
+                                  : `(the ${model.provider} key for this endpoint)`
                             }
                           />
                           <button
