@@ -9,7 +9,7 @@ use tracing::{info, warn};
 //
 //   {
 //     "version": 2,
-//     "endpoints": { "gemini|https://…/v1beta/openai": { "provider", "url", "api_key" } },
+//     "endpoints": [ { "provider": "gemini", "url": "https://…/v1beta/openai", "api_key": "…" } ],
 //     "models":    { "<model id>": { "api_key" } },      // rare per-model overrides
 //     "services":  { "tavily": { "api_key" } }           // keys that are not a model's
 //   }
@@ -41,8 +41,10 @@ pub struct EndpointKey {
 pub struct Credentials {
     #[serde(default = "current_version")]
     pub version: u32,
-    #[serde(default)]
-    pub endpoints: BTreeMap<String, EndpointKey>,
+    /// One entry per endpoint. Read as a list, or as the map keyed by
+    /// `endpoint_id` an earlier build wrote; always written as a list.
+    #[serde(default, deserialize_with = "endpoints_list_or_map")]
+    pub endpoints: Vec<EndpointKey>,
     #[serde(default)]
     pub models: BTreeMap<String, KeyEntry>,
     #[serde(default)]
@@ -53,25 +55,40 @@ fn current_version() -> u32 {
     CREDENTIALS_VERSION
 }
 
+/// The endpoints section as a list, or as the `{ "<id>": {…} }` map an
+/// earlier version-2 build wrote (ids in sorted order).
+fn endpoints_list_or_map<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<EndpointKey>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Shape {
+        List(Vec<EndpointKey>),
+        Map(BTreeMap<String, EndpointKey>),
+    }
+    Ok(match Shape::deserialize(d)? {
+        Shape::List(v) => v,
+        Shape::Map(m) => m.into_values().collect(),
+    })
+}
+
 impl Default for Credentials {
     fn default() -> Self {
         Self {
             version: CREDENTIALS_VERSION,
-            endpoints: BTreeMap::new(),
+            endpoints: Vec::new(),
             models: BTreeMap::new(),
             services: BTreeMap::new(),
         }
     }
 }
 
-/// The id an endpoint's key is stored under: provider and base URL, case
-/// and trailing slashes aside.
-pub fn endpoint_id(provider: &str, url: &str) -> String {
-    format!(
-        "{}|{}",
-        provider.trim().to_ascii_lowercase(),
-        url.trim().trim_end_matches('/').to_ascii_lowercase()
-    )
+/// Two endpoints are the same when provider and base URL match, case and
+/// trailing slashes aside.
+pub fn same_endpoint(provider_a: &str, url_a: &str, provider_b: &str, url_b: &str) -> bool {
+    provider_a.trim().eq_ignore_ascii_case(provider_b.trim())
+        && url_a
+            .trim()
+            .trim_end_matches('/')
+            .eq_ignore_ascii_case(url_b.trim().trim_end_matches('/'))
 }
 
 /// The version-1 row shape: a key entered for one model id, optionally
@@ -102,8 +119,10 @@ impl Credentials {
         let (creds, migrated) = Self::load_inner(file, configured);
         if migrated {
             let bak = file.with_extension("json.v1.bak");
-            if let Err(e) = std::fs::copy(file, &bak) {
-                warn!("credentials: could not keep the v1 copy at {}: {e}", bak.display());
+            if !bak.exists() {
+                if let Err(e) = std::fs::copy(file, &bak) {
+                    warn!("credentials: could not keep the earlier copy at {}: {e}", bak.display());
+                }
             }
             match creds.save(file) {
                 Ok(()) => info!(
@@ -141,8 +160,9 @@ impl Credentials {
         };
         let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
         if version >= 2 {
+            let map_shaped = value.get("endpoints").map(|e| e.is_object()).unwrap_or(false);
             return match serde_json::from_value::<Credentials>(value) {
-                Ok(c) => (c, false),
+                Ok(c) => (c, map_shaped),
                 Err(e) => {
                     warn!("Failed to parse credentials.json: {}", e);
                     (Self::default(), false)
@@ -171,12 +191,9 @@ impl Credentials {
         for (id, row) in &rows {
             let Some(key) = key_of(row) else { continue };
             if let Some(m) = configured.iter().find(|m| &m.id == id) {
-                let eid = endpoint_id(&m.provider, &m.url);
-                match out.endpoints.get(&eid) {
-                    None => {
-                        out.endpoints.insert(eid, EndpointKey { provider: m.provider.clone(), url: m.url.clone(), api_key: Some(key) });
-                    }
-                    Some(e) if e.api_key.as_deref() != Some(key.as_str()) => {
+                match out.endpoint_key(&m.provider, &m.url) {
+                    None => out.set_endpoint_key(&m.provider, &m.url, Some(key)),
+                    Some(k) if k != key => {
                         out.models.insert(id.clone(), KeyEntry { api_key: Some(key) });
                     }
                     Some(_) => {}
@@ -191,8 +208,9 @@ impl Credentials {
             }
             match (&row.provider, &row.url) {
                 (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => {
-                    let eid = endpoint_id(p, u);
-                    out.endpoints.entry(eid).or_insert_with(|| EndpointKey { provider: p.clone(), url: u.clone(), api_key: Some(key) });
+                    if out.endpoint_key(p, u).is_none() {
+                        out.set_endpoint_key(p, u, Some(key));
+                    }
                 }
                 _ => {
                     out.services.insert(id.clone(), KeyEntry { api_key: Some(key) });
@@ -215,21 +233,19 @@ impl Credentials {
     /// The key stored for an endpoint.
     pub fn endpoint_key(&self, provider: &str, url: &str) -> Option<&str> {
         self.endpoints
-            .get(&endpoint_id(provider, url))
+            .iter()
+            .find(|e| same_endpoint(&e.provider, &e.url, provider, url))
             .and_then(|e| e.api_key.as_deref())
             .filter(|k| !k.is_empty())
     }
 
     /// Set or clear an endpoint's key. Clearing removes the entry.
     pub fn set_endpoint_key(&mut self, provider: &str, url: &str, api_key: Option<String>) {
-        let eid = endpoint_id(provider, url);
-        match api_key.filter(|k| !k.is_empty()) {
-            Some(key) => {
-                self.endpoints.insert(eid, EndpointKey { provider: provider.trim().to_string(), url: url.trim().to_string(), api_key: Some(key) });
-            }
-            None => {
-                self.endpoints.remove(&eid);
-            }
+        self.endpoints
+            .retain(|e| !same_endpoint(&e.provider, &e.url, provider, url));
+        if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+            self.endpoints.push(EndpointKey { provider: provider.trim().to_string(), url: url.trim().to_string(), api_key: Some(key) });
+            self.endpoints.sort_by(|a, b| (&a.provider, &a.url).cmp(&(&b.provider, &b.url)));
         }
     }
 
@@ -289,7 +305,7 @@ impl Credentials {
             endpoints: self
                 .endpoints
                 .iter()
-                .map(|(id, e)| (id.clone(), EndpointKey { provider: e.provider.clone(), url: e.url.clone(), api_key: mask(&e.api_key) }))
+                .map(|e| EndpointKey { provider: e.provider.clone(), url: e.url.clone(), api_key: mask(&e.api_key) })
                 .collect(),
             models: self.models.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
             services: self.services.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
@@ -456,7 +472,7 @@ mod tests {
         assert_eq!(r.endpoint_key("gemini", GEMINI), Some("***"));
         assert_eq!(r.model_override("m"), Some("***"));
         assert_eq!(r.service_key("tavily"), Some("***"));
-        assert_eq!(r.endpoints[&endpoint_id("gemini", GEMINI)].provider, "gemini");
+        assert_eq!(r.endpoints[0].provider, "gemini");
     }
 
     #[test]
@@ -468,6 +484,22 @@ mod tests {
         creds.set_model_override("m", Some("k".into()));
         creds.set_model_override("m", Some(String::new()));
         assert!(creds.models.is_empty());
+    }
+
+    #[test]
+    fn a_map_shaped_endpoints_section_still_reads_and_is_rewritten_as_a_list() {
+        let tmp = std::env::temp_dir().join(format!("linggen_cred_map_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("credentials.json");
+        std::fs::write(&file, format!(r#"{{ "version": 2, "endpoints": {{ "gemini|x": {{ "provider": "gemini", "url": "{GEMINI}", "api_key": "AIza" }} }}, "services": {{ "tavily": {{ "api_key": "t" }} }} }}"#)).unwrap();
+        let creds = Credentials::load_for(&file, &[]);
+        assert_eq!(creds.endpoint_key("gemini", GEMINI), Some("AIza"));
+        let on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(on_disk["endpoints"].is_array(), "written back as a list");
+        assert_eq!(on_disk["endpoints"][0]["provider"], "gemini");
+        assert_eq!(on_disk["services"]["tavily"]["api_key"], "t");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

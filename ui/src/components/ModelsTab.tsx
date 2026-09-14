@@ -55,13 +55,14 @@ const emptyModel = (): ModelConfigUI => ({
 type KeyEntry = { api_key?: string | null };
 type CredentialsMap = {
   version?: number;
-  endpoints?: Record<string, KeyEntry & { provider: string; url: string }>;
+  endpoints?: Array<KeyEntry & { provider: string; url: string }>;
   models?: Record<string, KeyEntry>;
   services?: Record<string, KeyEntry>;
 };
-/** The id an endpoint's key is stored under — mirrors endpoint_id() in credentials.rs. */
-const endpointId = (provider: string, url: string) =>
-  `${provider.trim().toLowerCase()}|${url.trim().replace(/\/+$/, '').toLowerCase()}`;
+/** Provider and base URL name an endpoint — mirrors same_endpoint() in credentials.rs. */
+const sameEndpoint = (a: { provider: string; url: string }, b: { provider: string; url: string }) =>
+  a.provider.trim().toLowerCase() === b.provider.trim().toLowerCase() &&
+  a.url.trim().replace(/\/+$/, '').toLowerCase() === b.url.trim().replace(/\/+$/, '').toLowerCase();
 
 const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: 'connected' | 'disconnected' | 'na' }> = ({ health, ollamaStatus }) => {
   // Priority: health tracker status > Ollama ps status
@@ -343,11 +344,11 @@ export const ModelsTab: React.FC<{
 
   const hasOwnKey = (model: ModelConfigUI) => !!credentials.models?.[model.id]?.api_key;
   const hasEndpointKey = (model: ModelConfigUI) =>
-    !!credentials.endpoints?.[endpointId(model.provider, model.url)]?.api_key;
+    !!(credentials.endpoints ?? []).find((e) => sameEndpoint(e, model))?.api_key;
   const hasKey = (model: ModelConfigUI) => hasOwnKey(model) || hasEndpointKey(model);
   /** How many configured models share this model's endpoint key. */
   const sharedWith = (model: ModelConfigUI) =>
-    config.models.filter((o) => o.id !== model.id && endpointId(o.provider, o.url) === endpointId(model.provider, model.url)).length;
+    config.models.filter((o) => o.id !== model.id && sameEndpoint(o, model)).length;
 
   // Default model selection helpers
   const isDefault = (modelId: string) => defaultModels.includes(modelId);

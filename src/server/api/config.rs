@@ -122,8 +122,9 @@ pub(crate) async fn get_credentials_api(
 }
 
 /// Two body shapes are accepted. The version-2 shape names what a key is
-/// for: `{"endpoints": {"<provider>|<url>": {provider, url, api_key}},
-/// "models": {"<id>": {api_key}}, "services": {"<name>": {api_key}}}`. The
+/// for: `{"endpoints": [{provider, url, api_key}], "models": {"<id>":
+/// {api_key}}, "services": {"<name>": {api_key}}}` (endpoints may also be
+/// the older map keyed by id; a null or empty api_key removes). The
 /// settings page's older flat shape, model id → `{api_key, provider, url}`,
 /// means "the key for this model's endpoint" (or the model's own override
 /// when no endpoint is given). `null` or an empty key removes; `"***"` is
@@ -164,13 +165,15 @@ pub(crate) async fn update_credentials_api(
 
     let sectioned = ["endpoints", "models", "services"].iter().any(|k| body.entries.contains_key(*k));
     if sectioned {
-        for (id, v) in body.entries.get("endpoints").and_then(|e| e.as_object()).into_iter().flatten() {
+        let listed: Vec<&serde_json::Value> = match body.entries.get("endpoints") {
+            Some(serde_json::Value::Array(items)) => items.iter().collect(),
+            Some(serde_json::Value::Object(map)) => map.values().collect(),
+            _ => Vec::new(),
+        };
+        for v in listed {
             let Some(key) = key_of(v) else { continue };
-            match endpoint_of(v) {
-                Some((p, u)) => creds.set_endpoint_key(&p, &u, key),
-                None => {
-                    creds.endpoints.remove(id);
-                }
+            if let Some((p, u)) = endpoint_of(v) {
+                creds.set_endpoint_key(&p, &u, key);
             }
         }
         for (id, v) in body.entries.get("models").and_then(|e| e.as_object()).into_iter().flatten() {
