@@ -543,7 +543,7 @@ fn resolve_model_catalog(
     allow: &[String],
     config: &crate::config::Config,
 ) -> Vec<serde_json::Value> {
-    let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
+    let creds = crate::credentials::Credentials::load_for(&crate::credentials::credentials_file(), &config.models);
     allow
         .iter()
         .map(|id| {
@@ -562,7 +562,7 @@ fn resolve_model_catalog(
                     "kind": "byok",
                     "provider": m.provider,
                     "base_url": m.url,
-                    "key": creds.get_api_key(id),
+                    "key": crate::credentials::resolve_api_key(m, &creds),
                 }),
                 None => serde_json::json!({ "id": id, "kind": "unknown" }),
             }

@@ -50,8 +50,18 @@ const emptyModel = (): ModelConfigUI => ({
   tags: [],
 });
 
-/** A stored key, stamped with the endpoint it was entered for (credentials.rs). */
-type CredentialsMap = Record<string, { api_key?: string | null; provider?: string | null; url?: string | null }>;
+/** credentials.json v2 (credentials.rs): a key belongs to a provider endpoint;
+ *  every model on that endpoint shares it. A model may carry its own override. */
+type KeyEntry = { api_key?: string | null };
+type CredentialsMap = {
+  version?: number;
+  endpoints?: Record<string, KeyEntry & { provider: string; url: string }>;
+  models?: Record<string, KeyEntry>;
+  services?: Record<string, KeyEntry>;
+};
+/** The id an endpoint's key is stored under — mirrors endpoint_id() in credentials.rs. */
+const endpointId = (provider: string, url: string) =>
+  `${provider.trim().toLowerCase()}|${url.trim().replace(/\/+$/, '').toLowerCase()}`;
 
 const HealthDot: React.FC<{ health: ModelHealthInfo | undefined; ollamaStatus: 'connected' | 'disconnected' | 'na' }> = ({ health, ollamaStatus }) => {
   // Priority: health tracker status > Ollama ps status
@@ -189,11 +199,9 @@ export const ModelsTab: React.FC<{
       if (resp.ok) {
         const data: CredentialsMap = await resp.json();
         setCredentials(data);
-        const keys: Record<string, string> = {};
-        for (const [id, entry] of Object.entries(data)) {
-          keys[id] = entry.api_key || '';
-        }
-        setLocalKeys(keys);
+        // A stored key is never echoed into the field: the label says it
+        // is set, the placeholder says where; typing replaces it.
+        setLocalKeys({});
       }
     } catch { /* ignore */ }
   }, []);
@@ -296,7 +304,9 @@ export const ModelsTab: React.FC<{
   };
 
   const saveCredentials = useCallback(async () => {
-    const body: CredentialsMap = {};
+    // The flat shape: a key typed on a model row is the key for that
+    // model's endpoint (config.rs update_credentials_api).
+    const body: Record<string, { api_key: string | null; provider: string; url: string }> = {};
     for (const model of config.models) {
       if (!model.id) continue;
       const val = localKeys[model.id];
@@ -331,22 +341,13 @@ export const ModelsTab: React.FC<{
     return running ? 'connected' : 'disconnected';
   };
 
-  const hasKey = (modelId: string) => !!(credentials[modelId]?.api_key);
-
-  // A key belongs to an endpoint: a model without its own key uses a
-  // sibling's on the same provider + URL, or any stored key stamped for
-  // that endpoint (credentials.rs). Mirror that here so the row says so.
-  const keyInheritedFrom = (model: ModelConfigUI): string | null => {
-    const endpoint = (u: string) => u.replace(/\/+$/, '').toLowerCase();
-    const same = (provider: string | null | undefined, url: string | null | undefined) =>
-      (provider ?? '').toLowerCase() === model.provider.toLowerCase() && endpoint(url ?? '') === endpoint(model.url);
-    const sibling = config.models.find((o) => o.id !== model.id && same(o.provider, o.url) && hasKey(o.id));
-    if (sibling) return sibling.id;
-    const stamped = Object.entries(credentials)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .find(([id, e]) => id !== model.id && !!e.api_key && same(e.provider, e.url));
-    return stamped ? stamped[0] : null;
-  };
+  const hasOwnKey = (model: ModelConfigUI) => !!credentials.models?.[model.id]?.api_key;
+  const hasEndpointKey = (model: ModelConfigUI) =>
+    !!credentials.endpoints?.[endpointId(model.provider, model.url)]?.api_key;
+  const hasKey = (model: ModelConfigUI) => hasOwnKey(model) || hasEndpointKey(model);
+  /** How many configured models share this model's endpoint key. */
+  const sharedWith = (model: ModelConfigUI) =>
+    config.models.filter((o) => o.id !== model.id && endpointId(o.provider, o.url) === endpointId(model.provider, model.url)).length;
 
   // Default model selection helpers
   const isDefault = (modelId: string) => defaultModels.includes(modelId);
@@ -643,9 +644,11 @@ export const ModelsTab: React.FC<{
                       <>
                         <label className={labelCls}>
                           API Key
-                          {hasKey(model.id) && <span className="ml-1 text-green-500 text-[8px]">(set)</span>}
-                          {!hasKey(model.id) && keyInheritedFrom(model) && (
-                            <span className="ml-1 text-slate-400 text-[8px]">(inherited)</span>
+                          {hasOwnKey(model) && <span className="ml-1 text-green-500 text-[8px]">(own key)</span>}
+                          {!hasOwnKey(model) && hasEndpointKey(model) && (
+                            <span className="ml-1 text-green-500 text-[8px]">
+                              (set{sharedWith(model) > 0 ? ` · shared by ${sharedWith(model) + 1} ${model.provider} models` : ''})
+                            </span>
                           )}
                         </label>
                         <div className="relative">
@@ -655,11 +658,9 @@ export const ModelsTab: React.FC<{
                             value={localKeys[model.id] ?? ''}
                             onChange={(e) => updateLocalKey(model.id, e.target.value)}
                             placeholder={
-                              hasKey(model.id)
+                              hasKey(model)
                                 ? '(stored in ~/.linggen/credentials.json)'
-                                : keyInheritedFrom(model)
-                                  ? `(inherits ${keyInheritedFrom(model)}'s key)`
-                                  : '(optional)'
+                                : `(the ${model.provider} key for this endpoint)`
                             }
                           />
                           <button
@@ -752,7 +753,7 @@ export const ModelsTab: React.FC<{
           </div>
         )}
         <p className="mt-3 text-[11px] text-slate-400">
-          API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, not in the config file.
+          API keys are stored in <code className="text-[11px]">~/.linggen/credentials.json</code>, one per provider endpoint — every model on the same endpoint shares it; paste it once.
           Click the <Star size={10} className="inline text-amber-500" /> icon on a model to add it to the default fallback chain.
         </p>
       </section>

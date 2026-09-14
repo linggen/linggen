@@ -201,7 +201,7 @@ struct ModelInstance {
 
 impl ModelManager {
     pub fn new(configs: Vec<ModelConfig>) -> Self {
-        let creds = Credentials::load(&credentials::credentials_file());
+        let creds = Credentials::load_for(&credentials::credentials_file(), &configs);
         Self::new_with_credentials(configs, &creds)
     }
 

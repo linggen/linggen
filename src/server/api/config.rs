@@ -22,19 +22,23 @@ pub(crate) async fn update_config_api(
     // For backward compat: if the UI sends a non-redacted, non-empty key, migrate it
     // to credentials.json.
     let creds_file = credentials::credentials_file();
-    let mut creds = Credentials::load(&creds_file);
+    let mut creds = Credentials::load_for(&creds_file, &new_config.models);
     let mut creds_changed = false;
 
     for model in &mut new_config.models {
         if let Some(ref key) = model.api_key {
             if key != "***" && !key.is_empty() {
-                // Migrate to credentials.json
-                creds.set_api_key(&model.id, Some(key.clone()));
+                // Migrate to credentials.json — a key belongs to the endpoint.
+                creds.set_endpoint_key(&model.provider, &model.url, Some(key.clone()));
                 creds_changed = true;
             }
         }
         // Always strip from TOML
         model.api_key = None;
+    }
+    // An override belongs to a model row; a deleted row takes it along.
+    if creds.prune_overrides(&new_config.models) > 0 {
+        creds_changed = true;
     }
 
     if creds_changed {
@@ -109,16 +113,45 @@ pub(crate) async fn get_models_health(State(state): State<Arc<ServerState>>) -> 
 // Credentials API — reads/writes ~/.linggen/credentials.json
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn get_credentials_api() -> impl IntoResponse {
-    let creds = Credentials::load(&credentials::credentials_file());
+pub(crate) async fn get_credentials_api(
+    State(state): State<std::sync::Arc<crate::server::ServerState>>,
+) -> impl IntoResponse {
+    let config = state.manager.get_config_snapshot().await;
+    let creds = Credentials::load_for(&credentials::credentials_file(), &config.models);
     Json(creds.redacted()).into_response()
 }
 
+/// Two body shapes are accepted. The version-2 shape names what a key is
+/// for: `{"endpoints": {"<provider>|<url>": {provider, url, api_key}},
+/// "models": {"<id>": {api_key}}, "services": {"<name>": {api_key}}}`. The
+/// settings page's older flat shape, model id → `{api_key, provider, url}`,
+/// means "the key for this model's endpoint" (or the model's own override
+/// when no endpoint is given). `null` or an empty key removes; `"***"` is
+/// the redacted placeholder and changes nothing.
 #[derive(serde::Deserialize)]
 pub(crate) struct UpdateCredentialsRequest {
-    /// Model ID → API key. Send null/empty to remove.
     #[serde(flatten)]
     entries: std::collections::HashMap<String, serde_json::Value>,
+}
+
+fn key_of(v: &serde_json::Value) -> Option<Option<String>> {
+    match v {
+        serde_json::Value::Null => Some(None),
+        serde_json::Value::Object(obj) => match obj.get("api_key") {
+            Some(serde_json::Value::String(s)) if s == "***" => None,
+            Some(serde_json::Value::String(s)) => Some(Some(s.clone())),
+            _ => Some(None),
+        },
+        _ => None,
+    }
+}
+
+fn endpoint_of(v: &serde_json::Value) -> Option<(String, String)> {
+    let obj = v.as_object()?;
+    match (obj.get("provider").and_then(|p| p.as_str()), obj.get("url").and_then(|u| u.as_str())) {
+        (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => Some((p.to_string(), u.to_string())),
+        _ => None,
+    }
 }
 
 pub(crate) async fn update_credentials_api(
@@ -126,35 +159,45 @@ pub(crate) async fn update_credentials_api(
     Json(body): Json<UpdateCredentialsRequest>,
 ) -> impl IntoResponse {
     let creds_file = credentials::credentials_file();
-    let mut creds = Credentials::load(&creds_file);
+    let config = state.manager.get_config_snapshot().await;
+    let mut creds = Credentials::load_for(&creds_file, &config.models);
 
-    for (model_id, value) in &body.entries {
-        match value {
-            serde_json::Value::Object(obj) => {
-                let api_key = obj
-                    .get("api_key")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                // Skip if value is the redacted placeholder
-                if api_key.as_deref() == Some("***") {
-                    continue;
+    let sectioned = ["endpoints", "models", "services"].iter().any(|k| body.entries.contains_key(*k));
+    if sectioned {
+        for (id, v) in body.entries.get("endpoints").and_then(|e| e.as_object()).into_iter().flatten() {
+            let Some(key) = key_of(v) else { continue };
+            match endpoint_of(v) {
+                Some((p, u)) => creds.set_endpoint_key(&p, &u, key),
+                None => {
+                    creds.endpoints.remove(id);
                 }
-                // The settings page sends the endpoint the key was entered
-                // for; the stamp keeps the key usable after the model row is
-                // renamed or replaced (credentials.rs).
-                let endpoint = match (
-                    obj.get("provider").and_then(|v| v.as_str()),
-                    obj.get("url").and_then(|v| v.as_str()),
-                ) {
-                    (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => Some((p, u)),
-                    _ => None,
-                };
-                creds.set_api_key_at(model_id, api_key, endpoint);
             }
-            serde_json::Value::Null => {
-                creds.set_api_key(model_id, None);
+        }
+        for (id, v) in body.entries.get("models").and_then(|e| e.as_object()).into_iter().flatten() {
+            if let Some(key) = key_of(v) {
+                creds.set_model_override(id, key);
             }
-            _ => {}
+        }
+        for (id, v) in body.entries.get("services").and_then(|e| e.as_object()).into_iter().flatten() {
+            if let Some(key) = key_of(v) {
+                creds.set_service_key(id, key);
+            }
+        }
+    } else {
+        for (model_id, v) in &body.entries {
+            let Some(key) = key_of(v) else { continue };
+            let endpoint = endpoint_of(v).or_else(|| {
+                config.models.iter().find(|m| &m.id == model_id).map(|m| (m.provider.clone(), m.url.clone()))
+            });
+            match endpoint {
+                Some((p, u)) => {
+                    // The field on a model row edits the endpoint's key; a
+                    // stale override on that model would hide the change.
+                    creds.set_model_override(model_id, None);
+                    creds.set_endpoint_key(&p, &u, key);
+                }
+                None => creds.set_model_override(model_id, key),
+            }
         }
     }
 

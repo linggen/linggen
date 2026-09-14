@@ -340,7 +340,7 @@ async fn check_models(config: &Config) {
     // Keys come from where the engine gets them (TOML > credentials.json >
     // env) — the old probe only saw the TOML field, so a key kept in
     // credentials.json looked like a 401.
-    let creds = crate::credentials::Credentials::load(&crate::credentials::credentials_file());
+    let creds = crate::credentials::Credentials::load_for(&crate::credentials::credentials_file(), &config.models);
 
     for m in &config.models {
         let label = format!("Model [{}]", m.id);

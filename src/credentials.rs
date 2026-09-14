@@ -1,52 +1,205 @@
 use crate::config::ModelConfig;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
-// Persisted format: ~/.linggen/credentials.json
+// Persisted format: ~/.linggen/credentials.json (version 2)
+//
+//   {
+//     "version": 2,
+//     "endpoints": { "gemini|https://…/v1beta/openai": { "provider", "url", "api_key" } },
+//     "models":    { "<model id>": { "api_key" } },      // rare per-model overrides
+//     "services":  { "tavily": { "api_key" } }           // keys that are not a model's
+//   }
+//
+// A key belongs to an account at an endpoint (provider + base URL), not to a
+// model id: every model on the endpoint shares it, adding a model needs no
+// second paste, and deleting a model orphans nothing. Version 1 was a flat
+// map keyed by model id; it migrates on the first load that knows the
+// configured models (see `load_for`).
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct CredentialEntry {
-    #[serde(skip_serializing_if = "Option::is_none")]
+pub const CREDENTIALS_VERSION: u32 = 2;
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
+pub struct KeyEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// The endpoint the key was entered for, stamped on save. A key belongs
-    /// to an endpoint, not to a model id: the stamp lets it keep serving the
-    /// same provider + URL after the model row is renamed or replaced.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
+pub struct EndpointKey {
+    pub provider: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Credentials {
-    /// Keyed by model ID (e.g. "gemini-flash", "groq-llama").
-    #[serde(flatten)]
-    pub entries: HashMap<String, CredentialEntry>,
+    #[serde(default = "current_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub endpoints: BTreeMap<String, EndpointKey>,
+    #[serde(default)]
+    pub models: BTreeMap<String, KeyEntry>,
+    #[serde(default)]
+    pub services: BTreeMap<String, KeyEntry>,
+}
+
+fn current_version() -> u32 {
+    CREDENTIALS_VERSION
+}
+
+impl Default for Credentials {
+    fn default() -> Self {
+        Self {
+            version: CREDENTIALS_VERSION,
+            endpoints: BTreeMap::new(),
+            models: BTreeMap::new(),
+            services: BTreeMap::new(),
+        }
+    }
+}
+
+/// The id an endpoint's key is stored under: provider and base URL, case
+/// and trailing slashes aside.
+pub fn endpoint_id(provider: &str, url: &str) -> String {
+    format!(
+        "{}|{}",
+        provider.trim().to_ascii_lowercase(),
+        url.trim().trim_end_matches('/').to_ascii_lowercase()
+    )
+}
+
+/// The version-1 row shape: a key entered for one model id, optionally
+/// stamped with the endpoint it was entered for.
+#[derive(Debug, Deserialize, Default, Clone)]
+struct LegacyEntry {
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 impl Credentials {
-    /// Load from `~/.linggen/credentials.json`. Returns empty if missing or invalid.
+    /// Load from disk. A version-1 file migrates in memory using only the
+    /// stamps it carries; rows without a stamp that name no configured model
+    /// are kept under `services` so nothing disappears. Prefer `load_for`
+    /// when the configured models are known — it also writes the migrated
+    /// file back.
     pub fn load(file: &Path) -> Self {
-        if !file.exists() {
-            return Self::default();
-        }
-        match std::fs::read_to_string(file) {
-            Ok(content) => match serde_json::from_str::<Credentials>(&content) {
-                Ok(creds) => creds,
-                Err(e) => {
-                    warn!("Failed to parse credentials.json: {}", e);
-                    Self::default()
-                }
-            },
-            Err(e) => {
-                warn!("Failed to read credentials.json: {}", e);
-                Self::default()
+        Self::load_with(file, &[])
+    }
+
+    /// Load, migrating a version-1 file against the configured models and
+    /// saving the result (the old file stays beside it as `.v1.bak`).
+    pub fn load_for(file: &Path, configured: &[ModelConfig]) -> Self {
+        let (creds, migrated) = Self::load_inner(file, configured);
+        if migrated {
+            let bak = file.with_extension("json.v1.bak");
+            if let Err(e) = std::fs::copy(file, &bak) {
+                warn!("credentials: could not keep the v1 copy at {}: {e}", bak.display());
+            }
+            match creds.save(file) {
+                Ok(()) => info!(
+                    "credentials: migrated to version {} — {} endpoint key(s), {} model override(s), {} service key(s)",
+                    CREDENTIALS_VERSION, creds.endpoints.len(), creds.models.len(), creds.services.len()
+                ),
+                Err(e) => warn!("credentials: migrated in memory but could not save: {e}"),
             }
         }
+        creds
+    }
+
+    fn load_with(file: &Path, configured: &[ModelConfig]) -> Self {
+        Self::load_inner(file, configured).0
+    }
+
+    /// Returns the credentials and whether they came from a version-1 file.
+    fn load_inner(file: &Path, configured: &[ModelConfig]) -> (Self, bool) {
+        if !file.exists() {
+            return (Self::default(), false);
+        }
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to read credentials.json: {}", e);
+                return (Self::default(), false);
+            }
+        };
+        let value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to parse credentials.json: {}", e);
+                return (Self::default(), false);
+            }
+        };
+        let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
+        if version >= 2 {
+            return match serde_json::from_value::<Credentials>(value) {
+                Ok(c) => (c, false),
+                Err(e) => {
+                    warn!("Failed to parse credentials.json: {}", e);
+                    (Self::default(), false)
+                }
+            };
+        }
+        let rows: BTreeMap<String, LegacyEntry> = match serde_json::from_value(value) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Failed to parse credentials.json (v1): {}", e);
+                return (Self::default(), false);
+            }
+        };
+        (Self::migrate_v1(rows, configured), true)
+    }
+
+    /// Version 1 → 2. Precedence for an endpoint's key: a row whose model is
+    /// still configured, then a stamped orphan, ids in sorted order. A
+    /// configured model whose key differs from its endpoint's becomes an
+    /// override. An unstamped row naming no configured model has no known
+    /// endpoint and is kept as a service key rather than guessed.
+    fn migrate_v1(rows: BTreeMap<String, LegacyEntry>, configured: &[ModelConfig]) -> Self {
+        let mut out = Self::default();
+        let key_of = |e: &LegacyEntry| e.api_key.clone().filter(|k| !k.is_empty());
+        // Pass 1: rows of configured models set their endpoint's key.
+        for (id, row) in &rows {
+            let Some(key) = key_of(row) else { continue };
+            if let Some(m) = configured.iter().find(|m| &m.id == id) {
+                let eid = endpoint_id(&m.provider, &m.url);
+                match out.endpoints.get(&eid) {
+                    None => {
+                        out.endpoints.insert(eid, EndpointKey { provider: m.provider.clone(), url: m.url.clone(), api_key: Some(key) });
+                    }
+                    Some(e) if e.api_key.as_deref() != Some(key.as_str()) => {
+                        out.models.insert(id.clone(), KeyEntry { api_key: Some(key) });
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        // Pass 2: stamped orphans fill endpoints still without a key.
+        for (id, row) in &rows {
+            let Some(key) = key_of(row) else { continue };
+            if configured.iter().any(|m| &m.id == id) {
+                continue;
+            }
+            match (&row.provider, &row.url) {
+                (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => {
+                    let eid = endpoint_id(p, u);
+                    out.endpoints.entry(eid).or_insert_with(|| EndpointKey { provider: p.clone(), url: u.clone(), api_key: Some(key) });
+                }
+                _ => {
+                    out.services.insert(id.clone(), KeyEntry { api_key: Some(key) });
+                }
+            }
+        }
+        out
     }
 
     /// Save to disk. Creates parent directories if needed.
@@ -59,94 +212,88 @@ impl Credentials {
         Ok(())
     }
 
-    /// Get the API key for a model ID.
-    pub fn get_api_key(&self, model_id: &str) -> Option<&str> {
-        self.entries
+    /// The key stored for an endpoint.
+    pub fn endpoint_key(&self, provider: &str, url: &str) -> Option<&str> {
+        self.endpoints
+            .get(&endpoint_id(provider, url))
+            .and_then(|e| e.api_key.as_deref())
+            .filter(|k| !k.is_empty())
+    }
+
+    /// Set or clear an endpoint's key. Clearing removes the entry.
+    pub fn set_endpoint_key(&mut self, provider: &str, url: &str, api_key: Option<String>) {
+        let eid = endpoint_id(provider, url);
+        match api_key.filter(|k| !k.is_empty()) {
+            Some(key) => {
+                self.endpoints.insert(eid, EndpointKey { provider: provider.trim().to_string(), url: url.trim().to_string(), api_key: Some(key) });
+            }
+            None => {
+                self.endpoints.remove(&eid);
+            }
+        }
+    }
+
+    /// A model's own key, when it overrides its endpoint's.
+    pub fn model_override(&self, model_id: &str) -> Option<&str> {
+        self.models
             .get(model_id)
             .and_then(|e| e.api_key.as_deref())
+            .filter(|k| !k.is_empty())
     }
 
-    /// Set the API key for a model ID, keeping any endpoint stamp it has.
-    pub fn set_api_key(&mut self, model_id: &str, api_key: Option<String>) {
-        self.set_api_key_at(model_id, api_key, None);
-    }
-
-    /// Set the API key for a model ID and stamp the endpoint it belongs to.
-    /// `None` for the endpoint leaves an existing stamp in place.
-    pub fn set_api_key_at(
-        &mut self,
-        model_id: &str,
-        api_key: Option<String>,
-        endpoint: Option<(&str, &str)>,
-    ) {
-        if let Some(key) = api_key {
-            let entry = self.entries.entry(model_id.to_string()).or_default();
-            entry.api_key = Some(key);
-            if let Some((provider, url)) = endpoint {
-                entry.provider = Some(provider.to_string());
-                entry.url = Some(url.to_string());
+    /// Set or clear a model's override.
+    pub fn set_model_override(&mut self, model_id: &str, api_key: Option<String>) {
+        match api_key.filter(|k| !k.is_empty()) {
+            Some(key) => {
+                self.models.insert(model_id.to_string(), KeyEntry { api_key: Some(key) });
             }
-        } else {
-            // Remove the entry if key is None.
-            self.entries.remove(model_id);
+            None => {
+                self.models.remove(model_id);
+            }
         }
     }
 
-    /// The endpoint a stored key belongs to: its stamp, else the provider +
-    /// URL of the configured model that still carries its id.
-    fn endpoint_of<'a>(
-        &'a self,
-        id: &str,
-        entry: &'a CredentialEntry,
-        configured: &'a [ModelConfig],
-    ) -> Option<(&'a str, &'a str)> {
-        match (&entry.provider, &entry.url) {
-            (Some(p), Some(u)) => Some((p.as_str(), u.as_str())),
-            _ => configured
-                .iter()
-                .find(|m| m.id == id)
-                .map(|m| (m.provider.as_str(), m.url.as_str())),
+    /// A key that is not a model's (web search, a service).
+    pub fn service_key(&self, name: &str) -> Option<&str> {
+        self.services
+            .get(name)
+            .and_then(|e| e.api_key.as_deref())
+            .filter(|k| !k.is_empty())
+    }
+
+    pub fn set_service_key(&mut self, name: &str, api_key: Option<String>) {
+        match api_key.filter(|k| !k.is_empty()) {
+            Some(key) => {
+                self.services.insert(name.to_string(), KeyEntry { api_key: Some(key) });
+            }
+            None => {
+                self.services.remove(name);
+            }
         }
     }
 
-    /// A stored key for this endpoint, whichever model id it was entered
-    /// under — a renamed or replaced model row must not orphan its key.
-    /// Ids are visited in sorted order so the answer is stable.
-    pub fn key_for_endpoint(
-        &self,
-        provider: &str,
-        url: &str,
-        configured: &[ModelConfig],
-        except_id: &str,
-    ) -> Option<&str> {
-        let mut ids: Vec<&String> = self.entries.keys().collect();
-        ids.sort();
-        ids.into_iter().find_map(|id| {
-            if id == except_id {
-                return None;
-            }
-            let entry = self.entries.get(id)?;
-            let key = entry.api_key.as_deref().filter(|k| !k.is_empty())?;
-            let (p, u) = self.endpoint_of(id, entry, configured)?;
-            same_endpoint(p, u, provider, url).then_some(key)
-        })
+    /// Drop overrides for models that are no longer configured — an
+    /// override belongs to a model row; the endpoint key stays.
+    pub fn prune_overrides(&mut self, configured: &[ModelConfig]) -> usize {
+        let before = self.models.len();
+        self.models
+            .retain(|id, _| configured.iter().any(|m| &m.id == id));
+        before - self.models.len()
     }
 
     /// Return a copy with all keys redacted (for API responses).
     pub fn redacted(&self) -> Self {
-        let entries = self
-            .entries
-            .iter()
-            .map(|(id, entry)| {
-                let redacted = CredentialEntry {
-                    api_key: entry.api_key.as_ref().map(|_| "***".to_string()),
-                    provider: entry.provider.clone(),
-                    url: entry.url.clone(),
-                };
-                (id.clone(), redacted)
-            })
-            .collect();
-        Self { entries }
+        let mask = |k: &Option<String>| k.as_ref().map(|_| "***".to_string());
+        Self {
+            version: self.version,
+            endpoints: self
+                .endpoints
+                .iter()
+                .map(|(id, e)| (id.clone(), EndpointKey { provider: e.provider.clone(), url: e.url.clone(), api_key: mask(&e.api_key) }))
+                .collect(),
+            models: self.models.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
+            services: self.services.iter().map(|(id, e)| (id.clone(), KeyEntry { api_key: mask(&e.api_key) })).collect(),
+        }
     }
 }
 
@@ -155,121 +302,43 @@ pub fn credentials_file() -> PathBuf {
     crate::paths::linggen_home().join("credentials.json")
 }
 
-/// Resolve the effective API key for a model.
-/// Priority: 1) TOML config api_key  2) credentials.json  3) env var LINGGEN_API_KEY_{ID}
-pub fn resolve_api_key(
-    model_id: &str,
-    config_api_key: Option<&str>,
-    credentials: &Credentials,
-) -> Option<String> {
-    // 1. TOML config (backward compatible)
-    if let Some(key) = config_api_key {
-        if !key.is_empty() {
-            return Some(key.to_string());
-        }
-    }
-    // 2. credentials.json
-    if let Some(key) = credentials.get_api_key(model_id) {
-        if !key.is_empty() {
-            return Some(key.to_string());
-        }
-    }
-    // 3. Environment variable: LINGGEN_API_KEY_GEMINI_FLASH (hyphens → underscores, uppercase)
-    let env_name = format!(
-        "LINGGEN_API_KEY_{}",
-        model_id.to_uppercase().replace('-', "_")
-    );
-    if let Ok(key) = std::env::var(&env_name) {
-        if !key.is_empty() {
-            return Some(key);
-        }
-    }
-    None
+fn env_key(name: &str) -> Option<String> {
+    let var = format!("LINGGEN_API_KEY_{}", name.to_uppercase().replace(['-', '.', '/'], "_"));
+    std::env::var(var).ok().filter(|k| !k.is_empty())
 }
 
-/// Resolve a model's key the way the engine sends it. A key belongs to an
-/// endpoint, not to a model id: a model with no key of its own uses the key
-/// of a sibling configured on the same provider and URL, else any stored key
-/// stamped for that endpoint — so a second Gemini model works without
-/// pasting the key twice, and replacing the model row does not orphan it.
+/// Resolve the effective API key for a model.
+/// Priority: 1) TOML config api_key  2) the model's override  3) the
+/// endpoint's key  4) env LINGGEN_API_KEY_{MODEL_ID}  5) env LINGGEN_API_KEY_{PROVIDER}
+pub fn resolve_api_key(
+    model: &ModelConfig,
+    credentials: &Credentials,
+) -> Option<String> {
+    if let Some(key) = model.api_key.as_deref().filter(|k| !k.is_empty()) {
+        return Some(key.to_string());
+    }
+    if let Some(key) = credentials.model_override(&model.id) {
+        return Some(key.to_string());
+    }
+    if let Some(key) = credentials.endpoint_key(&model.provider, &model.url) {
+        return Some(key.to_string());
+    }
+    env_key(&model.id).or_else(|| env_key(&model.provider))
+}
+
+/// The key the engine sends for a model. Kept as the one entry point every
+/// caller uses; `_all` is no longer needed now that keys live per endpoint.
 pub fn resolve_api_key_shared(
     model: &ModelConfig,
-    all: &[ModelConfig],
+    _all: &[ModelConfig],
     credentials: &Credentials,
 ) -> Option<String> {
-    resolve_api_key(&model.id, model.api_key.as_deref(), credentials)
-        .or_else(|| {
-            all.iter()
-                .filter(|m| {
-                    m.id != model.id
-                        && same_endpoint(&m.provider, &m.url, &model.provider, &model.url)
-                })
-                .find_map(|m| resolve_api_key(&m.id, m.api_key.as_deref(), credentials))
-        })
-        .or_else(|| {
-            credentials
-                .key_for_endpoint(&model.provider, &model.url, all, &model.id)
-                .map(str::to_string)
-        })
-}
-
-fn same_endpoint(provider_a: &str, url_a: &str, provider_b: &str, url_b: &str) -> bool {
-    provider_a.eq_ignore_ascii_case(provider_b)
-        && url_a
-            .trim_end_matches('/')
-            .eq_ignore_ascii_case(url_b.trim_end_matches('/'))
+    resolve_api_key(model, credentials)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_credentials_roundtrip() {
-        let tmp = std::env::temp_dir().join("linggen_cred_test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let file = tmp.join("credentials.json");
-
-        let mut creds = Credentials::default();
-        creds.set_api_key("gemini-flash", Some("AIza123".to_string()));
-        creds.set_api_key("groq-llama", Some("gsk_456".to_string()));
-        creds.save(&file).unwrap();
-
-        let loaded = Credentials::load(&file);
-        assert_eq!(loaded.get_api_key("gemini-flash"), Some("AIza123"));
-        assert_eq!(loaded.get_api_key("groq-llama"), Some("gsk_456"));
-        assert_eq!(loaded.get_api_key("unknown"), None);
-
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_credentials_redacted() {
-        let mut creds = Credentials::default();
-        creds.set_api_key("model-a", Some("secret".to_string()));
-        let redacted = creds.redacted();
-        assert_eq!(redacted.get_api_key("model-a"), Some("***"));
-    }
-
-    #[test]
-    fn test_resolve_api_key_priority() {
-        let mut creds = Credentials::default();
-        creds.set_api_key("m1", Some("from_creds".to_string()));
-
-        // TOML takes priority
-        assert_eq!(
-            resolve_api_key("m1", Some("from_toml"), &creds),
-            Some("from_toml".to_string())
-        );
-        // Falls back to credentials
-        assert_eq!(
-            resolve_api_key("m1", None, &creds),
-            Some("from_creds".to_string())
-        );
-        // No key at all
-        assert_eq!(resolve_api_key("m2", None, &creds), None);
-    }
 
     fn model(id: &str, provider: &str, url: &str) -> ModelConfig {
         toml::from_str(&format!(
@@ -278,74 +347,133 @@ mod tests {
         .unwrap()
     }
 
+    const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+
     #[test]
-    fn test_shared_key_borrowed_from_same_endpoint() {
+    fn roundtrip_v2() {
+        let tmp = std::env::temp_dir().join(format!("linggen_cred_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("credentials.json");
+
         let mut creds = Credentials::default();
-        creds.set_api_key("gemini-old", Some("AIza".to_string()));
-        let endpoint = "https://generativelanguage.googleapis.com/v1beta/openai";
-        let old = model("gemini-old", "gemini", endpoint);
-        // Same endpoint, trailing slash and case aside.
-        let new = model("gemini-new", "Gemini", &format!("{endpoint}/"));
+        creds.set_endpoint_key("gemini", &format!("{GEMINI}/"), Some("AIza123".into()));
+        creds.set_model_override("gemini-special", Some("AIzaOther".into()));
+        creds.set_service_key("tavily", Some("tvly".into()));
+        creds.save(&file).unwrap();
+
+        let loaded = Credentials::load(&file);
+        assert_eq!(loaded.version, 2);
+        assert_eq!(loaded.endpoint_key("Gemini", GEMINI), Some("AIza123"));
+        assert_eq!(loaded.model_override("gemini-special"), Some("AIzaOther"));
+        assert_eq!(loaded.service_key("tavily"), Some("tvly"));
+        assert_eq!(loaded.endpoint_key("groq", "https://api.groq.com/openai/v1"), None);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn every_model_on_the_endpoint_shares_the_key() {
+        let mut creds = Credentials::default();
+        creds.set_endpoint_key("gemini", GEMINI, Some("AIza".into()));
+        let a = model("gemini-a", "gemini", GEMINI);
+        let b = model("gemini-b", "Gemini", &format!("{GEMINI}/"));
         let other = model("groq-x", "groq", "https://api.groq.com/openai/v1");
-        let all = vec![old.clone(), new.clone(), other.clone()];
-
-        assert_eq!(
-            resolve_api_key_shared(&new, &all, &creds),
-            Some("AIza".to_string())
-        );
-        assert_eq!(resolve_api_key_shared(&other, &all, &creds), None);
-
-        // A key of its own still wins.
-        creds.set_api_key("gemini-new", Some("own".to_string()));
-        assert_eq!(
-            resolve_api_key_shared(&new, &all, &creds),
-            Some("own".to_string())
-        );
+        assert_eq!(resolve_api_key(&a, &creds), Some("AIza".into()));
+        assert_eq!(resolve_api_key(&b, &creds), Some("AIza".into()));
+        assert_eq!(resolve_api_key(&other, &creds), None);
+        // An override wins over the endpoint; TOML over both.
+        creds.set_model_override("gemini-b", Some("own".into()));
+        assert_eq!(resolve_api_key(&b, &creds), Some("own".into()));
+        let mut c = model("gemini-b", "gemini", GEMINI);
+        c.api_key = Some("toml".into());
+        assert_eq!(resolve_api_key(&c, &creds), Some("toml".into()));
     }
 
     #[test]
-    fn test_stamped_key_survives_model_row_replacement() {
-        let endpoint = "https://generativelanguage.googleapis.com/v1beta/openai";
+    fn v1_file_migrates_by_endpoint() {
+        let tmp = std::env::temp_dir().join(format!("linggen_cred_v1_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("credentials.json");
+        std::fs::write(&file, format!(r#"{{
+  "stall-test": {{ "api_key": "x" }},
+  "tavily": {{ "api_key": "tvly" }},
+  "gemini-old-1": {{ "api_key": "AIza-old" }},
+  "gemini-old-2": {{ "api_key": "AIza-old" }},
+  "gemini-live": {{ "api_key": "AIza-live" }},
+  "gemini-gone": {{ "api_key": "AQ-new", "provider": "gemini", "url": "{GEMINI}" }},
+  "deepseek-v4-pro": {{ "api_key": "sk-ds" }},
+  "gemini-two": {{ "api_key": "AIza-two" }}
+}}"#)).unwrap();
+        let configured = vec![
+            model("gemini-live", "gemini", GEMINI),
+            model("gemini-two", "gemini", GEMINI),
+            model("deepseek-v4-pro", "deepseek", "https://api.deepseek.com/v1"),
+        ];
+        let creds = Credentials::load_for(&file, &configured);
+        // The configured model's key is the endpoint's; the stamped orphan
+        // with a different key did not win.
+        assert_eq!(creds.endpoint_key("gemini", GEMINI), Some("AIza-live"));
+        assert_eq!(creds.endpoint_key("deepseek", "https://api.deepseek.com/v1"), Some("sk-ds"));
+        // A configured sibling with a different key keeps it as an override.
+        assert_eq!(creds.model_override("gemini-two"), Some("AIza-two"));
+        assert_eq!(creds.model_override("gemini-live"), None);
+        // Unstamped rows naming no model are kept as services, not guessed.
+        assert_eq!(creds.service_key("tavily"), Some("tvly"));
+        assert_eq!(creds.service_key("gemini-old-1"), Some("AIza-old"));
+        assert_eq!(creds.service_key("stall-test"), Some("x"));
+        // Saved as v2, with the v1 copy kept.
+        let on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(on_disk["version"], 2);
+        assert!(file.with_extension("json.v1.bak").exists());
+        // A stamped orphan alone still seeds its endpoint.
+        let file2 = tmp.join("only-stamped.json");
+        std::fs::write(&file2, format!(r#"{{ "gemini-gone": {{ "api_key": "AQ-new", "provider": "gemini", "url": "{GEMINI}" }} }}"#)).unwrap();
+        let c2 = Credentials::load_for(&file2, &[model("gemini-live", "gemini", GEMINI)]);
+        assert_eq!(c2.endpoint_key("gemini", GEMINI), Some("AQ-new"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn overrides_are_pruned_with_their_model() {
         let mut creds = Credentials::default();
-        // Entered for a model row that has since been deleted from config.
-        creds.set_api_key_at(
-            "gemini-old",
-            Some("AIza".to_string()),
-            Some(("gemini", endpoint)),
-        );
-        let new = model("gemini-new", "gemini", endpoint);
-        let all = vec![new.clone()];
-        assert_eq!(
-            resolve_api_key_shared(&new, &all, &creds),
-            Some("AIza".to_string())
-        );
-
-        // An unstamped orphan says nothing about its endpoint — no guess.
-        let mut bare = Credentials::default();
-        bare.set_api_key("gemini-old", Some("AIza".to_string()));
-        assert_eq!(resolve_api_key_shared(&new, &all, &bare), None);
-
-        // Stamps survive the redacted copy the settings page reads.
-        let redacted = creds.redacted();
-        assert_eq!(
-            redacted.entries["gemini-old"].provider.as_deref(),
-            Some("gemini")
-        );
-        assert_eq!(redacted.get_api_key("gemini-old"), Some("***"));
+        creds.set_model_override("gone", Some("k".into()));
+        creds.set_model_override("kept", Some("k".into()));
+        creds.set_endpoint_key("gemini", GEMINI, Some("AIza".into()));
+        assert_eq!(creds.prune_overrides(&[model("kept", "gemini", GEMINI)]), 1);
+        assert_eq!(creds.model_override("gone"), None);
+        assert_eq!(creds.model_override("kept"), Some("k"));
+        assert_eq!(creds.endpoint_key("gemini", GEMINI), Some("AIza"));
     }
 
     #[test]
-    fn test_set_api_key_none_removes() {
+    fn redacted_masks_every_key() {
         let mut creds = Credentials::default();
-        creds.set_api_key("m1", Some("key".to_string()));
-        assert!(creds.get_api_key("m1").is_some());
-        creds.set_api_key("m1", None);
-        assert!(creds.get_api_key("m1").is_none());
+        creds.set_endpoint_key("gemini", GEMINI, Some("secret".into()));
+        creds.set_model_override("m", Some("secret".into()));
+        creds.set_service_key("tavily", Some("secret".into()));
+        let r = creds.redacted();
+        assert_eq!(r.endpoint_key("gemini", GEMINI), Some("***"));
+        assert_eq!(r.model_override("m"), Some("***"));
+        assert_eq!(r.service_key("tavily"), Some("***"));
+        assert_eq!(r.endpoints[&endpoint_id("gemini", GEMINI)].provider, "gemini");
     }
 
     #[test]
-    fn test_load_missing_file() {
+    fn clearing_removes() {
+        let mut creds = Credentials::default();
+        creds.set_endpoint_key("gemini", GEMINI, Some("k".into()));
+        creds.set_endpoint_key("gemini", GEMINI, None);
+        assert!(creds.endpoints.is_empty());
+        creds.set_model_override("m", Some("k".into()));
+        creds.set_model_override("m", Some(String::new()));
+        assert!(creds.models.is_empty());
+    }
+
+    #[test]
+    fn load_missing_file() {
         let creds = Credentials::load(Path::new("/nonexistent/credentials.json"));
-        assert!(creds.entries.is_empty());
+        assert!(creds.endpoints.is_empty());
+        assert_eq!(creds.version, 2);
     }
 }
