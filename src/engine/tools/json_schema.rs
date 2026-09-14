@@ -273,8 +273,12 @@ pub fn is_fully_required(schema: &Value) -> bool {
     if !is_object {
         return true;
     }
+    // A free-form object — `{type: object}` with no `properties` (a data
+    // tool's array of loosely-shaped items) — has no strict form: strictify
+    // would close it (`additionalProperties: false`, nothing allowed) and
+    // OpenAI rejects the result outright.
     let Some(props) = obj.get("properties").and_then(|v| v.as_object()) else {
-        return true;
+        return false;
     };
     if props.is_empty() {
         return true;
@@ -471,6 +475,17 @@ mod tests {
                 }}
             },
             "required": ["items"]
+        })));
+        // A required array of free-form objects (a skill data tool's
+        // `items: {type: object}`) → not strict-safe: strict would close the
+        // items to nothing, and OpenAI rejects the schema (seen live with
+        // gpt-5.6 on a skill's Show tool).
+        assert!(!is_fully_required(&json!({
+            "type": "object",
+            "properties": {
+                "cards": {"type": "array", "items": {"type": "object"}}
+            },
+            "required": ["cards"]
         })));
         // Composite keywords are never strict-safe (oneOf/allOf rejected,
         // anyOf needs per-branch strictify we don't do).
