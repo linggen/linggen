@@ -563,27 +563,28 @@ impl OpenAiClient {
                     }
                 };
 
-                // Check for usage data (some providers include it in the final chunk).
-                if let Some(usage) = chunk.usage {
-                    return Some(Ok(StreamChunk::Usage(TokenUsage {
-                        prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
-                        completion_tokens: usage.completion_tokens.map(|v| v as usize),
-                        total_tokens: usage.total_tokens.map(|v| v as usize),
-                        cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
-                    })));
-                }
-
+                // Content first: usage may ride on a content chunk (Gemini puts
+                // it on every chunk once asked), and a dropped token is worse
+                // than a dropped count. The final chunk carries no content and
+                // the last usage, and that is the one taken.
+                let usage = chunk.usage;
                 let content = chunk
                     .choices
                     .into_iter()
                     .next()
                     .and_then(|c| c.delta.content)
                     .unwrap_or_default();
-                if content.is_empty() {
-                    None
-                } else {
-                    Some(Ok(StreamChunk::Token(content)))
+                if !content.is_empty() {
+                    return Some(Ok(StreamChunk::Token(content)));
                 }
+                usage.map(|usage| {
+                    Ok(StreamChunk::Usage(TokenUsage {
+                        prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
+                        completion_tokens: usage.completion_tokens.map(|v| v as usize),
+                        total_tokens: usage.total_tokens.map(|v| v as usize),
+                        cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
+                    }))
+                })
             }
         });
 
@@ -896,7 +897,7 @@ impl OpenAiClient {
                 } else {
                     // Standard Chat Completions SSE
                     let sanitized = sanitize_json(data);
-                    let chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
+                    let mut chunk: OaiStreamChunk = match serde_json::from_str(&sanitized) {
                         Ok(c) => c,
                         Err(e) => {
                             return vec![Err(anyhow::anyhow!(
@@ -907,15 +908,19 @@ impl OpenAiClient {
                         }
                     };
 
-                    if let Some(usage) = chunk.usage {
-                        return vec![Ok(StreamChunk::Usage(TokenUsage {
+                    // Usage may ride on a chunk that also carries a tool call or
+                    // content — Gemini puts it on every chunk once asked for it.
+                    // Emit it beside the deltas, never instead of them (seen
+                    // live: three "empty responses" while the meter counted).
+                    let usage_chunk = chunk.usage.take().map(|usage| {
+                        Ok(StreamChunk::Usage(TokenUsage {
                             prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
                             completion_tokens: usage.completion_tokens.map(|v| v as usize),
                             total_tokens: usage.total_tokens.map(|v| v as usize),
                             cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
-                        }))];
-                    }
-
+                        }))
+                    });
+                    let deltas: Vec<Result<StreamChunk>> = (|| {
                     // Extract Gemini thought_signature — check chunk level first, then choice level.
                     let chunk_level_sig = chunk
                         .extra_content
@@ -973,6 +978,8 @@ impl OpenAiClient {
                     } else {
                         vec![Ok(StreamChunk::Token(content))]
                     }
+                    })();
+                    usage_chunk.into_iter().chain(deltas).collect()
                 }
             })
             .flat_map(futures_util::stream::iter);

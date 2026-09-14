@@ -576,22 +576,21 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
             // tokens exactly once here so the downstream accumulator
             // doesn't double-count if Anthropic ever echoes input_tokens
             // back in the delta frame.
+            // Anthropic's `input_tokens` EXCLUDES the cache: the prompt is
+            // input + cache_creation + cache_read. `prompt_tokens` is the
+            // whole prompt (what the context meter wants); `cached_tokens`
+            // is the part read from cache (what the pace meter discounts).
             let usage = data.get("message").and_then(|m| m.get("usage"))?;
-            let prompt_tokens = usage
-                .get("input_tokens")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize);
-            prompt_tokens.map(|p| {
-                Ok(StreamChunk::Usage(TokenUsage {
-                    prompt_tokens: Some(p),
-                    completion_tokens: None,
-                    total_tokens: None,
-                    cached_tokens: usage
-                        .get("cache_read_input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .map(|n| n as usize),
-                }))
-            })
+            let n = |k: &str| usage.get(k).and_then(|v| v.as_u64()).map(|n| n as usize);
+            let input = n("input_tokens")?;
+            let created = n("cache_creation_input_tokens").unwrap_or(0);
+            let read = n("cache_read_input_tokens").unwrap_or(0);
+            Some(Ok(StreamChunk::Usage(TokenUsage {
+                prompt_tokens: Some(input + created + read),
+                completion_tokens: None,
+                total_tokens: None,
+                cached_tokens: Some(read),
+            })))
         }
         "message_delta" => {
             // Only surface output_tokens from the delta. Input tokens were
