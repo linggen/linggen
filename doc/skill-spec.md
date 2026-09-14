@@ -253,7 +253,7 @@ cloud:
 
 - **Declaring `cloud` makes the skill need an account.** A turn in a session bound to it is refused with `AUTH_REQUIRED:` when signed out.
 - **`save`** — pulled before a turn, synced after every model call and at the turn's end. The site versions it; a stale write is refused and the account's copy replaces the file. Ledger: `~/.linggen/sync/cloud-{skill}.json`. The path must stay inside the skill directory.
-- **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
+- **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered — the prompt not served from the provider's cache, plus the output (`TokenUsage::metered`): a pace counts what the user did, not the cached world. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
 - The page reads `GET /api/skill-cloud/{skill}` (signed in, the meter's reading) and calls `POST /api/skill-cloud/{skill}/sync` on open and after a change it made itself.
 
 ## App skills

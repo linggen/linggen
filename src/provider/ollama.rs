@@ -222,6 +222,7 @@ impl OllamaClient {
                 let usage = TokenUsage {
                     prompt_tokens: payload.prompt_eval_count.map(|v| v as usize),
                     completion_tokens: payload.eval_count.map(|v| v as usize),
+                    cached_tokens: None,
                     total_tokens: match (payload.prompt_eval_count, payload.eval_count) {
                         (Some(p), Some(c)) => Some((p + c) as usize),
                         _ => None,
@@ -355,6 +356,7 @@ impl OllamaClient {
                     let usage = TokenUsage {
                         prompt_tokens: prompt_eval.map(|v| v as usize),
                         completion_tokens: eval.map(|v| v as usize),
+                        cached_tokens: None,
                         total_tokens: match (prompt_eval, eval) {
                             (Some(p), Some(c)) => Some((p + c) as usize),
                             _ => None,

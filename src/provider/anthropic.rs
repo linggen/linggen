@@ -586,6 +586,10 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                     prompt_tokens: Some(p),
                     completion_tokens: None,
                     total_tokens: None,
+                    cached_tokens: usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize),
                 }))
             })
         }
@@ -602,6 +606,7 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 prompt_tokens: None,
                 completion_tokens: Some(output_tokens),
                 total_tokens: None,
+                cached_tokens: None,
             })))
         }
         "message_stop" | "ping" => None,

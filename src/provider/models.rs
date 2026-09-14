@@ -25,6 +25,38 @@ pub struct TokenUsage {
     pub prompt_tokens: Option<usize>,
     pub completion_tokens: Option<usize>,
     pub total_tokens: Option<usize>,
+    /// Prompt tokens the provider served from its cache — a part of
+    /// `prompt_tokens`, not an addition to it.
+    #[serde(default)]
+    pub cached_tokens: Option<usize>,
+}
+
+impl TokenUsage {
+    /// A later report fills what an earlier one left out: Anthropic sends
+    /// the prompt at `message_start` and the output at `message_delta`.
+    pub fn merged(self, later: TokenUsage) -> TokenUsage {
+        let prompt_tokens = later.prompt_tokens.or(self.prompt_tokens);
+        let completion_tokens = later.completion_tokens.or(self.completion_tokens);
+        TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: later
+                .total_tokens
+                .or(self.total_tokens)
+                .or(prompt_tokens.zip(completion_tokens).map(|(p, c)| p + c)),
+            cached_tokens: later.cached_tokens.or(self.cached_tokens),
+        }
+    }
+
+    /// What the call cost the caller: the prompt not served from cache, plus
+    /// the output. Falls back to `total_tokens` when the parts are unknown.
+    /// A pace should count what the player did, not the cached world.
+    pub fn metered(&self) -> u64 {
+        match (self.prompt_tokens, self.completion_tokens) {
+            (Some(p), Some(c)) => (p.saturating_sub(self.cached_tokens.unwrap_or(0)) + c) as u64,
+            _ => self.total_tokens.unwrap_or(0) as u64,
+        }
+    }
 }
 
 /// Items yielded by the streaming chat API.
@@ -1367,5 +1399,21 @@ mod tests {
         assert!(v(&["vision"], "some-local-thing"));
         assert!(!v(&["no-vision"], "gpt-5.6-terra"));
         assert!(!v(&["vision", "no-vision"], "anything"));
+    }
+
+    #[test]
+    fn usage_merges_split_reports_and_meters_what_was_not_cached() {
+        // Anthropic: prompt at message_start, output at message_delta.
+        let start = TokenUsage { prompt_tokens: Some(19_000), cached_tokens: Some(17_500), ..Default::default() };
+        let delta = TokenUsage { completion_tokens: Some(400), ..Default::default() };
+        let u = start.merged(delta);
+        assert_eq!(u.total_tokens, Some(19_400));
+        assert_eq!(u.metered(), 1_900); // 19,000 − 17,500 + 400
+        // No cache accounting: the whole prompt counts.
+        let plain = TokenUsage { prompt_tokens: Some(100), completion_tokens: Some(50), ..Default::default() };
+        assert_eq!(plain.metered(), 150);
+        // Only a total known: it is what we have.
+        let total = TokenUsage { total_tokens: Some(77), ..Default::default() };
+        assert_eq!(total.metered(), 77);
     }
 }

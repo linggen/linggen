@@ -213,6 +213,10 @@ impl Stream for ProxyInferenceStream {
                                 .get("completion_tokens")
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as usize),
+                            cached_tokens: chunk
+                                .get("cached_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as usize),
                             total_tokens: chunk
                                 .get("total_tokens")
                                 .and_then(|v| v.as_u64())

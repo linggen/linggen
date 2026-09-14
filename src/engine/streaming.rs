@@ -190,7 +190,7 @@ impl AgentEngine {
             .await?;
         let mut accumulated = String::new();
         let mut thinking_ended = false;
-        let mut token_usage = None;
+        let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         let mut first_action: Option<(actions::ModelAction, usize)> = None;
 
         'stream: loop {
@@ -236,7 +236,10 @@ impl AgentEngine {
                     }
                 }
                 StreamChunk::Usage(usage) => {
-                    token_usage = Some(usage);
+                    token_usage = Some(match token_usage.take() {
+                        Some(prev) => prev.merged(usage),
+                        None => usage,
+                    });
                 }
                 StreamChunk::ToolCall(_) => {
                     // Tool call chunks are not expected in legacy streaming mode;
@@ -288,7 +291,7 @@ impl AgentEngine {
             .await?;
 
         let mut accumulated_text = String::new();
-        let mut token_usage = None;
+        let mut token_usage: Option<crate::provider::models::TokenUsage> = None;
         // Track whether we're inside a <think> block to suppress streaming
         let mut in_think_block = false;
         // Accumulate tool call deltas keyed by index
@@ -343,7 +346,10 @@ impl AgentEngine {
                     }
                 }
                 StreamChunk::Usage(usage) => {
-                    token_usage = Some(usage);
+                    token_usage = Some(match token_usage.take() {
+                        Some(prev) => prev.merged(usage),
+                        None => usage,
+                    });
                 }
                 StreamChunk::ToolCall(tc) => {
                     let idx = tc.index;

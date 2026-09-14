@@ -436,21 +436,13 @@ impl OpenAiClient {
             let oai_messages: Vec<OaiMessage> =
                 messages.iter().map(OaiMessage::from_chat).collect();
             let is_gemini = self.base_url.contains("googleapis.com");
-            let stream_options = if is_gemini {
-                None
-            } else {
-                Some(OaiStreamOptions {
-                    include_usage: true,
-                })
-            };
             let mut req = serde_json::json!({
                 "model": model,
                 "messages": oai_messages,
                 "stream": true,
+                // Usage in the final chunk — every provider's meter needs it.
+                "stream_options": { "include_usage": true },
             });
-            if let Some(opts) = stream_options {
-                req["stream_options"] = serde_json::json!({"include_usage": opts.include_usage});
-            }
             // Gemini 2.5 thinking models can exhaust their output budget on
             // internal reasoning and return empty responses.
             if is_gemini && model.contains("2.5") {
@@ -533,6 +525,11 @@ impl OpenAiClient {
                                 prompt_tokens: input,
                                 completion_tokens: output,
                                 total_tokens: input.zip(output).map(|(a, b)| a + b),
+                                cached_tokens: usage
+                                    .get("input_tokens_details")
+                                    .and_then(|d| d.get("cached_tokens"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as usize),
                             })))
                         } else {
                             None
@@ -572,6 +569,7 @@ impl OpenAiClient {
                         prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
                         completion_tokens: usage.completion_tokens.map(|v| v as usize),
                         total_tokens: usage.total_tokens.map(|v| v as usize),
+                        cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
                     })));
                 }
 
@@ -721,11 +719,8 @@ impl OpenAiClient {
                 "tools": tools,
             });
             let is_gemini = self.base_url.contains("googleapis.com");
-            // Only include stream_options for providers known to support it.
-            // Gemini's OpenAI-compatible API doesn't support stream_options.
-            if !is_gemini {
-                req["stream_options"] = serde_json::json!({"include_usage": true});
-            }
+            // Usage in the final chunk — every provider's meter needs it.
+            req["stream_options"] = serde_json::json!({"include_usage": true});
             // Gemini 2.5 thinking models can exhaust their output budget on
             // internal reasoning and return empty responses. Set a generous
             // max_completion_tokens so there's room for both thinking and output.
@@ -879,6 +874,11 @@ impl OpenAiClient {
                                     prompt_tokens: input,
                                     completion_tokens: output,
                                     total_tokens: input.zip(output).map(|(a, b)| a + b),
+                                    cached_tokens: usage
+                                        .get("input_tokens_details")
+                                        .and_then(|d| d.get("cached_tokens"))
+                                        .and_then(|v| v.as_u64())
+                                        .map(|v| v as usize),
                                 }))]
                             } else {
                                 vec![]
@@ -912,6 +912,7 @@ impl OpenAiClient {
                             prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
                             completion_tokens: usage.completion_tokens.map(|v| v as usize),
                             total_tokens: usage.total_tokens.map(|v| v as usize),
+                            cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
                         }))];
                     }
 
@@ -1207,9 +1208,17 @@ struct OaiStreamChunk {
 }
 
 #[derive(Debug, Deserialize)]
+struct OaiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct OaiUsage {
     #[serde(default)]
     prompt_tokens: Option<u64>,
+    #[serde(default)]
+    prompt_tokens_details: Option<OaiPromptTokensDetails>,
     #[serde(default)]
     completion_tokens: Option<u64>,
     #[serde(default)]

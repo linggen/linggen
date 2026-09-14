@@ -39,7 +39,14 @@ pub(crate) fn after_call(engine: &AgentEngine, usage: Option<&TokenUsage>) {
         return;
     }
     let meter = meter_of(engine);
-    let tokens = usage.and_then(|u| u.total_tokens).unwrap_or(0) as u64;
+    let tokens = usage.map(|u| u.metered()).unwrap_or(0);
+    match usage {
+        Some(u) => tracing::debug!(
+            "meter: {tokens} tokens this call (prompt {:?}, cached {:?}, output {:?})",
+            u.prompt_tokens, u.cached_tokens, u.completion_tokens
+        ),
+        None => tracing::debug!("meter: the provider reported no usage for this call"),
+    }
     let save = target(skill);
     tokio::spawn(async move {
         if let (Some(meter), true) = (meter.as_deref(), tokens > 0) {
