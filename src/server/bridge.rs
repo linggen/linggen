@@ -77,11 +77,32 @@ struct HubInner {
     modules: Vec<ModuleState>,
 }
 
+/// Where a request's `progress` lines go — the caller's live status.
+type ProgressFn = Box<dyn Fn(String) + Send + Sync>;
+
 /// Shared bridge state: the single connected extension plus in-flight requests.
 pub struct BridgeHub {
     inner: Mutex<HubInner>,
     pending: Mutex<HashMap<String, oneshot::Sender<ResData>>>,
+    /// Requests whose caller wants `progress` lines. A plain mutex: the
+    /// registration is dropped by a guard, which cannot await.
+    progress: std::sync::Mutex<HashMap<String, ProgressFn>>,
     seq: AtomicU64,
+}
+
+/// Removes a request's progress listener however the call ends — answered,
+/// timed out, or its future dropped by a cancelled tool.
+struct ProgressGuard<'a> {
+    hub: &'a BridgeHub,
+    id: String,
+}
+
+impl Drop for ProgressGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.hub.progress.lock() {
+            map.remove(&self.id);
+        }
+    }
 }
 
 impl BridgeHub {
@@ -89,6 +110,7 @@ impl BridgeHub {
         Self {
             inner: Mutex::new(HubInner::default()),
             pending: Mutex::new(HashMap::new()),
+            progress: std::sync::Mutex::new(HashMap::new()),
             seq: AtomicU64::new(1),
         }
     }
@@ -133,6 +155,7 @@ impl BridgeHub {
         match v.get("t").and_then(Value::as_str) {
             Some("hello") => self.on_hello(&v).await,
             Some("res") => self.on_res(&v).await,
+            Some("progress") => self.on_progress(&v),
             Some("status") => self.merge_modules(&v).await,
             _ => {}
         }
@@ -165,6 +188,22 @@ impl BridgeHub {
         });
     }
 
+    /// A `progress` frame: the op is waiting on something — the user's OK in
+    /// the approval popup, or another browser action ahead of it.
+    fn on_progress(&self, v: &Value) {
+        let (Some(id), Some(text)) = (
+            v.get("id").and_then(Value::as_str),
+            v.get("text").and_then(Value::as_str),
+        ) else {
+            return;
+        };
+        if let Ok(map) = self.progress.lock() {
+            if let Some(report) = map.get(id) {
+                report(text.to_string());
+            }
+        }
+    }
+
     async fn merge_modules(&self, v: &Value) {
         let updates = parse_modules(v);
         let mut inner = self.inner.lock().await;
@@ -177,10 +216,26 @@ impl BridgeHub {
     }
 
     /// Broker one read: enqueue a `req`, wait for the matching `res` or timeout.
-    async fn call(&self, module: &str, op: &str, params: Value, timeout_ms: u64) -> ResData {
+    async fn call(
+        &self,
+        module: &str,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+        on_progress: Option<ProgressFn>,
+    ) -> ResData {
         let id = self.next_id();
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id.clone(), tx);
+        let _guard = on_progress.map(|report| {
+            if let Ok(mut map) = self.progress.lock() {
+                map.insert(id.clone(), report);
+            }
+            ProgressGuard {
+                hub: self,
+                id: id.clone(),
+            }
+        });
 
         let frame = json!({ "t": "req", "id": id, "module": module, "op": op, "params": params });
         if !self.send_frame(frame).await {
@@ -208,7 +263,25 @@ impl BridgeHub {
         params: Value,
         timeout_ms: u64,
     ) -> Value {
-        self.call(module, op, params, timeout_ms).await.into_value()
+        self.call(module, op, params, timeout_ms, None)
+            .await
+            .into_value()
+    }
+
+    /// [call_value], with the op's `progress` lines handed to [on_progress]
+    /// as they arrive — so a caller can show "waiting for your OK" instead of
+    /// a bare spinner.
+    pub async fn call_value_reporting(
+        &self,
+        module: &str,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Value {
+        self.call(module, op, params, timeout_ms, Some(Box::new(on_progress)))
+            .await
+            .into_value()
     }
 
     async fn status(&self) -> Value {
@@ -321,7 +394,7 @@ pub(crate) async fn call_handler(
         .clamp(1_000, 180_000);
     let res = state
         .bridge
-        .call(&req.module, &req.op, req.params, timeout_ms)
+        .call(&req.module, &req.op, req.params, timeout_ms, None)
         .await;
     Json(res.into_value())
 }
@@ -329,4 +402,46 @@ pub(crate) async fn call_handler(
 /// `GET /api/bridge/status` — is the bridge connected, and which modules?
 pub(crate) async fn status_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     Json(state.bridge.status().await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn progress_reaches_its_caller_and_leaves_with_the_call() {
+        let hub = BridgeHub::new();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        hub.attach(tx).await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let call = hub.call(
+            "control",
+            "tabs",
+            json!({}),
+            1_000,
+            Some(Box::new(move |line| sink.lock().unwrap().push(line))),
+        );
+        let extension = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            hub.on_frame(
+                r#"{"t":"progress","id":"req-1","stage":"approval","text":"Waiting for your OK"}"#,
+            )
+            .await;
+            hub.on_frame(r#"{"t":"progress","id":"req-9","text":"another call's line"}"#)
+                .await;
+            hub.on_frame(r#"{"t":"res","id":"req-1","ok":true,"data":{}}"#)
+                .await;
+        };
+        let (res, _) = tokio::join!(call, extension);
+        assert!(res.ok);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["Waiting for your OK".to_string()]
+        );
+        assert!(
+            hub.progress.lock().unwrap().is_empty(),
+            "the listener leaves with the call"
+        );
+    }
 }

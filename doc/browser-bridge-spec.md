@@ -89,6 +89,12 @@ ext → daemon   { "t": "res", "id": "01H...", "ok": false, "code": "not_logged_
 ext → daemon   { "t": "status", "modules": [{ "id": "x", "ready": false }] }
 ```
 
+**Progress (optional)** — a line for a request still in flight, when it waits on something the caller can't see: the user's OK in the approval popup, or another browser action ahead of it in the control queue. The daemon hands it to whoever made the call; a `Browser_*` tool shows the latest line under its running row. Stages: `queued`, `approval`, `approved`.
+
+```
+ext → daemon   { "t": "progress", "id": "01H...", "stage": "approval", "text": "Waiting for your OK in the browser — allow example.com?" }
+```
+
 **Keepalive** — sent every 20s while the socket is open. It exists to keep Chrome from suspending the extension's service worker (see Transport), not to probe the link, so the daemon ignores it and answers nothing:
 
 ```

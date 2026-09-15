@@ -68,6 +68,12 @@ export const ContentBlockView: React.FC<{
 
   const isBash = block.tool === 'Bash';
   const hasOutput = isBash && block.output && block.output.length > 0;
+  // A non-Bash tool's output lines are status, not a transcript — the latest
+  // one says what it is waiting on ("Waiting for your OK in the browser…"),
+  // shown only while it runs.
+  const statusLine = !isBash && isRunning && block.output?.length
+    ? block.output[block.output.length - 1]
+    : null;
   const hasDiff = !!block.diffData;
   const hasWidget = hasOutput || hasDiff;
 
@@ -253,6 +259,11 @@ export const ContentBlockView: React.FC<{
             : 'text-slate-500 dark:text-slate-400'
         )}>
           {block.summary}
+        </div>
+      )}
+      {statusLine && (
+        <div className="pl-4 mt-0.5 text-[11px] text-amber-600 dark:text-amber-400 truncate">
+          <span className="text-slate-300 dark:text-slate-600 select-none">⎿  </span>{statusLine}
         </div>
       )}
       {bashWidget()}

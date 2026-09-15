@@ -36,7 +36,19 @@ impl Tools {
         let Some(hub) = &self.browser_bridge else {
             anyhow::bail!("browser control is unavailable in this context (no daemon bridge)");
         };
-        let res = hub.call_value("control", op, params, timeout_ms).await;
+        // The extension says when an op waits — on the user's OK in its
+        // approval popup, or behind another browser action — and that line
+        // rides the running tool, so a two-minute wait reads as one.
+        let res = match self.progress_tx.clone() {
+            Some(tx) => {
+                let tool = format!("Browser_{op}");
+                hub.call_value_reporting("control", op, params, timeout_ms, move |line| {
+                    let _ = tx.send((tool.clone(), "status".to_string(), line));
+                })
+                .await
+            }
+            None => hub.call_value("control", op, params, timeout_ms).await,
+        };
         if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             return Ok(res.get("data").cloned().unwrap_or(Value::Null));
         }
