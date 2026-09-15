@@ -824,10 +824,11 @@ impl Tool for WebSearchTool {
         &["web_search"]
     }
     fn description(&self) -> &'static str {
-        "Search the web (Linggen Cloud; requires linggen.dev sign-in, metered \
-         against the account's monthly pool). Returns titles, URLs, and \
-         snippets. If it reports a sign-in or quota error, do not retry — \
-         tell the user instead."
+        "Search the web (Tavily: the user's own key from Settings when saved, \
+         otherwise Linggen Cloud, which needs linggen.dev sign-in and is \
+         metered against the account's monthly pool). Returns titles, URLs, \
+         and snippets. If it reports a key, sign-in, or quota error, do not \
+         retry — tell the user instead."
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
@@ -852,7 +853,7 @@ impl Tool for WebSearchTool {
             "name": "WebSearch",
             "args": {"query": "string", "max_results": "number?"},
             "returns": "{results:[{title,url,snippet}]}",
-            "notes": "Search the web. Default 5 results, max 10. Requires sign-in to linggen.dev."
+            "notes": "Search the web. Default 5 results, max 10. Uses the Tavily key from Settings, else linggen.dev sign-in."
         })
     }
     async fn execute(&self, _tools: &Tools, call: ToolCall) -> Result<ToolResult> {
