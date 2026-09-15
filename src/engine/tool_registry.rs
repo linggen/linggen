@@ -111,14 +111,18 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
-    /// `true` if `name` passes the allowed-tools filter (or no filter set).
+    /// `true` if `name` passes the allowed-tools filter (or no filter set)
+    /// and, for a tool bound to a local-model lane, this machine can carry
+    /// that lane — a Mac without the memory is never offered the tool, so
+    /// the model never reaches for what cannot run.
     fn is_allowed(allowed: Option<&HashSet<String>>, name: &str) -> bool {
-        match allowed {
+        let listed = match allowed {
             // Wildcard (`*`): everything EXCEPT pet-scoped tools (only an agent
             // that lists them explicitly gets those).
             None => !tools::is_pet_scoped(name),
             Some(set) => set.contains(name),
-        }
+        };
+        listed && tools::lane_supported_for(name)
     }
 
     /// Merge built-in and skill tool schemas, filtered by the allowed
@@ -174,6 +178,10 @@ impl ToolRegistry {
 
     pub fn set_run_id(&mut self, run_id: Option<String>) {
         self.builtins.set_run_id(run_id);
+    }
+
+    pub fn set_active_skill(&mut self, name: String, dir: Option<std::path::PathBuf>) {
+        self.builtins.set_active_skill(name, dir);
     }
 
     pub fn get_manager(&self) -> Option<Arc<AgentManager>> {

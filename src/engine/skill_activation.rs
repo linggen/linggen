@@ -96,6 +96,8 @@ impl AgentEngine {
         if matches!(mode, ActivationMode::ToolInvocation) {
             register_skill_tools(self, &skill);
             apply_skill_app_scope(self, &skill);
+            self.tools
+                .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
             self.active_skill = Some(skill);
             return ActivationOutcome::Activated {
                 grants_changed: false,
@@ -120,6 +122,8 @@ impl AgentEngine {
         apply_skill_app_scope(self, &skill);
         apply_skill_tool_scope(self, &skill);
         seed_session_cwd_from_skill(self, &skill);
+        self.tools
+            .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
         self.active_skill = Some(skill);
         ActivationOutcome::Activated { grants_changed }
     }

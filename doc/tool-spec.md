@@ -38,6 +38,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `Edit` | `path, old_string, new_string, replace_all?` | String replacement in file |
 | `Bash` | `cmd, timeout_ms?` | Shell command execution |
 | `capture_screenshot` | `url, delay_ms?` | Web page screenshot |
+| `GenerateImage` | `prompt, name, shape?, reference?, seed?` | One picture from the local picture lane, saved as `<skill>/data/pictures/<name>.png`, returned as `/apps/<skill>/data/pictures/<name>.png` |
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
@@ -51,6 +52,17 @@ Built-in tools are the kernel API. Skills are userspace.
 | `EnterPlanMode` | `reason?` | Enter plan mode (research-only) |
 | `ExitPlanMode` | `plan_text` | Exit plan mode with completed plan |
 | `UpdatePlan` | `plan_text?, items?` | Update plan progress during execution |
+
+**Lane-bound tools.** A built-in may name a local-model lane
+(`Tool::lane`); `GenerateImage` runs on the `pictures` lane. The tool is
+offered only when a skill lists it in `allowed-tools` *and* the machine
+passes the lane gate (Apple Silicon, 16 GB unified memory) — a Mac that
+cannot draw never sees the tool, so the model never reaches for it. The
+first call on a capable Mac that has not installed the lane starts the
+install in the background (venv + ~5 GB model) and answers in one line;
+`GET /api/runtime/lanes` reports every lane's verdict. Renders run one at
+a time, one process per picture, `square` 512×512 or `landscape`
+768×512; a `reference` (a file inside the skill) keeps its pose and shape.
 
 **Aliases**: `Read`/`Write`/`Edit` accept `file`/`filepath` for `path`. `Edit` accepts `old`/`search`/`from` for `old_string`, `new`/`replace`/`to` for `new_string`.
 

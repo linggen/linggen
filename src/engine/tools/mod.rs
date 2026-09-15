@@ -198,6 +198,14 @@ pub(crate) fn is_pet_scoped(name: &str) -> bool {
     matches!(name, "Express")
 }
 
+/// `false` only for a built-in bound to a local-model lane this machine
+/// cannot carry; every other name passes.
+pub(crate) fn lane_supported_for(name: &str) -> bool {
+    builtin::lookup(name)
+        .and_then(|t| t.lane())
+        .is_none_or(crate::runtime::lane_supported)
+}
+
 /// Bridge between the synchronous tool executor and the async server state,
 /// allowing the AskUser tool to emit events and block on user responses.
 pub struct AskUserBridge {
@@ -264,6 +272,10 @@ pub struct Tools {
     /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
     /// `None` in CLI/eval contexts, where browser control is unavailable.
     pub(crate) browser_bridge: Option<Arc<crate::server::bridge::BridgeHub>>,
+    /// The active skill's name and folder, set on activation. Tools that
+    /// write a skill's own files (pictures) resolve the folder here and
+    /// build the `/apps/<name>/...` URL the web UI and phone can load.
+    pub(crate) active_skill: Option<(String, PathBuf)>,
 }
 
 impl Tools {
@@ -286,6 +298,7 @@ impl Tools {
             parent_interactive: true,
             last_ask_user: Arc::new(std::sync::Mutex::new(None)),
             browser_bridge: None,
+            active_skill: None,
         })
     }
 
@@ -344,6 +357,14 @@ impl Tools {
         self.session_id = session_id;
     }
 
+    pub fn set_active_skill(&mut self, name: String, dir: Option<PathBuf>) {
+        self.active_skill = dir.map(|d| (name, d));
+    }
+
+    pub(crate) fn active_skill(&self) -> Option<&(String, PathBuf)> {
+        self.active_skill.as_ref()
+    }
+
     /// Render a prompt template with fallback.
     pub fn prompt(&self, key: &str, vars: &[(&str, &str)]) -> String {
         match &self.prompt_store {
@@ -354,6 +375,60 @@ impl Tools {
 
     pub fn ask_user_bridge(&self) -> Option<&Arc<AskUserBridge>> {
         self.ask_user_bridge.as_ref()
+    }
+
+    /// Draw one picture into the active skill's `data/pictures/` and answer
+    /// with its URL. When the lane is not installed yet the install starts
+    /// in the background and the reply says so in one line — a first call
+    /// never blocks for a 5 GB download.
+    pub(crate) async fn generate_image(
+        &self,
+        args: builtin::GenerateImageArgs,
+    ) -> Result<ToolResult> {
+        use crate::pictures;
+        let (skill_name, skill_dir) = self.active_skill().cloned().ok_or_else(|| {
+            anyhow::anyhow!("GenerateImage needs an active skill to keep the picture")
+        })?;
+        if let Err(reason) = crate::runtime::lane_gate(&crate::runtime::PICTURES_LANE) {
+            anyhow::bail!("this Mac cannot draw pictures: {reason}");
+        }
+        if !crate::runtime::pictures_ready() {
+            crate::runtime::ensure_pictures_in_background();
+            return Ok(ToolResult::Success(
+                "The picture model is being installed on this Mac (about 5 GB). Try again in a few minutes."
+                    .to_string(),
+            ));
+        }
+        let shape = pictures::Shape::parse(args.shape.as_deref())?;
+        let stem = pictures::safe_stem(&args.name);
+        let reference = match args.reference.as_deref() {
+            Some(r) if !r.trim().is_empty() => Some(pictures::reference_inside(&skill_dir, r)?),
+            _ => None,
+        };
+        let rel = format!("data/pictures/{stem}.png");
+        let rendered = pictures::render(pictures::Request {
+            prompt: args.prompt,
+            out: skill_dir.join(&rel),
+            shape,
+            seed: args.seed.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() % 1_000_000)
+                    .unwrap_or(7)
+            }),
+            reference,
+        })
+        .await?;
+        let url = format!("/apps/{skill_name}/{rel}");
+        Ok(ToolResult::Success(
+            serde_json::json!({
+                "url": url,
+                "path": rendered.path,
+                "seconds": rendered.seconds,
+                "seed": rendered.seed,
+            })
+            .to_string(),
+        ))
     }
 
     pub fn get_manager(&self) -> Option<Arc<AgentManager>> {

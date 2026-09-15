@@ -46,14 +46,24 @@ const PY_ASSETS: [(&str, &str, &str); 2] = [
 /// `curl-cffi` gives browser impersonation. Installed `--pre`: YouTube
 /// blocks rot faster than yt-dlp's stable cadence (2026-08-19: stable
 /// 2026.7.4 403'd on every video, the nightly on PyPI downloaded fine).
-const VENVS: [(&str, &[&str]); 2] = [
+const VENVS: [(&str, &[&str]); 3] = [
     ("tools", &["--pre", "yt-dlp[default,curl-cffi]"]),
     ("tts", &["mlx-audio==0.5.0"]),
+    ("pictures", &["mflux==0.18.0"]),
 ];
 
 /// The TTS voice model the `tts` venv serves; warmed into the shared HF
 /// cache so first playback never downloads.
 const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+
+/// The picture model the `pictures` venv runs: FLUX.2 klein 4B, 4-bit,
+/// in mflux's own weight layout (only that layout loads pre-quantized;
+/// other MLX conversions fail in the text encoder). Chosen 2026-09-15
+/// over Z-Image Turbo: half the time and memory at 512², and the look
+/// suits the game. The upstream 4B weights are Apache-2.0; this
+/// community quantization's card mislabels its license, so before a
+/// public release the quantization is redone from the original.
+pub const PICTURE_MODEL: &str = "ar9av/FLUX.2-klein-4B-mflux-4bit";
 
 // ---------------------------------------------------------------------------
 // Lanes — which local models this machine may carry
@@ -130,6 +140,31 @@ fn gate(lane: &Lane, m: &Machine) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Whether this machine can ever carry `lane` — platform and memory only,
+/// which do not change while the engine runs. Cached; used on the hot
+/// path that decides which tools the model is offered. Free disk is the
+/// install stage's concern, not this one's.
+pub fn lane_supported(lane: &Lane) -> bool {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, bool>>,
+    > = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().ok().and_then(|m| m.get(lane.name).copied()) {
+        return v;
+    }
+    let m = Machine {
+        macos: cfg!(target_os = "macos"),
+        apple_silicon: cfg!(all(target_os = "macos", target_arch = "aarch64")),
+        memory_gb: unified_memory_gb(),
+        disk_gb: u64::MAX,
+    };
+    let ok = gate(lane, &m).is_ok();
+    if let Ok(mut map) = cache.lock() {
+        map.insert(lane.name, ok);
+    }
+    ok
 }
 
 /// Every lane with its verdict — what Settings and the progress topic show.
@@ -280,12 +315,29 @@ fn write_stamp(dir: &Path, value: &str) -> Result<()> {
 /// prewarm, so publish failures are swallowed inside [`publish_progress`].
 pub type Progress = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
 
+/// The progress sink the server wires at boot, kept so an on-demand
+/// install started from a tool call reports on the same topic.
+static PROGRESS_SINK: std::sync::OnceLock<Progress> = std::sync::OnceLock::new();
+
+pub fn set_progress_sink(progress: Progress) {
+    let _ = PROGRESS_SINK.set(progress);
+}
+
+fn progress_sink() -> Progress {
+    PROGRESS_SINK
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::sync::Arc::new(|_| {}))
+}
+
 /// `with_tts` gates the voice stages (venv + model, ~2.1 GB): the caller
 /// passes whether anything on this machine actually speaks (pet enabled),
-/// so a machine with the pet off never pulls the model. `progress`
-/// receives each stage payload; the server wires it to the live topic
-/// bus + retained store.
-pub async fn prewarm(with_tts: bool, progress: Progress) {
+/// so a machine with the pet off never pulls the model. `with_pictures`
+/// gates the picture stages the same way (venv + model, ~5.6 GB): only
+/// when an installed skill declares the picture tool. `progress` receives
+/// each stage payload; the server wires it to the live topic bus +
+/// retained store.
+pub async fn prewarm(with_tts: bool, with_pictures: bool, progress: Progress) {
     // One prewarm at a time; a second boot-time spawn or an on-demand
     // ensure_* call waits instead of racing the unpack.
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -298,7 +350,7 @@ pub async fn prewarm(with_tts: bool, progress: Progress) {
     export_python_env();
 
     for attempt in 0..3u32 {
-        match prewarm_stages(with_tts, &progress).await {
+        match prewarm_stages(with_tts, with_pictures, &progress).await {
             Ok(()) => return,
             Err(e) if format!("{e:#}").contains("low disk") => {
                 // Not retryable on a timer — the disk won't free itself.
@@ -325,24 +377,52 @@ fn export_python_env() {
     }
 }
 
-async fn prewarm_stages(with_tts: bool, progress: &Progress) -> Result<()> {
-    // The voice lane goes through the lane gate (Apple Silicon, memory,
-    // disk); a Mac that fails it keeps the runtime + tools and simply
-    // never grows a TTS lane. The reason is logged and rides on the
-    // progress payload so Settings can say why.
-    let tts_on = with_tts
-        && match lane_gate(&VOICE_LANE) {
-            Ok(()) => true,
-            Err(reason) => {
-                tracing::info!("[runtime] voice lane off: {reason}");
-                false
-            }
-        };
+/// Are the picture venv and model both on disk? Cheap; the tool asks on
+/// every call.
+pub fn pictures_ready() -> bool {
+    env_bin("pictures", "python3").exists() && stamp_matches(&picture_model_stamp(), PICTURE_MODEL)
+}
+
+fn picture_model_stamp() -> PathBuf {
+    runtime_dir().join("pictures-model.stamp")
+}
+
+/// Start the picture stages now, off the caller's path, when a tool call
+/// finds them missing (a skill installed after boot, or a boot that ran
+/// before the skill declared the tool). Serialized by prewarm's own lock.
+pub fn ensure_pictures_in_background() {
+    tokio::spawn(prewarm(false, true, progress_sink()));
+}
+
+/// Which lanes a stage set may run: each goes through the gate and a
+/// closed lane is logged with its reason.
+fn lane_open(lane: &Lane, wanted: bool) -> bool {
+    if !wanted {
+        return false;
+    }
+    match lane_gate(lane) {
+        Ok(()) => true,
+        Err(reason) => {
+            tracing::info!("[runtime] {} lane off: {reason}", lane.name);
+            false
+        }
+    }
+}
+
+async fn prewarm_stages(with_tts: bool, with_pictures: bool, progress: &Progress) -> Result<()> {
+    // Each lane goes through the lane gate (Apple Silicon, memory, disk);
+    // a Mac that fails it keeps the runtime + tools and simply never grows
+    // that lane. The reason is logged and rides on the progress payload so
+    // Settings can say why.
+    let tts_on = lane_open(&VOICE_LANE, with_tts);
+    let pictures_on = lane_open(&PICTURES_LANE, with_pictures);
     let stages: &[(&str, bool)] = &[
         ("python", true),
         ("tools", true),
         ("tts", tts_on),
         ("tts-model", tts_on),
+        ("pictures", pictures_on),
+        ("pictures-model", pictures_on),
     ];
     let total = stages.iter().filter(|(_, on)| *on).count();
     let mut done = 0;
@@ -360,6 +440,8 @@ async fn prewarm_stages(with_tts: bool, progress: &Progress) -> Result<()> {
             "tools" => ensure_venv("tools").await.map(|_| ())?,
             "tts" => ensure_venv("tts").await.map(|_| ())?,
             "tts-model" => ensure_tts_model().await?,
+            "pictures" => ensure_venv("pictures").await.map(|_| ())?,
+            "pictures-model" => ensure_picture_model().await?,
             _ => unreachable!(),
         }
         done += 1;
@@ -497,14 +579,40 @@ async fn ensure_tts_model() -> Result<()> {
         tokio::process::Command::new(env_bin("tts", "python3"))
             .arg("-c")
             .arg(&code)
-            .env(
-                "HF_HOME",
-                crate::paths::linggen_home().join("models/hf-hub"),
-            ),
+            .env("HF_HOME", hf_home()),
         "warm tts model",
     )
     .await
     .map(|_| ())
+}
+
+/// Warm the picture model into the same HF cache, then stamp it so
+/// [`pictures_ready`] is a file test. snapshot_download resumes partial
+/// pulls on its own; `HF_ENDPOINT` is inherited for the China mirror.
+async fn ensure_picture_model() -> Result<()> {
+    if stamp_matches(&picture_model_stamp(), PICTURE_MODEL) {
+        return Ok(());
+    }
+    check_disk_headroom(&runtime_dir(), PICTURES_LANE.disk_gb)?;
+    let code = format!(
+        "from huggingface_hub import snapshot_download; snapshot_download({PICTURE_MODEL:?})"
+    );
+    run_ok(
+        tokio::process::Command::new(env_bin("pictures", "python3"))
+            .arg("-c")
+            .arg(&code)
+            .env("HF_HOME", hf_home()),
+        "warm picture model",
+    )
+    .await?;
+    std::fs::write(picture_model_stamp(), PICTURE_MODEL)?;
+    tracing::info!("[runtime] picture model ready");
+    Ok(())
+}
+
+/// The one Hugging Face cache every managed model shares.
+pub fn hf_home() -> PathBuf {
+    crate::paths::linggen_home().join("models/hf-hub")
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ mod mcp_client;
 mod message;
 mod paths;
 mod perception;
+mod pictures;
 mod prompts;
 mod provider;
 mod runtime;

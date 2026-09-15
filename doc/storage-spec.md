@@ -51,7 +51,9 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │       └── scripts/                  # Skill assets (optional)
 ├── runtime/                          # Managed Python runtime (see src/runtime.rs)
 │   ├── py/                           # Pinned relocatable CPython (python-build-standalone)
-│   └── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio)
+│   ├── envs/{name}/                  # Named venvs: tools (yt-dlp), tts (mlx-audio), pictures (mflux)
+│   ├── mlx_tts.py, mlx_picture.py    # Sidecar/runner scripts, rewritten from the binary at spawn
+│   └── pictures-model.stamp          # Picture model warmed into models/hf-hub (the lane is ready)
 ├── sessions/                         # All sessions (user, skill, mission — flat)
 │   └── {session_id}/
 │       ├── session.yaml              # Session metadata (includes creator, cwd, project)
