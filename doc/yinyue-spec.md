@@ -126,10 +126,12 @@ that app loses focus. Two apps open means two Yinyues. The target: **one** Yinyu
 owned by the shared daemon, free to walk the desktop and climb Linggen's own app
 windows.
 
-### One device, one voice (built)
+### One device, one Yinyue (built)
 
-Her body and voice live on exactly one surface per device. Every other place
-she appears on that device is silent and shows her words as text.
+One device shows exactly one Yinyue 3D model, and that one carries her voice.
+Every other place she appears on that device is silent and shows her words as
+text. The rule is per device, not per person: a Mac and a phone each have their
+own Yinyue, and both may speak at the same time.
 
 The engine enforces it per engine: every surface that can render her — the web
 tab, the desktop pet window, a stage inside an app page — subscribes over the
@@ -141,7 +143,8 @@ with a **stage** — one that stands her in a place, such as a game scene loadin
 next by the same rule, so when a stage closes she returns to the corner she came
 from. Two cases the engine cannot see are the surface's own duty: a phone with
 the Linggen app and a browser tab of a Mac's web UI keeps voice in the app; at a
-game table other players' Yinyue never speak aloud. Engine: `ServerState::yinyue_*`
+game table other players' Yinyue are silent figures on your device (each speaks
+on her own player's device). Engine: `ServerState::yinyue_*`
 in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
 
 ### Singleton ownership
