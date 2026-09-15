@@ -70,7 +70,7 @@ use api::skills::{
     delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills, reload_skills,
     upsert_skill_file_api,
 };
-use api::status::{get_status_api, list_models_api};
+use api::status::{get_runtime_lanes_api, get_status_api, list_models_api};
 use api::storage::{
     storage_delete_file, storage_read_file, storage_roots, storage_tree, storage_write_file,
 };
@@ -1248,6 +1248,7 @@ async fn prepare_server(
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
         .route("/api/status", get(get_status_api))
+        .route("/api/runtime/lanes", get(get_runtime_lanes_api))
         .route("/api/account", get(get_account))
         .route("/api/user/name", get(get_user_name))
         .route("/api/account/login", post(post_account_login))

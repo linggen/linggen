@@ -55,6 +55,177 @@ const VENVS: [(&str, &[&str]); 2] = [
 /// cache so first playback never downloads.
 const TTS_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
 
+// ---------------------------------------------------------------------------
+// Lanes — which local models this machine may carry
+// ---------------------------------------------------------------------------
+
+/// A local-model lane and the machine it needs. A lane is an engine
+/// capability (voice, pictures), never an app. Both run on MLX, so both
+/// are Apple-Silicon-only. The thresholds are measurements from 2026-09-15:
+/// the voice sidecar peaks at 2.5 GB resident, a 512² picture at 6.9 GB;
+/// beside the engine and a browser an 8 GB Mac carries neither, a 16 GB
+/// Mac carries both. Disk is the download plus unpack headroom.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct Lane {
+    pub name: &'static str,
+    pub min_memory_gb: u64,
+    pub disk_gb: u64,
+}
+
+pub const VOICE_LANE: Lane = Lane {
+    name: "voice",
+    min_memory_gb: 16,
+    disk_gb: 6,
+};
+pub const PICTURES_LANE: Lane = Lane {
+    name: "pictures",
+    min_memory_gb: 16,
+    disk_gb: 8,
+};
+pub const LANES: [Lane; 2] = [VOICE_LANE, PICTURES_LANE];
+
+/// What the gate measures. Read once per check; nothing here is cached
+/// because free disk changes under us.
+struct Machine {
+    macos: bool,
+    apple_silicon: bool,
+    memory_gb: u64,
+    disk_gb: u64,
+}
+
+impl Machine {
+    fn this() -> Self {
+        Machine {
+            macos: cfg!(target_os = "macos"),
+            apple_silicon: cfg!(all(target_os = "macos", target_arch = "aarch64")),
+            memory_gb: unified_memory_gb(),
+            disk_gb: disk_free_gb(&runtime_dir()),
+        }
+    }
+}
+
+/// May this machine carry `lane`? `Err` carries the reason in plain
+/// words, shown to the user as-is.
+pub fn lane_gate(lane: &Lane) -> Result<(), String> {
+    gate(lane, &Machine::this())
+}
+
+fn gate(lane: &Lane, m: &Machine) -> Result<(), String> {
+    if !m.macos {
+        return Err("needs a Mac".into());
+    }
+    if !m.apple_silicon {
+        return Err("needs an Apple Silicon Mac".into());
+    }
+    if m.memory_gb < lane.min_memory_gb {
+        return Err(format!(
+            "needs {} GB of memory, this Mac has {} GB",
+            lane.min_memory_gb, m.memory_gb
+        ));
+    }
+    if m.disk_gb < lane.disk_gb {
+        return Err(format!(
+            "needs {} GB free on disk, {} GB free now",
+            lane.disk_gb, m.disk_gb
+        ));
+    }
+    Ok(())
+}
+
+/// Every lane with its verdict — what Settings and the progress topic show.
+pub fn lanes_status() -> serde_json::Value {
+    let m = Machine::this();
+    let lanes: Vec<serde_json::Value> = LANES
+        .iter()
+        .map(|lane| {
+            let verdict = gate(lane, &m);
+            serde_json::json!({
+                "name": lane.name,
+                "min_memory_gb": lane.min_memory_gb,
+                "disk_gb": lane.disk_gb,
+                "available": verdict.is_ok(),
+                "reason": verdict.err(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "memory_gb": m.memory_gb,
+        "disk_free_gb": m.disk_gb,
+        "lanes": lanes,
+    })
+}
+
+/// Installed unified memory in whole GB; 0 when it cannot be read, which
+/// fails the gate closed rather than open.
+fn unified_memory_gb() -> u64 {
+    if !cfg!(target_os = "macos") {
+        return 0;
+    }
+    std::process::Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|b| b / GB)
+        .unwrap_or(0)
+}
+
+const GB: u64 = 1024 * 1024 * 1024;
+
+/// Free disk in whole GB for the volume holding `dir`. On macOS this is
+/// the purgeable-aware figure Finder shows (APFS frees purgeable space on
+/// demand); `df` excludes it and under-reports by tens of GB on a Mac with
+/// big caches. Unreadable free space must not block a stage, so the
+/// fallback is "plenty".
+fn disk_free_gb(dir: &Path) -> u64 {
+    std::fs::create_dir_all(dir).ok();
+    foundation_free_bytes(dir)
+        .or_else(|| df_free_bytes(dir))
+        .map(|b| b / GB)
+        .unwrap_or(u64::MAX)
+}
+
+fn foundation_free_bytes(dir: &Path) -> Option<u64> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let path = serde_json::to_string(&dir.to_string_lossy()).ok()?;
+    let script = format!(
+        "ObjC.import('Foundation'); \
+         const u = $.NSURL.fileURLWithPath({path}); \
+         const k = $.NSURLVolumeAvailableCapacityForImportantUsageKey; \
+         const v = u.resourceValuesForKeysError($([k]), null); \
+         v.objectForKey(k).longLongValue"
+    );
+    let out = std::process::Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &script])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+fn df_free_bytes(dir: &Path) -> Option<u64> {
+    let out = std::process::Command::new("df")
+        .arg("-Pk")
+        .arg(dir)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let avail_kb: u64 = text
+        .lines()
+        .nth(1)?
+        .split_whitespace()
+        .nth(3)?
+        .parse()
+        .ok()?;
+    Some(avail_kb * 1024)
+}
+
 pub fn runtime_dir() -> PathBuf {
     crate::paths::linggen_home().join("runtime")
 }
@@ -155,9 +326,18 @@ fn export_python_env() {
 }
 
 async fn prewarm_stages(with_tts: bool, progress: &Progress) -> Result<()> {
-    // MLX is Apple-Silicon-only; Intel Macs keep the runtime + tools and
-    // simply never grow a TTS lane.
-    let tts_on = with_tts && cfg!(target_arch = "aarch64");
+    // The voice lane goes through the lane gate (Apple Silicon, memory,
+    // disk); a Mac that fails it keeps the runtime + tools and simply
+    // never grows a TTS lane. The reason is logged and rides on the
+    // progress payload so Settings can say why.
+    let tts_on = with_tts
+        && match lane_gate(&VOICE_LANE) {
+            Ok(()) => true,
+            Err(reason) => {
+                tracing::info!("[runtime] voice lane off: {reason}");
+                false
+            }
+        };
     let stages: &[(&str, bool)] = &[
         ("python", true),
         ("tools", true),
@@ -196,6 +376,7 @@ fn publish_progress(progress: &Progress, done: usize, total: usize, current: &st
             "label": "Preparing runtime",
             "done": done, "total": total, "current": current,
             "finished": finished,
+            "machine": lanes_status(),
             "at": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -405,21 +586,9 @@ fn file_sha256(path: &Path) -> Result<String> {
 /// Refuse to start a stage without `need_gb` of free disk — a full disk
 /// mid-unpack is worse than a missing runtime.
 fn check_disk_headroom(dir: &Path, need_gb: u64) -> Result<()> {
-    std::fs::create_dir_all(dir).ok();
-    let out = std::process::Command::new("df")
-        .arg("-Pk")
-        .arg(dir)
-        .output()
-        .context("df")?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let avail_kb: u64 = text
-        .lines()
-        .nth(1)
-        .and_then(|l| l.split_whitespace().nth(3))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(u64::MAX); // unparseable df must not block the prewarm
-    if avail_kb / 1024 / 1024 < need_gb {
-        bail!("low disk: {}MB free, need {need_gb}GB", avail_kb / 1024);
+    let free = disk_free_gb(dir);
+    if free < need_gb {
+        bail!("low disk: {free}GB free, need {need_gb}GB");
     }
     Ok(())
 }
@@ -434,4 +603,74 @@ async fn run_ok(cmd: &mut tokio::process::Command, what: &str) -> Result<String>
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mac(memory_gb: u64, disk_gb: u64) -> Machine {
+        Machine {
+            macos: true,
+            apple_silicon: true,
+            memory_gb,
+            disk_gb,
+        }
+    }
+
+    #[test]
+    fn lane_opens_on_a_capable_mac() {
+        assert_eq!(gate(&VOICE_LANE, &mac(16, 50)), Ok(()));
+        assert_eq!(gate(&PICTURES_LANE, &mac(16, 8)), Ok(()));
+    }
+
+    #[test]
+    fn lane_closes_off_mac_and_off_apple_silicon() {
+        let linux = Machine {
+            macos: false,
+            apple_silicon: false,
+            memory_gb: 64,
+            disk_gb: 500,
+        };
+        assert_eq!(gate(&PICTURES_LANE, &linux), Err("needs a Mac".into()));
+        let intel = Machine {
+            macos: true,
+            apple_silicon: false,
+            memory_gb: 64,
+            disk_gb: 500,
+        };
+        assert_eq!(
+            gate(&VOICE_LANE, &intel),
+            Err("needs an Apple Silicon Mac".into())
+        );
+    }
+
+    #[test]
+    fn lane_closes_on_small_memory_then_disk() {
+        assert_eq!(
+            gate(&VOICE_LANE, &mac(8, 100)),
+            Err("needs 16 GB of memory, this Mac has 8 GB".into())
+        );
+        assert_eq!(
+            gate(&PICTURES_LANE, &mac(32, 7)),
+            Err("needs 8 GB free on disk, 7 GB free now".into())
+        );
+    }
+
+    #[test]
+    fn unreadable_memory_fails_closed() {
+        assert!(gate(&VOICE_LANE, &mac(0, 100)).is_err());
+    }
+
+    #[test]
+    fn lanes_status_names_every_lane() {
+        let v = lanes_status();
+        let names: Vec<&str> = v["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["voice", "pictures"]);
+    }
 }
