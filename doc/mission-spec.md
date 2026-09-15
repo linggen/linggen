@@ -31,6 +31,8 @@ Two sibling subsystems in the linggen engine, discovered and loaded the same way
 
 A mission looks like a `SKILL.md` with a `schedule:` field. It uses built-in engine tools plus the tools of any connected MCP server (memory's, say), calling them directly. Missions do **not** delegate to skills — the `Skill` tool is never part of a mission's tool surface (see "Tools missions can use").
 
+**Skills ship missions; the engine runs them.** A skill may carry its own missions (see "Skill missions"). Such a mission also gets its own skill's tools — never another skill's.
+
 ## File layout
 
 Missions live under `~/.linggen/missions/` and mirror the skill directory shape:
@@ -44,6 +46,24 @@ Missions live under `~/.linggen/missions/` and mirror the skill directory shape:
 
 The mission name is the directory name. One mission per directory. Run history is kept alongside the definition — delete the directory, the mission and its history are gone.
 
+## Skill missions
+
+*Designed 2026-09-15, not built yet — nor is catch-up from the scheduler tick (see "Catch-up fires").*
+
+An app's scheduled work belongs to its skill, not to the engine. `dream` is built in because memory ships with every install; an app's mission ships with the app.
+
+```
+~/.linggen/skills/cfo/missions/reports/
+└── mission.md         # same format as any mission
+```
+
+- **Discovery** — the engine loads `missions/<name>/mission.md` from every installed skill. The id is the skill name plus the mission name (`cfo:reports`), so it never collides with a user mission or another skill's.
+- **Ownership** — the skill owns the file: a skill update updates the mission. The user owns `enabled` and `schedule`: the file's values are defaults, the user's choices are stored under `~/.linggen/missions/` with the run history, and an update never undoes them.
+- **Toggle** — a skill mission may ship `enabled: false`; the skill's page turns it on through the missions API (e.g. a "Tell me when…" switch).
+- **Tools** — the run has its owning skill's `tools:` and `permission.paths`, plus its own `allowed-tools` and `permission`. The skill's `SKILL.md` body is not added — the mission body stays the whole runbook.
+- **Removal** — uninstalling the skill removes its missions; past run sessions stay in the session store.
+- Skills never generate missions from user state — the file is identical for every install.
+
 ## Frontmatter
 
 ```yaml
@@ -55,7 +75,7 @@ description: >-
 
 # Schedule
 schedule: "0 3 * * *"
-catchup_hours: 24                  # optional — fire from the post-turn seam if last run is older than this
+catchup_hours: 24                  # optional — the scheduler fires it if the last run is older than this
 enabled: true
 agent: ling                        # optional — engine agent to run this mission (default: ling)
 cwd: ~/.linggen                    # working directory for the agent
@@ -95,8 +115,8 @@ permission:
 | `name` | yes | Mission id (matches directory name) |
 | `description` | yes | Short human-readable summary — shown in UI |
 | `schedule` | yes | Cron expression (5-field standard) |
-| `catchup_hours` | no | If set, the post-turn seam fires the mission when its last non-skipped run is older than this many hours. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
-| `enabled` | yes | On/off |
+| `catchup_hours` | no | If set, the scheduler fires the mission when its last non-skipped run is older than this many hours. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
+| `enabled` | yes | On/off. For a skill mission this is the default; the user's choice wins |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
 | `cwd` | yes | Working directory for the agent |
 | `model` | no | Model override |
@@ -204,7 +224,9 @@ Missions and skills are independent subsystems — a mission **cannot** delegate
 1. **Built-in engine tools** — `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, etc.
 2. **The built-in memory server's tools** — `mcp__memory__memory_*`. ling-mem ships with the product and is connected as an MCP server at `agent.ling_mem_url` + `/mcp` (see `doc/mcp-client-spec.md`); the daemon is installed alongside `ling` by the Linggen installer, and no skill is consulted. A mission may name the whole server (`mcp__memory`), which expands to the tools it advertises.
 
-If a listed tool name doesn't resolve to either bucket, the call fails at runtime with `unknown tool: <name>`. There is no separate `requires:` field — `allowed-tools` is the complete contract.
+3. **Its own skill's tools** — skill missions only: the `tools:` its skill declares (e.g. CFO's `LatestAnalysis`), available without listing them. Other skills' tools never resolve.
+
+If a listed tool name doesn't resolve to any bucket, the call fails at runtime with `unknown tool: <name>`. There is no separate `requires:` field — `allowed-tools` is the complete contract.
 
 The `dream` mission lists `mcp__memory` — the built-in server. It runs without any installed skill being present.
 
@@ -233,9 +255,9 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 ### Catch-up fires
 
-Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. After every owner-session user turn, a non-blocking sweep walks all enabled missions whose last non-skipped run is older than their `catchup_hours` and triggers them — same dispatch path as a normal cron fire. Catch-up overlaps are prevented by the same busy-skip used for cron. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
+Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions whose last non-skipped run is older than their `catchup_hours` and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
-The built-in `dream` mission uses `catchup_hours: 24`: missed 3am fires re-run opportunistically the next time the user sends a turn. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
+The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 
 ## Run history
 
@@ -277,7 +299,7 @@ Skipped triggers (busy / daily cap) are logged with `skipped: true` and no `sess
 create → enabled → (triggers run on schedule, each run creates a session) → disabled → delete
 ```
 
-- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (e.g. `dream`) are installed by the Linggen installer alongside the engine.
+- **Create** — user defines via Web UI, CLI, or hand-authored file. Built-in missions (e.g. `dream`) are seeded by the engine on first start. Skill missions arrive with their skill.
 - **Enable / disable** — toggle without deleting. Disabled missions keep config and history.
 - **Delete** — removes the directory. Sessions created by past runs are preserved (they live in the global session store).
 - **Edit** — update frontmatter or body. Takes effect on next tick. Entry script changes take effect on next run.
@@ -286,7 +308,7 @@ create → enabled → (triggers run on schedule, each run creates a session) �
 
 ### Mission management page (Linggen Web UI)
 
-- **List** — all missions with status, schedule, last run, next run.
+- **List** — all missions with status, schedule, last run, next run, and the skill a mission came from.
 - **Editor** — edit frontmatter fields + body. Body shown as markdown with step headings.
 - **Permissions panel** — `permission.paths` (per-path mode). Warnings from `permission.warning` surfaced before enable.
 - **Agent tab** — read-only view of the mission body (prompt).
@@ -317,7 +339,7 @@ Missions and skills are sibling subsystems inside linggen. They share shape (mar
 
 | Concern | Skill subsystem | Mission subsystem |
 |:--------|:----------------|:------------------|
-| Root dir | `~/.linggen/skills/` | `~/.linggen/missions/` |
+| Root dir | `~/.linggen/skills/` | `~/.linggen/missions/`, plus `missions/` inside each skill |
 | Entry file | `SKILL.md` | `mission.md` |
 | Trigger | User invocation or `Skill` tool call | Cron / manual trigger |
 | Registers capabilities | Yes (`provides` + `implements`) | No (consumer only) |

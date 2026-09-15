@@ -86,7 +86,8 @@ my-skill/
 ├── SKILL.md           # Main instructions (required)
 ├── references/        # Detailed docs, loaded on demand
 ├── scripts/           # Executable code the model can run
-└── assets/            # Static resources (templates, missions, schemas)
+├── missions/          # Scheduled work the engine runs (mission-spec.md)
+└── assets/            # Static resources (templates, schemas)
 ```
 
 `SKILL.md` is YAML frontmatter + markdown body. Directory name should match `name`.
@@ -305,7 +306,7 @@ const saveUi = (patch) => { try { localStorage.setItem(UI_KEY, JSON.stringify({ 
 
 ## Install
 
-Skills can declare an `install` field pointing to a script that runs once when the skill is installed. Used to seed directories, copy mission files into `~/.linggen/missions/`, fetch binaries via `requires:`, or perform any other one-time setup.
+Skills can declare an `install` field pointing to a script that runs once when the skill is installed. Used to seed directories, fetch binaries via `requires:`, or perform any other one-time setup.
 
 ```yaml
 install: scripts/install.sh
@@ -313,7 +314,7 @@ install: scripts/install.sh
 
 Scripts run with `$SKILL_DIR` set to the skill directory and must be **idempotent**. The same hook runs on every install path — `ling init`, the WebUI Install button, `ling skills install`, and auto-install on first startup.
 
-Missions ship as files under the skill's `assets/` and are copied by the install script — there is no `mission:` frontmatter field.
+Missions ship in the skill's `missions/` folder and the engine runs them in place — no install-time copy, no `mission:` frontmatter field. A skill's mission gets that skill's tools. See "Skill missions" in `mission-spec.md`.
 
 ## Permissions
 
