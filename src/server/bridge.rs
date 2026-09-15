@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -97,6 +97,63 @@ struct ProgressGuard<'a> {
     id: String,
 }
 
+/// One log line per brokered op, however it ends — answered, refused, timed
+/// out, or abandoned when its caller's future is dropped (a tool the user
+/// stopped). Without it the log cannot say whether a call ever reached the
+/// extension or what came back.
+struct CallTrace<'a> {
+    module: &'a str,
+    op: &'a str,
+    id: String,
+    started: Instant,
+    done: bool,
+}
+
+impl<'a> CallTrace<'a> {
+    fn new(module: &'a str, op: &'a str, id: &str) -> Self {
+        Self {
+            module,
+            op,
+            id: id.to_string(),
+            started: Instant::now(),
+            done: false,
+        }
+    }
+
+    fn finish(mut self, res: &ResData) {
+        self.done = true;
+        let ms = self.started.elapsed().as_millis() as u64;
+        let (module, op, id) = (self.module, self.op, self.id.as_str());
+        if res.ok {
+            tracing::info!(module, op, id, ms, outcome = "ok", "bridge/call");
+            return;
+        }
+        let outcome = res.code.as_deref().unwrap_or("error");
+        let detail = res.message.as_deref().unwrap_or("");
+        if expected_refusal(outcome) {
+            tracing::info!(module, op, id, ms, outcome, detail, "bridge/call");
+        } else {
+            tracing::warn!(module, op, id, ms, outcome, detail, "bridge/call");
+        }
+    }
+}
+
+impl Drop for CallTrace<'_> {
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        let ms = self.started.elapsed().as_millis() as u64;
+        let (module, op, id) = (self.module, self.op, self.id.as_str());
+        tracing::info!(module, op, id, ms, outcome = "abandoned", "bridge/call");
+    }
+}
+
+/// Refusals that are the page or the person answering, not the bridge failing.
+fn expected_refusal(code: &str) -> bool {
+    matches!(code, "not_permitted" | "element_gone")
+}
+
 impl Drop for ProgressGuard<'_> {
     fn drop(&mut self) {
         if let Ok(mut map) = self.hub.progress.lock() {
@@ -132,6 +189,7 @@ impl BridgeHub {
             inner.tx = None;
             inner.ext_version = None;
             inner.modules.clear();
+            tracing::info!(generation, "bridge/disconnected");
         }
     }
 
@@ -169,6 +227,14 @@ impl BridgeHub {
                 .and_then(Value::as_str)
                 .map(String::from);
             inner.modules = parse_modules(v);
+            let modules = inner
+                .modules
+                .iter()
+                .map(|m| format!("{}@{}", m.id, m.version.as_deref().unwrap_or("?")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let ext_version = inner.ext_version.as_deref().unwrap_or("?");
+            tracing::info!(ext_version, modules = %modules, "bridge/connected");
         }
         self.send_frame(json!({ "t": "ready", "bridge_version": BRIDGE_VERSION }))
             .await;
@@ -179,7 +245,10 @@ impl BridgeHub {
             return;
         };
         let waiter = self.pending.lock().await.remove(id);
-        let Some(waiter) = waiter else { return };
+        let Some(waiter) = waiter else {
+            tracing::debug!(id, "bridge/res for a call no longer waiting — dropped");
+            return;
+        };
         let _ = waiter.send(ResData {
             ok: v.get("ok").and_then(Value::as_bool).unwrap_or(false),
             data: v.get("data").cloned(),
@@ -197,6 +266,8 @@ impl BridgeHub {
         ) else {
             return;
         };
+        let stage = v.get("stage").and_then(Value::as_str).unwrap_or("");
+        tracing::info!(id, stage, text, "bridge/progress");
         if let Ok(map) = self.progress.lock() {
             if let Some(report) = map.get(id) {
                 report(text.to_string());
@@ -237,17 +308,30 @@ impl BridgeHub {
             }
         });
 
+        let trace = CallTrace::new(module, op, &id);
         let frame = json!({ "t": "req", "id": id, "module": module, "op": op, "params": params });
+        let res = self.exchange(&id, frame, rx, timeout_ms).await;
+        trace.finish(&res);
+        res
+    }
+
+    /// Send one `req` and wait for its `res`, the timeout, or a dropped link.
+    async fn exchange(
+        &self,
+        id: &str,
+        frame: Value,
+        rx: oneshot::Receiver<ResData>,
+        timeout_ms: u64,
+    ) -> ResData {
         if !self.send_frame(frame).await {
-            self.pending.lock().await.remove(&id);
+            self.pending.lock().await.remove(id);
             return ResData::err("no_bridge", "no browser extension is connected");
         }
-
         match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => ResData::err("no_bridge", "bridge connection dropped"),
             Err(_) => {
-                self.pending.lock().await.remove(&id);
+                self.pending.lock().await.remove(id);
                 ResData::err("timeout", "extension did not respond in time")
             }
         }
