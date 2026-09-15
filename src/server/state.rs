@@ -77,11 +77,12 @@ pub struct ServerState {
     /// `(session_id, project_root)`. Lets `agent_chat` deliver into the chat the
     /// user actually has open; falls back to the agent's latest session.
     pub current_view: Arc<std::sync::Mutex<Option<(String, String)>>>,
-    /// Yinyue presenter registry (FCFS singleton). Ordered list of subscribed
-    /// peer ids; the HEAD holds the presenter lock — the one surface that
-    /// renders her 3D model + plays her voice + bubble. Other surfaces stay
-    /// blank. On the holder's disconnect the next subscriber is promoted.
-    pub yinyue_presenters: Arc<std::sync::Mutex<Vec<u64>>>,
+    /// Yinyue presenter registry — one device, one voice. Ordered list of
+    /// subscribed peers with their stage rank; the holder (see
+    /// [`yinyue_holder_of`]) is the one surface that renders her 3D model +
+    /// plays her voice + bubble. Other surfaces stay blank. On the holder's
+    /// release or disconnect the next in rank is promoted.
+    pub yinyue_presenters: Arc<std::sync::Mutex<Vec<YinyuePresenter>>>,
     /// Monotonic id source for WebRTC peers (presenter-registry key).
     pub next_peer_id: Arc<AtomicU64>,
 }
@@ -91,35 +92,103 @@ pub(crate) struct ActiveStatusRecord {
     pub(crate) status: AgentStatusKind,
     detail: Option<String>,
 }
+/// One surface that can show Yinyue: its RTC peer and whether it has a stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YinyuePresenter {
+    pub peer_id: u64,
+    /// The surface stands her in a place (a scene), not a pet corner.
+    pub stage: bool,
+}
+
+/// Who holds her among the subscribed surfaces: the first with a stage, else
+/// the first of all. One device, one voice — every other surface stays blank.
+pub fn yinyue_holder_of(reg: &[YinyuePresenter]) -> Option<u64> {
+    reg.iter()
+        .find(|p| p.stage)
+        .or_else(|| reg.first())
+        .map(|p| p.peer_id)
+}
+
+#[cfg(test)]
+mod yinyue_presenter_tests {
+    use super::*;
+    fn p(peer_id: u64, stage: bool) -> YinyuePresenter {
+        YinyuePresenter { peer_id, stage }
+    }
+    #[test]
+    fn first_arrival_holds_without_a_stage() {
+        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, false)]), Some(1));
+        assert_eq!(yinyue_holder_of(&[]), None);
+    }
+    #[test]
+    fn a_stage_outranks_earlier_corners() {
+        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, true)]), Some(2));
+    }
+    #[test]
+    fn among_stages_the_earlier_holds() {
+        assert_eq!(
+            yinyue_holder_of(&[p(1, false), p(2, true), p(3, true)]),
+            Some(2)
+        );
+    }
+    #[test]
+    fn the_stage_leaving_returns_her_to_the_corner() {
+        let mut reg = vec![p(1, false), p(2, true)];
+        reg.retain(|q| q.peer_id != 2);
+        assert_eq!(yinyue_holder_of(&reg), Some(1));
+    }
+}
+
 impl ServerState {
     /// Mint a unique id for a new WebRTC peer (presenter-registry key).
     pub fn mint_peer_id(&self) -> u64 {
         self.next_peer_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// The peer currently holding the Yinyue presenter lock (head of the FCFS
-    /// registry), if any.
+    /// The peer currently holding the Yinyue presenter lock, if any.
     pub fn yinyue_holder(&self) -> Option<u64> {
-        self.yinyue_presenters.lock().unwrap().first().copied()
+        yinyue_holder_of(&self.yinyue_presenters.lock().unwrap())
     }
 
-    /// Subscribe a peer as a Yinyue presenter candidate (append if absent). The
-    /// first subscriber becomes the holder; later ones queue behind it (FCFS).
-    /// Broadcasts `YinyuePresenterChanged` so every peer re-evaluates whether it
-    /// is now the holder.
-    pub fn yinyue_subscribe(&self, peer_id: u64) {
+    /// Subscribe a peer as a Yinyue presenter candidate. A surface with a
+    /// `stage` — one that stands her in a place rather than a pet corner —
+    /// outranks one without; among equals the earlier subscriber holds. A
+    /// re-subscribe may change the peer's stage. Broadcasts
+    /// `YinyuePresenterChanged` so every peer re-evaluates whether it is now
+    /// the holder.
+    pub fn yinyue_subscribe(&self, peer_id: u64, stage: bool) {
         let changed = {
             let mut reg = self.yinyue_presenters.lock().unwrap();
-            if reg.contains(&peer_id) {
-                false
-            } else {
-                reg.push(peer_id);
-                true
+            match reg.iter_mut().find(|p| p.peer_id == peer_id) {
+                Some(p) if p.stage == stage => false,
+                Some(p) => {
+                    p.stage = stage;
+                    true
+                }
+                None => {
+                    reg.push(YinyuePresenter { peer_id, stage });
+                    true
+                }
             }
         };
         if changed {
-            let _ = self.events_tx.send(ServerEvent::YinyuePresenterChanged);
+            self.yinyue_changed();
         }
+    }
+
+    /// Say who holds her now, then tell every peer to re-evaluate.
+    fn yinyue_changed(&self) {
+        let reg = self.yinyue_presenters.lock().unwrap();
+        match yinyue_holder_of(&reg) {
+            Some(id) => tracing::info!(
+                "[yinyue] presenter → peer {id} (stage={}) of {}",
+                reg.iter().any(|p| p.peer_id == id && p.stage),
+                reg.len()
+            ),
+            None => tracing::info!("[yinyue] presenter → none"),
+        }
+        drop(reg);
+        let _ = self.events_tx.send(ServerEvent::YinyuePresenterChanged);
     }
 
     /// Remove a peer from the Yinyue registry (explicit release or disconnect).
@@ -129,11 +198,11 @@ impl ServerState {
         let changed = {
             let mut reg = self.yinyue_presenters.lock().unwrap();
             let before = reg.len();
-            reg.retain(|&id| id != peer_id);
+            reg.retain(|p| p.peer_id != peer_id);
             reg.len() != before
         };
         if changed {
-            let _ = self.events_tx.send(ServerEvent::YinyuePresenterChanged);
+            self.yinyue_changed();
         }
     }
 

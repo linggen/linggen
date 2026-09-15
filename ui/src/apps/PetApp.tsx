@@ -15,11 +15,15 @@ import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { YinyueBubble } from '../components/YinyueBubble';
 import { useYinyuePresenter } from '../hooks/useTransport';
 
+/** `?pet=1&stage=1`: this surface is a stage (a scene that stands her in a place). */
+const isStage = new URLSearchParams(window.location.search).get('stage') === '1';
+
 export const PetApp: React.FC = () => {
-  // Subscribe to the server's FCFS presenter lock. The pet window normally wins
-  // (it opens first / stays open), but if another surface already holds her this
-  // window stays blank until it's free — one Yinyue, server-arbitrated.
-  const showYinyue = useYinyuePresenter();
+  // Subscribe to the server's presenter lock — one device, one voice. The pet
+  // window normally holds her (it opens first / stays open); a page that stands
+  // her in a place loads this same view with `&stage=1` and outranks the corner,
+  // so she walks onto that stage and comes back when it closes.
+  const showYinyue = useYinyuePresenter(true, isStage);
   // She rides in a transparent always-on-top window; keep the page see-through
   // so only her body paints (the WebGL canvas already clears with alpha).
   useEffect(() => {

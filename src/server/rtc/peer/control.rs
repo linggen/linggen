@@ -156,11 +156,14 @@ pub(super) fn handle_control_message(
             None
         }
 
-        // Yinyue presenter lock (FCFS singleton). A surface that renders her
-        // subscribes on mount; the server grants the lock to the first
-        // subscriber and tells the others (via `yinyue_present`) to stay blank.
+        // Yinyue presenter lock — one device, one voice. A surface that renders
+        // her subscribes on mount, saying whether it has a `stage` (it stands
+        // her in a place); a stage outranks a pet corner, otherwise the first
+        // subscriber holds. The others are told (via `yinyue_present`) to stay
+        // blank.
         "yinyue_subscribe" => {
-            state.yinyue_subscribe(peer_id);
+            let stage = msg.get("stage").and_then(|v| v.as_bool()).unwrap_or(false);
+            state.yinyue_subscribe(peer_id, stage);
             None
         }
         "yinyue_release" => {

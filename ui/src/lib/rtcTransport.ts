@@ -78,6 +78,8 @@ export class RtcTransport implements Transport {
   // Sticky intent: this surface wants to be a Yinyue presenter candidate.
   // Re-sent on every (re)connect so the FCFS lock survives reconnects.
   private yinyueSubscribed = false;
+  /** This surface stands her in a place (a scene), not a pet corner. */
+  private yinyueStage = false;
   private sessionChannels = new Map<string, RTCDataChannel>();
   private _status: TransportStatus = 'disconnected';
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -196,12 +198,14 @@ export class RtcTransport implements Transport {
     }
   }
 
-  /** Join the Yinyue presenter registry — this surface renders her if it wins
-   *  the FCFS lock. Intent is sticky so it re-subscribes after a reconnect. */
-  sendYinyueSubscribe(): void {
+  /** Join the Yinyue presenter registry — this surface renders her if it holds
+   *  the lock (a stage outranks a pet corner; otherwise first arrival). Intent
+   *  is sticky so it re-subscribes after a reconnect. */
+  sendYinyueSubscribe(stage = false): void {
     this.yinyueSubscribed = true;
+    this.yinyueStage = stage;
     if (this.controlChannel?.readyState === 'open') {
-      this.controlChannel.send(JSON.stringify({ type: 'yinyue_subscribe' }));
+      this.controlChannel.send(JSON.stringify({ type: 'yinyue_subscribe', stage }));
     }
   }
 
@@ -333,7 +337,7 @@ export class RtcTransport implements Transport {
       this.flushPendingViewContext();
       // Re-assert Yinyue presenter candidacy after a (re)connect.
       if (this.yinyueSubscribed) {
-        this.controlChannel?.send(JSON.stringify({ type: 'yinyue_subscribe' }));
+        this.controlChannel?.send(JSON.stringify({ type: 'yinyue_subscribe', stage: this.yinyueStage }));
       }
       this.callbacks.onReconnect?.();
       this.startHeartbeat();

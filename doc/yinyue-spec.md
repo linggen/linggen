@@ -126,6 +126,24 @@ that app loses focus. Two apps open means two Yinyues. The target: **one** Yinyu
 owned by the shared daemon, free to walk the desktop and climb Linggen's own app
 windows.
 
+### One device, one voice (built)
+
+Her body and voice live on exactly one surface per device. Every other place
+she appears on that device is silent and shows her words as text.
+
+The engine enforces it per engine: every surface that can render her — the web
+tab, the desktop pet window, a stage inside an app page — subscribes over the
+RTC control channel (`yinyue_subscribe {stage}`); the engine keeps an ordered
+registry and tells each peer whether it holds her (`yinyue_present`), and only
+the holder gets `pet_speak` / `pet_express`. The holder is the first surface
+with a **stage** — one that stands her in a place, such as a game scene loading
+`/?pet=1&stage=1` — else the first to arrive. Release or disconnect promotes the
+next by the same rule, so when a stage closes she returns to the corner she came
+from. Two cases the engine cannot see are the surface's own duty: a phone with
+the Linggen app and a browser tab of a Mac's web UI keeps voice in the app; at a
+game table other players' Yinyue never speak aloud. Engine: `ServerState::yinyue_*`
+in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
+
 ### Singleton ownership
 
 The daemon arbitrates a single **pet lease**. On launch each shell claims the lease

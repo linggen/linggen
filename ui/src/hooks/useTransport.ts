@@ -41,10 +41,12 @@ export function sendViewContext() {
  *  AFTER the transport connects — a child's mount effect runs before Root's
  *  transport-creating effect, so a subscribe at mount time would be lost. */
 let yinyuePresenterWanted = false;
+/** Whether the wanting surface has a stage (stands her in a place). */
+let yinyuePresenterStage = false;
 
-/** Join / leave the server's Yinyue presenter registry (FCFS singleton lock). */
-function sendYinyueSubscribe() {
-  try { getTransport().sendYinyueSubscribe?.(); } catch { /* transport not ready — onReconnect re-sends */ }
+/** Join / leave the server's Yinyue presenter registry — one device, one voice. */
+function sendYinyueSubscribe(stage: boolean) {
+  try { getTransport().sendYinyueSubscribe?.(stage); } catch { /* transport not ready — onReconnect re-sends */ }
 }
 function sendYinyueRelease() {
   try { getTransport().sendYinyueRelease?.(); } catch { /* transport not ready */ }
@@ -53,19 +55,21 @@ function sendYinyueRelease() {
 /**
  * Subscribe this surface to the Yinyue presenter lock and report whether it
  * currently holds it. Only the holder should render her avatar + play her voice
- * — so with multiple tabs/apps open she appears in exactly one place (FCFS;
- * released on close, the next surface takes over). Pass `enabled = false` for
- * surfaces that must never present her (e.g. a branded app's main window, where
- * the native pet window owns her).
+ * — so with multiple tabs/apps open she appears in exactly one place: a surface
+ * with a `stage` (it stands her in a place, e.g. a game scene) outranks a pet
+ * corner, otherwise first arrival holds; released on close, the next surface
+ * takes over. Pass `enabled = false` for surfaces that must never present her
+ * (e.g. a branded app's main window, where the native pet window owns her).
  */
-export function useYinyuePresenter(enabled = true): boolean {
+export function useYinyuePresenter(enabled = true, stage = false): boolean {
   const present = useUiStore((s) => s.yinyuePresenter);
   useEffect(() => {
     yinyuePresenterWanted = enabled;
+    yinyuePresenterStage = stage;
     if (!enabled) return;
     // Best-effort now (covers route changes where the transport already exists);
     // the real guarantee is the re-send in onReconnect once connected.
-    sendYinyueSubscribe();
+    sendYinyueSubscribe(stage);
     const release = () => sendYinyueRelease();
     // Explicit release on tab/window close → instant handoff (the server's
     // disconnect timeout is just the crash fallback).
@@ -75,7 +79,7 @@ export function useYinyuePresenter(enabled = true): boolean {
       yinyuePresenterWanted = false;
       sendYinyueRelease();
     };
-  }, [enabled]);
+  }, [enabled, stage]);
   return enabled && present;
 }
 
@@ -139,7 +143,7 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         // Re-assert Yinyue presenter candidacy now that we're connected (the
         // mount-time subscribe is lost if it raced ahead of transport creation).
         if (yinyuePresenterWanted) {
-          try { getTransport().sendYinyueSubscribe?.(); } catch { /* not ready */ }
+          try { getTransport().sendYinyueSubscribe?.(yinyuePresenterStage); } catch { /* not ready */ }
         }
         // Fetch workspace state immediately (chat history — not included in page_state)
         // Skip for consumer mode — HTTP fetch blocked by WebRTC tunnel permissions.
