@@ -369,6 +369,10 @@ export interface CronMission {
   /** Legacy project field — kept for back-compat. Prefer `cwd`. */
   project?: string | null;
 
+  /** The skill that ships this mission. Its file is the skill's; the user
+   *  owns only on/off and the schedule. */
+  skill?: string | null;
+
   created_at: number;
 }
 

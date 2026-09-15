@@ -48,8 +48,6 @@ The mission name is the directory name. One mission per directory. Run history i
 
 ## Skill missions
 
-*Designed 2026-09-15, not built yet — nor is catch-up from the scheduler tick (see "Catch-up fires").*
-
 An app's scheduled work belongs to its skill, not to the engine. `dream` is built in because memory ships with every install; an app's mission ships with the app.
 
 ```

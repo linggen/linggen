@@ -129,28 +129,15 @@ pub(crate) async fn get_system_prompt_api(
                     .flatten()
             });
             if let Some(mission) = mission {
-                // Mirror what mission_scheduler does at dispatch time:
-                // - inject the mission body via active_mission
-                // - apply allowed-tools so the `tools` array and
-                //   system-prompt reflect the real run.
-                engine.active_mission = Some(crate::engine::ActiveMission {
-                    name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-                    description: mission.description.clone(),
-                    body: mission.prompt.clone(),
-                    mission_dir: Some(state.manager.missions.mission_dir(&mission.id)),
-                });
-                if !mission.allowed_tools.is_empty() {
-                    engine.cfg.mission_allowed_tools =
-                        Some(mission.allowed_tools.iter().cloned().collect());
-                }
-                // Mirror `scheduler::dispatch_mission_prompt_public`: mission
-                // sessions strip the core/memory_protocol blocks from the
-                // system prompt and invalidate any cached prompt. Without
-                // this, the "Copy System Prompt" debug export shows a
-                // prompt the actual run never had — making bugs look like
-                // they're elsewhere than they are.
-                engine.prompt_profile.include_memory = false;
-                engine.cached_system_prompt = None;
+                // The same entry the scheduler's dispatch uses, so the export
+                // shows the prompt and tools the real run has.
+                crate::extensions::missions::enter::enter_mission(
+                    &mut engine,
+                    &mission,
+                    &state.manager.missions,
+                    &state.manager.skills,
+                )
+                .await;
             }
         }
     }

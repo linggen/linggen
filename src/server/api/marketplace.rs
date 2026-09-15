@@ -83,7 +83,7 @@ pub(crate) async fn marketplace_install(
         Ok(msg) => {
             let _ = state.skills.load_all(project_root_path).await;
             state.manager.session_engines.lock().await.clear();
-            // Reload missions in case install script created one.
+            // The skill may ship missions.
             state.manager.missions.reload();
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
@@ -120,6 +120,8 @@ pub(crate) async fn marketplace_uninstall(
     match marketplace::delete_skill(&req.name, &target_dir) {
         Ok(msg) => {
             let _ = state.skills.load_all(project_root_path).await;
+            // Its missions go with it, and so does what the user kept for them.
+            state.manager.missions.forget_skill(&req.name);
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             axum::Json(serde_json::json!({ "ok": true, "message": msg })).into_response()
         }

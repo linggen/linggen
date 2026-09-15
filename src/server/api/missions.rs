@@ -12,6 +12,16 @@ use std::sync::Arc;
 /// Accepted values for permission.mode.
 const VALID_MODES: &[&str] = &["read", "edit", "admin"];
 
+/// 409 for a change a skill mission's owner refuses (its file is the
+/// skill's), else `fallback`.
+fn status_for(e: &anyhow::Error, fallback: StatusCode) -> StatusCode {
+    if e.downcast_ref::<missions::SkillOwned>().is_some() {
+        StatusCode::CONFLICT
+    } else {
+        fallback
+    }
+}
+
 fn validate_mode(mode: &str) -> Result<(), String> {
     if VALID_MODES.contains(&mode) {
         Ok(())
@@ -267,11 +277,12 @@ pub(crate) async fn update_mission(
             Json(mission).into_response()
         }
         Err(e) => {
-            let status = if e.to_string().contains("not found") {
+            let fallback = if e.to_string().contains("not found") {
                 StatusCode::NOT_FOUND
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
+            let status = status_for(&e, fallback);
             (status, format!("Failed to update mission: {}", e)).into_response()
         }
     }
@@ -288,7 +299,7 @@ pub(crate) async fn delete_mission(
             Json(serde_json::json!({ "ok": true })).into_response()
         }
         Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            status_for(&e, StatusCode::INTERNAL_SERVER_ERROR),
             format!("Failed to delete mission: {}", e),
         )
             .into_response(),
@@ -347,7 +358,7 @@ pub(crate) async fn upsert_mission_file(
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(mission).into_response()
         }
-        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        Err(e) => (status_for(&e, StatusCode::BAD_REQUEST), e.to_string()).into_response(),
     }
 }
 

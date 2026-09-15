@@ -36,8 +36,8 @@ pub struct Mission {
 
     pub schedule: String,
     pub enabled: bool,
-    /// Hours since last successful run before the post-turn seam fires a
-    /// catch-up. `None` = opt out (only the cron `schedule` triggers it).
+    /// Hours since the last run before the scheduler fires a catch-up.
+    /// `None` = opt out (only the cron `schedule` triggers it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catchup_hours: Option<u64>,
 
@@ -96,6 +96,12 @@ pub struct Mission {
     /// Legacy project scoping. Prefer `cwd` for new missions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+
+    /// The skill that ships this mission (`<skill>/missions/<name>/`).
+    /// Stamped by the loader, never read from frontmatter. `None` for the
+    /// user's own missions and built-ins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
 
     pub created_at: u64,
 }

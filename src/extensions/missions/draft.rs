@@ -23,3 +23,21 @@ pub struct MissionDraft {
     pub prompt: Option<String>,
     pub project: Option<Option<String>>,
 }
+
+impl MissionDraft {
+    /// True when the draft changes anything beyond on/off and the schedule —
+    /// the part of a skill mission that belongs to its skill.
+    pub fn touches_definition(&self) -> bool {
+        self.name.is_some()
+            || self.description.is_some()
+            || self.catchup_hours.is_some()
+            || self.cwd.is_some()
+            || self.model.is_some()
+            || self.agent.is_some()
+            || self.kickoff.is_some()
+            || self.allowed_tools.is_some()
+            || self.permission.is_some()
+            || self.prompt.is_some()
+            || self.project.is_some()
+    }
+}

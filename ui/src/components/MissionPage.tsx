@@ -88,6 +88,7 @@ const MissionNav: React.FC<{
                     </div>
                     <div className="text-[11px] text-slate-400 truncate mt-0.5">
                       {describeCron(mission.schedule)}
+                      {mission.skill && <> &middot; from {mission.skill}</>}
                       {projLabel && <> &middot; {projLabel}</>}
                     </div>
                   </button>
@@ -128,13 +129,15 @@ const MissionNav: React.FC<{
                       >
                         {mission.enabled ? <Pause size={11} /> : <Play size={11} />}
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(mission.id); }}
-                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500"
-                        title="Delete"
-                      >
-                        <Trash2 size={11} />
-                      </button>
+                      {!mission.skill && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(mission.id); }}
+                          className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500"
+                          title="Delete"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

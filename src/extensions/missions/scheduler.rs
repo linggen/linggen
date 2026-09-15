@@ -405,7 +405,7 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
     (root, project_path)
 }
 
-/// Turn-seam catch-up. Called from the post-turn seam (owner sessions only).
+/// Catch-up sweep, called from the scheduler tick once a minute.
 /// Scans all enabled missions whose `catchup_hours` is set, and fires any
 /// whose last non-skipped run is older than that threshold (or which has
 /// never run). Used to recover from missed cron fires when the machine was
@@ -726,26 +726,18 @@ async fn dispatch_mission_prompt(
         }
     }
 
-    // Inject the mission body into the system prompt so the agent reads it as
-    // instructions (not as a user turn). Matches how skill bodies are injected
-    // via active_skill — see engine/prompt.rs.
-    engine.active_mission = Some(crate::engine::ActiveMission {
-        name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-        description: mission.description.clone(),
-        body: mission.prompt.clone(),
-        mission_dir: Some(state.manager.missions.mission_dir(&mission.id)),
-    });
-    // Mission sessions don't write to the user's biographical memory and
-    // shouldn't see the core block + memory protocol in their system prompt.
-    // Mirrors the chat-handler gate for skill-creator sessions. Invalidate
-    // the cached prompt so the next build excludes the memory sections.
-    let before = engine.prompt_profile.include_memory;
-    engine.prompt_profile.include_memory = false;
-    engine.cached_system_prompt = None;
-    tracing::info!(
-        "mission '{}' scheduler: prompt_profile.include_memory {} → false (cache cleared)",
+    // The mission body becomes the system prompt's runbook (not a user
+    // turn), `allowed-tools` the tool scope, and a skill mission borrows
+    // its own skill's tools.
+    let owning_skill =
+        super::enter::enter_mission(&mut engine, mission, &state.manager.missions, &state.skills)
+            .await;
+    engine.cfg.bash_allow_prefixes = None; // frontmatter controls bash, not tier
+    info!(
+        "mission '{}' entered (skill: {:?}, tool scope: {:?})",
         mission.id,
-        before
+        mission.skill,
+        engine.cfg.mission_allowed_tools.as_ref().map(|s| s.len())
     );
     // Force Auto permission mode (legacy — kept for backward compat with old check flow).
     engine.cfg.tool_permission_mode = crate::config::ToolPermissionMode::Auto;
@@ -757,9 +749,8 @@ async fn dispatch_mission_prompt(
     //     strict  → silently deny (safe default for unattended runs)
     //     trusted → silently allow (legacy locked-mission behavior)
     //     interactive → prompt (rare for missions — nothing to click)
-    // - Path-mode grants come from (a) the mission's permission.mode on
-    //   cwd + declared paths, and (b) if a skill is bound to the session,
-    //   the skill's declared permission.paths.
+    // - Path-mode grants come from (a) the mission's permission.paths, and
+    //   (b) for a skill mission, its skill's declared permission.paths.
     {
         // Missions never prompt — they pause/fail on permission-needed.
         engine.session_permissions.interactive = false;
@@ -771,22 +762,11 @@ async fn dispatch_mission_prompt(
             crate::engine::permission::apply_grants(perm, &mut engine.session_permissions);
         }
 
-        // If the session binds a skill, apply its declared permission grants.
-        // These are narrower than the tier grant (e.g. write on ~/.linggen)
-        // and win via longest-path-match in effective_mode_for_path.
-        if let Some(ref sid) = session_id {
-            if let Ok(Some(meta)) = state.manager.global_sessions.get_session_meta(sid) {
-                if let Some(ref skill_name) = meta.skill {
-                    if let Some(skill) = state.skills.get_skill(skill_name).await {
-                        if let Some(ref perm) = skill.permission {
-                            crate::engine::permission::apply_grants(
-                                perm,
-                                &mut engine.session_permissions,
-                            );
-                        }
-                    }
-                }
-            }
+        // A skill mission runs with its skill's declared grants — the ones
+        // its tools were written against. Longest-path-match lets them
+        // narrow a broader mission grant.
+        if let Some(perm) = owning_skill.as_ref().and_then(|s| s.permission.as_ref()) {
+            crate::engine::permission::apply_grants(perm, &mut engine.session_permissions);
         }
 
         // Persist so the UI shows the correct mode if user opens the mission session.
@@ -795,9 +775,6 @@ async fn dispatch_mission_prompt(
             engine.session_permissions.save(&sdir);
         }
     }
-
-    // Apply allowed-tools and allow-skills from frontmatter.
-    apply_mission_tool_scope(&mut engine, mission);
 
     // Attended runs have a present user — AskUser joins the mission's
     // tool scope so review questions can be asked. The agent's own spec
@@ -957,23 +934,6 @@ async fn dispatch_mission_prompt(
     ));
 }
 
-/// Apply the mission's `allowed-tools` to the engine.
-///
-/// Missions and skills are independent: a mission cannot delegate to a skill
-/// via the `Skill` tool, and the `Skill` tool is not auto-injected into the
-/// allowlist. If a mission omits `allowed-tools`, the engine treats it as
-/// "unrestricted" — every built-in tool is callable. Otherwise the listed
-/// names are the full set.
-///
-/// Pure computation in `compute_mission_tool_scope` so it's unit-testable;
-/// this wrapper just mutates the engine config.
-fn apply_mission_tool_scope(engine: &mut crate::engine::AgentEngine, mission: &Mission) {
-    engine.cfg.mission_allowed_tools = compute_mission_tool_scope(&mission.allowed_tools);
-    engine.cfg.bash_allow_prefixes = None; // frontmatter controls bash, not tier
-}
-
-use crate::extensions::scope::compute_tool_scope as compute_mission_tool_scope;
-
 /// Append the engine-composed run report (see `super::report`) to the
 /// run's session as an agent message, then ping the UI to reload.
 async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id: Option<&str>) {
@@ -1052,30 +1012,4 @@ fn record_mission_run(
         .manager
         .missions
         .append_mission_run(&mission.id, &entry);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn v(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn tool_scope_empty_means_unrestricted() {
-        // Empty `allowed-tools` → no restriction. Every built-in is callable.
-        assert!(compute_mission_tool_scope(&[]).is_none());
-    }
-
-    #[test]
-    fn tool_scope_lists_become_allowlist() {
-        // Explicit list → that's the full set.
-        let set = compute_mission_tool_scope(&v(&["Read", "Bash"])).unwrap();
-        assert!(set.contains("Read"));
-        assert!(set.contains("Bash"));
-        assert_eq!(set.len(), 2);
-        // Skill is not auto-injected — missions don't delegate to skills.
-        assert!(!set.contains("Skill"));
-    }
 }

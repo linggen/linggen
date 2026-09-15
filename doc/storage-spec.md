@@ -67,8 +67,11 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 ├── credentials.json                  # API keys for model providers (JSON)
 ├── permissions.json                  # (legacy, ignored — see permission-spec.md)
 ├── missions/
-│   └── {mission_id}/
-│       ├── mission.md                # Mission definition (markdown + YAML frontmatter)
+│   ├── {mission_id}/
+│   │   ├── mission.md                # Mission definition (markdown + YAML frontmatter)
+│   │   └── runs.jsonl                # Mission run history (JSONL)
+│   └── {skill}:{name}/               # A skill mission's user side (its mission.md is in skills/{skill}/missions/{name}/)
+│       ├── user.json                 # The user's on/off + schedule over the file's defaults
 │       └── runs.jsonl                # Mission run history (JSONL)
 ├── ling.pid                          # Daemon PID
 └── ling.log                          # Daemon stdout

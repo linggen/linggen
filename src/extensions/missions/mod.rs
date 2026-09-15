@@ -1,8 +1,10 @@
 pub mod cron;
 pub mod draft;
+pub mod enter;
 pub mod parser;
 mod report;
 pub mod scheduler;
+mod skill_missions;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -22,30 +24,58 @@ pub use crate::engine::mission::runs::MissionRunStore;
 pub use cron::{parse_cron, validate_cron};
 pub use draft::MissionDraft;
 use parser::{id_to_display_name, mission_to_md, name_to_filename, parse_mission_md};
+use skill_missions::UserChoice;
+
+/// A change refused because the mission ships with a skill: its file is the
+/// skill's. Only on/off and the schedule belong to the user.
+#[derive(Debug)]
+pub struct SkillOwned {
+    pub id: String,
+    pub skill: String,
+    pub hint: &'static str,
+}
+
+impl std::fmt::Display for SkillOwned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "'{}' ships with the {} skill — {}",
+            self.id, self.skill, self.hint
+        )
+    }
+}
+
+impl std::error::Error for SkillOwned {}
 
 // ---------------------------------------------------------------------------
-// MissionLoader — global mission storage at ~/.linggen/missions/
+// MissionLoader — the user's missions at ~/.linggen/missions/, plus the
+// missions installed skills ship in `<skill>/missions/`
 // ---------------------------------------------------------------------------
 
 pub struct MissionLoader {
     dir: PathBuf,
+    skills_dir: PathBuf,
     cache: std::sync::Mutex<Vec<Mission>>,
 }
 
 impl MissionLoader {
     pub fn new() -> Self {
-        let store = Self {
-            dir: crate::paths::global_missions_dir(),
-            cache: std::sync::Mutex::new(Vec::new()),
-        };
-        store.reload();
-        store
+        Self::with_dirs(
+            crate::paths::global_missions_dir(),
+            crate::paths::global_skills_dir(),
+        )
     }
 
     #[cfg(test)]
     pub fn with_dir(dir: PathBuf) -> Self {
+        let skills_dir = dir.join("no-skills");
+        Self::with_dirs(dir, skills_dir)
+    }
+
+    fn with_dirs(dir: PathBuf, skills_dir: PathBuf) -> Self {
         let store = Self {
             dir,
+            skills_dir,
             cache: std::sync::Mutex::new(Vec::new()),
         };
         store.reload();
@@ -71,7 +101,7 @@ impl MissionLoader {
             return None;
         }
         let content = fs::read_to_string(&mission_file).ok()?;
-        let parsed = match parse_mission_md(id, &content) {
+        let parsed = match self.parse(id, &content) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!("reload_one: parse failed for '{}': {}", id, e);
@@ -92,16 +122,51 @@ impl MissionLoader {
         Ok(())
     }
 
+    /// The folder holding `mission.md` — inside the skill for a skill
+    /// mission. `$MISSION_DIR` in a body resolves here.
     pub fn mission_dir(&self, id: &str) -> PathBuf {
+        match skill_missions::split_id(id) {
+            Some((skill, name)) => skill_missions::definition_dir(&self.skills_dir, skill, name),
+            None => self.dir.join(id),
+        }
+    }
+
+    /// Where the user's side of a mission lives: run history, and a skill
+    /// mission's on/off + schedule.
+    fn state_dir(&self, id: &str) -> PathBuf {
         self.dir.join(id)
     }
 
     fn mission_path(&self, id: &str) -> PathBuf {
-        self.dir.join(id).join("mission.md")
+        self.mission_dir(id).join("mission.md")
     }
 
     fn runs_path(&self, id: &str) -> PathBuf {
-        self.dir.join(id).join("runs.jsonl")
+        self.state_dir(id).join("runs.jsonl")
+    }
+
+    /// Parse `mission.md` for `id`. A skill mission is stamped with its
+    /// skill and gets the user's choices over the file's defaults.
+    fn parse(&self, id: &str, content: &str) -> Result<Mission> {
+        let mut mission = parse_mission_md(id, content)?;
+        if let Some((skill, _)) = skill_missions::split_id(id) {
+            mission.skill = Some(skill.to_string());
+            UserChoice::load(&self.state_dir(id)).apply(&mut mission);
+        }
+        Ok(mission)
+    }
+
+    /// Refuse a change to a skill mission's file. `Ok` for user missions.
+    fn ensure_user_owned(&self, id: &str, hint: &'static str) -> Result<()> {
+        match skill_missions::split_id(id) {
+            Some((skill, _)) => Err(SkillOwned {
+                id: id.to_string(),
+                skill: skill.to_string(),
+                hint,
+            }
+            .into()),
+            None => Ok(()),
+        }
     }
 
     /// Create a mission from a draft. Required: schedule, prompt (unless
@@ -161,6 +226,7 @@ impl MissionLoader {
                 .clone()
                 .unwrap_or_else(|| MISSION_AGENT_ID.to_string()),
             project: draft.project.clone().flatten(),
+            skill: None,
             created_at: crate::util::now_ts_secs(),
         };
 
@@ -177,15 +243,19 @@ impl MissionLoader {
             return Ok(None);
         }
         let content = fs::read_to_string(&path)?;
-        let mission = parse_mission_md(mission_id, &content)?;
+        let mission = self.parse(mission_id, &content)?;
         Ok(Some(mission))
     }
 
     /// Update a mission by applying a draft. Fields left `None` are untouched.
+    /// A skill mission takes only on/off and the schedule.
     pub fn update_mission(&self, mission_id: &str, draft: MissionDraft) -> Result<Mission> {
         let Some(mut mission) = self.get_mission(mission_id)? else {
             bail!("Mission '{}' not found", mission_id);
         };
+        if mission.skill.is_some() {
+            return self.choose_for_skill_mission(mission_id, draft);
+        }
 
         if let Some(n) = draft.name {
             mission.name = Some(n);
@@ -233,7 +303,44 @@ impl MissionLoader {
         Ok(mission)
     }
 
+    /// Record the user's on/off and schedule for a skill mission.
+    fn choose_for_skill_mission(&self, id: &str, draft: MissionDraft) -> Result<Mission> {
+        if draft.touches_definition() {
+            self.ensure_user_owned(id, "only on/off and the schedule can change here")?;
+        }
+        let state_dir = self.state_dir(id);
+        let mut choice = UserChoice::load(&state_dir);
+        if let Some(schedule) = draft.schedule {
+            validate_cron(&schedule)?;
+            choice.schedule = Some(schedule);
+        }
+        if let Some(enabled) = draft.enabled {
+            choice.enabled = Some(enabled);
+        }
+        choice.save(&state_dir)?;
+        self.reload();
+        self.get_mission(id)?
+            .ok_or_else(|| anyhow::anyhow!("Mission '{}' not found", id))
+    }
+
+    /// Drop what the user kept for a removed skill's missions — choices and
+    /// run history — so a reinstall starts from the skill's defaults. Past
+    /// run sessions stay in the session store.
+    pub fn forget_skill(&self, skill: &str) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if skill_missions::split_id(&id).is_some_and(|(s, _)| s == skill) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+        self.reload();
+    }
+
     pub fn delete_mission(&self, mission_id: &str) -> Result<()> {
+        self.ensure_user_owned(mission_id, "remove the skill to remove its mission")?;
         let dir = self.mission_dir(mission_id);
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
@@ -257,6 +364,7 @@ impl MissionLoader {
     /// rather than the frontmatter `name`, matching how `scan_disk`
     /// already reads them back. Creates the mission dir if absent.
     pub fn write_mission_raw(&self, mission_id: &str, content: &str) -> Result<Mission> {
+        self.ensure_user_owned(mission_id, "change its mission.md in the skill")?;
         let mission = parse_mission_md(mission_id, content)?;
         fs::create_dir_all(self.mission_dir(mission_id))?;
         fs::write(self.mission_path(mission_id), content)?;
@@ -280,39 +388,41 @@ impl MissionLoader {
     }
 
     fn scan_disk(&self) -> Result<Vec<Mission>> {
-        if !self.dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut missions = Vec::new();
-        for entry in fs::read_dir(&self.dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let mission_file = path.join("mission.md");
-            if !mission_file.exists() {
-                continue;
-            }
-            let id = path.file_name().unwrap().to_string_lossy().to_string();
-            let content = match fs::read_to_string(&mission_file) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            match parse_mission_md(&id, &content) {
-                Ok(m) => missions.push(m),
-                Err(e) => {
-                    tracing::warn!("Skipping corrupt mission dir {}: {}", id, e);
-                }
-            }
-        }
+        let mut ids = self.user_mission_ids();
+        ids.extend(skill_missions::discover(&self.skills_dir));
+        let mut missions: Vec<Mission> = ids.iter().filter_map(|id| self.read_one(id)).collect();
         missions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(missions)
     }
 
+    /// Folders under `~/.linggen/missions/` holding a `mission.md`. A skill
+    /// mission's state folder has none, and a skill-shaped id is never
+    /// read from here.
+    fn user_mission_ids(&self) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter(|e| e.path().join("mission.md").is_file())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|id| skill_missions::split_id(id).is_none())
+            .collect()
+    }
+
+    fn read_one(&self, id: &str) -> Option<Mission> {
+        let content = fs::read_to_string(self.mission_path(id)).ok()?;
+        match self.parse(id, &content) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!("Skipping corrupt mission {}: {}", id, e);
+                None
+            }
+        }
+    }
+
     pub fn append_mission_run(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
-        fs::create_dir_all(self.mission_dir(mission_id))?;
+        fs::create_dir_all(self.state_dir(mission_id))?;
         let path = self.runs_path(mission_id);
         let mut file = fs::OpenOptions::new()
             .create(true)
@@ -888,6 +998,116 @@ mod tests {
         );
         assert!(mission.enabled, "dream must be enabled by default");
         assert!(!mission.prompt.is_empty(), "dream must have a body");
+    }
+
+    fn skill_store() -> (MissionLoader, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_mission = dir.path().join("skills/cfo/missions/reports");
+        std::fs::create_dir_all(&skill_mission).unwrap();
+        std::fs::write(
+            skill_mission.join("mission.md"),
+            "---\nname: Reports\nschedule: \"0 9 * * 1-5\"\nenabled: false\n---\nCheck reports.\n",
+        )
+        .unwrap();
+        let store =
+            MissionLoader::with_dirs(dir.path().join("missions"), dir.path().join("skills"));
+        (store, dir)
+    }
+
+    #[test]
+    fn a_skill_mission_is_found_in_its_skill_and_keeps_state_with_the_user() {
+        let (store, dir) = skill_store();
+        let missions = store.list_all_missions().unwrap();
+        assert_eq!(missions.len(), 1);
+        let m = &missions[0];
+        assert_eq!(m.id, "cfo:reports");
+        assert_eq!(m.skill.as_deref(), Some("cfo"));
+        assert!(!m.enabled);
+        assert_eq!(
+            store.mission_dir(&m.id),
+            dir.path().join("skills/cfo/missions/reports")
+        );
+
+        let run = MissionRunEntry {
+            run_id: "r1".into(),
+            session_id: None,
+            triggered_at: 1,
+            status: "completed".into(),
+            skipped: false,
+        };
+        store.append_mission_run(&m.id, &run).unwrap();
+        assert!(dir.path().join("missions/cfo:reports/runs.jsonl").exists());
+        assert!(!dir
+            .path()
+            .join("skills/cfo/missions/reports/runs.jsonl")
+            .exists());
+    }
+
+    #[test]
+    fn the_users_choice_outlives_a_skill_update() {
+        let (store, dir) = skill_store();
+        let on = store
+            .update_mission(
+                "cfo:reports",
+                MissionDraft {
+                    enabled: Some(true),
+                    schedule: Some("0 18 * * 1-5".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(on.enabled);
+        assert_eq!(on.schedule, "0 18 * * 1-5");
+
+        // The skill ships a new version of the file.
+        std::fs::write(
+            dir.path().join("skills/cfo/missions/reports/mission.md"),
+            "---\nschedule: \"0 9 * * *\"\nenabled: false\n---\nNew body.\n",
+        )
+        .unwrap();
+        store.reload();
+        let m = store.get_mission("cfo:reports").unwrap().unwrap();
+        assert!(m.enabled);
+        assert_eq!(m.schedule, "0 18 * * 1-5");
+        assert_eq!(m.prompt, "New body.");
+    }
+
+    #[test]
+    fn a_skill_missions_file_is_the_skills() {
+        let (store, _dir) = skill_store();
+        let owned = |e: anyhow::Error| e.downcast_ref::<SkillOwned>().is_some();
+        let body_edit = MissionDraft {
+            prompt: Some("mine".into()),
+            ..Default::default()
+        };
+        assert!(owned(
+            store.update_mission("cfo:reports", body_edit).unwrap_err()
+        ));
+        assert!(owned(store.delete_mission("cfo:reports").unwrap_err()));
+        assert!(owned(
+            store
+                .write_mission_raw("cfo:reports", "---\nschedule: \"0 * * * *\"\n---\nx\n")
+                .unwrap_err()
+        ));
+        assert_eq!(store.list_all_missions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn forgetting_a_skill_drops_its_missions_state() {
+        let (store, dir) = skill_store();
+        store
+            .update_mission(
+                "cfo:reports",
+                MissionDraft {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::fs::remove_dir_all(dir.path().join("skills/cfo")).unwrap();
+        store.forget_skill("cfo");
+        assert!(!dir.path().join("missions/cfo:reports").exists());
+        assert!(store.list_all_missions().unwrap().is_empty());
     }
 
     #[test]

@@ -127,6 +127,17 @@ impl AgentEngine {
         self.active_skill = Some(skill);
         ActivationOutcome::Activated { grants_changed }
     }
+
+    /// Lend a skill's tools to a run that is not the skill's own session —
+    /// a mission the skill ships. Registers the tool defs and the skill dir
+    /// they resolve against. No SKILL.md body (`active_skill` stays unset),
+    /// no grants, no cwd seed: the mission body is the whole runbook and
+    /// its dispatch applies grants itself.
+    pub fn lend_skill_tools(&mut self, skill: &Skill) {
+        register_skill_tools(self, skill);
+        self.tools
+            .set_active_skill(skill.name.clone(), skill.skill_dir.clone());
+    }
 }
 
 /// Register a skill's tool defs into the engine's `skill_tools` registry.

@@ -64,6 +64,8 @@ pub(crate) async fn reload_skills(
     }
     // Clear per-session engines so they get recreated with new skills.
     state.manager.session_engines.lock().await.clear();
+    // Skills ship missions — pick up added, changed, or removed ones.
+    state.manager.missions.reload();
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     axum::Json(serde_json::json!({ "ok": true })).into_response()
 }

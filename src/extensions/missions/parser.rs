@@ -150,6 +150,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         prompt: body,
         agent_id: fm.agent.unwrap_or_else(|| MISSION_AGENT_ID.to_string()),
         project: fm.project,
+        skill: None,
         created_at: fm.created_at,
     })
 }
@@ -173,6 +174,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         prompt,
         agent_id: MISSION_AGENT_ID.to_string(),
         project: None,
+        skill: None,
         created_at: 0,
     }
 }
@@ -219,6 +221,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         prompt,
         agent_id: MISSION_AGENT_ID.to_string(),
         project: fm.project,
+        skill: None,
         created_at: fm.created_at,
     })
 }

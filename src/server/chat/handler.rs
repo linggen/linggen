@@ -729,19 +729,13 @@ async fn apply_session_bound_mission(engine: &mut crate::engine::AgentEngine, ct
         return;
     };
     tracing::info!("Session-bound mission activated: {}", mission_id);
-    engine.active_mission = Some(crate::engine::ActiveMission {
-        name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
-        description: mission.description.clone(),
-        body: mission.prompt.clone(),
-        mission_dir: Some(ctx.manager.missions.mission_dir(&mission.id)),
-    });
-    if !mission.allowed_tools.is_empty() {
-        engine.cfg.mission_allowed_tools = Some(mission.allowed_tools.iter().cloned().collect());
-    }
-    // Mirror scheduler dispatch: mission sessions strip the biographical
-    // memory blocks, and any cached prompt predates the mission body.
-    engine.prompt_profile.include_memory = false;
-    engine.cached_system_prompt = None;
+    crate::extensions::missions::enter::enter_mission(
+        engine,
+        &mission,
+        &ctx.manager.missions,
+        &ctx.manager.skills,
+    )
+    .await;
 }
 
 pub(crate) async fn run_session_turn(

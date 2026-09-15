@@ -123,7 +123,11 @@ export const MissionEditor: React.FC<{
     return <div className="p-6 text-sm text-slate-500">Naming new mission...</div>;
   }
 
-  const filePath = `~/.linggen/missions/${missionId}/mission.md`;
+  // A skill mission's file ships with its skill: shown, never saved here.
+  const skill = editing?.skill || null;
+  const filePath = skill
+    ? `~/.linggen/skills/${skill}/missions/${missionId.slice(skill.length + 1)}/mission.md`
+    : `~/.linggen/missions/${missionId}/mission.md`;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -134,6 +138,9 @@ export const MissionEditor: React.FC<{
           {dirty && <span className="text-[12px] text-amber-600 ml-2">Unsaved</span>}
         </div>
         <div className="flex items-center gap-1.5">
+          {skill ? (
+            <span className="text-[12px] text-slate-500">From the {skill} skill — pause or resume it from the list</span>
+          ) : (
           <button
             onClick={handleSave}
             disabled={saving || loading || !content.trim()}
@@ -141,7 +148,8 @@ export const MissionEditor: React.FC<{
           >
             <span className="inline-flex items-center gap-1"><Save size={12} /> {saving ? 'Saving…' : editing ? 'Save' : 'Create'}</span>
           </button>
-          {editing && (
+          )}
+          {editing && !skill && (
             <button
               onClick={handleDelete}
               className="px-2 py-1.5 rounded text-xs border border-red-200 text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"
@@ -168,7 +176,7 @@ export const MissionEditor: React.FC<{
         {loading ? (
           <div className="p-6 text-xs text-slate-500">Loading mission.md…</div>
         ) : (
-          <CM6Editor value={content} onChange={setContent} livePreview />
+          <CM6Editor value={content} onChange={setContent} readOnly={!!skill} livePreview />
         )}
       </div>
     </div>
