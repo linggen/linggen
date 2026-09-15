@@ -44,6 +44,11 @@ impl AgentManager {
             ended_at: None,
         };
         self.run_store.add_run(&record);
+        // A new run is new page state, same as its finish below. Without this
+        // the run only reached a page when something else happened to refresh
+        // it — a new chat's first-message rename did, a follow-up turn did not
+        // — so older chats never learned the run existed and showed no Stop.
+        let _ = self.events.send((AgentEvent::StateUpdated, None));
         // Remember the agent's current top-level session so agent_chat can later
         // deliver a message into the chat the user is actually using.
         if record.parent_run_id.is_none() {
