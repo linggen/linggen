@@ -951,19 +951,12 @@ async fn prepare_server(
     {
         let state = state.clone();
         let with_tts = pet_cfg.enabled;
-        // Pictures are pulled only when an installed skill declares the
-        // tool — the engine reads the declaration, never a skill's name.
-        let with_pictures = state.skills.list_skills().await.iter().any(|s| {
-            s.allowed_tools
-                .as_deref()
-                .is_some_and(|t| t.iter().any(|n| n == "GenerateImage"))
-        });
         let progress: crate::runtime::Progress = std::sync::Arc::new(move |payload| {
             crate::server::api::topic::publish_topic(&state, "tasks", "runtime", payload.clone());
             crate::server::api::topic::retain("tasks", "runtime", payload);
         });
         crate::runtime::set_progress_sink(progress.clone());
-        tokio::spawn(crate::runtime::prewarm(with_tts, with_pictures, progress));
+        tokio::spawn(crate::runtime::prewarm(with_tts, progress));
     }
 
     // Pre-warm the voice providers off the hot path when the pet is enabled:

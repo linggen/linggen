@@ -332,12 +332,16 @@ fn progress_sink() -> Progress {
 
 /// `with_tts` gates the voice stages (venv + model, ~2.1 GB): the caller
 /// passes whether anything on this machine actually speaks (pet enabled),
-/// so a machine with the pet off never pulls the model. `with_pictures`
-/// gates the picture stages the same way (venv + model, ~5.6 GB): only
-/// when an installed skill declares the picture tool. `progress` receives
-/// each stage payload; the server wires it to the live topic bus +
-/// retained store.
-pub async fn prewarm(with_tts: bool, with_pictures: bool, progress: Progress) {
+/// so a machine with the pet off never pulls the model. Pictures are not
+/// a daily model — most players never make a scene — so their stages
+/// never run at boot; [`ensure_pictures_in_background`] runs them on the
+/// first call that needs them. `progress` receives each stage payload;
+/// the server wires it to the live topic bus + retained store.
+pub async fn prewarm(with_tts: bool, progress: Progress) {
+    prewarm_lanes(with_tts, false, progress).await
+}
+
+async fn prewarm_lanes(with_tts: bool, with_pictures: bool, progress: Progress) {
     // One prewarm at a time; a second boot-time spawn or an on-demand
     // ensure_* call waits instead of racing the unpack.
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -387,11 +391,12 @@ fn picture_model_stamp() -> PathBuf {
     runtime_dir().join("pictures-model.stamp")
 }
 
-/// Start the picture stages now, off the caller's path, when a tool call
-/// finds them missing (a skill installed after boot, or a boot that ran
-/// before the skill declared the tool). Serialized by prewarm's own lock.
+/// Start the picture stages now, off the caller's path: the first
+/// GenerateImage call on this machine finds them missing and answers
+/// "installing" while this runs (venv + ~5 GB model, minutes on a fast
+/// line). Serialized by prewarm's own lock.
 pub fn ensure_pictures_in_background() {
-    tokio::spawn(prewarm(false, true, progress_sink()));
+    tokio::spawn(prewarm_lanes(false, true, progress_sink()));
 }
 
 /// Which lanes a stage set may run: each goes through the gate and a

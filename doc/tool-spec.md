@@ -42,7 +42,7 @@ Built-in tools are the kernel API. Skills are userspace.
 | `lock_paths` | `globs, ttl_ms?` | Acquire file locks (multi-agent) |
 | `unlock_paths` | `tokens` | Release file locks |
 | `Task` | `target_agent_id, task` | Spawn subagent |
-| `WebSearch` | `query, max_results?` | Web search (Tavily — requires API key in settings) |
+| `WebSearch` | `query, max_results?` | Web search (Tavily — your key from Settings first, else Linggen Cloud with sign-in; a failing key is reported, never swapped) |
 | `WebFetch` | `url, max_bytes?` | Fetch URL content as text |
 | `Skill` | `skill, args?` | Invoke a skill by name |
 | `RunApp` | `skill, args?` | Launch an app-enabled skill |
@@ -58,8 +58,9 @@ Built-in tools are the kernel API. Skills are userspace.
 offered only when a skill lists it in `allowed-tools` *and* the machine
 passes the lane gate (Apple Silicon, 16 GB unified memory) — a Mac that
 cannot draw never sees the tool, so the model never reaches for it. The
-first call on a capable Mac that has not installed the lane starts the
-install in the background (venv + ~5 GB model) and answers in one line;
+lane installs on first use, never at boot (pictures are not a daily
+model): the first call starts the install in the background (venv +
+~5 GB model) and answers in one line;
 `GET /api/runtime/lanes` reports every lane's verdict. Renders run one at
 a time, one process per picture, `square` 512×512 or `landscape`
 768×512; a `reference` (a file inside the skill) keeps its pose and shape.

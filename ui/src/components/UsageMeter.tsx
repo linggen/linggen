@@ -5,9 +5,10 @@
  * Reads GET /api/account?app=linggen (the engine caches entitlement 60s):
  * one chip "6.8M left" for whichever allowance the account runs on — the
  * free trial (unsubscribed) or the monthly pool (subscribed). Amber past
- * 80% used or under 6 trial days remaining, red once exhausted.
- * Clicking opens a small dropdown with the progress bar, days left and a
- * link to linggen.dev billing.
+ * 80% used, red once exhausted. A trial has no clock: it lasts until its
+ * tokens are spent. An account whose plan ended reads "Plan ended", not
+ * "Trial ended" — it never was a trial that ran out. Clicking opens a
+ * small dropdown with the progress bar and a link to linggen.dev billing.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
@@ -30,8 +31,9 @@ interface Meter {
   kind: 'trial' | 'monthly';
   used: number;
   total: number;
-  daysLeft: number | null; // trial only; null = not started yet
   exhausted: boolean;
+  /** A subscription existed and ended — the account is back on its trial remainder. */
+  pastPlan: boolean;
 }
 
 function fmtTokens(n: number): string {
@@ -49,15 +51,13 @@ async function fetchMeter(): Promise<Meter | null> {
   if (acc.gate?.entitled) {
     const u: UsageState | undefined = acc.entitlement.usage;
     if (!u || !u.allowance) return null;
-    return { kind: 'monthly', used: u.used, total: u.allowance, daysLeft: null, exhausted: u.over };
+    return { kind: 'monthly', used: u.used, total: u.allowance, exhausted: u.over, pastPlan: false };
   }
 
   const t: TrialState | undefined = acc.gate?.trial;
   if (!t || !t.budget) return null;
-  const daysLeft = t.expires_at
-    ? Math.max(0, Math.ceil((t.expires_at - Date.now() / 1000) / 86400))
-    : null;
-  return { kind: 'trial', used: t.tokens, total: t.budget, daysLeft, exhausted: !t.active };
+  const pastPlan = Object.keys(acc.entitlement.apps ?? {}).length > 0;
+  return { kind: 'trial', used: t.tokens, total: t.budget, exhausted: !t.active, pastPlan };
 }
 
 export const UsageMeter: React.FC = () => {
@@ -91,17 +91,18 @@ export const UsageMeter: React.FC = () => {
   if (!meter) return null;
 
   const frac = meter.total > 0 ? Math.min(1, meter.used / meter.total) : 0;
-  const low = frac >= 0.8 || (meter.daysLeft !== null && meter.daysLeft <= 5);
+  const low = frac >= 0.8;
   const tone = meter.exhausted
     ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20'
     : low
       ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
       : 'bg-slate-200 dark:bg-white/10 text-slate-500 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-white/20';
   const barTone = meter.exhausted ? 'bg-red-500' : low ? 'bg-amber-500' : 'bg-blue-500';
+  const endedWord = meter.pastPlan ? 'Plan ended' : 'Trial ended';
   const label = meter.exhausted
-    ? meter.kind === 'trial' ? 'Trial ended' : 'Cap reached'
+    ? meter.kind === 'trial' ? endedWord : 'Cap reached'
     : `${fmtTokens(meter.total - meter.used)} left`;
-  const title = meter.kind === 'trial' ? 'Free trial' : 'Monthly usage';
+  const title = meter.kind === 'trial' ? (meter.pastPlan ? 'Plan ended · trial remainder' : 'Free trial') : 'Monthly usage';
 
   return (
     <div className="relative" ref={ref}>
@@ -120,19 +121,14 @@ export const UsageMeter: React.FC = () => {
           </div>
           <div className="mt-1.5 text-[10px] text-slate-400">
             {fmtTokens(meter.used)} of {fmtTokens(meter.total)} tokens used
-            {meter.kind === 'trial' && (
-              meter.daysLeft === null
-                ? ' · window starts on first use'
-                : meter.exhausted
-                  ? ''
-                  : ` · ${meter.daysLeft} day${meter.daysLeft === 1 ? '' : 's'} left`
-            )}
           </div>
           {meter.exhausted && (
             <div className="mt-1 text-[10px] text-red-500">
-              {meter.kind === 'trial'
-                ? 'Your free trial is used up — subscribe to keep going.'
-                : 'Monthly allowance spent — add a top-up or wait for next month.'}
+              {meter.kind !== 'trial'
+                ? 'Monthly allowance spent — add a top-up or wait for next month.'
+                : meter.pastPlan
+                  ? 'Your plan has ended — subscribe again to keep going.'
+                  : 'Your free trial is used up — subscribe to keep going.'}
             </div>
           )}
           <a
