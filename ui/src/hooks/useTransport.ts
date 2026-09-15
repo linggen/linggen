@@ -12,6 +12,7 @@ import { useUiStore } from '../stores/uiStore';
 import { RtcTransport } from '../lib/rtcTransport';
 import { RelaySignaling } from '../lib/signaling';
 import { dispatchEvent, relayConnectionToSkillIframe } from '../lib/eventDispatcher';
+import { armInterruptCheck } from '../lib/eventHandlers/pageState';
 import { useUserStore } from '../stores/userStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
@@ -148,6 +149,7 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         // re-drives the spinner) or died with it (daemon restart mid-turn —
         // no TurnComplete is coming, the spinner would tick forever).
         // Same for ghost generating bubbles.
+        armInterruptCheck();
         useServerStore.setState({ pendingSends: {} });
         useChatStore.getState().finalizeAllGenerating();
         if (onReconnectRef.current) {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, ArrowDown, Copy, FileText, Eraser } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
+import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
@@ -118,7 +119,7 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
 };
 
 /** Plumbing rows — context, not a speaker, so never labelled. */
-const UNSPOKEN = new Set(['system', 'memory', 'memory-recall', 'compaction']);
+const UNSPOKEN = UNSPOKEN_SENDERS;
 
 /**
  * The bracket label for an agent's message. Every speaking turn carries its
@@ -410,6 +411,10 @@ export const ChatPanel: React.FC<{
 
   // Track agent active state and elapsed time — keyed by session ID
   const agentStatusText = useServerStore((s) => s.agentStatusText);
+  // While the link to the engine is down nothing about the run is known —
+  // it may have died with the engine. A counting "Thinking… (2m 26s)" then
+  // claims work that may not exist, so the line says what is actually true.
+  const reconnecting = useUserStore((s) => s.connectionStatus === 'reconnecting');
   const currentStatus = agentStatus?.[sessionId || ''];
   // Bind the spinner to the server's authoritative agent_runs records,
   // NOT the agentStatus proxy: that proxy is set from too many paths
@@ -885,7 +890,14 @@ export const ChatPanel: React.FC<{
       </div>
 
       {/* Status spinner — always visible when active or just completed */}
-      {isAgentActive ? (
+      {isAgentActive && reconnecting ? (
+        <div className="px-3 py-1.5">
+          <div className="flex items-center gap-1.5 text-[13px] text-amber-600 dark:text-amber-400 font-medium">
+            <span>⚠</span>
+            <span>Lost the connection to Linggen — reconnecting. This turn may have stopped.</span>
+          </div>
+        </div>
+      ) : isAgentActive ? (
         <div className="px-3 py-1.5">
           <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
             <span className="text-blue-500">✶</span>

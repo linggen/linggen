@@ -9,6 +9,7 @@ import { useUserStore } from '../../stores/userStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useChatStore } from '../../stores/chatStore';
+import { UNSPOKEN_SENDERS } from '../messageUtils';
 
 export function handlePageState(item: UiEvent): void {
   const ps = item.data;
@@ -155,6 +156,23 @@ function applyScopedState(ps: any): void {
  *  state — long enough to cover send→run/begin→page_state propagation. */
 const STREAM_STATE_STALE_MS = 15_000;
 
+/** The visible session, when it was busy as the link dropped. Reconnect
+ *  wipes the optimistic pendingSends before any page_state can judge them,
+ *  so without this a turn that died with the engine was never called
+ *  interrupted — the chat just showed "Musing for 58s" as if it finished. */
+let busyBeforeReconnect: string | null = null;
+
+/** Called on reconnect, BEFORE the client's optimistic flags are cleared. */
+export function armInterruptCheck(): void {
+  const sid = useSessionStore.getState().activeSessionId;
+  const { pendingSends, agentRuns } = useServerStore.getState();
+  const busy = !!sid && (
+    !!pendingSends[sid] ||
+    agentRuns.some((r) => r.session_id === sid && !r.parent_run_id && r.status === 'running')
+  );
+  busyBeforeReconnect = busy ? sid : null;
+}
+
 /**
  * Terminal turn events (message / turn_complete / run outcome) are only
  * delivered while the session's data channel is open, and the server buffers
@@ -171,6 +189,15 @@ function reconcileStreamingState(runs: any[]): void {
       .filter((r: any) => !r.parent_run_id && r.status === 'running')
       .map((r: any) => r.session_id),
   );
+  // The first runs list after a reconnect settles the turn that was busy when
+  // the link dropped: still running means it survived a blip; absent means it
+  // died, and the persisted thread decides whether anything answered.
+  if (busyBeforeReconnect) {
+    const sid = busyBeforeReconnect;
+    busyBeforeReconnect = null;
+    if (!running.has(sid)) void markInterruptedIfUnanswered(sid);
+  }
+
   const serverStore = useServerStore.getState();
   const now = Date.now();
   for (const [sid, sentAt] of Object.entries(serverStore.pendingSends)) {
@@ -207,7 +234,12 @@ async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
   try {
     await useChatStore.getState().fetchSessionState({ sessionId });
   } catch { /* best-effort — judge from what we have */ }
-  const msgs = useChatStore.getState().messages.filter((m) => !m.isError);
+  // The last row that SPEAKS. A memory recall is persisted right after the
+  // user's message, before any reply — counting it as an answer hid every
+  // interrupted turn once auto-recall landed.
+  const msgs = useChatStore.getState().messages.filter(
+    (m) => !m.isError && !UNSPOKEN_SENDERS.has(m.from || ''),
+  );
   const last = msgs[msgs.length - 1];
   if (!last || last.role !== 'user') return;
   useServerStore.getState().markRunInterrupted(sessionId);
