@@ -20,6 +20,7 @@ import {
   handleContentBlock,
   handleTurnComplete,
   handleToolProgress,
+  handleFollowups,
 } from './chat';
 import {
   handleAskUser,
@@ -47,6 +48,7 @@ export const eventHandlers: Record<EventKind, EventHandler> = {
   text_segment: handleTextSegment,
   content_block: handleContentBlock,
   turn_complete: handleTurnComplete,
+  followups: handleFollowups,
 
   // Activity / lifecycle
   activity: handleActivity,

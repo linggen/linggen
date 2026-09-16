@@ -132,6 +132,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `tools` | Custom tools the skill exposes to the agent (see "Custom tools") |
 | `permission` | Permission request, prompted at activation |
 | `cwd` | Starting cwd for sessions invoking this skill |
+| `suggestions` | Starter prompts shown as buttons above the skill's chat (see `chat-spec.md` § Suggestions) |
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `cloud` | A save and/or a token meter kept on linggen.dev for the account (see "Cloud") |

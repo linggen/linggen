@@ -166,6 +166,10 @@ pub struct Skill {
     /// `CloudConfig`.
     #[serde(default)]
     pub cloud: Option<CloudConfig>,
+    /// Starter prompts shown as buttons above the skill's chat — see
+    /// `doc/chat-spec.md` § Suggestions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<String>,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

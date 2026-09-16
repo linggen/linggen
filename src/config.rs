@@ -307,6 +307,11 @@ pub struct AgentConfig {
     /// host. Trailing slash optional; no path segment.
     #[serde(default = "default_ling_mem_url")]
     pub ling_mem_url: String,
+    /// Ask the model for follow-up buttons on the turns of a chat that shows
+    /// them (the Mac chat). Off: no asking; a skill's starters and a page's
+    /// buttons still show. See `chat-spec.md` § Suggestions.
+    #[serde(default = "default_true")]
+    pub suggest_followups: bool,
 }
 
 fn default_episodic_ttl_days() -> u64 {
@@ -681,6 +686,7 @@ impl Default for Config {
                 memory_inject_min_score: default_memory_inject_min_score(),
                 memory_recall_count: default_memory_recall_count(),
                 ling_mem_url: default_ling_mem_url(),
+                suggest_followups: true,
             },
             logging: LoggingConfig {
                 level: None,

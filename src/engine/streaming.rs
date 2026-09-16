@@ -303,6 +303,9 @@ impl AgentEngine {
         // streaming ExitPlanMode tool args to avoid showing plan text twice
         // (models like DeepSeek/Gemini output plan as text AND tool arg).
         let mut had_content_tokens = false;
+        let mut followups_gate = self
+            .suggest_followups
+            .then(crate::engine::followups::StreamGate::default);
 
         'stream: loop {
             // Same cancel-poll as stream_with_thinking_model: a stop must not
@@ -339,8 +342,12 @@ impl AgentEngine {
                     // a generating message. When PlanUpdate arrives the frontend
                     // replaces the streaming text with the PlanBlock.
                     if !in_think_block {
-                        if let Some(tx) = &self.thinking_tx {
-                            let _ = tx.send(ThinkingEvent::ContentToken(token));
+                        let shown = match followups_gate.as_mut() {
+                            Some(gate) => gate.push(&token),
+                            None => token,
+                        };
+                        if let (Some(tx), false) = (&self.thinking_tx, shown.is_empty()) {
+                            let _ = tx.send(ThinkingEvent::ContentToken(shown));
                         }
                         had_content_tokens = true;
                     }
@@ -378,6 +385,14 @@ impl AgentEngine {
                     }
                 }
             }
+        }
+
+        // Text held back as a possible follow-ups block that wasn't one.
+        let held = followups_gate
+            .map(|mut gate| gate.finish())
+            .unwrap_or_default();
+        if let (Some(tx), false) = (&self.thinking_tx, held.is_empty()) {
+            let _ = tx.send(ThinkingEvent::ContentToken(held));
         }
 
         // Signal content stream done (not thinking done — avoids re-enabling
@@ -557,6 +572,31 @@ impl AgentEngine {
         }
         meta.model_id = Some(model_id.to_string());
         let _ = manager.global_sessions.update_session_meta(&meta);
+    }
+
+    /// Take a reply's follow-ups block off its text and hand the buttons to
+    /// the chat. A no-op unless this turn asked for them.
+    pub(crate) async fn lift_followups(&self, raw: String) -> String {
+        if !self.suggest_followups {
+            return raw;
+        }
+        let (text, items) = crate::engine::followups::split(&raw);
+        if items.is_empty() {
+            return text;
+        }
+        if let Some(manager) = self.tools.get_manager() {
+            let agent_id = self
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            manager
+                .send_event(
+                    crate::engine::agent::AgentEvent::Followups { agent_id, items },
+                    self.session_id.clone(),
+                )
+                .await;
+        }
+        text
     }
 
     /// Emit a ModelFallback event via the agent manager.

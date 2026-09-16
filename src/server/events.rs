@@ -248,6 +248,12 @@ pub enum ServerEvent {
         widget_id: String,
         session_id: Option<String>,
     },
+    /// The next questions a reply offers the person, as buttons.
+    Followups {
+        agent_id: String,
+        items: Vec<String>,
+        session_id: Option<String>,
+    },
     ModelFallback {
         agent_id: String,
         preferred_model: String,
@@ -454,6 +460,11 @@ impl ServerEvent {
                 agent_id,
                 text,
                 parent_id,
+                session_id,
+            }),
+            AgentEvent::Followups { agent_id, items } => Some(Self::Followups {
+                agent_id,
+                items,
                 session_id,
             }),
             AgentEvent::ModelFallback {

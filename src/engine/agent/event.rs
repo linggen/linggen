@@ -114,6 +114,11 @@ pub enum AgentEvent {
         agent_id: String,
         plan: Plan,
     },
+    /// The next questions a reply offers the person, as buttons.
+    Followups {
+        agent_id: String,
+        items: Vec<String>,
+    },
     ModelFallback {
         agent_id: String,
         preferred_model: String,

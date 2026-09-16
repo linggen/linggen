@@ -88,6 +88,18 @@ export const GeneralTab: React.FC<{
             </select>
             <p className="text-[11px] text-slate-400 mt-0.5">Default mode for new sessions. Per-session mode can be changed in the chat header.</p>
           </div>
+          <div>
+            <label className={labelCls}>Suggest Follow-ups</label>
+            <select
+              className={inputCls}
+              value={config.agent.suggest_followups === false ? 'off' : 'on'}
+              onChange={(e) => onChange({ ...config, agent: { ...config.agent, suggest_followups: e.target.value === 'on' } })}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-0.5">After a reply, buttons with what you might ask next.</p>
+          </div>
           <div className="col-span-2">
             <label className={labelCls}>Prompt Loop Breaker</label>
             <textarea

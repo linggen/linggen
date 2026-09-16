@@ -7,6 +7,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
+import { useSuggestionStore } from '../stores/suggestionStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
@@ -251,6 +252,8 @@ export function useChatActions(
       // so ChatPanel renders the busy state before the server's first
       // page_state push lands. Cleared by handleTurnComplete.
       useServerStore.getState().setPendingSend(sid, true);
+      // The last reply's buttons answered the turn before this one.
+      if (sid) useSuggestionStore.getState().clearFollowups(sid);
       const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
       const sessionModel = useUiStore.getState().sessionModel;
       const data = await getTransport().sendChat({
@@ -262,6 +265,7 @@ export function useChatActions(
         ...(isSkillSession && activeSkillName ? { skill_name: activeSkillName } : {}),
         ...(sessionModel ? { model_id: sessionModel } : {}),
         ...(images && images.length > 0 ? { images } : {}),
+        followups: true,
       }) as any;
       if (data?.session_id && !sid) {
         useSessionStore.getState().setActiveSessionId(data.session_id);

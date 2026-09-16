@@ -577,6 +577,23 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             project_root: None,
             data: Some(json!({ "widget_id": widget_id })),
         }),
+        ServerEvent::Followups {
+            agent_id,
+            items,
+            session_id,
+        } => Some(UiEvent {
+            id: format!("followups-{agent_id}-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "followups".to_string(),
+            phase: None,
+            text: None,
+            agent_id: Some(agent_id),
+            session_id,
+            project_root: None,
+            data: Some(json!({ "items": items })),
+        }),
         ServerEvent::ModelFallback {
             agent_id,
             preferred_model,
@@ -2027,6 +2044,11 @@ mod tests {
                 agent_id: "ling".into(),
                 question_id: "q1".into(),
                 questions: vec![],
+                session_id: None,
+            },
+            ServerEvent::Followups {
+                agent_id: "ling".into(),
+                items: vec!["Show the details".into()],
                 session_id: None,
             },
             ServerEvent::ModelFallback {

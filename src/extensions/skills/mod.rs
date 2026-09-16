@@ -369,6 +369,8 @@ struct SkillFrontmatter {
     /// `doc/skill-spec.md` § Cloud.
     #[serde(default)]
     cloud: Option<CloudConfig>,
+    #[serde(default)]
+    suggestions: Vec<String>,
 }
 
 pub struct SkillLoader {
@@ -633,6 +635,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         install: frontmatter.install,
         sync: frontmatter.sync,
         cloud: frontmatter.cloud,
+        suggestions: frontmatter.suggestions,
         skill_dir: None,
     })
 }
@@ -813,6 +816,18 @@ This is the skill content."#;
         assert_eq!(skill.description, "A test skill");
         assert_eq!(skill.content, "This is the skill content.");
         assert!(skill.user_invocable); // default true
+    }
+
+    #[test]
+    fn a_skill_lists_its_starter_buttons() {
+        let text = "---\nname: cfo\ndescription: Money\nsuggestions:\n  - Review my portfolio\n  - How are my investments?\n---\nBody";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(
+            skill.suggestions,
+            vec!["Review my portfolio", "How are my investments?"]
+        );
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert!(bare.unwrap().suggestions.is_empty());
     }
 
     #[test]

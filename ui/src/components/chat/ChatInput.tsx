@@ -5,6 +5,7 @@ import { useInteractionStore } from '../../stores/interactionStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
+import { SuggestionRow } from './SuggestionRow';
 import { normalizeAgentKey } from './utils/message';
 import type {
   AgentInfo,
@@ -475,6 +476,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
           );
         })()}
+        <SuggestionRow
+          skills={skills}
+          hidden={!!isRunning || chatInput.trim() !== '' || pendingImages.length > 0}
+          onPick={(text) => onSendMessage(text)}
+        />
         <div className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
           {showSkillDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-52 overflow-y-auto z-[70]">

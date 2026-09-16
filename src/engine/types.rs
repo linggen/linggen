@@ -329,6 +329,10 @@ pub struct AgentEngine {
     /// a mission run takes it to record what the run spent. A delegated
     /// agent's calls are its own engine's.
     pub run_usage: crate::provider::models::RunUsage,
+    /// This turn's surface shows follow-up buttons: the model is asked for
+    /// them and its `<followups>` block is lifted off the reply. Set per turn
+    /// by the chat runtime; never on for missions or delegated agents.
+    pub suggest_followups: bool,
     /// Cached stable portion of the system prompt.
     pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
     /// Running token estimate accumulated incrementally during the loop.
@@ -505,6 +509,7 @@ impl AgentEngine {
             compact_focus: None,
             last_token_usage: None,
             run_usage: Default::default(),
+            suggest_followups: false,
             cached_system_prompt: None,
             accumulated_token_estimate: 0,
             last_assistant_text: None,

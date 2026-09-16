@@ -35,6 +35,9 @@ pub(crate) struct ChatRequest {
     /// handed to the model as "[Yinyue]: …". Absent or "user" = the user.
     #[serde(default)]
     pub(super) sender: Option<String>,
+    /// The surface shows follow-up buttons — ask the model for them this turn.
+    #[serde(default)]
+    pub(super) followups: bool,
 }
 
 #[derive(Deserialize)]

@@ -918,6 +918,7 @@ pub(crate) async fn chat_handler(
     let req_user_type = req.user_type;
     let req_model_id = req.model_id.clone();
     let req_images = req.images.clone();
+    let req_followups = req.followups;
 
     tokio::spawn(async move {
         let mut engine = agent.lock().await;
@@ -973,6 +974,14 @@ pub(crate) async fn chat_handler(
 
         let policy = crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type);
         policy.apply(&mut engine);
+        engine.suggest_followups = req_followups
+            && !is_consumer
+            && state
+                .manager
+                .get_config_snapshot()
+                .await
+                .agent
+                .suggest_followups;
 
         // Skill- and mission-created sessions don't write to the user's
         // biographical memory and shouldn't have the core block + memory

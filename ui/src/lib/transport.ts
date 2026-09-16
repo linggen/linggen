@@ -34,6 +34,8 @@ export interface ChatRequest {
   mission_id?: string;
   model_id?: string;
   images?: string[];
+  /** This surface shows follow-up buttons — ask the model for them. */
+  followups?: boolean;
 }
 
 /** A request to respond to an AskUser prompt. */

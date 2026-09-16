@@ -2,6 +2,7 @@ import type { UiEvent, ContentBlock, SubagentToolStep } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
+import { useSuggestionStore } from '../../stores/suggestionStore';
 import type { AgentStatusValue } from '../../stores/serverStore';
 import { agentTracker } from '../agentTracker';
 import {
@@ -22,6 +23,16 @@ export function handleTextSegment(item: UiEvent): void {
   const segText = String(item.text || '').trim();
   if (!segText) return;
   useChatStore.getState().addTextSegment(agentId, segText);
+}
+
+// ---------------------------------------------------------------------------
+// Follow-ups — the buttons a reply offers
+// ---------------------------------------------------------------------------
+
+export function handleFollowups(item: UiEvent): void {
+  if (!item.session_id) return;
+  if (agentTracker.getParent(String(item.agent_id || ''))) return;
+  useSuggestionStore.getState().setFollowups(item.session_id, item.data?.items ?? []);
 }
 
 // ---------------------------------------------------------------------------

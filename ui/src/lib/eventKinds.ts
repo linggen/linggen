@@ -17,6 +17,8 @@ export const EVENT_KINDS = [
   'text_segment',
   'content_block',
   'turn_complete',
+  // The next questions a reply offers, shown as buttons above the input.
+  'followups',
 
   // Activity / lifecycle
   'activity',

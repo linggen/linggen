@@ -212,6 +212,18 @@ Plan approval/rejection is already synced via PlanUpdate status changes — no s
 
 When a user sends a message to a busy agent, it queues. The agent picks it up at the next loop iteration and can react mid-run. This enables the "AI interrupt" pattern — users can redirect, cancel, or query a running agent without waiting.
 
+## Suggestions
+
+A row of short buttons above the chat input, so a person can talk to an agent without composing a message. A tap sends the button's words as their own message. The row hides while they type and while a turn runs; at most four buttons.
+
+Three sources; the latest to change wins:
+
+- **Starters** — a skill lists them in its frontmatter (`suggestions`). Shown in the skill's chat until something newer arrives. No model call.
+- **Page** — an app page sets the row for what is on screen (`chat.setSuggestions([...])`, e.g. CFO's Investments tab). An empty list hands the row back to the starters.
+- **Follow-ups** — after a reply, the agent's 2–3 next questions, in the person's voice. The surface asks for them on its turns (`followups` on the chat request); the engine adds a short instruction, the model ends its reply with a `<followups>` block, and the engine hides the block while streaming, lifts it off the saved reply and sends a `followups` event. No extra model call. A reply without them hands the row back to the page or the starters.
+
+Only the Mac chat asks in v1 — the main UI and app embeds. Missions, delegated agents, Yinyue and the phone never do. Settings → "Suggest follow-ups" (`agent.suggest_followups`, on by default) stops the asking; starters and page buttons stay.
+
 ## Event flow: single agent turn
 
 1. User sends a message.

@@ -17,6 +17,7 @@ import { useServerStore } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
+import { useSuggestionStore } from '../stores/suggestionStore';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
 
@@ -166,6 +167,12 @@ export const EmbedApp: React.FC = () => {
         case 'clear':
           clearChatRef.current();
           break;
+        case 'set_suggestions': {
+          // The page's buttons for what is on screen (chat.setSuggestions).
+          const sid = useSessionStore.getState().activeSessionId;
+          useSuggestionStore.getState().setPage(sid, payload?.items);
+          break;
+        }
       }
     };
     window.addEventListener('message', handleSkillCommand);
