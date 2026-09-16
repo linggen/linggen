@@ -12,6 +12,8 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
+use crate::provider::models::RunUsage;
+
 // Records + lookup contracts live in `engine::mission`. Re-exported
 // here so existing callers (`extensions::missions::Mission`, etc.)
 // keep working without churning every import site.
@@ -494,15 +496,26 @@ impl MissionLoader {
         Ok(())
     }
 
-    /// Rewrite the run entry matching `run_id` with a new status, keeping
-    /// file order and unknown lines intact. Missing file or run_id is a
-    /// no-op — finalizing a run whose record was healed or removed in the
-    /// meantime must not error the dispatch path.
     pub fn update_mission_run_status(
         &self,
         mission_id: &str,
         run_id: &str,
         status: &str,
+    ) -> Result<()> {
+        self.finish_mission_run(mission_id, run_id, status, None)
+    }
+
+    /// Rewrite the run entry matching `run_id` with its status and, when
+    /// given, what the run spent — keeping file order and unknown lines
+    /// intact. Missing file or run_id is a no-op — finalizing a run whose
+    /// record was healed or removed in the meantime must not error the
+    /// dispatch path.
+    pub fn finish_mission_run(
+        &self,
+        mission_id: &str,
+        run_id: &str,
+        status: &str,
+        usage: Option<RunUsage>,
     ) -> Result<()> {
         let path = self.runs_path(mission_id);
         if !path.exists() {
@@ -519,6 +532,10 @@ impl MissionLoader {
                 Ok(mut e) if e.run_id == run_id => {
                     if e.status != status {
                         e.status = status.to_string();
+                        changed = true;
+                    }
+                    if usage.is_some() && e.usage != usage {
+                        e.usage = usage.clone();
                         changed = true;
                     }
                     out.push_str(&serde_json::to_string(&e)?);
@@ -791,6 +808,7 @@ mod tests {
             triggered_at: 1000,
             status: "completed".into(),
             skipped: false,
+            usage: None,
         };
         let entry2 = MissionRunEntry {
             run_id: "run-2".into(),
@@ -798,6 +816,7 @@ mod tests {
             triggered_at: 2000,
             status: "skipped".into(),
             skipped: true,
+            usage: None,
         };
         store.append_mission_run(&m.id, &entry1).unwrap();
         store.append_mission_run(&m.id, &entry2).unwrap();
@@ -822,6 +841,7 @@ mod tests {
             triggered_at: 1000,
             status: status.into(),
             skipped: false,
+            usage: None,
         };
         store
             .append_mission_run(&m.id, &run("run-1", "running"))
@@ -830,9 +850,18 @@ mod tests {
             .append_mission_run(&m.id, &run("run-2", "running"))
             .unwrap();
 
-        // Normal finalize: running → completed, other rows untouched.
+        // Normal finalize: running → completed with what it spent, other
+        // rows untouched.
+        let spent = RunUsage {
+            calls: 3,
+            prompt: 21_000,
+            cached: 9_000,
+            output: 700,
+            models: vec!["flash".into()],
+            ..Default::default()
+        };
         store
-            .update_mission_run_status(&m.id, "run-1", "completed")
+            .finish_mission_run(&m.id, "run-1", "completed", Some(spent.clone()))
             .unwrap();
         let by_id = |runs: &[MissionRunEntry], id: &str| {
             runs.iter().find(|r| r.run_id == id).unwrap().status.clone()
@@ -840,6 +869,9 @@ mod tests {
         let runs = store.list_mission_runs(&m.id).unwrap();
         assert_eq!(by_id(&runs, "run-1"), "completed");
         assert_eq!(by_id(&runs, "run-2"), "running");
+        let usage_of = |id: &str| runs.iter().find(|r| r.run_id == id).unwrap().usage.clone();
+        assert_eq!(usage_of("run-1"), Some(spent));
+        assert_eq!(usage_of("run-2"), None);
 
         // Unknown run id / missing file: no-op, not an error.
         store
@@ -1034,6 +1066,7 @@ mod tests {
             triggered_at: 1,
             status: "completed".into(),
             skipped: false,
+            usage: None,
         };
         store.append_mission_run(&m.id, &run).unwrap();
         assert!(dir.path().join("missions/cfo:reports/runs.jsonl").exists());
@@ -1153,6 +1186,7 @@ mod tests {
             triggered_at: 1000,
             status: "completed".into(),
             skipped: false,
+            usage: None,
         };
         store.append_mission_run(&m.id, &entry).unwrap();
         assert!(root.join("test-dir").join("runs.jsonl").exists());

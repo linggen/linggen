@@ -59,6 +59,49 @@ impl TokenUsage {
     }
 }
 
+/// What a run spent, summed over its model calls. A mission's run history
+/// keeps it, so a skill can see what a night of its mission costs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunUsage {
+    pub calls: usize,
+    pub prompt: usize,
+    /// A part of `prompt`, not an addition to it.
+    pub cached: usize,
+    pub output: usize,
+    /// Calls whose provider reported no usage — the sums miss those.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unreported: usize,
+    /// The models that answered, in order of first use. More than one means
+    /// a fallback.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+impl RunUsage {
+    pub fn add(&mut self, model: &str, usage: Option<&TokenUsage>) {
+        self.calls += 1;
+        if !self.models.iter().any(|m| m == model) {
+            self.models.push(model.to_string());
+        }
+        let Some(u) = usage.filter(|u| u.prompt_tokens.is_some() || u.completion_tokens.is_some())
+        else {
+            self.unreported += 1;
+            return;
+        };
+        self.prompt += u.prompt_tokens.unwrap_or(0);
+        self.cached += u.cached_tokens.unwrap_or(0);
+        self.output += u.completion_tokens.unwrap_or(0);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.calls == 0
+    }
+}
+
 /// Items yielded by the streaming chat API.
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
@@ -1415,5 +1458,29 @@ mod tests {
         // Only a total known: it is what we have.
         let total = TokenUsage { total_tokens: Some(77), ..Default::default() };
         assert_eq!(total.metered(), 77);
+    }
+
+    #[test]
+    fn run_usage_sums_calls_and_names_each_model_once() {
+        let mut run = RunUsage::default();
+        let call = TokenUsage {
+            prompt_tokens: Some(9_000),
+            cached_tokens: Some(6_000),
+            completion_tokens: Some(200),
+            ..Default::default()
+        };
+        let total_only = TokenUsage {
+            total_tokens: Some(5),
+            ..Default::default()
+        };
+        run.add("flash", Some(&call));
+        run.add("flash", Some(&call));
+        run.add("fallback", None);
+        run.add("fallback", Some(&total_only));
+        let sums = (run.calls, run.prompt, run.cached, run.output);
+        assert_eq!(sums, (4, 18_000, 12_000, 400));
+        assert_eq!(run.unreported, 2);
+        assert_eq!(run.models, vec!["flash", "fallback"]);
+        assert!(RunUsage::default().is_empty());
     }
 }

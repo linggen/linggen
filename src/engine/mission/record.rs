@@ -119,4 +119,7 @@ pub struct MissionRunEntry {
     pub triggered_at: u64,
     pub status: String,
     pub skipped: bool,
+    /// The run's model calls and tokens, written when it finishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<crate::provider::models::RunUsage>,
 }

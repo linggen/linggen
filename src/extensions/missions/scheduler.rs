@@ -1,4 +1,5 @@
 use crate::engine::mission::record::{Mission, MissionRunEntry};
+use crate::provider::models::RunUsage;
 use crate::server::{ServerEvent, ServerState};
 use chrono::Local;
 use std::collections::HashMap;
@@ -600,7 +601,7 @@ async fn dispatch_mission_prompt(
         Ok(a) => a,
         Err(e) => {
             warn!("Mission scheduler: failed to get mission agent: {}", e);
-            finalize_mission_run(&state, mission, &mission_run_id, "failed");
+            finalize_mission_run(&state, mission, &mission_run_id, "failed", None);
             return;
         }
     };
@@ -832,9 +833,11 @@ async fn dispatch_mission_prompt(
         }
     });
 
+    engine.run_usage = Default::default();
     let result = engine.run_agent_loop(session_id.as_deref()).await;
     engine.thinking_tx = None;
     engine.set_run_id(None);
+    let usage = std::mem::take(&mut engine.run_usage);
 
     let status = match result {
         Ok(outcome) => {
@@ -920,7 +923,8 @@ async fn dispatch_mission_prompt(
 
     manager.update_agent_activity(project_path, agent_id).await;
 
-    finalize_mission_run(&state, mission, &mission_run_id, status);
+    let usage = (!usage.is_empty()).then_some(usage);
+    finalize_mission_run(&state, mission, &mission_run_id, status, usage);
 
     // Notify UI that the mission finished.
     let _ = state.events_tx.send(ServerEvent::Notification(
@@ -978,13 +982,20 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
 }
 
-/// Flip the up-front `running` entry to its terminal status. The entry
-/// keeps its original `triggered_at` (the actual start time).
-fn finalize_mission_run(state: &Arc<ServerState>, mission: &Mission, run_id: &str, status: &str) {
+/// Flip the up-front `running` entry to its terminal status, with what the
+/// run spent. The entry keeps its original `triggered_at` (the actual start
+/// time).
+fn finalize_mission_run(
+    state: &Arc<ServerState>,
+    mission: &Mission,
+    run_id: &str,
+    status: &str,
+    usage: Option<RunUsage>,
+) {
     if let Err(e) = state
         .manager
         .missions
-        .update_mission_run_status(&mission.id, run_id, status)
+        .finish_mission_run(&mission.id, run_id, status, usage)
     {
         warn!(
             "Mission '{}': failed to finalize run {} as {}: {}",
@@ -1007,6 +1018,7 @@ fn record_mission_run(
         triggered_at: crate::util::now_ts_secs(),
         status: status.to_string(),
         skipped,
+        usage: None,
     };
     let _ = state
         .manager

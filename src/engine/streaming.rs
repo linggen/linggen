@@ -490,6 +490,7 @@ impl AgentEngine {
             match result {
                 Ok(result) => {
                     self.last_token_usage = result.token_usage.clone();
+                    self.run_usage.add(&model_id, result.token_usage.as_ref());
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());
                     if model_id != preferred {
                         self.model_id = model_id.clone();

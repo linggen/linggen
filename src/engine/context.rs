@@ -630,7 +630,7 @@ impl AgentEngine {
     /// — the caller then leaves the transcript uncompacted rather than
     /// silently degrading to a low-fidelity extract.
     async fn summarize_span(
-        &self,
+        &mut self,
         dropped: &[&ChatMessage],
         focus: Option<&str>,
     ) -> Option<String> {
@@ -690,9 +690,16 @@ impl AgentEngine {
         {
             Ok(mut stream) => {
                 let mut result = String::new();
+                let mut usage: Option<crate::provider::models::TokenUsage> = None;
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         Ok(crate::provider::models::StreamChunk::Token(t)) => result.push_str(&t),
+                        Ok(crate::provider::models::StreamChunk::Usage(u)) => {
+                            usage = Some(match usage {
+                                Some(earlier) => earlier.merged(u),
+                                None => u,
+                            });
+                        }
                         Ok(_) => {}
                         Err(e) => {
                             tracing::warn!(
@@ -702,6 +709,7 @@ impl AgentEngine {
                         }
                     }
                 }
+                self.run_usage.add(&self.model_id, usage.as_ref());
                 let result = result.trim();
                 if result.is_empty() {
                     tracing::warn!("[compact] summary model returned empty, skipping compaction");

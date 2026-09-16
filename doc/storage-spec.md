@@ -183,7 +183,14 @@ Mission sessions are stored in `~/.linggen/sessions/` alongside all other sessio
 { "run_id": "mission-run-1700000000-a1b2c3d4", "session_id": "sess-1700000000-abc12345", "triggered_at": 1700000000, "status": "completed", "skipped": false }
 ```
 
-Append-only. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true` and no `session_id`.
+A run is appended as `running` and rewritten once when it ends: its status, and `usage` — what the run spent, summed over the mission engine's model calls (compaction included; a delegated agent's calls are not):
+
+```json
+{ "run_id": "…", "session_id": "…", "triggered_at": 1700000000, "status": "completed", "skipped": false,
+  "usage": { "calls": 3, "prompt": 21000, "cached": 9000, "output": 700, "models": ["deepseek-flash"] } }
+```
+
+`cached` is a part of `prompt`. `unreported` (omitted when 0) counts calls whose provider sent no usage — the sums miss those. More than one model means a fallback answered. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true`, no `session_id` and no `usage`.
 
 ### Plan messages (in `messages.jsonl`)
 
