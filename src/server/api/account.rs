@@ -62,7 +62,10 @@ fn gate_for(ent: &serde_json::Value, app: &str) -> serde_json::Value {
     if ent.is_null() {
         return serde_json::json!({ "app": app, "entitled": false, "trial": null, "allowed": false });
     }
-    let entitled = account::app_entitled(ent, app, unix_now());
+    // The developer account (linggensite: users.tier = admin) is entitled
+    // everywhere and metered nowhere; the site says so on the payload.
+    let developer = ent.get("developer").and_then(|d| d.as_bool()).unwrap_or(false);
+    let entitled = developer || account::app_entitled(ent, app, unix_now());
     let trial = ent
         .get("trial")
         .and_then(|t| t.get(app))
@@ -75,6 +78,7 @@ fn gate_for(ent: &serde_json::Value, app: &str) -> serde_json::Value {
     serde_json::json!({
         "app": app,
         "entitled": entitled,
+        "developer": developer,
         "trial": trial,
         "allowed": entitled || trial_active,
     })

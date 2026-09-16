@@ -47,6 +47,8 @@ async function fetchMeter(): Promise<Meter | null> {
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
   if (!acc?.signed_in || !acc.entitlement) return null;
+  // The developer account is metered nowhere: no meter to draw.
+  if (acc.gate?.developer) return null;
 
   if (acc.gate?.entitled) {
     const u: UsageState | undefined = acc.entitlement.usage;
