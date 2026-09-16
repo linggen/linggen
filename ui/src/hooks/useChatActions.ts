@@ -327,12 +327,21 @@ export function useChatActions(
       });
       useInteractionStore.getState().setPendingAskUser(null);
     } catch (e) {
-      // Leave the question on screen — it was not delivered.
       const reason = String((e as Error)?.message ?? e);
+      // The server no longer holds the question: it was answered from the
+      // skill page, or a queued message cancelled it. The click still
+      // counts — send the choice as the user's words and drop the widget.
+      if (/unknown question|already expired/i.test(reason)) {
+        useInteractionStore.getState().setPendingAskUser(null);
+        const said = answers.flatMap((a) => [...(a?.selected ?? []), a?.custom_text]).filter(Boolean).join(', ');
+        if (said) void sendChatMessage(said);
+        return;
+      }
+      // Leave the question on screen — it was not delivered.
       useUiStore.getState().addToast({ message: `Answer failed to send — ${reason}`, variant: 'error' });
       console.error('Error responding to AskUser:', e);
     }
-  }, []);
+  }, [sendChatMessage]);
 
   /**
    * Send one plan decision. A failure is shown, never swallowed: a button that

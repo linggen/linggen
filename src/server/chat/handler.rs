@@ -318,12 +318,27 @@ async fn enqueue_if_busy(
 
     // Cancel any pending AskUser for this agent+session so the tool
     // unblocks immediately and the loop can pick up the new message.
+    // Each removal is announced with WidgetResolved: removal alone left
+    // the question on screen, and the next tap on it answered a question
+    // the server no longer knew (Lingjing, 2026-09-16).
     {
+        let mut resolved: Vec<(String, Option<String>)> = Vec::new();
         let mut pending = state.pending_ask_user.lock().await;
-        pending.retain(|_, entry| {
-            !(entry.agent_id == target_id
-                && entry.session_id.as_deref() == Some(effective_session_id))
+        pending.retain(|qid, entry| {
+            let hit = entry.agent_id == target_id
+                && entry.session_id.as_deref() == Some(effective_session_id);
+            if hit {
+                resolved.push((qid.clone(), entry.session_id.clone()));
+            }
+            !hit
         });
+        drop(pending);
+        for (widget_id, session_id) in resolved {
+            let _ = state.events_tx.send(ServerEvent::WidgetResolved {
+                widget_id,
+                session_id,
+            });
+        }
     }
 
     // Send through interrupt channel so the running loop sees the message.
