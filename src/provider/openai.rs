@@ -234,7 +234,7 @@ impl OpenAiClient {
             }
         }
         let truncated = if text.len() > 500 {
-            format!("{}… ({} chars)", &text[..500], text.len())
+            format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
         } else {
             text
         };
@@ -551,7 +551,7 @@ impl OpenAiClient {
                     Ok(c) => c,
                     Err(e) => {
                         let truncated = if data.len() > 300 {
-                            format!("{}… ({} chars)", &data[..300], data.len())
+                            format!("{}… ({} chars)", &data[..data.floor_char_boundary(300)], data.len())
                         } else {
                             data.to_string()
                         };

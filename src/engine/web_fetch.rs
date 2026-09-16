@@ -45,13 +45,20 @@ pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchRe
         .unwrap_or("text/plain")
         .to_string();
 
-    let body = resp.text().await.context("failed to read response body")?;
-
-    let is_html = content_type.contains("text/html");
-    let text = if is_html {
-        strip_html_tags(&body)
-    } else {
-        body
+    let text = match body_kind(&content_type) {
+        BodyKind::Html => {
+            strip_html_tags(&resp.text().await.context("failed to read response body")?)
+        }
+        BodyKind::Text => resp.text().await.context("failed to read response body")?,
+        // Octet-stream is sometimes a plain file served without a type.
+        BodyKind::Unknown => {
+            let bytes = resp.bytes().await.context("failed to read response body")?;
+            match String::from_utf8(bytes.to_vec()) {
+                Ok(text) => text,
+                Err(_) => binary_note(&content_type, Some(bytes.len() as u64)),
+            }
+        }
+        BodyKind::Binary => binary_note(&content_type, resp.content_length()),
     };
 
     let truncated = text.len() > limit;
@@ -72,6 +79,52 @@ pub async fn fetch_url(url: &str, max_bytes: Option<usize>) -> Result<WebFetchRe
         content_type,
         truncated,
     })
+}
+
+#[derive(Debug, PartialEq)]
+enum BodyKind {
+    Html,
+    Text,
+    Unknown,
+    Binary,
+}
+
+/// What a response body is, by its media type. A PDF or an image decoded as
+/// UTF-8 is tens of KB of U+FFFD noise the model can't use — and that noise
+/// once panicked the result preview and hung the turn.
+fn body_kind(content_type: &str) -> BodyKind {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let binary_family = ["image/", "audio/", "video/", "font/"]
+        .iter()
+        .any(|p| mime.starts_with(p));
+    match mime.as_str() {
+        "text/html" | "application/xhtml+xml" => BodyKind::Html,
+        "application/octet-stream" => BodyKind::Unknown,
+        "application/pdf"
+        | "application/zip"
+        | "application/gzip"
+        | "application/x-tar"
+        | "application/msword"
+        | "application/vnd.ms-excel"
+        | "application/vnd.ms-powerpoint" => BodyKind::Binary,
+        _ if binary_family
+            || mime.starts_with("application/vnd.openxmlformats-officedocument.") =>
+        {
+            BodyKind::Binary
+        }
+        _ => BodyKind::Text,
+    }
+}
+
+/// Said in place of a body that isn't text.
+fn binary_note(content_type: &str, len: Option<u64>) -> String {
+    let size = len.map(|n| format!(", {n} bytes")).unwrap_or_default();
+    format!("[{content_type}{size} — not text. WebFetch reads web pages and text only.]")
 }
 
 /// Strip HTML tags and collapse whitespace to produce readable plain text.
@@ -107,6 +160,28 @@ fn strip_html_tags(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pdf_or_image_is_named_not_decoded() {
+        for ct in [
+            "application/pdf",
+            "image/png",
+            "application/zip",
+            "font/woff2",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ] {
+            assert_eq!(body_kind(ct), BodyKind::Binary, "{ct}");
+        }
+        assert_eq!(body_kind("text/html; charset=utf-8"), BodyKind::Html);
+        assert_eq!(body_kind("application/json"), BodyKind::Text);
+        assert_eq!(body_kind("application/vnd.api+json"), BodyKind::Text);
+        assert_eq!(body_kind("text/plain"), BodyKind::Text);
+        assert_eq!(body_kind("application/octet-stream"), BodyKind::Unknown);
+        assert_eq!(
+            binary_note("application/pdf", Some(237911)),
+            "[application/pdf, 237911 bytes — not text. WebFetch reads web pages and text only.]"
+        );
+    }
 
     #[test]
     fn test_strip_html_basic() {

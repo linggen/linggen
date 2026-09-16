@@ -358,7 +358,7 @@ impl Tools {
                 }
                 out.push_str(&line);
                 if out.len() > max {
-                    out.truncate(max);
+                    out.truncate(out.floor_char_boundary(max));
                     truncated = true;
                     break;
                 }
@@ -455,5 +455,32 @@ impl Tools {
             url: args.url,
             base64: b64,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A line-range read over its byte budget stops on a character, not
+    /// inside one — a mid-character cut panics and kills the turn.
+    #[test]
+    fn a_line_range_read_never_cuts_inside_a_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        fs::write(&path, "月光".repeat(40) + "\n").unwrap();
+        let tools = Tools::new(dir.path().to_path_buf()).unwrap();
+        match tools
+            .do_read_file("notes.txt", &path, Some(100), Some([1, 5]))
+            .unwrap()
+        {
+            ToolResult::FileContent {
+                content, truncated, ..
+            } => {
+                assert!(truncated);
+                assert_eq!(content.len(), 99);
+            }
+            other => panic!("expected file content, got {other:?}"),
+        }
     }
 }

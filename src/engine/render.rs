@@ -126,7 +126,10 @@ fn preview_text(content: &str, max_lines: usize, max_chars: usize) -> (String, b
 
         if out.len() >= max_chars {
             truncated = true;
-            out.truncate(max_chars);
+            // A byte cut inside a character panics — and a panic here kills
+            // the turn with no error (a PDF read as text is full of 3-byte
+            // U+FFFD, so this hung WebFetch).
+            out.truncate(out.floor_char_boundary(max_chars));
             break;
         }
     }
@@ -301,5 +304,27 @@ pub fn truncate_for_log(s: &str, max_chars: usize) -> String {
     } else {
         let truncated: String = collapsed.chars().take(max_chars).collect();
         format!("{}… ({} chars total)", truncated, collapsed.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cut lands on a character, whatever sits at the byte limit — a
+    /// PDF read as text is mostly 3-byte U+FFFD.
+    #[test]
+    fn a_preview_never_cuts_inside_a_character() {
+        let noise = "\u{FFFD}".repeat(1000); // byte 2000 falls inside one
+        let (out, truncated) = preview_text(&noise, 30, 2000);
+        assert!(truncated && out.len() <= 2000 && out.len() > 1990);
+
+        let r = ToolResult::WebFetchContent {
+            url: "https://example.com/a.pdf".into(),
+            content: "月".repeat(1000),
+            content_type: "text/plain".into(),
+            truncated: false,
+        };
+        assert!(render_tool_result_public(&r).contains("(preview)"));
     }
 }

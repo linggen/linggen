@@ -100,14 +100,14 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..500], body.len())
+                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..500], text.len())
+                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
             } else {
                 text
             };
@@ -172,14 +172,14 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..500], body.len())
+                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..500], text.len())
+                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
             } else {
                 text
             };
@@ -205,7 +205,7 @@ impl OllamaClient {
                 Ok(p) => p,
                 Err(e) => {
                     let truncated = if line.len() > 300 {
-                        format!("{}… ({} chars)", &line[..300], line.len())
+                        format!("{}… ({} chars)", &line[..line.floor_char_boundary(300)], line.len())
                     } else {
                         line.clone()
                     };
@@ -294,14 +294,14 @@ impl OllamaClient {
             );
             if let Ok(body) = serde_json::to_string(&req) {
                 let truncated_body = if body.len() > 500 {
-                    format!("{}… ({} chars)", &body[..500], body.len())
+                    format!("{}… ({} chars)", &body[..body.floor_char_boundary(500)], body.len())
                 } else {
                     body
                 };
                 tracing::debug!("Ollama failed request body: {}", truncated_body);
             }
             let truncated_err = if text.len() > 500 {
-                format!("{}… ({} chars)", &text[..500], text.len())
+                format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
             } else {
                 text
             };
@@ -333,7 +333,7 @@ impl OllamaClient {
                     Ok(p) => p,
                     Err(e) => {
                         let truncated = if line.len() > 300 {
-                            format!("{}… ({} chars)", &line[..300], line.len())
+                            format!("{}… ({} chars)", &line[..line.floor_char_boundary(300)], line.len())
                         } else {
                             line.clone()
                         };
@@ -469,7 +469,7 @@ impl OllamaClient {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             let truncated = if text.len() > 500 {
-                format!("{}…", &text[..500])
+                format!("{}…", &text[..text.floor_char_boundary(500)])
             } else {
                 text
             };
@@ -544,7 +544,7 @@ impl OllamaClient {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             let truncated = if text.len() > 500 {
-                format!("{}…", &text[..500])
+                format!("{}…", &text[..text.floor_char_boundary(500)])
             } else {
                 text
             };
