@@ -69,6 +69,8 @@ export const apiDelete = <T>(path: string, body?: unknown): Promise<T> =>
 
 interface SessionCreateRequest {
   title: string;
+  /** A skill-bound session (an app page's chat): binds the skill's rules and tools. */
+  skill?: string;
 }
 interface SessionCreateResponse {
   id: string;

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles, ArrowDown, Copy, FileText, Eraser } from 'lucide-react';
+import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
@@ -26,6 +26,8 @@ import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
 import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
+import { useChatStore } from '../../stores/chatStore';
+import { sessions as sessionsApi } from '../../lib/api';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -98,8 +100,42 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   const labelFor = (status: 'idle' | 'copied' | 'error', idle: string) =>
     status === 'copied' ? 'Copied' : status === 'error' ? 'Failed' : idle;
 
+  // A fresh session in place — the way an app page (its toolbar hidden)
+  // gets a new chat, e.g. to bind a skill's rules changed since the last
+  // one. A skill session stays bound to its skill; the parent page is told
+  // the way a first send tells it, so its bridge follows the new id.
+  const [newStatus, setNewStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const handleNewChat = useCallback(async () => {
+    const ss = useSessionStore.getState();
+    const skill = ss.isSkillSession && ss.activeSkillName ? ss.activeSkillName : undefined;
+    const now = new Date();
+    const title = skill
+      ? `${skill} session`
+      : `Chat ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    try {
+      const data = await sessionsApi.create({ title, ...(skill ? { skill } : {}) });
+      const created = { id: data.id, repo_path: '', title, created_at: Math.floor(Date.now() / 1000), ...(skill ? { skill } : {}) };
+      useSessionStore.setState((s) => ({ activeSessionId: data.id, allSessions: [created, ...s.allSessions] }));
+      const cs = useChatStore.getState();
+      cs.setActiveSession(data.id);
+      cs.fetchSessionState();
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } }, '*');
+      }
+      setNewStatus('copied');
+    } catch (err) {
+      console.error('[new-chat] failed:', err);
+      setNewStatus('error');
+    }
+    setTimeout(() => setNewStatus('idle'), 1500);
+  }, []);
+
   return (
     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <button onClick={handleNewChat} className={btnClass(newStatus)} title="Start a new chat session here">
+        <Plus size={12} />
+        <span>{newStatus === 'copied' ? 'New' : labelFor(newStatus, 'New chat')}</span>
+      </button>
       <button onClick={handleCopyChat} className={btnClass(copyStatus)} title="Copy chat transcript to clipboard">
         <Copy size={12} />
         <span>{labelFor(copyStatus, 'Chat')}</span>
