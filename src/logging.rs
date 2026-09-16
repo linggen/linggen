@@ -90,8 +90,29 @@ pub fn setup_tracing_with_settings(settings: LoggingSettings<'_>) -> Result<Path
         .with(stdout_layer)
         .with(file_layer)
         .try_init();
+    log_panics();
 
     Ok(log_dir)
+}
+
+/// Every panic lands in the log with where it happened and how it got there.
+/// Without this a panic only reaches stderr, which the app-bundle daemon
+/// sends nowhere — a turn could die and leave no trace. The default hook
+/// still runs after.
+fn log_panics() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let place = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "an unknown place".to_string());
+        tracing::error!(
+            "panic at {place}: {}\n{}",
+            crate::util::panic_message(info.payload()),
+            std::backtrace::Backtrace::force_capture()
+        );
+        default_hook(info);
+    }));
 }
 
 /// Update the log level at runtime. Called when the user changes the level via settings.

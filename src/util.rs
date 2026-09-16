@@ -88,3 +88,67 @@ pub fn resolve_path(path: &std::path::Path) -> std::path::PathBuf {
     };
     expanded.canonicalize().unwrap_or(expanded)
 }
+
+/// The text a panic carried — `panic!("…")` and failed assertions give a
+/// `&str` or a `String`; anything else has no words.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic with no message".to_string())
+}
+
+/// Await a fallible future, turning a panic inside it into an error. A panic
+/// that unwinds a spawned task ends it with no result: a chat turn then never
+/// finishes and says nothing, where an error reaches every caller's existing
+/// failure handling.
+pub async fn panic_as_error<T>(
+    fut: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    use futures_util::FutureExt;
+    std::panic::AssertUnwindSafe(fut)
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|payload| {
+            Err(anyhow::anyhow!(
+                "internal error, the turn stopped: {}",
+                panic_message(&*payload)
+            ))
+        })
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panic_comes_back_as_an_error_with_its_message() {
+        let err = panic_as_error(async {
+            let s = String::from("月");
+            let _ = &s[..1];
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .starts_with("internal error, the turn stopped: "));
+        assert!(err.to_string().contains("char boundary"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn results_pass_through_untouched() {
+        assert_eq!(panic_as_error(async { Ok(7) }).await.unwrap(), 7);
+        let err = panic_as_error(async { Err::<(), _>(anyhow::anyhow!("model timed out")) })
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "model timed out");
+    }
+
+    #[test]
+    fn a_formatted_panic_keeps_its_words() {
+        let payload = std::panic::catch_unwind(|| panic!("tool {} broke", "Read")).unwrap_err();
+        assert_eq!(panic_message(&*payload), "tool Read broke");
+    }
+}
