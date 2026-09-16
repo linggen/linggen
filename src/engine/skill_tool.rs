@@ -125,7 +125,15 @@ impl SkillToolDef {
 }
 
 impl SkillToolDef {
-    pub fn execute(&self, args: &Value, workspace_root: &Path) -> Result<ToolResult> {
+    /// `env` is what the engine tells the command about where it runs — the
+    /// session and how many turns the person has taken in it (see
+    /// `Tools::tool_env`); a script reads it or ignores it.
+    pub fn execute(
+        &self,
+        args: &Value,
+        workspace_root: &Path,
+        env: &[(String, String)],
+    ) -> Result<ToolResult> {
         let obj = args.as_object();
 
         // Validate required args.
@@ -227,6 +235,7 @@ impl SkillToolDef {
                 .arg(&rendered)
                 .current_dir(workspace_root)
                 .env("PATH", crate::util::shell_path())
+                .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             #[cfg(unix)]
@@ -424,7 +433,7 @@ mod tests {
     fn a_spilling_shell_tool_comes_back_capped() {
         let tool = shell_tool("head -c 200000 /dev/zero | tr '\\0' 'x'", 64 * 1024);
         let result = tool
-            .execute(&serde_json::json!({}), Path::new("."))
+            .execute(&serde_json::json!({}), Path::new("."), &[])
             .expect("tool runs");
         let ToolResult::CommandOutput { stdout, .. } = result else {
             panic!("expected CommandOutput");
@@ -442,7 +451,7 @@ mod tests {
     fn a_skill_can_declare_its_own_budget() {
         let tool = shell_tool("head -c 200000 /dev/zero | tr '\\0' 'x'", 4096);
         let result = tool
-            .execute(&serde_json::json!({}), Path::new("."))
+            .execute(&serde_json::json!({}), Path::new("."), &[])
             .expect("tool runs");
         let ToolResult::CommandOutput { stdout, .. } = result else {
             panic!("expected CommandOutput");
@@ -460,7 +469,7 @@ mod tests {
         tool.timeout_ms = 300;
         let start = Instant::now();
         let result = tool
-            .execute(&serde_json::json!({}), Path::new("."))
+            .execute(&serde_json::json!({}), Path::new("."), &[])
             .expect("tool returns");
         assert!(
             start.elapsed() < Duration::from_secs(5),

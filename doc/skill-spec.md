@@ -164,7 +164,7 @@ A skill can declare its own tools in the `tools:` frontmatter list. Each tool su
 
 | Kind | Trigger | What happens when the agent calls it |
 | :--- | :------ | :----------------------------------- |
-| **Shell** | `cmd: "..."` is set | Engine runs the command, stdout returns to the model. `$SKILL_DIR` and `{{argname}}` placeholders are expanded. |
+| **Shell** | `cmd: "..."` is set | Engine runs the command, stdout returns to the model. `$SKILL_DIR` and `{{argname}}` placeholders are expanded. The command's env carries `LINGGEN_SESSION_ID` and `LINGGEN_USER_TURNS` — how many messages the person has sent in this session, the one being answered included — so a script that counts the person's turns takes the number from the engine, never from the model's report. |
 | **HTTP** | `endpoint: "..."` is set (requires `daemon:` block) | Engine POSTs args as JSON to `http://127.0.0.1:<daemon.port>{endpoint}`; response body returns to the model. |
 | **Data** | Neither `cmd` nor `endpoint` | No backend execution. Args surface as a `content_block` event to the app's iframe. Used for app UI signals like `PageUpdate`. |
 

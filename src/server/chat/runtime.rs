@@ -65,9 +65,11 @@ pub(super) async fn run_loop_with_tracking(
                 // AUTH_REQUIRED errors render as a structured block in chat so
                 // the UI can show an inline "Sign in with ChatGPT" button —
                 // no need to navigate to Settings → Models to re-authenticate.
+                // Sent as the system's line, not the agent's: the agent
+                // never said it, and no surface should label it so.
                 let display = crate::server::chat::helpers::format_turn_error(&msg);
                 let _ = events_tx.send(ServerEvent::Message {
-                    from: agent_id.to_string(),
+                    from: "system".to_string(),
                     to: "user".to_string(),
                     content: display,
                     session_id: session_id.map(|s| s.to_string()),

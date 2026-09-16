@@ -450,6 +450,26 @@ impl Tools {
         self.root = new_root;
     }
 
+    /// What a skill tool's command is told about where it runs, as env:
+    /// `LINGGEN_SESSION_ID`, and `LINGGEN_USER_TURNS` — how many messages the
+    /// person has sent in this session, the one being answered included. A
+    /// script that keeps count of the person's turns (a game paying a tale
+    /// by turns played) takes the number from here instead of trusting the
+    /// model to report each one. Names no app.
+    pub fn tool_env(&self) -> Vec<(String, String)> {
+        let Some(sid) = &self.session_id else {
+            return Vec::new();
+        };
+        let mut env = vec![("LINGGEN_SESSION_ID".to_string(), sid.clone())];
+        if let Some(manager) = self.get_manager() {
+            if let Ok(history) = manager.global_sessions.get_chat_history(sid) {
+                let turns = history.iter().filter(|m| m.from_id == "user").count();
+                env.push(("LINGGEN_USER_TURNS".to_string(), turns.to_string()));
+            }
+        }
+        env
+    }
+
     pub fn cwd(&self) -> PathBuf {
         let map = self.cwd_by_session.lock().unwrap();
         if let Some(sid) = &self.session_id {

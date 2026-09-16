@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MarkdownContent } from './chat/MarkdownContent';
 import type { PendingAskUser, AskUserAnswer } from '../types';
 
 interface AskUserCardProps {
@@ -114,9 +115,10 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ pending, onRespond }) 
               <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400">
                 {q.header}
               </span>
-              <p className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">
-                {q.question}
-              </p>
+              {/* The question is written by the agent, markdown and all. */}
+              <div className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">
+                <MarkdownContent text={q.question} />
+              </div>
             </div>
 
             {/* Options */}

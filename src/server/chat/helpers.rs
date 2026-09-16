@@ -22,8 +22,22 @@ use tokio::sync::broadcast;
 /// marker in the text so the UI upgrades the banner into an inline "Sign in
 /// with ChatGPT" CTA. Shared by every interactive turn path (main loop,
 /// runtime wrapper, plan execution).
+/// What the chat shows when a turn fails: one plain line for the person,
+/// never the provider's text as if the agent had said it. The raw message
+/// is in the log. AUTH_REQUIRED keeps its shape — the UI turns it into the
+/// inline sign-in.
 pub(crate) fn format_turn_error(msg: &str) -> String {
-    format!("Error: {}", msg)
+    if msg.contains("AUTH_REQUIRED") {
+        return format!("Error: {}", msg);
+    }
+    // "Error:" is the prefix every surface reads as the error banner.
+    let line = match model_error_code(msg) {
+        "quota" => "The model has hit its limit for now — try again in a minute, or switch models.",
+        "network" => "Couldn't reach the model — check the connection and try again.",
+        "model_not_found" => "That model isn't available here — pick another in Settings → Models.",
+        _ => "The model didn't answer this turn — try again.",
+    };
+    format!("Error: {line}")
 }
 
 /// Coarse telemetry bucket for a failed model turn. Buckets only — the
@@ -249,4 +263,27 @@ pub(crate) fn emit_outcome_event(
         outcome: outcome.clone(),
         session_id: sid.clone(),
     });
+}
+
+#[cfg(test)]
+mod turn_error_tests {
+    use super::format_turn_error;
+
+    #[test]
+    fn a_failed_turn_is_one_plain_line_never_the_providers_text() {
+        let raw = "Gemini API error (429): RESOURCE_EXHAUSTED quota exceeded for metric …";
+        let shown = format_turn_error(raw);
+        assert!(shown.starts_with("Error: "), "the prefix every surface reads as the banner");
+        assert!(!shown.contains("RESOURCE_EXHAUSTED"), "the raw text stays in the log");
+        assert!(shown.contains("limit"));
+        assert!(format_turn_error("connection timed out").contains("reach the model"));
+    }
+
+    #[test]
+    fn an_auth_failure_keeps_its_shape_for_the_inline_sign_in() {
+        assert_eq!(
+            format_turn_error("AUTH_REQUIRED: chatgpt"),
+            "Error: AUTH_REQUIRED: chatgpt"
+        );
+    }
 }

@@ -138,7 +138,8 @@ export const AgentMessage: React.FC<{
 
   // Error messages get a prominent banner style.
   if (msg.isError) {
-    const errorText = fallbackText || msg.text || 'An error occurred';
+    // The banner already says it is an error; the prefix is for detection.
+    const errorText = (fallbackText || msg.text || 'An error occurred').replace(/^Error:\s*/, '');
     return (
       <div className="rounded-lg border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-800 dark:text-red-300">
         <div className="flex items-start gap-2">
