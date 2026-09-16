@@ -241,16 +241,16 @@ export const GeneralTab: React.FC<{
             <p className="text-[11px] text-slate-400 mt-0.5">Her speaker (Qwen3-TTS). Applied on her next spoken line; the fallback voice ignores it.</p>
           </div>
           <div>
-            <label className={labelCls}>Speech Text</label>
+            <label className={labelCls}>Mute Voice</label>
             <select
               className={inputCls}
-              value={(config.pet?.show_text ?? true) ? 'on' : 'off'}
-              onChange={(e) => onChange({ ...config, pet: { ...config.pet, show_text: e.target.value === 'on' } })}
+              value={config.pet?.muted ? 'muted' : 'on'}
+              onChange={(e) => onChange({ ...config, pet: { ...config.pet, muted: e.target.value === 'muted' } })}
             >
-              <option value="on">Show bubble</option>
-              <option value="off">Voice only</option>
+              <option value="on">Voice on</option>
+              <option value="muted">Muted — text only</option>
             </select>
-            <p className="text-[11px] text-slate-400 mt-0.5">Whether her spoken line also shows as an on-screen bubble.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">On this Mac. Muted, she still writes every line. Also <code>/mute</code> and <code>/unmute</code> in any chat.</p>
           </div>
           <div>
             <label className={labelCls}>Recall Count</label>

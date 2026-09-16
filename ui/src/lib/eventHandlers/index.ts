@@ -36,7 +36,7 @@ import {
   handleRoomChat,
   handleDeviceTopic,
 } from './misc';
-import { handlePetSpeak, handlePetExpress, handleYinyuePresent } from './yinyue';
+import { handlePetSpeak, handlePetVoice, handlePetExpress, handleYinyuePresent } from './yinyue';
 
 export type EventHandler = (item: UiEvent) => void;
 
@@ -73,6 +73,7 @@ export const eventHandlers: Record<EventKind, EventHandler> = {
   // Pet (Yinyue today)
   pet_speak: handlePetSpeak,
   pet_express: handlePetExpress,
+  pet_voice: handlePetVoice,
   yinyue_present: handleYinyuePresent,
 };
 

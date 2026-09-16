@@ -60,6 +60,12 @@ pub struct PetConfig {
     /// per clip; unknown names fall back to the provider default.
     #[serde(default = "default_pet_voice")]
     pub voice: String,
+    /// Her voice is off on this Mac: she still writes every line — the
+    /// bubble, her chat — and no audio is made or played. Set by `/mute` and
+    /// `/unmute`, the `Voice` tool, or Settings; kept until turned back on.
+    /// This Mac only: a phone keeps its own.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 fn default_pet_voice() -> String {
@@ -76,6 +82,7 @@ impl Default for PetConfig {
             recall_min_score: default_pet_recall_min_score(),
             model: default_pet_model(),
             voice: default_pet_voice(),
+            muted: false,
         }
     }
 }
@@ -753,6 +760,13 @@ mod tests {
             is_builtin: false,
         });
         cfg
+    }
+
+    #[test]
+    fn a_config_from_before_mute_reads_as_voice_on() {
+        let pet: PetConfig = toml::from_str("enabled = true\nvoice = \"vivian\"\n").unwrap();
+        assert!(!pet.muted);
+        assert!(!Config::default().pet.muted);
     }
 
     // ---- Config::validate tests ----

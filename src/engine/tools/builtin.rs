@@ -115,6 +115,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(WebSearchTool),
             Arc::new(WebFetchTool),
             Arc::new(ExpressTool),
+            Arc::new(VoiceTool),
             Arc::new(SenseTool),
             Arc::new(RecentActivityTool),
             Arc::new(AnswerPromptTool),
@@ -1073,6 +1074,69 @@ impl Tool for ExpressTool {
                 .await;
         }
         Ok(ToolResult::Success("ok".to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voice — the pet's voice on this machine, off or on
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct VoiceArgs {
+    muted: bool,
+}
+
+/// "Mute yourself", "be quiet", "you can talk again": the words for what
+/// `/mute` and `/unmute` do. Every agent has it, in every session — a person
+/// asks whoever they're talking to. Muted, Yinyue still writes every line.
+pub struct VoiceTool;
+#[async_trait]
+impl Tool for VoiceTool {
+    fn name(&self) -> &'static str {
+        "Voice"
+    }
+    fn description(&self) -> &'static str {
+        "Turn Yinyue's spoken voice on this Mac off or on. Muted, she still \
+         writes every line — only the audio stops — until it is turned back on. \
+         Use when the person asks to mute her (or you), to be quiet or silent, \
+         to stop talking out loud — or to speak again. Not for ending an answer."
+    }
+    fn tier(&self) -> PermissionMode {
+        PermissionMode::Read
+    }
+    fn args_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "muted": {
+                    "type": "boolean",
+                    "description": "true = voice off (text only); false = voice back on."
+                }
+            },
+            "required": ["muted"]
+        })
+    }
+    fn legacy_schema_entry(&self) -> Value {
+        json!({
+            "name": "Voice",
+            "args": {"muted": "boolean"},
+            "returns": "the new state",
+            "notes": "Yinyue's voice on this Mac off (muted: true, text only) or back on (false)."
+        })
+    }
+    async fn execute(&self, tools: &Tools, call: ToolCall) -> Result<ToolResult> {
+        let args: VoiceArgs = serde_json::from_value(call.args)
+            .map_err(|e| anyhow::anyhow!("invalid args for Voice: {}", e))?;
+        let manager = tools
+            .get_manager()
+            .ok_or_else(|| anyhow::anyhow!("Voice: no engine to change"))?;
+        manager.set_pet_muted(args.muted).await?;
+        Ok(ToolResult::Success(if args.muted {
+            "Yinyue's voice is off on this Mac; she still writes. Tell the person in a few words."
+        } else {
+            "Yinyue's voice is back on on this Mac. Tell the person in a few words."
+        }
+        .to_string()))
     }
 }
 

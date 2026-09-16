@@ -907,6 +907,8 @@ impl AgentEngine {
                 }
                 // Skill tool is always allowed so the model can discover/invoke skills.
                 allowed.insert("Skill".to_string());
+                // A person can ask anyone to mute Yinyue.
+                allowed.insert("Voice".to_string());
                 // Core memory is curated by writing a `tier: "core"` row, not
                 // by editing files, so the previous auto-grant of
                 // Read/Write/Edit on `~/.linggen/memory/` is no longer
@@ -935,6 +937,8 @@ impl AgentEngine {
 
         // Skill tool is always allowed so the model can discover/invoke skills.
         allowed.insert("Skill".to_string());
+        // A person can ask anyone to mute Yinyue.
+        allowed.insert("Voice".to_string());
         self.inject_memory_tools(&mut allowed);
 
         Some(allowed)

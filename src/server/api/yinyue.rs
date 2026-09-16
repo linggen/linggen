@@ -27,10 +27,39 @@ pub(crate) struct SayRequest {
 /// event-reactive watch loop calls this when Yinyue reacts, and the test
 /// endpoint below calls it directly.
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
+    // Muted, the line still goes out — as words only.
+    let voice = !state.manager.pet_muted();
     // Err only means no surface is currently connected — nothing to hear her.
-    let _ = state
-        .events_tx
-        .send(ServerEvent::PetSpeak { text, emotion });
+    let _ = state.events_tx.send(ServerEvent::PetSpeak {
+        text,
+        emotion,
+        voice,
+    });
+}
+
+/// `/mute` → turn her voice off, `/unmute` → back on; any other message is
+/// not a voice command. Caught before any model runs, in every chat on this
+/// machine.
+pub(crate) fn voice_command(message: &str) -> Option<bool> {
+    match message.trim().to_ascii_lowercase().as_str() {
+        "/mute" => Some(true),
+        "/unmute" => Some(false),
+        _ => None,
+    }
+}
+
+/// Carry out a voice command; returns the system's line for the chat.
+pub(crate) async fn run_voice_command(state: &Arc<ServerState>, muted: bool) -> &'static str {
+    match state.manager.set_pet_muted(muted).await {
+        Ok(()) if muted => {
+            "Yinyue's voice is off on this Mac. She still writes — /unmute brings it back."
+        }
+        Ok(()) => "Yinyue's voice is back on on this Mac.",
+        Err(e) => {
+            tracing::warn!("[yinyue] voice command failed: {e}");
+            "Couldn't change Yinyue's voice — try again."
+        }
+    }
 }
 
 /// POST /api/yinyue/say — `{ text, emotion? }`. Trigger entry point for the
@@ -61,6 +90,12 @@ pub(crate) async fn chat_handler(
     let text = req.text.trim().to_string();
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty text").into_response();
+    }
+    if let Some(muted) = voice_command(&text) {
+        // The avatar has no chat to write a line into: the surface shows
+        // the change from the voice event.
+        run_voice_command(&state, muted).await;
+        return (StatusCode::OK, "ok").into_response();
     }
     tracing::info!("[yinyue] chat from user ({} chars)", text.len());
     // If a worker agent is currently blocked on a prompt, frame this turn so she
@@ -131,4 +166,25 @@ pub(crate) async fn presence_handler(
         .manager
         .update_presence(beat.focused, beat.typing, beat.idle_ms);
     (StatusCode::OK, "ok").into_response()
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::voice_command;
+
+    #[test]
+    fn mute_and_unmute_are_commands_and_nothing_else_is() {
+        assert_eq!(voice_command("/mute"), Some(true));
+        assert_eq!(voice_command("  /UNMUTE \n"), Some(false));
+        for other in [
+            "mute",
+            "/mute please",
+            "/muted",
+            "/unmute me",
+            "please /mute",
+            "",
+        ] {
+            assert_eq!(voice_command(other), None, "{other:?}");
+        }
+    }
 }

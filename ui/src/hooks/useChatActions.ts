@@ -109,6 +109,7 @@ export function useChatActions(
         '**Commands:**', '- `/help` — Show available commands', '- `/clear` — Clear chat context',
         '- `/compact [focus]` — Compact context (summarize old messages)',
         '- `/status` — Show project status', '- `/model` — List models; `/model <id>` — Switch default model',
+        "- `/mute` / `/unmute` — Yinyue's voice on this Mac off / back on (she still writes)",
         '- `/plan <task>` — Ask agent to create a plan (read-only)', '- `/image <path>` — Attach an image file',
         '- `!command` — Run a shell command directly',
         '- `@path` — Mention a file', '- `@@agent message` — Send to specific agent', '', '**Skills:** Type `/` to see available skills.',

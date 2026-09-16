@@ -76,6 +76,9 @@ pub struct AgentManager {
     /// repo_path)`. Survives run completion (the run store is in-flight only), so
     /// `agent_chat` can deliver a message into the agent's current chat.
     latest_session_by_agent: std::sync::Mutex<HashMap<String, (String, String)>>,
+    /// `config.pet.muted`, readable without the config lock — every spoken
+    /// line checks it.
+    pet_muted: AtomicBool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,6 +338,7 @@ impl AgentManager {
     ) {
         let (tx, rx) = mpsc::unbounded_channel();
         let models = Arc::new(ModelManager::new(config.models.clone()));
+        let pet_muted = AtomicBool::new(config.pet.muted);
         (
             Arc::new(Self {
                 config: RwLock::new(config),
@@ -361,9 +365,34 @@ impl AgentManager {
                 presence: std::sync::Mutex::new(Presence::default()),
                 agent_chat_sessions: std::sync::Mutex::new(HashSet::new()),
                 latest_session_by_agent: std::sync::Mutex::new(HashMap::new()),
+                pet_muted,
             }),
             rx,
         )
+    }
+
+    /// Whether the pet's voice is off on this machine.
+    pub fn pet_muted(&self) -> bool {
+        self.pet_muted.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Turn the pet's voice off or on. Saved with the config — without
+    /// rebuilding any engine, since nothing a session runs with depends on
+    /// it — and announced to every surface.
+    pub async fn set_pet_muted(&self, muted: bool) -> Result<()> {
+        {
+            let mut cfg = self.config.write().await;
+            if cfg.pet.muted != muted {
+                let mut next = cfg.clone();
+                next.pet.muted = muted;
+                next.save_runtime(self.config_dir.as_deref())?;
+                *cfg = next;
+            }
+        }
+        self.pet_muted
+            .store(muted, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.events.send((AgentEvent::PetVoice { muted }, None));
+        Ok(())
     }
 
     pub fn register_tool_cancel_flag(&self, block_id: &str) -> Arc<AtomicBool> {
@@ -762,6 +791,17 @@ impl AgentManager {
         let new_models = Arc::new(ModelManager::new(new_config.models.clone()));
         *self.models.write().await = new_models;
         *self.config.write().await = new_config.clone();
+        let was_muted = self
+            .pet_muted
+            .swap(new_config.pet.muted, std::sync::atomic::Ordering::Relaxed);
+        if was_muted != new_config.pet.muted {
+            let _ = self.events.send((
+                AgentEvent::PetVoice {
+                    muted: new_config.pet.muted,
+                },
+                None,
+            ));
+        }
 
         // Apply log level change at runtime.
         if let Some(ref level) = new_config.logging.level {
@@ -992,5 +1032,40 @@ mod tests {
             AgentManager::normalize_model_choice(Some(" local_ollama ".to_string())),
             Some("local_ollama".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod pet_voice_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn muting_is_saved_announced_and_read_without_the_config_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let (manager, mut rx) = AgentManager::new(
+            Config::default(),
+            Some(dir.path().to_path_buf()),
+            Arc::new(SkillLoader::new()),
+            Arc::new(crate::extensions::agents::AgentLoader::new()),
+            InterfaceMode::Web,
+        );
+        assert!(!manager.pet_muted());
+
+        manager.set_pet_muted(true).await.unwrap();
+        assert!(manager.pet_muted());
+        assert!(matches!(
+            rx.recv().await,
+            Some((AgentEvent::PetVoice { muted: true }, None))
+        ));
+        let saved = std::fs::read_to_string(Config::runtime_config_path(Some(dir.path()))).unwrap();
+        assert!(saved.contains("muted = true"), "kept across a restart");
+        assert!(manager.get_config_snapshot().await.pet.muted);
+
+        manager.set_pet_muted(false).await.unwrap();
+        assert!(!manager.pet_muted());
+        assert!(matches!(
+            rx.recv().await,
+            Some((AgentEvent::PetVoice { muted: false }, None))
+        ));
     }
 }

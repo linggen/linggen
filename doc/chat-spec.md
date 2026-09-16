@@ -264,5 +264,6 @@ Handled client-side in the Web UI (not sent to the agent).
 | `/plan reject` | Reject the pending plan |
 | `/image <path>` | Attach an image file |
 | `/paste` | Paste image from clipboard |
+| `/mute` / `/unmute` | Yinyue's voice on this Mac off (text only) / back on. The one pair the engine handles, before any model, so it works from every chat on the Mac — see yinyue-spec.md "Mute" |
 | `@path` | Mention a file (autocomplete on `@`) |
 | `@agent message` | Send to a specific agent |

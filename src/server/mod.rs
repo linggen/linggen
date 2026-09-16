@@ -123,7 +123,24 @@ fn default_status_text(status: AgentStatusKind) -> String {
 pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Option<UiEvent> {
     let ts_ms = crate::util::now_ts_ms();
     match event {
-        ServerEvent::PetSpeak { text, emotion } => Some(UiEvent {
+        ServerEvent::PetVoice { muted } => Some(UiEvent {
+            id: format!("pet-voice-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: "pet_voice".to_string(),
+            phase: None,
+            text: None,
+            agent_id: Some("yinyue".to_string()),
+            session_id: None, // global → every surface
+            project_root: None,
+            data: Some(json!({ "muted": muted })),
+        }),
+        ServerEvent::PetSpeak {
+            text,
+            emotion,
+            voice,
+        } => Some(UiEvent {
             id: format!("pet-speak-{seq}"),
             seq,
             rev: seq,
@@ -134,7 +151,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             agent_id: Some("yinyue".to_string()),
             session_id: None, // global → control channel of every surface
             project_root: None,
-            data: Some(json!({ "text": text, "emotion": emotion })),
+            data: Some(json!({ "text": text, "emotion": emotion, "voice": voice })),
         }),
         ServerEvent::PetExpress { emotion, action } => Some(UiEvent {
             id: format!("pet-express-{seq}"),

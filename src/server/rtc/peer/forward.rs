@@ -122,6 +122,7 @@ pub(super) fn forward_event_to_channels(
                 if ui_msg.kind != "room_chat"
                     && ui_msg.kind != "pet_speak"
                     && ui_msg.kind != "pet_express"
+                    && ui_msg.kind != "pet_voice"
                     && ui_msg.kind != "device_topic"
                 {
                     tracing::debug!(

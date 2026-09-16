@@ -254,6 +254,8 @@ fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
         for td in &skill.tool_defs {
             set.insert(td.name.clone());
         }
+        // A person can ask anyone to mute Yinyue — in an app's chat too.
+        set.insert("Voice".to_string());
     }
     engine.cfg.skill_allowed_tools = scope;
 }

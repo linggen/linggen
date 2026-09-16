@@ -668,6 +668,18 @@ async fn dispatch_turn(
     manager: &Arc<AgentManager>,
     clean_msg: &str,
 ) {
+    if let Some(muted) = crate::server::api::yinyue::voice_command(clean_msg) {
+        let line = crate::server::api::yinyue::run_voice_command(&ctx.state, muted).await;
+        let _ = ctx.events_tx.send(ServerEvent::Message {
+            from: "system".to_string(),
+            to: "user".to_string(),
+            content: line.to_string(),
+            session_id: ctx.session_id.clone(),
+            run_id: None,
+            parent_agent_id: None,
+        });
+        return;
+    }
     if clean_msg.trim_start().starts_with('/') {
         run_skill_dispatch(ctx, engine).await;
         return;

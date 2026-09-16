@@ -112,9 +112,33 @@ export function handlePetSpeak(item: UiEvent): void {
   if (!text) return;
   const emotion = (item.data?.emotion as string | undefined) ?? 'neutral';
   console.info(`[yinyue] speak (${emotion}): ${text}`);
+  // Her voice is muted on this Mac: the words, no audio fetched.
+  if (item.data?.voice === false) {
+    showWords(text, emotion);
+    return;
+  }
   // Keep her in thinking until the voice actually starts (synth lags a few
   // seconds); the bubble, voice, and any held gesture all land together then.
   void play(text, emotion);
+}
+
+/// Her voice was turned off or on (`/mute`, her Voice tool, Settings). Every
+/// surface hears it: muting cuts off whatever she is saying now.
+export function handlePetVoice(item: UiEvent): void {
+  if (item.data?.muted !== true) return;
+  current?.stop();
+  current = null;
+  playback = null;
+  useUiStore.getState().setPetSpeaking(false);
+}
+
+/// Her line as words only — the bubble and any held gesture, no talking loop.
+function showWords(text: string, emotion: string): void {
+  synthInFlight = false;
+  useUiStore.getState().setPetThinking(false);
+  useUiStore.getState().setPetSpeaking(false);
+  useUiStore.getState().showYinyueSpeech(text, emotion);
+  flushExpress();
 }
 
 async function play(text: string, emotion: string): Promise<void> {
@@ -172,10 +196,6 @@ async function play(text: string, emotion: string): Promise<void> {
   } catch (err) {
     // TTS failed — show text, leave thinking, fire the gesture; no audio so no talking loop.
     console.error('[yinyue] speak failed', err);
-    synthInFlight = false;
-    useUiStore.getState().setPetThinking(false);
-    useUiStore.getState().setPetSpeaking(false);
-    useUiStore.getState().showYinyueSpeech(text, emotion);
-    flushExpress();
+    showWords(text, emotion);
   }
 }

@@ -95,6 +95,14 @@ pub enum ServerEvent {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         emotion: Option<String>,
+        /// False while her voice is muted on this machine: the surface shows
+        /// the bubble and fetches no audio.
+        voice: bool,
+    },
+    /// The pet's voice on this machine was turned off or on. Global and sent
+    /// to every surface, so whichever is playing her stops at once.
+    PetVoice {
+        muted: bool,
     },
     /// The pet expresses on its avatar — a sustained mood and/or a one-shot
     /// gesture (no speech). Emitted by the `Express` tool. Global, like Speak.
@@ -437,6 +445,7 @@ impl ServerEvent {
             AgentEvent::PetExpress { emotion, action } => {
                 Some(Self::PetExpress { emotion, action })
             }
+            AgentEvent::PetVoice { muted } => Some(Self::PetVoice { muted }),
             AgentEvent::TextSegment {
                 agent_id,
                 text,

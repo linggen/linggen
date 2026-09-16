@@ -69,7 +69,7 @@ see "Adaptive presentation".
   point. App-only (no browser tray). See "Menubar presence" below.
 - **Chat** — interactive sessions, same as any agent.
 - **Voice** — neural TTS (Kokoro, local) generated engine-side and played by the
-  active surface, lip-synced on the body. Per-user: off / text / voice / both.
+  active surface, lip-synced on the body. Mutable per device — see "Mute" below.
 
 ## Adaptive presentation (app vs web)
 
@@ -146,6 +146,30 @@ the Linggen app and a browser tab of a Mac's web UI keeps voice in the app; at a
 game table other players' Yinyue are silent figures on your device (each speaks
 on her own player's device). Engine: `ServerState::yinyue_*`
 in `src/server/state.rs`; UI: `useYinyuePresenter(enabled, stage)`.
+
+### Mute (built 2026-09-16)
+
+A person mutes her on the device they type on, to whoever they're talking to
+(Hanli, 2026-09-16). Muted, she still writes every line — the bubble, her chat
+— and no audio is made or played; it holds until turned back on.
+
+- **Mac:** `[pet] muted` in the engine config, mirrored in memory
+  (`AgentManager::pet_muted`). `set_pet_muted` saves it without rebuilding any
+  engine and sends `pet_voice {muted}` to every surface, so whichever is
+  playing her stops. `pet_speak` carries `voice`; muted, the holder shows the
+  bubble and fetches no `/api/tts`.
+  - `/mute` and `/unmute` are caught in `dispatch_turn` before any model, for
+    every Mac chat (web UI, skill pages, a Ling chat relayed from the phone),
+    and in `/api/yinyue/chat` for the avatar; the chat gets a system line.
+  - Plain words ("mute yourself", "be quiet", "静音") go to the `Voice {muted}`
+    tool — every agent has it, in every session including a skill's restricted
+    tool set.
+  - Settings → General → Pet → Mute Voice shows and sets the same flag.
+- **Phone:** its own switch (`yinyue.muted`): `/mute` and `/unmute` are caught
+  in the chat screen in both tabs and never sent; her `voice` tool takes the
+  plain words. The phone has no spoken voice yet, so the switch waits for it.
+  Plain words typed in the phone's Ling tab reach Ling on the Mac, and mute
+  the Mac.
 
 ### Singleton ownership
 

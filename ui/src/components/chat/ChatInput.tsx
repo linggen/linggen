@@ -292,6 +292,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ['/compact', 'Compact context (summarize old messages)'],
       ['/status', 'Show project status'],
       ['/model', 'Switch default model'],
+      ['/mute', "Mute Yinyue's voice on this Mac"],
+      ['/unmute', "Turn Yinyue's voice back on"],
       ['/image', 'Attach an image file'],
     ];
 

@@ -20,6 +20,12 @@ pub enum AgentEvent {
         emotion: Option<String>,
         action: Option<String>,
     },
+    /// The pet's voice on this machine was turned off or on (`/mute`, the
+    /// `Voice` tool, Settings). Every surface hears it, so one playing her
+    /// stops at once.
+    PetVoice {
+        muted: bool,
+    },
     /// One agent sends a one-way message to another. Routed on the bus; a
     /// recipient that watches the bus (Yinyue) picks up messages addressed to it.
     AgentChat {

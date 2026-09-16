@@ -38,6 +38,7 @@ export const EVENT_KINDS = [
   'pet_speak',
   // Pet expression — emotion / one-shot gesture for the avatar (global).
   'pet_express',
+  'pet_voice',
   // Pet presenter — per-peer push: does THIS surface hold the FCFS singleton
   // lock (render + voice) or stay blank.
   'yinyue_present',
