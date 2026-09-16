@@ -334,35 +334,16 @@ async fn auto_recall_memory(
         contexts,
         cwd_scope
     );
-    // Over the engine's own MCP client, the same way an agent's tool call
-    // reaches it. A model is needed to CHOOSE a tool, not to CALL one — so
-    // running before the model is no obstacle, and local and remote become
-    // the same code with a different URL.
-    let qualified = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "memory_search");
-    let dispatch = crate::mcp_client::registry().call(&qualified, args);
-    let raw = match tokio::time::timeout(RECALL_BUDGET, dispatch).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            warn_recall_unreachable(&e.to_string());
-            return None;
-        }
-        Err(_) => {
-            warn_recall_unreachable(&format!("no answer in {}s", RECALL_BUDGET.as_secs()));
-            return None;
-        }
+    let rows = match contexts {
+        Some(_) => search_app_rows(&args, RECALL_BUDGET).await?,
+        None => search_rows(args, RECALL_BUDGET).await?,
     };
-
-    let Ok(result) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        tracing::debug!("auto-recall: memory_search returned non-JSON");
-        return None;
-    };
-    let rows = result.as_array()?;
     if rows.is_empty() {
         return None;
     }
 
     let mut hits: Vec<RecallRow> = Vec::new();
-    for row in rows {
+    for row in &rows {
         if hits.len() >= top_k {
             break;
         }
@@ -403,17 +384,7 @@ async fn auto_recall_memory(
         if content.is_empty() {
             continue;
         }
-        // Surface the HYBRID score (cosine + keyword boost) — it's the number
-        // `min_score` actually gates and the daemon ranks by. Showing the raw
-        // cosine (`score`) made a 0.7 floor look broken whenever a keyword
-        // boost admitted a low-cosine row. Fallback for older daemons that
-        // don't return `hybrid_score`.
-        let score = row
-            .get("hybrid_score")
-            .or_else(|| row.get("score"))
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32)
-            .unwrap_or(0.0);
+        let score = row_score(row);
         hits.push(RecallRow {
             id,
             r#type: typ,
@@ -429,6 +400,79 @@ async fn auto_recall_memory(
     } else {
         Some(hits)
     }
+}
+
+/// What an app's own recall may bring back: what is true of the person and
+/// what they like. Built, fixed, tried, learned and decision rows are notes
+/// about the work, even when a coding session tagged them with the app's name
+/// — the same line the phone draws (`MacMemory.pulledTypes`).
+const APP_RECALL_TYPES: [&str; 2] = ["fact", "preference"];
+
+/// One `memory_search` over the engine's own MCP client, the same way an
+/// agent's tool call reaches it. A model is needed to CHOOSE a tool, not to
+/// CALL one — so running before the model is no obstacle, and local and
+/// remote become the same code with a different URL. `None` when memory
+/// can't answer within the budget.
+async fn search_rows(
+    args: serde_json::Value,
+    budget: std::time::Duration,
+) -> Option<Vec<serde_json::Value>> {
+    let qualified = crate::mcp_client::qualify(crate::mcp_client::BUILTIN_MEMORY, "memory_search");
+    let dispatch = crate::mcp_client::registry().call(&qualified, args);
+    let raw = match tokio::time::timeout(budget, dispatch).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            warn_recall_unreachable(&e.to_string());
+            return None;
+        }
+        Err(_) => {
+            warn_recall_unreachable(&format!("no answer in {}s", budget.as_secs()));
+            return None;
+        }
+    };
+    let Ok(result) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        tracing::debug!("auto-recall: memory_search returned non-JSON");
+        return None;
+    };
+    result.as_array().cloned()
+}
+
+/// An app's recall: one search per [`APP_RECALL_TYPES`] type, side by side —
+/// the daemon filters one type per search, and filtering there (not on the
+/// returned list) keeps work notes from crowding the person's rows out of
+/// the fetch.
+async fn search_app_rows(
+    args: &serde_json::Value,
+    budget: std::time::Duration,
+) -> Option<Vec<serde_json::Value>> {
+    let searches = APP_RECALL_TYPES.iter().map(|t| {
+        let mut typed = args.clone();
+        typed["type"] = serde_json::json!(t);
+        search_rows(typed, budget)
+    });
+    let answers = futures_util::future::join_all(searches).await;
+    let answers: Vec<Vec<serde_json::Value>> = answers.into_iter().collect::<Option<_>>()?;
+    Some(merge_by_score(answers))
+}
+
+/// Rows from several searches as one list, best first.
+fn merge_by_score(answers: Vec<Vec<serde_json::Value>>) -> Vec<serde_json::Value> {
+    let mut rows: Vec<serde_json::Value> = answers.into_iter().flatten().collect();
+    rows.sort_by(|a, b| row_score(b).total_cmp(&row_score(a)));
+    rows
+}
+
+/// Surface the HYBRID score (cosine + keyword boost) — it's the number
+/// `min_score` actually gates and the daemon ranks by. Showing the raw cosine
+/// (`score`) made a 0.7 floor look broken whenever a keyword boost admitted a
+/// low-cosine row. Fallback for older daemons that don't return
+/// `hybrid_score`.
+fn row_score(row: &serde_json::Value) -> f32 {
+    row.get("hybrid_score")
+        .or_else(|| row.get("score"))
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.0)
 }
 
 /// Push the user message onto the engine's chat history with auto-recall
@@ -455,9 +499,10 @@ pub(super) async fn push_user_turn_with_recall(
         )
         .await
     } else if let Some(ctx_tag) = engine.prompt_profile.memory_context.clone() {
-        // Scoped per-app recall — ONLY this app's namespace, at the app's own
-        // threshold/count. No core block, no capture nudge (include_memory is
-        // off) → lean, isolated, no cross-app pollution.
+        // Scoped per-app recall — ONLY this app's namespace and only the
+        // person's facts and preferences, at the app's own threshold/count.
+        // No core block, no capture nudge (include_memory is off) → lean,
+        // isolated, no cross-app pollution.
         auto_recall_memory(
             &ctx.state,
             &ctx.clean_msg,
@@ -565,7 +610,22 @@ pub(super) async fn send_thinking_status(ctx: &ChatRunCtx, detail: impl Into<Str
 
 #[cfg(test)]
 mod tests {
-    use super::RecallRow;
+    use super::{merge_by_score, RecallRow};
+    use serde_json::json;
+
+    #[test]
+    fn an_apps_typed_searches_merge_best_first() {
+        let facts = vec![
+            json!({"id": "f1", "hybrid_score": 0.71}),
+            json!({"id": "f2", "score": 0.9}),
+        ];
+        let prefs = vec![json!({"id": "p1", "hybrid_score": 0.8})];
+        let ids: Vec<String> = merge_by_score(vec![facts, prefs])
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, vec!["f2", "p1", "f1"]);
+    }
 
     /// The injected line shape is a contract with `MemoryRecallMessage.tsx`
     /// (regex on the UI side parses these tokens). Keep them in lockstep.
