@@ -89,6 +89,20 @@ pub struct CloudConfig {
     pub meter: Option<String>,
 }
 
+/// How a message sent while the skill's session is mid-turn meets that turn.
+/// See `doc/skill-spec.md` § Queue.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueMode {
+    /// The message steers: the running turn stops at its next step and the
+    /// message is taken up (ordinary chat).
+    #[default]
+    Steer,
+    /// The message waits for the whole turn — tools, words, an open question —
+    /// and runs once the turn is over (a game whose turn must play out).
+    AfterTurn,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum SkillSource {
@@ -170,6 +184,14 @@ pub struct Skill {
     /// `doc/chat-spec.md` § Suggestions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suggestions: Vec<String>,
+    /// The skill's tools hand each turn its closing question (`ask` in their
+    /// result); when the model ends a turn without asking it, the engine asks
+    /// it. See `doc/skill-spec.md` § Closing question.
+    #[serde(default)]
+    pub closing_ask: bool,
+    /// Whether a busy-time message steers the running turn or waits for it.
+    #[serde(default)]
+    pub queue: QueueMode,
     /// Filesystem path to the skill directory (set at load time, not serialized to clients).
     #[serde(skip)]
     pub skill_dir: Option<PathBuf>,

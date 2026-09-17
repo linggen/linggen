@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod agent;
+mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
@@ -36,6 +37,7 @@ pub use actions::{
 pub use skill_activation::{ActivationMode, ActivationOutcome};
 
 // Internal imports used by run_agent_loop
+use closing_ask::ClosingAsk;
 use streaming::{can_parallel_tool, has_write_path_conflicts};
 use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall};
 
@@ -373,6 +375,8 @@ impl AgentEngine {
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         let mut state = self.initialize_loop(session_id).await?;
         self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
+        self.closing_ask = None;
+        self.last_ask_answered = false;
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
 
         let mut interrupted_by_user = false;
@@ -603,6 +607,20 @@ impl AgentEngine {
                     self.chat_history
                         .push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw.clone());
+                    let done_ids: Vec<String> =
+                        native_tool_calls.iter().map(|tc| tc.id.clone()).collect();
+                    match self
+                        .try_closing_ask(&mut state, session_id, &raw, true, &done_ids)
+                        .await?
+                    {
+                        ClosingAsk::Answered => continue,
+                        ClosingAsk::Exit(outcome) => return Ok(outcome),
+                        ClosingAsk::Unanswered => {
+                            self.active_skill = None;
+                            return Ok(AgentOutcome::None);
+                        }
+                        ClosingAsk::NotNeeded => {}
+                    }
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
@@ -690,6 +708,18 @@ impl AgentEngine {
                     self.chat_history
                         .push(ChatMessage::new("assistant", raw.clone()));
                     self.last_assistant_text = Some(raw.clone());
+                    match self
+                        .try_closing_ask(&mut state, session_id, &raw, true, &[])
+                        .await?
+                    {
+                        ClosingAsk::Answered => continue,
+                        ClosingAsk::Exit(outcome) => return Ok(outcome),
+                        ClosingAsk::Unanswered => {
+                            self.active_skill = None;
+                            return Ok(AgentOutcome::None);
+                        }
+                        ClosingAsk::NotNeeded => {}
+                    }
                     if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                         continue;
                     }
@@ -742,6 +772,21 @@ impl AgentEngine {
                         // Plain text that looks like a substantive answer (long enough,
                         // not "thinking out loud") — treat as an implicit done.
                         let _ = self.persist_assistant_message(&raw, session_id).await;
+                        match self
+                            .try_closing_ask(
+                                &mut state,
+                                session_id,
+                                &raw,
+                                native_tools.is_some(),
+                                &[],
+                            )
+                            .await?
+                        {
+                            ClosingAsk::Answered => continue,
+                            ClosingAsk::Exit(outcome) => return Ok(outcome),
+                            ClosingAsk::Unanswered => return Ok(AgentOutcome::None),
+                            ClosingAsk::NotNeeded => {}
+                        }
                         if self.try_drain_kickoff(&mut state, session_id, &raw).await {
                             continue;
                         }

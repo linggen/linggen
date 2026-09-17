@@ -212,6 +212,8 @@ Plan approval/rejection is already synced via PlanUpdate status changes — no s
 
 When a user sends a message to a busy agent, it queues. The agent picks it up at the next loop iteration and can react mid-run. This enables the "AI interrupt" pattern — users can redirect, cancel, or query a running agent without waiting.
 
+It waits for the run to end instead when a question is open (a message never cancels an AskUser or permission prompt), or when the session's skill declares `queue: after-turn` (`skill-spec.md` § Queue).
+
 ## Suggestions
 
 A row of short buttons above the chat input, so a person can talk to an agent without composing a message. A tap sends the button's words as their own message. The row hides while they type and while a turn runs; at most four buttons.

@@ -136,6 +136,8 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `cloud` | A save and/or a token meter kept on linggen.dev for the account (see "Cloud") |
+| `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
+| `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
 | `requires` | External dependencies to resolve at install |
 | `renamed-from` | Slugs this skill used to be called (see "Renaming a skill") |
 
@@ -257,6 +259,26 @@ cloud:
 - **`save`** — pulled before a turn, synced after every model call and at the turn's end. The site versions it; a stale write is refused and the account's copy replaces the file. Ledger: `~/.linggen/sync/cloud-{skill}.json`. The path must stay inside the skill directory.
 - **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered — the prompt not served from the provider's cache, plus the output (`TokenUsage::metered`): a pace counts what the user did, not the cached world. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
 - The page reads `GET /api/skill-cloud/{skill}` (signed in, the meter's reading) and calls `POST /api/skill-cloud/{skill}/sync` on open and after a change it made itself.
+
+## Closing question
+
+A skill whose rules always know what the user must choose next — a game's scene, a riddle — can make sure a turn never ends without that choice on screen.
+
+```yaml
+closing-ask: true
+```
+
+- Each of the skill's tools may return JSON with a top-level `ask`: `{header, question, options: [{label, …}]}` (2–6 options; extra fields on an option are the skill's own). The latest one is the turn's closing question; any AskUser clears it.
+- The model is still told to AskUser it. When the model ends its turn on words alone, the **engine** asks it — a real AskUser call in the transcript, the same widget, the same answer path — and the loop goes on with the answer as the tool result. Labels only reach the widget.
+- Asked at most once. Unanswered (skipped, timed out) → the run ends there, with no further model call.
+
+## Queue
+
+A message sent while a session's agent is mid-turn is queued. What happens to the running turn:
+
+- **`steer`** (default) — the turn stops at its next step and the message is taken up next (ordinary chat: the user redirects the agent).
+- **`after-turn`** — the turn plays out: its tools, its words, its question. The message runs when the run ends.
+- Either way, **a message never cancels an open question**: an AskUser (or a permission prompt) stays on screen until it is answered or skipped, and the message waits behind it.
 
 ## App skills
 

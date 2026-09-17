@@ -652,6 +652,7 @@ impl AgentEngine {
 
         match result {
             Ok(result) => {
+                self.note_closing_ask(&canonical_tool, &result);
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 

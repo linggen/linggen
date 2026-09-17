@@ -310,6 +310,12 @@ pub struct AgentEngine {
     /// `Mission.kickoff_then`: sentinel → the items that replace the queue.
     /// A branch is removed when it fires, so it runs once per run.
     pub kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
+    /// The question the active skill's latest tool result handed this turn
+    /// (`closing-ask`), as AskUser arguments — asked by the engine if the
+    /// model ends the turn without asking. Cleared by any AskUser.
+    pub(crate) closing_ask: Option<serde_json::Value>,
+    /// Whether this run's latest AskUser came back with an answer.
+    pub(crate) last_ask_answered: bool,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
@@ -531,6 +537,8 @@ impl AgentEngine {
             kickoff_fresh: false,
             kickoff_turn: None,
             kickoff_then: Default::default(),
+            closing_ask: None,
+            last_ask_answered: false,
             session_permissions: permission::SessionPermissions::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,

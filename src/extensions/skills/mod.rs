@@ -371,6 +371,13 @@ struct SkillFrontmatter {
     cloud: Option<CloudConfig>,
     #[serde(default)]
     suggestions: Vec<String>,
+    /// The tools' results carry the turn's closing question — see
+    /// `doc/skill-spec.md` § Closing question.
+    #[serde(default, rename = "closing-ask")]
+    closing_ask: bool,
+    /// `steer` (default) or `after-turn` — see `doc/skill-spec.md` § Queue.
+    #[serde(default)]
+    queue: crate::engine::skill::QueueMode,
 }
 
 pub struct SkillLoader {
@@ -636,6 +643,8 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         sync: frontmatter.sync,
         cloud: frontmatter.cloud,
         suggestions: frontmatter.suggestions,
+        closing_ask: frontmatter.closing_ask,
+        queue: frontmatter.queue,
         skill_dir: None,
     })
 }
@@ -816,6 +825,30 @@ This is the skill content."#;
         assert_eq!(skill.description, "A test skill");
         assert_eq!(skill.content, "This is the skill content.");
         assert!(skill.user_invocable); // default true
+    }
+
+    #[test]
+    fn a_skill_declares_its_closing_question() {
+        let text = "---\nname: game\ndescription: Play\nclosing-ask: true\n---\nBody";
+        assert!(
+            parse_skill_text(text, SkillSource::Global)
+                .unwrap()
+                .closing_ask
+        );
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert!(!bare.unwrap().closing_ask);
+    }
+
+    #[test]
+    fn a_skill_declares_how_busy_messages_wait() {
+        use crate::engine::skill::QueueMode;
+        let text = "---\nname: game\ndescription: Play\nqueue: after-turn\n---\nBody";
+        assert_eq!(
+            parse_skill_text(text, SkillSource::Global).unwrap().queue,
+            QueueMode::AfterTurn
+        );
+        let bare = parse_skill_text("---\nname: x\ndescription: y\n---\n", SkillSource::Global);
+        assert_eq!(bare.unwrap().queue, QueueMode::Steer);
     }
 
     #[test]

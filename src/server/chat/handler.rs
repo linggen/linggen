@@ -1,4 +1,5 @@
 use crate::engine::agent::AgentManager;
+use crate::engine::skill::QueueMode;
 use crate::server::chat::helpers::{
     emit_queue_updated, persist_and_emit_to_store, queue_key, queue_preview,
 };
@@ -281,11 +282,29 @@ async fn route_target(
     (req.agent_id.clone(), req.message.clone())
 }
 
-/// When the agent is busy, enqueue this turn, broadcast the queue update,
-/// cancel any pending AskUser for the agent+session (so the running loop
-/// unblocks), and forward the message through the interrupt channel.
-/// Returns the queued item (if any) so the spawned task can dequeue it
-/// once the lock is acquired.
+/// How a message sent while the agent is busy meets the running turn.
+#[derive(Debug, PartialEq, Eq)]
+enum BusyMessage {
+    /// Break the loop at its next step and take the message up (steering).
+    Interrupt,
+    /// Leave the turn alone; the message runs once the run is over.
+    WaitForRun,
+}
+
+/// A message never cancels an open question — the question stays on screen
+/// until it is answered or skipped, and the message waits behind it. A skill
+/// declaring `queue: after-turn` has every message wait for the whole turn.
+fn busy_message(queue: QueueMode, question_open: bool) -> BusyMessage {
+    if queue == QueueMode::AfterTurn || question_open {
+        return BusyMessage::WaitForRun;
+    }
+    BusyMessage::Interrupt
+}
+
+/// When the agent is busy, enqueue this turn and broadcast the queue update;
+/// then either leave the running turn alone (see [`busy_message`]) or forward
+/// the message through the interrupt channel. Returns the queued item (if
+/// any) so the spawned task can dequeue it once the lock is acquired.
 async fn enqueue_if_busy(
     state: &Arc<ServerState>,
     was_busy: bool,
@@ -293,6 +312,7 @@ async fn enqueue_if_busy(
     effective_session_id: &str,
     target_id: &str,
     clean_msg: &str,
+    queue: QueueMode,
 ) -> Option<QueuedChatItem> {
     if !was_busy {
         return None;
@@ -316,29 +336,14 @@ async fn enqueue_if_busy(
     }
     emit_queue_updated(state, project_root_str, effective_session_id, target_id).await;
 
-    // Cancel any pending AskUser for this agent+session so the tool
-    // unblocks immediately and the loop can pick up the new message.
-    // Each removal is announced with WidgetResolved: removal alone left
-    // the question on screen, and the next tap on it answered a question
-    // the server no longer knew (Lingjing, 2026-09-16).
-    {
-        let mut resolved: Vec<(String, Option<String>)> = Vec::new();
-        let mut pending = state.pending_ask_user.lock().await;
-        pending.retain(|qid, entry| {
-            let hit = entry.agent_id == target_id
-                && entry.session_id.as_deref() == Some(effective_session_id);
-            if hit {
-                resolved.push((qid.clone(), entry.session_id.clone()));
-            }
-            !hit
-        });
-        drop(pending);
-        for (widget_id, session_id) in resolved {
-            let _ = state.events_tx.send(ServerEvent::WidgetResolved {
-                widget_id,
-                session_id,
-            });
-        }
+    // An open question is never cancelled by a message: cancelling it used
+    // to swap the question for the message mid-turn (Lingjing, 2026-09-17:
+    // a tap on the page replaced the riddle's answer). The message waits.
+    let question_open = state.pending_ask_user.lock().await.values().any(|entry| {
+        entry.agent_id == target_id && entry.session_id.as_deref() == Some(effective_session_id)
+    });
+    if busy_message(queue, question_open) == BusyMessage::WaitForRun {
+        return Some(item);
     }
 
     // Send through interrupt channel so the running loop sees the message.
@@ -877,6 +882,16 @@ pub(crate) async fn chat_handler(
     };
 
     let was_busy = agent.try_lock().is_err();
+    let queue = match bound_skill.as_deref() {
+        Some(name) if was_busy => state
+            .manager
+            .skills
+            .get_skill(name)
+            .await
+            .map(|s| s.queue)
+            .unwrap_or_default(),
+        _ => QueueMode::Steer,
+    };
     let queued_item = enqueue_if_busy(
         &state,
         was_busy,
@@ -884,6 +899,7 @@ pub(crate) async fn chat_handler(
         &effective_session_id,
         &target_id,
         &clean_msg,
+        queue,
     )
     .await;
 
@@ -1048,6 +1064,28 @@ pub(crate) async fn chat_handler(
 #[cfg(test)]
 mod tests {
     use super::{auto_session_title, parse_explicit_target_prefix, turn_creator};
+    use super::{busy_message, BusyMessage};
+    use crate::engine::skill::QueueMode;
+
+    #[test]
+    fn a_busy_message_steers_unless_a_question_is_open_or_the_skill_waits() {
+        assert_eq!(
+            busy_message(QueueMode::Steer, false),
+            BusyMessage::Interrupt
+        );
+        assert_eq!(
+            busy_message(QueueMode::Steer, true),
+            BusyMessage::WaitForRun
+        );
+        assert_eq!(
+            busy_message(QueueMode::AfterTurn, false),
+            BusyMessage::WaitForRun
+        );
+        assert_eq!(
+            busy_message(QueueMode::AfterTurn, true),
+            BusyMessage::WaitForRun
+        );
+    }
 
     #[test]
     fn turn_creator_follows_the_request_for_a_new_session() {

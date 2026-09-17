@@ -55,6 +55,12 @@ This is **cooperative interruption** — the loop yields at each iteration bound
 
 Messages are queued per-agent and checked at each iteration boundary via an interrupt channel.
 
+Two exceptions leave the running turn alone — the message waits and runs when the run ends: an **open question** (AskUser or a permission prompt) is never cancelled by a message, and a session bound to a skill declaring `queue: after-turn` never interrupts (`skill-spec.md` § Queue).
+
+## Closing question
+
+A skill declaring `closing-ask` hands each turn its question in its tools' results (`ask`). When the model ends a turn on text without asking it, the loop calls AskUser itself (recorded like the model's own call) and continues with the answer; unanswered, the run ends. At most once per question. See `skill-spec.md` § Closing question; `engine/closing_ask.rs`.
+
 ## Cancellation (signals)
 
 - Checked at loop entry and before/after each tool execution.
