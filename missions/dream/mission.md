@@ -24,127 +24,115 @@ cwd: ~/.linggen
 # but skip "re-list until empty" on their own. Seven nudges + the
 # opener cover an 8-day backlog per run; a longer backlog continues
 # the next night (oldest-first, so progress is monotone).
-# kickoff-stop: a reply ending on DONE (empty worklist) or STALLED
-# (same day twice — abort) ends the run; the engine discards the
-# leftover nudges instead of burning a no-op turn on each.
+# kickoff-stop: a reply ending on DONE (finish-up complete) or STALLED
+# (a day already stamped this run came back — abort) ends the run; the
+# engine discards the leftover items instead of burning a no-op turn on each.
 kickoff-stop: [DONE, STALLED]
-# kickoff-fresh: each nudge starts clean — the finished day's lists, searches
+# kickoff-fresh: each turn starts clean — the finished turn's lists, searches
 # and adds leave the context; its opening item and status reply stay, so the
 # stall rule can still see this run's `DAY … done` lines. One run holding five
 # days of worklists cost 2.08M prompt tokens (2026-09-17).
 kickoff-fresh: true
+# kickoff-then: a reply ending on CLEAR (the worklist is empty) swaps the
+# leftover day nudges for the finish-up, one stage per turn — each stage's
+# scan (the marker and subject scans run ~50KB and ~40KB) folds away before
+# the next instead of riding every later call.
+kickoff-then:
+  CLEAR:
+    - >-
+      Finish-up 1 of 3 — the worklist is clear. Call `memory_sweep()`
+      and report `SWEEP removed=<n>`. Then the cited-chains condense
+      per your system prompt: ONE
+      `memory_chains({"kind":"cited","limit":10,"derived_only":true})`
+      fetch, collapse each returned chain (a `MERGE` line each; empty
+      scan → no lines). End with `CONDENSE merged=<k>`, then stop and
+      wait.
+    - >-
+      Finish-up 2 of 3 — the marker audit per your system prompt: ONE
+      `memory_chains({"kind":"marker","limit":5})` fetch; merge each
+      candidate that clears the completion bar (a `MERGE` line), queue
+      the rest via `memory_issue_add({...})` (a `QUEUE` line). End with
+      `MARKERS merged=<k> queued=<q>`, then stop and wait.
+    - >-
+      Finish-up 3 of 3 — the quiet-subject digest per your system
+      prompt: ONE
+      `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
+      fetch; digest each cluster you are confident is one subject (a
+      `MERGE` line), queue the doubtful ones listing ALL member ids (a
+      `QUEUE` line). Then reply exactly: DONE.
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then
-    call `memory_days({"undreamed_only":true})`. If no
-    days are undreamed, run the finish-up per your system prompt: call
-    `memory_sweep()`, report `SWEEP removed=<n>`, then
-    condense — call
-    `memory_chains({"kind":"cited","limit":10,"derived_only":true})`,
-    collapse each returned chain (a `MERGE` line per chain; empty scan
-    → no lines) — then the audit pass per your system prompt
-    (`memory_chains({"kind":"marker","limit":5})` → merge each
-    candidate clearing the completion bar, queue the rest via
-    `memory_issue_add({...})`; then
-    `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
-    → digest each cluster you are confident is one subject, queue
-    the doubtful ones; a `MERGE`/`QUEUE` line each), and
-    reply exactly: DONE. Otherwise remember
-    the OLDEST undreamed day per your system prompt (worklist → cluster
-    → promote → stamp), then stop and wait.
+    call `memory_days({"undreamed_only":true})`. No days undreamed →
+    reply exactly: CLEAR (the finish-up follows as its own turns).
+    Otherwise remember the OLDEST undreamed day per your system prompt
+    (worklist → cluster → promote → stamp), then stop and wait.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     First action this turn: call
-    `memory_days({"undreamed_only":true})` to fetch a
-    FRESH worklist — never answer from a previous turn's response.
-    Then decide from ONLY that fresh result: empty list → finish up
-    per your system prompt (`memory_sweep()` + `SWEEP
-    removed=<n>`, then the cited-chains condense with its `MERGE`
-    lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. The oldest listed day already has a `DAY <date>
-    done` line from you in THIS run → reply exactly: STALLED. A
-    `remembered_at` from before this run is normal (late rows re-open
-    a day) → remember it. Otherwise → remember the oldest listed day
-    per your system prompt.
+    `memory_days({"undreamed_only":true})` to fetch a FRESH worklist —
+    never answer from a previous turn's response. Then decide from ONLY
+    that fresh result: empty list → reply exactly: CLEAR. The oldest
+    listed day already has a `DAY <date> done` line from you in THIS
+    run → reply exactly: STALLED. A `remembered_at` from before this
+    run is normal (late rows re-open a day) → remember it. Otherwise →
+    remember the oldest listed day per your system prompt.
   - >-
     Last scheduled turn for tonight. First call
-    `memory_days({"undreamed_only":true})` for a fresh
-    count, then call `memory_sweep()`. From the fresh
-    result only: no undreamed days → report `SWEEP removed=<n>`, run
-    the cited-chains condense per your system prompt (`MERGE` lines)
-    and the audit pass — markers then quiet-subject digests
-    (`MERGE`/`QUEUE` lines) — and reply exactly:
-    DONE. Days remain → reply exactly:
-    `PARTIAL <n> days remain` with n from the fresh response (they
-    continue tomorrow — oldest-first keeps progress monotone; the
-    audit also waits for a night with a clear worklist).
+    `memory_days({"undreamed_only":true})` for a fresh count. From the
+    fresh result only: no undreamed days → reply exactly: CLEAR. Days
+    remain → call `memory_sweep()`, report `SWEEP removed=<n>`, and
+    reply exactly: `PARTIAL <n> days remain` with n from the fresh
+    response (they continue tomorrow — oldest-first keeps progress
+    monotone; the finish-up waits for a night with a clear worklist).
 # Day-scoped variant: used when a trigger passes a target day (the
 # memory app's calendar dream button). $DAY is replaced by the engine
-# with the YYYY-MM-DD date. Same procedure, one day, then the sweep.
+# with the YYYY-MM-DD date. Same procedure, one day, then the finish-up
+# one stage per turn.
 kickoff-day:
   - >-
     You are in the dream mission, scoped to a single day: $DAY.
@@ -155,10 +143,20 @@ kickoff-day:
     judged/promoted counts). If the day has no episodic rows, reply
     exactly: CLEAN. Then stop and wait.
   - >-
-    Last turn for this run: call `memory_sweep()`,
-    report `SWEEP removed=<n>`, run the cited-chains condense per
-    your system prompt (`MERGE` lines; empty scan → no lines) and the
-    audit pass (`MERGE`/`QUEUE` lines), then reply exactly: DONE.
+    Call `memory_sweep()` and report `SWEEP removed=<n>`. Then the
+    cited-chains condense per your system prompt (`MERGE` lines; empty
+    scan → no lines). End with `CONDENSE merged=<k>`, then stop and
+    wait.
+  - >-
+    The marker audit per your system prompt: ONE
+    `memory_chains({"kind":"marker","limit":5})` fetch (`MERGE` /
+    `QUEUE` lines). End with `MARKERS merged=<k> queued=<q>`, then stop
+    and wait.
+  - >-
+    Last turn for this run: the quiet-subject digest per your system
+    prompt — ONE
+    `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
+    fetch (`MERGE` / `QUEUE` lines). Then reply exactly: DONE.
 # Attended day-scoped variant: the calendar day-click sends
 # `attended: true` — the user just clicked and is watching, so the
 # engine puts AskUser in scope and this kickoff ends with the
@@ -174,11 +172,12 @@ kickoff-attended:
     judged/promoted counts). If the day has no episodic rows, reply
     exactly: CLEAN. Then stop and wait.
   - >-
-    Last turn for this run: call `memory_sweep()`,
-    report `SWEEP removed=<n>`, run the cited-chains condense per
-    your system prompt (`MERGE` lines), then the attended review per
-    your system prompt: fetch
-    `memory_chains({"kind":"marker","limit":4,"derived_only":true})`
+    Call `memory_sweep()` and report `SWEEP removed=<n>`. Then the
+    cited-chains condense per your system prompt (`MERGE` lines). End
+    with `CONDENSE merged=<k>`, then stop and wait.
+  - >-
+    Last turn for this run: the attended review per your system prompt.
+    Fetch `memory_chains({"kind":"marker","limit":4,"derived_only":true})`
     and, if candidates return, confirm them with the user in ONE
     AskUser call — merge only what they approve; on timeout or error
     queue the candidates instead (`issue_add`, `QUEUE` lines). Then
@@ -219,37 +218,39 @@ agent). This mission adds only the nightly run protocol:
   (`memory_days({"undreamed_only":true})`), take the
   **oldest** day, run the remember procedure on it, stamp it, stop.
   The next kickoff nudge continues the loop.
-- **Stop conditions.** Empty worklist → run the finish-up
-  (below), reply `DONE`. The oldest day already has your
-  `DAY <date> done` line from this run → reply `STALLED` (its stamp
-  didn't take — a human will look; do not loop). A day dreamed on an
-  earlier night that late rows re-opened is not a stall. Out of
-  nudges with days remaining → sweep, reply `PARTIAL <n> days remain`
-  (no condense on PARTIAL nights).
-- **Finish-up = sweep → condense → audit.** On the empty-worklist
-  turn, after the sweep, fetch
+- **Stop conditions.** Empty worklist → reply `CLEAR`; the engine
+  then runs the finish-up (below) as its own turns. The oldest day
+  already has your `DAY <date> done` line from this run → reply
+  `STALLED` (its stamp didn't take — a human will look; do not loop).
+  A day dreamed on an earlier night that late rows re-opened is not a
+  stall. Out of nudges with days remaining → sweep, reply
+  `PARTIAL <n> days remain` (no finish-up on PARTIAL nights).
+- **Finish-up = three turns, one stage each.** Each turn starts clean
+  and fetches ONE capped scan: (1) sweep, then
   `memory_chains({"kind":"cited","limit":10,"derived_only":true})`
-  ONCE and collapse each returned chain per your condense doctrine —
-  one current-truth row via `replace_ids`, a `MERGE` line each. Then
-  the audit pass per your system prompt: ONE
-  `memory_chains({"kind":"marker","limit":5})` fetch; per candidate,
-  MERGE when the completion bar is met (a strictly newer same-subject
-  derived neighbor asserts the marked work done — a `MERGE` line), and
+  — collapse each chain per your condense doctrine, one current-truth
+  row via `replace_ids`, a `MERGE` line each, end with
+  `CONDENSE merged=<k>`; (2) `memory_chains({"kind":"marker","limit":5})`
+  — MERGE when the completion bar is met (a strictly newer
+  same-subject derived neighbor asserts the marked work done),
   `issue_add` (a `QUEUE` line) for what you cannot solve with
-  confidence. Then ONE
+  confidence, end with `MARKERS merged=<k> queued=<q>`; (3)
   `memory_chains({"kind":"subject","limit":5,"derived_only":true})`
-  fetch — the digest stage: collapse each quiet cluster you are
-  confident shares one subject into a single digest row per your
-  system prompt (a `MERGE` line each); queue doubtful clusters as
-  `subject` issues listing ALL member ids (a `QUEUE` line each). The
-  capped fetches are the nightly budget; leftovers wait for
-  tomorrow. Every audit merge archives its losers (recoverable) —
-  nothing in the audit deletes.
-- **Failure = tool_error only.** A failed HTTP call / unreachable
-  daemon → say `Consolidation failed: <short reason>` and stop.
-  Everything else — merged adds, vanished episodic twins, empty
-  lists — is normal; keep going.
+  — the digest stage: collapse each quiet cluster you are confident
+  shares one subject into a single digest row (a `MERGE` line each);
+  queue doubtful clusters as `subject` issues listing ALL member ids
+  (a `QUEUE` line each); reply `DONE`. The capped fetches are the
+  nightly budget; leftovers wait for tomorrow. Every audit merge
+  archives its losers (recoverable) — nothing in the audit deletes.
+- **A failed save doesn't end the day.** A `tool_error` on a write may
+  still have landed (a timeout says so): search its gist once, retry
+  once if it's absent, then carry on and stamp the day. Only a daemon
+  that answers nothing at all → say
+  `Consolidation failed: <short reason>` and stop. Everything else —
+  merged adds, vanished episodic twins, empty lists — is normal; keep
+  going.
 - **Report as you go.** The status lines from your agent spec are the
   whole surface: `DAY … rows=…`, `PROMOTE … "…"`, `DAY … done …`,
-  `SWEEP removed=…`, then `DONE` / `PARTIAL …` / `STALLED`. Never
+  `CLEAR`, `SWEEP removed=…`, `CONDENSE …`, `MARKERS …`, then `DONE` /
+  `PARTIAL …` / `STALLED`. Never
   print a status line for a tool call you did not make.

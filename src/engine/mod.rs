@@ -89,6 +89,14 @@ impl AgentEngine {
         session_id: Option<&str>,
         final_reply: &str,
     ) -> bool {
+        if let Some((sentinel, items)) = take_kickoff_branch(&mut self.kickoff_then, final_reply) {
+            info!(
+                "kickoff: branch {sentinel:?} — {} item(s) replace {} queued",
+                items.len(),
+                self.kickoff_queue.len()
+            );
+            self.kickoff_queue = items.into();
+        }
         if !self.kickoff_queue.is_empty() && kickoff_stop_hit(&self.kickoff_stop, final_reply) {
             info!(
                 "kickoff: completion sentinel {:?} — discarding {} queued item(s)",
@@ -999,6 +1007,19 @@ fn fold_kickoff_turn(messages: &mut Vec<ChatMessage>, turn: &KickoffTurn) -> boo
     true
 }
 
+/// The `kickoff-then` branch a final reply ends on, taken out of the map so it
+/// fires once: its sentinel and the items that replace the queue.
+fn take_kickoff_branch(
+    branches: &mut std::collections::BTreeMap<String, Vec<String>>,
+    reply: &str,
+) -> Option<(String, Vec<String>)> {
+    let sentinel = branches
+        .keys()
+        .find(|s| kickoff_stop_hit(std::slice::from_ref(*s), reply))?
+        .clone();
+    branches.remove_entry(&sentinel)
+}
+
 fn kickoff_stop_hit(stops: &[String], reply: &str) -> bool {
     if stops.is_empty() {
         return false;
@@ -1048,7 +1069,7 @@ fn summarize_task_for_log(task: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_kickoff_turn, kickoff_stop_hit, KickoffTurn};
+    use super::{fold_kickoff_turn, kickoff_stop_hit, take_kickoff_branch, KickoffTurn};
     use crate::message::ChatMessage;
 
     fn msg(role: &str, content: &str) -> ChatMessage {
@@ -1069,6 +1090,18 @@ mod tests {
         ];
         let turn = KickoffTurn::opened_by_last(&messages[..2]).unwrap();
         (messages, turn)
+    }
+
+    #[test]
+    fn a_branch_sentinel_hands_over_its_items_once() {
+        let mut branches = std::collections::BTreeMap::from([(
+            "CLEAR".to_string(),
+            vec!["sweep".to_string(), "audit".to_string()],
+        )]);
+        assert!(take_kickoff_branch(&mut branches, "DAY 2026-09-14 done judged=1").is_none());
+        let (sentinel, items) = take_kickoff_branch(&mut branches, "CLEAR").unwrap();
+        assert_eq!((sentinel.as_str(), items.len()), ("CLEAR", 2));
+        assert!(take_kickoff_branch(&mut branches, "CLEAR").is_none());
     }
 
     #[test]

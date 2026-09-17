@@ -221,6 +221,7 @@ impl MissionLoader {
             kickoff_attended: Vec::new(),
             kickoff_stop: Vec::new(),
             kickoff_fresh: false,
+            kickoff_then: Default::default(),
             allowed_tools: draft.allowed_tools.clone().unwrap_or_default(),
             permission: draft.permission.clone().flatten(),
             prompt,
@@ -643,14 +644,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_dream_starts_each_day_with_a_fresh_context() {
+    fn the_dream_starts_each_turn_fresh_and_finishes_in_stages() {
         let dream =
             parse_mission_md("dream", include_str!("../../../missions/dream/mission.md")).unwrap();
         assert!(dream.kickoff_fresh);
         assert_eq!(dream.kickoff_stop, ["DONE", "STALLED"]);
+        let finish = &dream.kickoff_then["CLEAR"];
+        assert_eq!(finish.len(), 3);
+        assert!(finish[2].ends_with("DONE."), "{}", finish[2]);
+        assert!(dream
+            .kickoff
+            .iter()
+            .all(|item| !item.contains("memory_chains")));
         let md = mission_to_md(&dream);
         assert!(md.contains("kickoff-fresh: true"), "{md}");
-        assert!(parse_mission_md("dream", &md).unwrap().kickoff_fresh);
+        let again = parse_mission_md("dream", &md).unwrap();
+        assert!(again.kickoff_fresh);
+        assert_eq!(again.kickoff_then, dream.kickoff_then);
         let plain =
             parse_mission_md("plain", "---\nschedule: \"0 3 * * *\"\n---\n\nBody\n").unwrap();
         assert!(!plain.kickoff_fresh);

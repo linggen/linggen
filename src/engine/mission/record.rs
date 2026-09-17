@@ -86,6 +86,13 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub kickoff_fresh: bool,
 
+    /// Branches (frontmatter `kickoff-then`): a final reply ending on one of
+    /// these sentinels replaces the rest of the kickoff queue with that
+    /// sentinel's items — once per run. The dream's `CLEAR` (an empty
+    /// worklist) swaps the leftover day nudges for its finish-up turns.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

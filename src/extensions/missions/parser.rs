@@ -72,6 +72,13 @@ struct MissionFrontmatter {
     kickoff_fresh: bool,
 
     #[serde(
+        rename = "kickoff-then",
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
+
+    #[serde(
         rename = "allowed-tools",
         default,
         skip_serializing_if = "Vec::is_empty"
@@ -153,6 +160,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         kickoff_attended: fm.kickoff_attended,
         kickoff_stop: fm.kickoff_stop,
         kickoff_fresh: fm.kickoff_fresh,
+        kickoff_then: fm.kickoff_then,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
         prompt: body,
@@ -178,6 +186,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
         kickoff_fresh: false,
+        kickoff_then: Default::default(),
         allowed_tools: Vec::new(),
         permission: None,
         prompt,
@@ -226,6 +235,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
         kickoff_fresh: false,
+        kickoff_then: Default::default(),
         allowed_tools: Vec::new(),
         permission,
         prompt,
@@ -260,6 +270,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         kickoff_attended: mission.kickoff_attended.clone(),
         kickoff_stop: mission.kickoff_stop.clone(),
         kickoff_fresh: mission.kickoff_fresh,
+        kickoff_then: mission.kickoff_then.clone(),
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),
         project: mission.project.clone(),

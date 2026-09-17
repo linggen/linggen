@@ -307,6 +307,9 @@ pub struct AgentEngine {
     pub kickoff_fresh: bool,
     /// Where the running kickoff turn opened in the loop's messages.
     pub(crate) kickoff_turn: Option<KickoffTurn>,
+    /// `Mission.kickoff_then`: sentinel → the items that replace the queue.
+    /// A branch is removed when it fires, so it runs once per run.
+    pub kickoff_then: std::collections::BTreeMap<String, Vec<String>>,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
@@ -527,6 +530,7 @@ impl AgentEngine {
             kickoff_stop: Vec::new(),
             kickoff_fresh: false,
             kickoff_turn: None,
+            kickoff_then: Default::default(),
             session_permissions: permission::SessionPermissions::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,

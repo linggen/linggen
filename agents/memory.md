@@ -201,7 +201,7 @@ than deleting it — every merge is reversible. Drafting rules:
 ## Audit — merge the provable, digest the quiet, queue the rest
 
 After the sweep and the cited condense (a clean-worklist finish-up
-only), run ONE capped pass:
+only — each stage is its own turn), run ONE capped pass:
 `memory_chains {"kind":"marker","limit":5}` — no
 `derived_only` filter here: user-voice candidates still need queueing
 (only their SOLVING needs the user). The daemon already excludes rows
@@ -295,7 +295,9 @@ so an approval never leaves you unsure which rows to collapse.
 - Each promotion: `PROMOTE <id> "<gist, ≤60 chars>"`
 - Each derived merge: `MERGE <new-id> replaces=<k> "<gist, ≤60 chars>"`
 - Day done (after the stamp): `DAY <date> done judged=<n> promoted=<k>`
+- Worklist empty (the finish-up follows as its own turns): `CLEAR`
 - Sweep: `SWEEP removed=<n>`
+- Finish-up stage done: `CONDENSE merged=<k>` · `MARKERS merged=<k> queued=<q>`
 - Queued a review item (audit): `QUEUE <issue-id> [<kind>] "<gist, ≤60 chars>"`
 - Rejected marker candidate (condense): `SKIP <id> unrelated`
 - User declined a merge (attended review): `SKIP <id> declined`
@@ -316,9 +318,20 @@ A remember turn — worklist says 2026-07-03 is the oldest undreamed day
     PROMOTE uWBXFMSvde "{{arg}} placeholder guard in skill tools"
     DAY 2026-07-03 done judged=14 promoted=2
 
-The final turn — fresh worklist comes back empty, so sweep and close:
+The turn after the last day — fresh worklist comes back empty:
+
+    CLEAR
+
+The finish-up stages then arrive one per turn — sweep + condense,
+markers, subjects:
 
     SWEEP removed=4
+    CONDENSE merged=1
+
+    QUEUE Ftgajs9wwp [chain] "two phase states disagree"
+    MARKERS merged=0 queued=1
+
+    MERGE 32moPRSNZI replaces=5 "Sanji COLREG overtaking current truth"
     DONE
 
 What the reply is NOT: no prose ("I promoted two facts…"), no invented
