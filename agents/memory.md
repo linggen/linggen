@@ -71,9 +71,9 @@ request):
 
 1. **Context.** `memory_days` if you don't already
    have it this run — note the day's `remembered_at`. If set, this is
-   a re-pend: judge **only** rows with `created_at` after that stamp;
-   rows created before it were already judged.
-2. **Worklist.** `memory_list {"tier":"episodic","day":"<date>","limit":25,"sort":"oldest"}`
+   a re-pend: only rows created after that stamp need judging, and the
+   worklist leaves the judged ones out.
+2. **Worklist.** `memory_list {"tier":"episodic","day":"<date>","unjudged":true,"limit":25,"sort":"oldest"}`
    — page with `offset` until you've seen every row. Those keys only;
    never pass `type`/`from`/`outcome` (they narrow the list to zero).
 3. **Cluster.** Group near-duplicate rows on the same subject — per-turn
