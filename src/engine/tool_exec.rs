@@ -861,8 +861,8 @@ impl AgentEngine {
                 }
             }
             Err(e) => {
-                warn!("Tool failed: {} err={}", canonical_tool, e);
-                let rendered = format!("tool_error: tool={} error={}", canonical_tool, e);
+                warn!("Tool failed: {} err={:#}", canonical_tool, e);
+                let rendered = tool_error_text(&canonical_tool, &e);
                 if tools::tool_cacheable(&canonical_tool) {
                     tool_cache.insert(
                         sig,
@@ -1181,5 +1181,29 @@ impl AgentEngine {
         );
         *streak = 0;
         Some(LoopControl::Continue)
+    }
+}
+
+/// What the model reads when a tool fails. `{:#}` keeps the cause chain: `{}`
+/// showed only the outer context ("MCP tools/call memory_add") and hid the
+/// timeout underneath, so a dream read a slow save as a refused one.
+fn tool_error_text(tool: &str, err: &anyhow::Error) -> String {
+    format!("tool_error: tool={tool} error={err:#}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Context;
+
+    #[test]
+    fn a_tool_error_keeps_its_cause() {
+        let err = Err::<(), _>(anyhow::anyhow!("MCP error -32603: add timed out after 25s"))
+            .context("MCP tools/call memory_add")
+            .unwrap_err();
+        assert_eq!(
+            tool_error_text("mcp__memory__memory_add", &err),
+            "tool_error: tool=mcp__memory__memory_add error=MCP tools/call memory_add: MCP error -32603: add timed out after 25s"
+        );
     }
 }

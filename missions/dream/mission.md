@@ -55,10 +55,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     First action this turn: call
     `memory_days({"undreamed_only":true})` to fetch a
@@ -67,10 +68,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     First action this turn: call
     `memory_days({"undreamed_only":true})` to fetch a
@@ -79,10 +81,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     First action this turn: call
     `memory_days({"undreamed_only":true})` to fetch a
@@ -91,10 +94,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     First action this turn: call
     `memory_days({"undreamed_only":true})` to fetch a
@@ -103,10 +107,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     First action this turn: call
     `memory_days({"undreamed_only":true})` to fetch a
@@ -115,10 +120,11 @@ kickoff:
     per your system prompt (`memory_sweep()` + `SWEEP
     removed=<n>`, then the cited-chains condense with its `MERGE`
     lines, then the audit pass with its `MERGE`/`QUEUE` lines), reply
-    exactly: DONE. Oldest listed day is one you ALREADY
-    STAMPED this run with an undropped `unjudged` → reply exactly:
-    STALLED. Otherwise → remember the oldest listed day per your
-    system prompt.
+    exactly: DONE. The oldest listed day already has a `DAY <date>
+    done` line from you in THIS run → reply exactly: STALLED. A
+    `remembered_at` from before this run is normal (late rows re-open
+    a day) → remember it. Otherwise → remember the oldest listed day
+    per your system prompt.
   - >-
     Last scheduled turn for tonight. First call
     `memory_days({"undreamed_only":true})` for a fresh
@@ -209,10 +215,12 @@ agent). This mission adds only the nightly run protocol:
   **oldest** day, run the remember procedure on it, stamp it, stop.
   The next kickoff nudge continues the loop.
 - **Stop conditions.** Empty worklist → run the finish-up
-  (below), reply `DONE`. Same oldest day twice with an undropped
-  `unjudged` count → reply `STALLED` (something is wrong — a human
-  will look; do not loop). Out of nudges with days remaining → sweep,
-  reply `PARTIAL <n> days remain` (no condense on PARTIAL nights).
+  (below), reply `DONE`. The oldest day already has your
+  `DAY <date> done` line from this run → reply `STALLED` (its stamp
+  didn't take — a human will look; do not loop). A day dreamed on an
+  earlier night that late rows re-opened is not a stall. Out of
+  nudges with days remaining → sweep, reply `PARTIAL <n> days remain`
+  (no condense on PARTIAL nights).
 - **Finish-up = sweep → condense → audit.** On the empty-worklist
   turn, after the sweep, fetch
   `memory_chains({"kind":"cited","limit":10,"derived_only":true})`

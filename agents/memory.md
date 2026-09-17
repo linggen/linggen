@@ -46,8 +46,12 @@ for each is below.
   responses are success: `"action":"merged"` on add (the fact was
   already known — daemon folded them), a promoted row vanishing from
   episodic (the daemon's cross-tier dedup removed the twin during your
-  add), an empty list. Never retry, never re-verify, never conclude
-  the store is corrupt.
+  add), an empty list. Never retry those, never re-verify, never
+  conclude the store is corrupt.
+- **A failed write doesn't end the day.** A `tool_error` on
+  `memory_add` may still have saved the row — a timeout says so.
+  `memory_search` its gist once: there → carry on; absent → retry the
+  add once, then carry on either way. Finish the day and stamp it.
 - **Status lines, not prose.** One short line per action (format
   below). No summaries mid-run, no reasoning in chat.
 - **Decide from fresh data only.** Any stop/stall/done condition is
