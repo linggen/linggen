@@ -73,10 +73,14 @@ const Root: React.FC = () => {
           ? 'consumer'
           : 'main';
 
+  // The server scopes what this surface receives by its view context — an
+  // embed is pinned to one session — so it follows the active session too: a
+  // New chat inside an embed switched the panel while the pin stayed on the
+  // old session, and every event of the new one was dropped (2026-09-17).
   useEffect(() => {
     (window as { __LINGGEN_VIEW__?: View }).__LINGGEN_VIEW__ = view;
     sendViewContext();
-  }, [view]);
+  }, [view, sessionId]);
 
   if (view === 'pet') return <PetApp />;
   if (view === 'launcher') return <LauncherApp />;
