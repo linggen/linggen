@@ -102,9 +102,6 @@ impl Tool for BrowserNavigateTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -150,9 +147,6 @@ impl Tool for BrowserReadPageTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
-    }
-    fn cacheable(&self) -> bool {
-        false
     }
     fn args_schema(&self) -> Value {
         json!({
@@ -215,9 +209,6 @@ impl Tool for BrowserScreenshotTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -271,9 +262,6 @@ impl Tool for BrowserClickTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -324,9 +312,6 @@ impl Tool for BrowserTypeTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -372,9 +357,6 @@ impl Tool for BrowserKeyTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -418,9 +400,6 @@ impl Tool for BrowserScrollTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
-    }
-    fn cacheable(&self) -> bool {
-        false
     }
     fn args_schema(&self) -> Value {
         json!({
@@ -468,9 +447,6 @@ impl Tool for BrowserWaitTool {
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
     }
-    fn cacheable(&self) -> bool {
-        false
-    }
     fn args_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -514,9 +490,6 @@ impl Tool for BrowserReadConsoleTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
-    }
-    fn cacheable(&self) -> bool {
-        false
     }
     fn args_schema(&self) -> Value {
         json!({
@@ -574,9 +547,6 @@ impl Tool for BrowserTabsTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
-    }
-    fn cacheable(&self) -> bool {
-        false
     }
     fn args_schema(&self) -> Value {
         json!({

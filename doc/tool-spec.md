@@ -119,7 +119,7 @@ The session's effective permission mode for the target path controls which tools
 - **Path-scoped**: permissions are stored as `(path, mode)` grants and recomputed when cwd changes.
 - **Deny/ask rules**: configured in `linggen.toml` to hard-block or force-prompt specific commands.
 - Write-safety mode: checks that file was Read before Write/Edit.
-- Redundancy detection: cache + loop-breaker for repeated calls.
+- Redundancy detection: cache + loop-breaker for repeated calls — pure workspace reads only (`Read`, `Grep`, `Glob`). Every other tool, a skill's or an MCP server's included, runs on every call: a cached answer is a call that never ran.
 
 **Flow**: permission gate in `handle_tool_action()` → classify action tier → check deny/ask rules → resolve target path → compare action tier to effective path mode → emit `AskUser` event if interactive, otherwise return permission-needed.
 

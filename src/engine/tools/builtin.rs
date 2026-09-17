@@ -67,12 +67,13 @@ pub trait Tool: Send + Sync {
     }
 
     /// True when an identical later call may be served from the per-run
-    /// tool cache and counted toward the redundant-loop nudge. Tools
-    /// that read live mutable state outside the session (the memory
-    /// store is shared across sessions and hosts) return false — an
-    /// identical call can legitimately return new data.
+    /// tool cache and counted toward the redundant-loop nudge. Opt-in, for
+    /// pure reads of the workspace only: a cached answer is a call that never
+    /// ran, so anything that acts (writes, asks the user, delegates, drives a
+    /// browser or an avatar) or reads live state (the web, a browser page,
+    /// the user's presence) must run every time.
     fn cacheable(&self) -> bool {
-        true
+        false
     }
 
     /// Wall-clock ceiling for one call. A backstop against hangs, not a
@@ -159,17 +160,15 @@ pub fn builtin_tier(name: &str) -> Option<PermissionMode> {
 
 /// Cache/redundancy-gate participation, used by `engine::tool_exec`.
 ///
-/// Unknown (custom / skill) tools default to cacheable. **An MCP tool never
-/// is**: it belongs to a process we don't control, so we have no basis for
-/// claiming an identical call returns an identical answer — and the first such
-/// server is memory, whose store is live state shared across sessions and
-/// hosts. Serving a repeat `memory_search` from cache would hide a row the
-/// user just added.
+/// Only a built-in that opts in (a pure workspace read) is cacheable. Unknown
+/// tools — a skill's, an MCP server's — never are: the engine has no basis for
+/// claiming an identical call returns an identical answer or did nothing, the
+/// same reason `tool_max_duration` leaves them unbounded. A skill tool served
+/// from cache is an action that never happened (2026-09-17: three identical
+/// `Trade … buy` calls answered "paid" from cache after one real purchase),
+/// and memory's store is live state shared across sessions and hosts.
 pub fn tool_cacheable(name: &str) -> bool {
-    if crate::mcp_client::is_mcp_tool(name) {
-        return false;
-    }
-    lookup(name).map(|t| t.cacheable()).unwrap_or(true)
+    lookup(name).is_some_and(|t| t.cacheable())
 }
 
 /// Wall-clock ceiling for a tool call, used by `engine::tool_exec`.
@@ -217,6 +216,9 @@ pub struct GlobTool;
 impl Tool for GlobTool {
     fn name(&self) -> &'static str {
         "Glob"
+    }
+    fn cacheable(&self) -> bool {
+        true
     }
     // A filesystem walk. The default 5 min is meaningless here: a glob that
     // has not answered in a minute is walking somewhere it should not be.
@@ -266,6 +268,9 @@ pub struct ReadTool;
 impl Tool for ReadTool {
     fn name(&self) -> &'static str {
         "Read"
+    }
+    fn cacheable(&self) -> bool {
+        true
     }
     fn description(&self) -> &'static str {
         "Read a file's contents. Path can be relative (resolved from workspace root) or absolute. Always read a file before modifying it."
@@ -320,6 +325,9 @@ pub struct GrepTool;
 impl Tool for GrepTool {
     fn name(&self) -> &'static str {
         "Grep"
+    }
+    fn cacheable(&self) -> bool {
+        true
     }
     // Same reasoning as Glob — it walks the tree.
     fn max_duration(&self) -> Option<Duration> {
@@ -424,9 +432,6 @@ impl Tool for GenerateImageTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Edit
-    }
-    fn cacheable(&self) -> bool {
-        false
     }
     fn max_duration(&self) -> Option<Duration> {
         Some(Duration::from_secs(300))
@@ -833,11 +838,6 @@ impl Tool for WebSearchTool {
     }
     fn tier(&self) -> PermissionMode {
         PermissionMode::Read
-    }
-    // Results are time-sensitive and a sign-in error must not outlive the
-    // sign-in that fixes it, so nothing here is worth caching for a run.
-    fn cacheable(&self) -> bool {
-        false
     }
     fn args_schema(&self) -> Value {
         json!({
@@ -1763,5 +1763,40 @@ mod max_duration_tests {
     fn unknown_tools_are_unbounded() {
         // Skill-provided tools declare their own work; the engine cannot guess.
         assert_eq!(tool_max_duration("SomeSkillProvidedTool"), None);
+    }
+
+    #[test]
+    fn only_pure_workspace_reads_are_served_from_cache() {
+        for name in ["Read", "Grep", "Glob"] {
+            assert!(tool_cacheable(name), "{name} is a pure read");
+        }
+        // A skill's tool may act (a purchase); an MCP tool may read live state.
+        assert!(!tool_cacheable("Trade"));
+        assert!(!tool_cacheable("mcp__memory__memory_search"));
+        for name in [
+            "AskUser",
+            "Bash",
+            "Write",
+            "Edit",
+            "Task",
+            "Skill",
+            "RunApp",
+            "Express",
+            "Voice",
+            "GenerateImage",
+            "WebSearch",
+            "WebFetch",
+            "sense",
+            "recent_activity",
+            "answer_prompt",
+            "agent_chat",
+            "capture_screenshot",
+            "lock_paths",
+            "unlock_paths",
+            "Browser_navigate",
+            "Browser_readPage",
+        ] {
+            assert!(!tool_cacheable(name), "{name} must run every time");
+        }
     }
 }

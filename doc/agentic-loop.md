@@ -77,7 +77,7 @@ A skill declaring `closing-ask` hands each turn its question in its tools' resul
 - `/compact [focus]` command forces compaction regardless of budget. Optional focus parameter guides the summarizer to emphasize specific topics.
 - High/Critical importance messages survive compaction; Low/Normal messages are summarized.
 - Tool results are trimmed to fit within limits.
-- Read cache invalidated after Write/Edit to keep observations fresh.
+- The read cache (`Read`/`Grep`/`Glob`) is dropped after any other tool runs — a Write, a shell command or a skill tool may have changed what the reads saw.
 
 ## Guardrails
 

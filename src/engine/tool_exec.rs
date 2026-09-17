@@ -482,20 +482,22 @@ impl AgentEngine {
         // as a normal `not_permitted` tool error.
 
         // --- redundancy / cache gates ---
-        // Tools that read live mutable state opt out entirely — every MCP
-        // tool, memory's included, since that store is shared across sessions
-        // and hosts: an identical call can legitimately return new data, so it
-        // is neither served from cache nor counted toward the redundant-loop
-        // nudge.
+        // Only pure workspace reads take part (`tool_cacheable`). Anything
+        // else runs every time and is never counted toward the redundant-loop
+        // nudge: repeating an action or a live read is legitimate, and the
+        // model sees each real result (a refusal, a changed page) rather than
+        // a replay. It also breaks a run of identical reads — the world may
+        // have changed in between.
         let cacheable = tools::tool_cacheable(&canonical_tool);
 
-        if cacheable {
-            if sig == *last_tool_sig {
-                *redundant_tool_streak += 1;
-            } else {
-                *redundant_tool_streak = 0;
-                *last_tool_sig = sig.clone();
-            }
+        if !cacheable {
+            *redundant_tool_streak = 0;
+            last_tool_sig.clear();
+        } else if sig == *last_tool_sig {
+            *redundant_tool_streak += 1;
+        } else {
+            *redundant_tool_streak = 0;
+            *last_tool_sig = sig.clone();
         }
 
         if cacheable && *redundant_tool_streak >= 3 {
@@ -656,6 +658,9 @@ impl AgentEngine {
                 let rendered_model = render_tool_result(&result);
                 let rendered_public = render_tool_result_public(&result);
 
+                // A pure read is remembered; anything else may have changed
+                // what the reads saw — a Write, a shell command, a skill tool
+                // writing its state — so the remembered reads go.
                 if tools::tool_cacheable(&canonical_tool) {
                     tool_cache.insert(
                         sig,
@@ -663,20 +668,8 @@ impl AgentEngine {
                             model: rendered_model.clone(),
                         },
                     );
-                }
-
-                // Invalidate cached Read results for the same file after a successful mutation.
-                if matches!(canonical_tool.as_str(), "Write" | "Edit") {
-                    if let Some(path) =
-                        normalize_tool_path_arg(&self.tools.builtins.cwd(), &original_args)
-                    {
-                        tool_cache.retain(|key, _| {
-                            if !key.starts_with("Read|") {
-                                return true;
-                            }
-                            !key.contains(&format!("\"{}\"", path))
-                        });
-                    }
+                } else {
+                    tool_cache.clear();
                 }
 
                 self.upsert_observation("tool", &canonical_tool, rendered_model.clone());
@@ -871,6 +864,8 @@ impl AgentEngine {
                             model: rendered.clone(),
                         },
                     );
+                } else {
+                    tool_cache.clear();
                 }
                 self.upsert_observation("error", &canonical_tool, rendered.clone());
                 let _ = self
