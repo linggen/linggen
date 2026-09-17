@@ -78,6 +78,14 @@ pub struct Mission {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kickoff_stop: Vec<String>,
 
+    /// Each kickoff turn starts clean (frontmatter `kickoff-fresh`). Once a
+    /// turn's final reply lands, its tool calls, tool results and nudges
+    /// leave the model's context; the item that opened it and the reply that
+    /// closed it stay. For missions whose turns each fetch their own data —
+    /// the dream re-read every earlier day's worklist on every later call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kickoff_fresh: bool,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

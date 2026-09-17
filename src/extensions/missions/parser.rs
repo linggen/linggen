@@ -65,6 +65,13 @@ struct MissionFrontmatter {
     kickoff_stop: Vec<String>,
 
     #[serde(
+        rename = "kickoff-fresh",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    kickoff_fresh: bool,
+
+    #[serde(
         rename = "allowed-tools",
         default,
         skip_serializing_if = "Vec::is_empty"
@@ -145,6 +152,7 @@ pub(super) fn parse_mission_md(id: &str, content: &str) -> Result<Mission> {
         kickoff_day: fm.kickoff_day,
         kickoff_attended: fm.kickoff_attended,
         kickoff_stop: fm.kickoff_stop,
+        kickoff_fresh: fm.kickoff_fresh,
         allowed_tools: fm.allowed_tools,
         permission: fm.permission,
         prompt: body,
@@ -169,6 +177,7 @@ fn default_mission(id: String, prompt: String) -> Mission {
         kickoff_day: Vec::new(),
         kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
+        kickoff_fresh: false,
         allowed_tools: Vec::new(),
         permission: None,
         prompt,
@@ -216,6 +225,7 @@ fn parse_legacy(id: &str, yaml: &str, body: String) -> Result<Mission> {
         kickoff_day: Vec::new(),
         kickoff_attended: Vec::new(),
         kickoff_stop: Vec::new(),
+        kickoff_fresh: false,
         allowed_tools: Vec::new(),
         permission,
         prompt,
@@ -249,6 +259,7 @@ pub(super) fn mission_to_md(mission: &Mission) -> String {
         kickoff_day: mission.kickoff_day.clone(),
         kickoff_attended: mission.kickoff_attended.clone(),
         kickoff_stop: mission.kickoff_stop.clone(),
+        kickoff_fresh: mission.kickoff_fresh,
         allowed_tools: mission.allowed_tools.clone(),
         permission: mission.permission.clone(),
         project: mission.project.clone(),

@@ -302,6 +302,11 @@ pub struct AgentEngine {
     /// discards the remaining `kickoff_queue` — an early-finished mission
     /// run skips its leftover nudge turns. Empty = never early-drain.
     pub kickoff_stop: Vec<String>,
+    /// `Mission.kickoff_fresh`: fold each finished kickoff turn down to its
+    /// opening item and final reply before the next item goes in.
+    pub kickoff_fresh: bool,
+    /// Where the running kickoff turn opened in the loop's messages.
+    pub(crate) kickoff_turn: Option<KickoffTurn>,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
@@ -429,6 +434,27 @@ pub(crate) struct CachedToolObs {
     pub model: String,
 }
 
+/// The user message that opened the running kickoff turn: its index in the
+/// loop's messages and its text, so a fold can check it is still there — a
+/// compaction summary may have replaced it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct KickoffTurn {
+    pub index: usize,
+    pub opening: String,
+}
+
+impl KickoffTurn {
+    /// The turn opened by the last message, when it is the user's.
+    pub(crate) fn opened_by_last(messages: &[ChatMessage]) -> Option<Self> {
+        let index = messages.len().checked_sub(1)?;
+        let last = &messages[index];
+        (last.role == "user").then(|| Self {
+            index,
+            opening: last.content.clone(),
+        })
+    }
+}
+
 /// Mutable state carried through the agent loop iterations.
 /// Extracted to allow helper methods to accept it as a single `&mut LoopState`.
 pub(crate) struct LoopState {
@@ -499,6 +525,8 @@ impl AgentEngine {
             pending_images: Vec::new(),
             kickoff_queue: VecDeque::new(),
             kickoff_stop: Vec::new(),
+            kickoff_fresh: false,
+            kickoff_turn: None,
             session_permissions: permission::SessionPermissions::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,

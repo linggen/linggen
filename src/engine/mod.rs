@@ -37,7 +37,7 @@ pub use skill_activation::{ActivationMode, ActivationOutcome};
 
 // Internal imports used by run_agent_loop
 use streaming::{can_parallel_tool, has_write_path_conflicts};
-use types::{LoopControl, LoopState, ParsedToolCall};
+use types::{KickoffTurn, LoopControl, LoopState, ParsedToolCall};
 
 use crate::message::ChatMessage;
 use anyhow::Result;
@@ -127,9 +127,32 @@ impl AgentEngine {
                 )
                 .await;
         }
+        // The next item answers this reply, so the model sees it first.
+        state
+            .messages
+            .push(ChatMessage::new("assistant", final_reply.to_string()));
+        if self.kickoff_fresh {
+            self.fold_finished_kickoff_turn(&mut state.messages);
+        }
         state.messages.push(ChatMessage::new("user", next.clone()));
+        self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
         self.chat_history.push(ChatMessage::new("user", next));
         true
+    }
+
+    /// `kickoff-fresh`: drop the finished turn's working messages.
+    fn fold_finished_kickoff_turn(&mut self, messages: &mut Vec<ChatMessage>) {
+        let Some(turn) = self.kickoff_turn.take() else {
+            return;
+        };
+        let before = messages.len();
+        if fold_kickoff_turn(messages, &turn) {
+            self.accumulated_token_estimate = Self::estimate_tokens_for_messages(messages);
+            info!(
+                "kickoff: fresh context — folded {} message(s) of the finished turn",
+                before - messages.len()
+            );
+        }
     }
 
     /// Pre-loop setup: load session permissions, emit "working" status,
@@ -341,6 +364,7 @@ impl AgentEngine {
 
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
         let mut state = self.initialize_loop(session_id).await?;
+        self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
         let log_run = self.run_id.clone().unwrap_or_else(|| "root".to_string());
 
         let mut interrupted_by_user = false;
@@ -956,6 +980,25 @@ fn truncate_for_log(task: &str, max_chars: usize) -> String {
 /// while every mid-run reply ends on a data-bearing line (`DAY <date>
 /// done judged=…`), so a backlog run never ends on a bare sentinel.
 /// A sentinel merely *mentioned* mid-reply never matches.
+/// Fold a finished kickoff turn to what the next turn needs: the message that
+/// opened it and the reply that closed it (the last message). Everything
+/// between — tool calls, tool results, nudges — goes; calls and their results
+/// leave together, so no tool result is orphaned. Returns false and leaves
+/// `messages` alone when the opening is no longer at its index.
+fn fold_kickoff_turn(messages: &mut Vec<ChatMessage>, turn: &KickoffTurn) -> bool {
+    let opened_here = messages
+        .get(turn.index)
+        .is_some_and(|m| m.role == "user" && m.content == turn.opening);
+    let Some(reply) = messages.len().checked_sub(1) else {
+        return false;
+    };
+    if !opened_here || reply <= turn.index + 1 {
+        return false;
+    }
+    messages.drain(turn.index + 1..reply);
+    true
+}
+
 fn kickoff_stop_hit(stops: &[String], reply: &str) -> bool {
     if stops.is_empty() {
         return false;
@@ -1005,7 +1048,67 @@ fn summarize_task_for_log(task: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::kickoff_stop_hit;
+    use super::{fold_kickoff_turn, kickoff_stop_hit, KickoffTurn};
+    use crate::message::ChatMessage;
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage::new(role, content.to_string())
+    }
+
+    /// A dream turn: the nudge, a list call and its 50KB result, the stamp,
+    /// then the status reply.
+    fn day_turn() -> (Vec<ChatMessage>, KickoffTurn) {
+        let messages = vec![
+            msg("system", "doctrine"),
+            msg("user", "remember the oldest day"),
+            msg("assistant", "calling memory_list"),
+            msg("tool", "[fifty kilobytes of rows]"),
+            msg("assistant", "calling memory_remember_day"),
+            msg("tool", "{\"date\":\"2026-09-14\"}"),
+            msg("assistant", "DAY 2026-09-14 done judged=31 promoted=3"),
+        ];
+        let turn = KickoffTurn::opened_by_last(&messages[..2]).unwrap();
+        (messages, turn)
+    }
+
+    #[test]
+    fn a_fresh_fold_keeps_the_opening_and_the_reply() {
+        let (mut messages, turn) = day_turn();
+        assert!(fold_kickoff_turn(&mut messages, &turn));
+        let kept: Vec<_> = messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            kept,
+            [
+                "doctrine",
+                "remember the oldest day",
+                "DAY 2026-09-14 done judged=31 promoted=3"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fold_leaves_messages_alone_when_the_opening_moved() {
+        let (mut messages, turn) = day_turn();
+        messages[1] = msg("user", "[summary of earlier turns]");
+        let before = messages.clone();
+        assert!(!fold_kickoff_turn(&mut messages, &turn));
+        assert_eq!(messages.len(), before.len());
+    }
+
+    #[test]
+    fn a_turn_with_nothing_between_is_left_as_is() {
+        let mut messages = vec![msg("system", "doctrine"), msg("user", "go")];
+        let turn = KickoffTurn::opened_by_last(&messages).unwrap();
+        messages.push(msg("assistant", "DONE"));
+        assert!(!fold_kickoff_turn(&mut messages, &turn));
+        assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn only_a_user_message_opens_a_turn() {
+        assert!(KickoffTurn::opened_by_last(&[msg("system", "doctrine")]).is_none());
+        assert!(KickoffTurn::opened_by_last(&[]).is_none());
+    }
 
     fn stops(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

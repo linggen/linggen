@@ -220,6 +220,7 @@ impl MissionLoader {
             kickoff_day: Vec::new(),
             kickoff_attended: Vec::new(),
             kickoff_stop: Vec::new(),
+            kickoff_fresh: false,
             allowed_tools: draft.allowed_tools.clone().unwrap_or_default(),
             permission: draft.permission.clone().flatten(),
             prompt,
@@ -640,6 +641,21 @@ impl MissionRunStore for MissionLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dream_starts_each_day_with_a_fresh_context() {
+        let dream =
+            parse_mission_md("dream", include_str!("../../../missions/dream/mission.md")).unwrap();
+        assert!(dream.kickoff_fresh);
+        assert_eq!(dream.kickoff_stop, ["DONE", "STALLED"]);
+        let md = mission_to_md(&dream);
+        assert!(md.contains("kickoff-fresh: true"), "{md}");
+        assert!(parse_mission_md("dream", &md).unwrap().kickoff_fresh);
+        let plain =
+            parse_mission_md("plain", "---\nschedule: \"0 3 * * *\"\n---\n\nBody\n").unwrap();
+        assert!(!plain.kickoff_fresh);
+        assert!(!mission_to_md(&plain).contains("kickoff-fresh"));
+    }
 
     fn temp_store() -> (MissionLoader, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();

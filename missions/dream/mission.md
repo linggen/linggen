@@ -28,6 +28,11 @@ cwd: ~/.linggen
 # (same day twice — abort) ends the run; the engine discards the
 # leftover nudges instead of burning a no-op turn on each.
 kickoff-stop: [DONE, STALLED]
+# kickoff-fresh: each nudge starts clean — the finished day's lists, searches
+# and adds leave the context; its opening item and status reply stay, so the
+# stall rule can still see this run's `DAY … done` lines. One run holding five
+# days of worklists cost 2.08M prompt tokens (2026-09-17).
+kickoff-fresh: true
 kickoff:
   - >-
     You are in the dream mission. Introduce it in one short line, then
