@@ -556,8 +556,7 @@ impl MissionLoader {
     /// Startup reconciliation: a fresh daemon has no live runs, so any
     /// entry still `running` belongs to a dead process (hang, crash,
     /// restart). Flip them to `interrupted` so run history shows the
-    /// truth and the catch-up window (completed-only) treats the slot
-    /// as unfilled.
+    /// truth and the catch-up sweep treats the slot as still missed.
     pub fn mark_running_runs_interrupted(&self) {
         let Ok(dirs) = fs::read_dir(&self.dir) else {
             return;

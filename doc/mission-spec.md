@@ -73,7 +73,7 @@ description: >-
 
 # Schedule
 schedule: "0 3 * * *"
-catchup_hours: 24                  # optional — the scheduler fires it if the last run is older than this
+catchup_hours: 24                  # optional — a slot missed within this many hours runs late
 enabled: true
 agent: ling                        # optional — engine agent to run this mission (default: ling)
 cwd: ~/.linggen                    # working directory for the agent
@@ -113,7 +113,7 @@ permission:
 | `name` | yes | Mission id (matches directory name) |
 | `description` | yes | Short human-readable summary — shown in UI |
 | `schedule` | yes | Cron expression (5-field standard) |
-| `catchup_hours` | no | If set, the scheduler fires the mission when its last non-skipped run is older than this many hours. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
+| `catchup_hours` | no | If set, the scheduler fires the mission when a scheduled time inside the last this-many hours has no run started at or after it. Used to recover from cron fires missed while the machine was off/asleep. Omit to leave the mission cron-only. `0` is treated as opt-out |
 | `enabled` | yes | On/off. For a skill mission this is the default; the user's choice wins |
 | `agent` | no | Engine agent that runs the mission (key into `agents/`). Defaults to `ling`. The mission body is still the system prompt — `agent:` just picks the routing identity, the model default, and the persona-level config |
 | `cwd` | yes | Working directory for the agent |
@@ -253,7 +253,7 @@ The scheduler tracks the last fire minute per mission. A cron match only fires o
 
 ### Catch-up fires
 
-Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions whose last non-skipped run is older than their `catchup_hours` and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
+Cron is missed when the machine is off or asleep. To recover, a mission can declare `catchup_hours: <n>` in its frontmatter. The scheduler's own tick sweeps all enabled missions for a missed slot — the latest scheduled time inside the last `catchup_hours` that no run started at or after (skipped and `interrupted` runs don't count; a run from before the slot, like an afternoon's manual trigger, doesn't either) — and triggers them once the machine has been quiet for the background quiet window — no user turn needed. Same dispatch path as a normal cron fire; overlaps are prevented by the same busy-skip. Missions that omit `catchup_hours` (or set it to `0`) are cron-only.
 
 The built-in `dream` mission uses `catchup_hours: 24`: a missed 3am fire re-runs soon after the machine wakes. Catch-up attempts are capped per local day (a repeatedly-failing mission must not burn the day's token budget), and one run per mission is enforced across all trigger paths — cron, catch-up, and manual triggers share a single in-flight guard; an overlapping trigger records a `skipped` run.
 

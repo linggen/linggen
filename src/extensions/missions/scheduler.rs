@@ -408,12 +408,12 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 
 /// Catch-up sweep, called from the scheduler tick once a minute.
 /// Scans all enabled missions whose `catchup_hours` is set, and fires any
-/// whose last non-skipped run is older than that threshold (or which has
-/// never run). Used to recover from missed cron fires when the machine was
-/// off/asleep — the scheduler tick re-triggers the work in the next quiet
-/// window (see `QUIET_WINDOW_SECS`): no user chat turn for the window, no
-/// top-level run in flight. Background runs never race the user's chat for
-/// the model.
+/// with a missed slot (see [`missed_slot`]): a scheduled time inside the
+/// last `catchup_hours` that no run started at or after. Used to recover
+/// from missed cron fires when the machine was off/asleep — the scheduler
+/// tick re-triggers the work in the next quiet window (see
+/// `QUIET_WINDOW_SECS`): no user chat turn for the window, no top-level run
+/// in flight. Background runs never race the user's chat for the model.
 ///
 /// Per mission, opt in by setting `catchup_hours: <n>` in the mission's
 /// frontmatter. Omit the field to leave the mission cron-only.
@@ -435,7 +435,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
             }
         };
 
-        let now = crate::util::now_ts_secs();
+        let now = Local::now();
 
         for mission in missions {
             let Some(catchup_hours) = mission.catchup_hours else {
@@ -446,8 +446,6 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                 continue;
             }
 
-            // Last *attempt* (completed or failed; skipped doesn't count).
-            // None ⇒ never run ⇒ overdue.
             let runs = match state.manager.missions.list_mission_runs(&mission.id) {
                 Ok(runs) => runs,
                 Err(e) => {
@@ -458,27 +456,18 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
                     continue;
                 }
             };
-            let last_run_secs = runs
-                .iter()
-                .filter(|r| !r.skipped)
-                .map(|r| r.triggered_at)
-                .max();
-
-            let threshold_secs = catchup_hours.saturating_mul(3600);
-            let overdue = match last_run_secs {
-                None => true,
-                Some(last) => now.saturating_sub(last) >= threshold_secs,
-            };
-            if !overdue {
+            let Ok(schedule) = super::parse_cron(&mission.schedule) else {
                 continue;
-            }
+            };
+            let Some(slot) = missed_slot(&schedule, catchup_hours, &runs, now) else {
+                continue;
+            };
 
-            // Retry cap: a mission that keeps failing (each failure resets
-            // nothing — the catch-up would otherwise re-fire once the
-            // threshold re-elapses, or immediately for sub-day thresholds)
-            // gets at most CATCHUP_MAX_ATTEMPTS_PER_DAY attempts per local
-            // day before we stop trying until tomorrow.
-            let day_start_secs = Local::now()
+            // Retry cap: a mission whose runs keep dying with the daemon
+            // (an interrupted run leaves its slot missed) gets at most
+            // CATCHUP_MAX_ATTEMPTS_PER_DAY attempts per local day before we
+            // stop trying until tomorrow.
+            let day_start_secs = now
                 .date_naive()
                 .and_hms_opt(0, 0, 0)
                 .and_then(|n| n.and_local_timezone(Local).earliest())
@@ -497,9 +486,9 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
             }
 
             info!(
-                "catchup: mission '{}' last run {:?}s ago (threshold {}h) — triggering",
+                "catchup: mission '{}' missed its {} slot (catch-up window {}h) — triggering",
                 mission.id,
-                last_run_secs.map(|l| now.saturating_sub(l)),
+                slot.format("%Y-%m-%d %H:%M"),
                 catchup_hours
             );
             let (root, project_path) = mission_root(&mission);
@@ -515,6 +504,30 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
             .await;
         }
     });
+}
+
+/// The slot a catch-up fills: the latest scheduled time of `schedule` inside
+/// the last `catchup_hours`, from a minute already past (the tick owns the
+/// current one), that no run started at or after. Skipped runs and runs a
+/// dead daemon left `interrupted` don't fill it. Neither does a run from
+/// before the slot — an afternoon's manual run is not the night's.
+fn missed_slot(
+    schedule: &cron::Schedule,
+    catchup_hours: u64,
+    runs: &[MissionRunEntry],
+    now: chrono::DateTime<Local>,
+) -> Option<chrono::DateTime<Local>> {
+    let window = chrono::TimeDelta::try_hours(i64::try_from(catchup_hours).ok()?)?;
+    let this_minute = now.timestamp() / 60;
+    let slot = schedule
+        .after(&now.checked_sub_signed(window)?)
+        .take_while(|t| t.timestamp() / 60 < this_minute)
+        .last()?;
+    let slot_secs = u64::try_from(slot.timestamp()).ok()?;
+    let filled = runs
+        .iter()
+        .any(|r| !r.skipped && r.status != "interrupted" && r.triggered_at >= slot_secs);
+    (!filled).then_some(slot)
 }
 
 /// Dispatch a mission prompt to the mission agent.
@@ -1024,4 +1037,92 @@ fn record_mission_run(
         .manager
         .missions
         .append_mission_run(&mission.id, &entry);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn at(d: u32, h: u32, m: u32) -> chrono::DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 9, d, h, m, 0).unwrap()
+    }
+
+    fn run(started: chrono::DateTime<Local>, status: &str, skipped: bool) -> MissionRunEntry {
+        MissionRunEntry {
+            run_id: format!("run-{}", started.timestamp()),
+            session_id: None,
+            triggered_at: started.timestamp() as u64,
+            status: status.into(),
+            skipped,
+            usage: None,
+        }
+    }
+
+    fn nightly() -> cron::Schedule {
+        super::super::parse_cron("0 1 * * *").unwrap()
+    }
+
+    #[test]
+    fn an_afternoon_run_does_not_fill_the_night_slot() {
+        // The Watch, 2026-09-17: checked by hand at 16:12, Mac off at 01:00,
+        // back at 09:07 — the 01:00 slot is missed, whatever ran before it.
+        let runs = [run(at(16, 16, 12), "completed", false)];
+        let slot = missed_slot(&nightly(), 20, &runs, at(17, 9, 12));
+        assert_eq!(slot, Some(at(17, 1, 0)));
+    }
+
+    #[test]
+    fn a_run_at_or_after_the_slot_fills_it() {
+        let runs = [run(at(17, 1, 0), "completed", false)];
+        assert_eq!(missed_slot(&nightly(), 20, &runs, at(17, 9, 12)), None);
+        let failed = [run(at(17, 9, 20), "failed", false)];
+        assert_eq!(missed_slot(&nightly(), 20, &failed, at(17, 9, 30)), None);
+    }
+
+    #[test]
+    fn skipped_and_interrupted_runs_leave_the_slot_missed() {
+        let runs = [
+            run(at(17, 1, 0), "skipped", true),
+            run(at(17, 1, 1), "interrupted", false),
+        ];
+        let slot = missed_slot(&nightly(), 20, &runs, at(17, 9, 12));
+        assert_eq!(slot, Some(at(17, 1, 0)));
+    }
+
+    #[test]
+    fn a_never_run_mission_catches_up_its_slot() {
+        assert_eq!(
+            missed_slot(&nightly(), 20, &[], at(17, 9, 12)),
+            Some(at(17, 1, 0))
+        );
+    }
+
+    #[test]
+    fn a_slot_older_than_the_window_is_let_go() {
+        // 00:30: the last slot is yesterday's 01:00, 23.5 h back.
+        assert_eq!(missed_slot(&nightly(), 20, &[], at(17, 0, 30)), None);
+    }
+
+    #[test]
+    fn the_current_minute_belongs_to_the_cron_tick() {
+        let now = at(17, 1, 0) + chrono::TimeDelta::seconds(30);
+        assert_eq!(missed_slot(&nightly(), 20, &[], now), None);
+        assert_eq!(
+            missed_slot(&nightly(), 20, &[], at(17, 1, 1)),
+            Some(at(17, 1, 0))
+        );
+    }
+
+    #[test]
+    fn weekday_slots_skip_the_weekend() {
+        // Reports: 9:00 and 18:00 on weekdays, 12 h to catch up. Saturday
+        // 10:00 — the last slot is Friday 18:00, 16 h back.
+        let schedule = super::super::parse_cron("0 9,18 * * 1-5").unwrap();
+        assert_eq!(missed_slot(&schedule, 12, &[], at(19, 10, 0)), None);
+        assert_eq!(
+            missed_slot(&schedule, 12, &[], at(18, 23, 0)),
+            Some(at(18, 18, 0))
+        );
+    }
 }
