@@ -232,7 +232,8 @@ factor (Retina). Single-display first; multi-monitor is a follow-up.
 
 ## Menubar presence
 
-Designed, not built. Lives in `linggen-app/shell` (`menubar.rs`), gated on
+v1 (local) built — `linggen-app` `cdb13c2`; the daemon tier (`talk`/`mood`)
+is designed, not built. Lives in `linggen-app/shell` (`menubar.rs`), gated on
 `[features] menubar`; same wiring pattern as `pet.rs`.
 
 A macOS tray item (`NSStatusItem` via Tauri `TrayIconBuilder`) is Yinyue's
