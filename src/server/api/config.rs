@@ -149,8 +149,13 @@ fn key_of(v: &serde_json::Value) -> Option<Option<String>> {
 
 fn endpoint_of(v: &serde_json::Value) -> Option<(String, String)> {
     let obj = v.as_object()?;
-    match (obj.get("provider").and_then(|p| p.as_str()), obj.get("url").and_then(|u| u.as_str())) {
-        (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => Some((p.to_string(), u.to_string())),
+    match (
+        obj.get("provider").and_then(|p| p.as_str()),
+        obj.get("url").and_then(|u| u.as_str()),
+    ) {
+        (Some(p), Some(u)) if !p.is_empty() && !u.is_empty() => {
+            Some((p.to_string(), u.to_string()))
+        }
         _ => None,
     }
 }
@@ -163,7 +168,9 @@ pub(crate) async fn update_credentials_api(
     let config = state.manager.get_config_snapshot().await;
     let mut creds = Credentials::load_for(&creds_file, &config.models);
 
-    let sectioned = ["endpoints", "models", "services"].iter().any(|k| body.entries.contains_key(*k));
+    let sectioned = ["endpoints", "models", "services"]
+        .iter()
+        .any(|k| body.entries.contains_key(*k));
     if sectioned {
         let listed: Vec<&serde_json::Value> = match body.entries.get("endpoints") {
             Some(serde_json::Value::Array(items)) => items.iter().collect(),
@@ -176,12 +183,24 @@ pub(crate) async fn update_credentials_api(
                 creds.set_endpoint_key(&p, &u, key);
             }
         }
-        for (id, v) in body.entries.get("models").and_then(|e| e.as_object()).into_iter().flatten() {
+        for (id, v) in body
+            .entries
+            .get("models")
+            .and_then(|e| e.as_object())
+            .into_iter()
+            .flatten()
+        {
             if let Some(key) = key_of(v) {
                 creds.set_model_override(id, key);
             }
         }
-        for (id, v) in body.entries.get("services").and_then(|e| e.as_object()).into_iter().flatten() {
+        for (id, v) in body
+            .entries
+            .get("services")
+            .and_then(|e| e.as_object())
+            .into_iter()
+            .flatten()
+        {
             if let Some(key) = key_of(v) {
                 creds.set_service_key(id, key);
             }
@@ -190,7 +209,11 @@ pub(crate) async fn update_credentials_api(
         for (model_id, v) in &body.entries {
             let Some(key) = key_of(v) else { continue };
             let endpoint = endpoint_of(v).or_else(|| {
-                config.models.iter().find(|m| &m.id == model_id).map(|m| (m.provider.clone(), m.url.clone()))
+                config
+                    .models
+                    .iter()
+                    .find(|m| &m.id == model_id)
+                    .map(|m| (m.provider.clone(), m.url.clone()))
             });
             match endpoint {
                 Some((p, u)) => {

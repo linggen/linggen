@@ -27,7 +27,10 @@ async fn cloud_skill(state: &Arc<ServerState>, name: &str) -> Result<Skill, Resp
     Ok(skill)
 }
 
-pub async fn get_cloud(State(state): State<Arc<ServerState>>, Path(name): Path<String>) -> Response {
+pub async fn get_cloud(
+    State(state): State<Arc<ServerState>>,
+    Path(name): Path<String>,
+) -> Response {
     let skill = match cloud_skill(&state, &name).await {
         Ok(s) => s,
         Err(r) => return r,
@@ -41,7 +44,10 @@ pub async fn get_cloud(State(state): State<Arc<ServerState>>, Path(name): Path<S
     Json(serde_json::json!({ "signed_in": signed_in, "meter": meter })).into_response()
 }
 
-pub async fn post_sync(State(state): State<Arc<ServerState>>, Path(name): Path<String>) -> Response {
+pub async fn post_sync(
+    State(state): State<Arc<ServerState>>,
+    Path(name): Path<String>,
+) -> Response {
     let skill = match cloud_skill(&state, &name).await {
         Ok(s) => s,
         Err(r) => return r,
@@ -53,7 +59,9 @@ pub async fn post_sync(State(state): State<Arc<ServerState>>, Path(name): Path<S
         return (StatusCode::NOT_FOUND, "that skill keeps no save").into_response();
     };
     match sync(&save).await {
-        Ok((action, version)) => Json(serde_json::json!({ "done": action, "version": version })).into_response(),
+        Ok((action, version)) => {
+            Json(serde_json::json!({ "done": action, "version": version })).into_response()
+        }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
     }
 }

@@ -543,7 +543,10 @@ fn resolve_model_catalog(
     allow: &[String],
     config: &crate::config::Config,
 ) -> Vec<serde_json::Value> {
-    let creds = crate::credentials::Credentials::load_for(&crate::credentials::credentials_file(), &config.models);
+    let creds = crate::credentials::Credentials::load_for(
+        &crate::credentials::credentials_file(),
+        &config.models,
+    );
     allow
         .iter()
         .map(|id| {
