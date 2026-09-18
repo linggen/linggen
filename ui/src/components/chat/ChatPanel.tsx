@@ -226,7 +226,10 @@ const ChatMessageRow = React.memo<{
       ref={userMsgIndex != null ? registerRef : undefined}
       className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
     >
-      <div className={cn(isUser ? 'max-w-[96%]' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
+      {/* A typed message keeps the shape it was typed in: line breaks and
+          indentation are how a list, an address block or a pasted email
+          reads. Rendering it raw collapsed all of it into one paragraph. */}
+      <div className={cn(isUser ? 'max-w-[96%] whitespace-pre-wrap break-words' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
         {senderTag && (
           <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
             [{senderTag}]

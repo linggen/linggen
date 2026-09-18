@@ -182,7 +182,8 @@ export const RoomChatPanel: React.FC = () => {
               {!msg.isMine && (
                 <span className="text-[9px] text-slate-400 ml-0.5">{msg.senderName}</span>
               )}
-              <div className={`text-[12px] px-2 py-1 rounded-lg ${
+              {/* Typed line breaks survive here too — same reason as the chat panel. */}
+              <div className={`text-[12px] px-2 py-1 rounded-lg whitespace-pre-wrap break-words ${
                 msg.isMine
                   ? 'bg-blue-500 text-white rounded-tr-sm'
                   : 'bg-slate-100 dark:bg-white/[0.06] text-slate-800 dark:text-slate-200 rounded-tl-sm'
