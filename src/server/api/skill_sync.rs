@@ -133,6 +133,16 @@ pub(crate) async fn get_items(
                 .iter()
                 .map(|e| format!("{prefix}.{e}"))
                 .find(|f| pool.contains(f));
+            // The size travels with the name. A companion was presence-only, so
+            // a device that already had one never fetched it again — a lyrics
+            // file corrected on the Mac could not reach the phone (2026-09-18).
+            if let Some(name) = &found {
+                let size = s
+                    .dir_for(c.subdir.as_deref())
+                    .map(|d| std::fs::metadata(d.join(name)).map(|m| m.len()).unwrap_or(0))
+                    .unwrap_or(0);
+                item.insert(format!("{}_size", c.name), size.into());
+            }
             item.insert(c.name.clone(), found.into());
         }
         items.push(serde_json::Value::Object(item));
