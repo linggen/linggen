@@ -100,10 +100,18 @@ pub struct YinyuePresenter {
     pub stage: bool,
 }
 
-/// Who holds her among the subscribed surfaces: the first with a stage, else
+/// Who holds her among the subscribed surfaces: the LATEST with a stage, else
 /// the first of all. One device, one voice — every other surface stays blank.
+///
+/// Among stages the newest wins because a stage is a page the person just
+/// opened and is looking at. It was the earliest until 2026-09-21: a reload
+/// then handed her to nobody, since the page's previous pet view — gone, but
+/// its peer not yet reaped — still held the lock and the fresh one waited
+/// behind it. (That day one such peer held her for ninety minutes.) Pet
+/// corners keep first-come: they stay open, and she should not hop between.
 pub fn yinyue_holder_of(reg: &[YinyuePresenter]) -> Option<u64> {
     reg.iter()
+        .rev()
         .find(|p| p.stage)
         .or_else(|| reg.first())
         .map(|p| p.peer_id)
@@ -125,11 +133,18 @@ mod yinyue_presenter_tests {
         assert_eq!(yinyue_holder_of(&[p(1, false), p(2, true)]), Some(2));
     }
     #[test]
-    fn among_stages_the_earlier_holds() {
+    fn among_stages_the_latest_holds() {
+        // A reloaded page's new stage must not wait behind its own ghost.
         assert_eq!(
             yinyue_holder_of(&[p(1, false), p(2, true), p(3, true)]),
-            Some(2)
+            Some(3)
         );
+    }
+    #[test]
+    fn the_latest_stage_leaving_hands_her_back_to_the_one_before() {
+        let mut reg = vec![p(1, false), p(2, true), p(3, true)];
+        reg.retain(|q| q.peer_id != 3);
+        assert_eq!(yinyue_holder_of(&reg), Some(2));
     }
     #[test]
     fn the_stage_leaving_returns_her_to_the_corner() {

@@ -39,6 +39,10 @@ use session::handle_session_message;
 /// Generous on purpose: any packet in either direction resets the clock, so
 /// only a peer that is genuinely stuck ever reaches this.
 const SPIN_LIMIT: Duration = Duration::from_secs(5);
+/// A peer not heard from for this long is gone, whatever ICE believes. A live
+/// one sends consent checks every few seconds; ninety is room for a stalled
+/// tab or a phone changing networks.
+const PEER_SILENCE_LIMIT: Duration = Duration::from_secs(90);
 
 /// Track a run of do-nothing iterations, and report when it has gone on past
 /// [SPIN_LIMIT]. Returns when the stall began, or `None` while still in grace.
@@ -307,6 +311,13 @@ async fn run_peer(
     let mut dc_write_paused = false;
     // Track when ICE entered Disconnected state for timeout-based cleanup.
     let mut disconnected_since: Option<Instant> = None;
+    // When the peer was last heard from at all. A live browser peer is never
+    // quiet: ICE consent checks alone arrive every few seconds. A peer whose
+    // page was reloaded can stay `Connected` for ever in str0m's eyes — it never
+    // reports `Disconnected`, so the timer above never starts — and on
+    // 2026-09-21 six of sixteen such peers were still running an hour later,
+    // one of them holding Yinyue's presenter lock away from every live page.
+    let mut last_heard = Instant::now();
 
     // Track which session IDs belong to this user (for event filtering).
     // Populated from session store on connect, updated on SessionCreated events.
@@ -766,6 +777,13 @@ async fn run_peer(
             }
         };
 
+        // Silence is death, whatever ICE believes.
+        if Instant::now().duration_since(last_heard) > PEER_SILENCE_LIMIT {
+            tracing::info!("WebRTC peer silent for {:?} — exiting", PEER_SILENCE_LIMIT);
+            media_channel::abandon(&mut media_transfer).await;
+            return Ok(());
+        }
+
         // Exit if disconnected for more than 30 seconds (str0m has no Failed/Closed states).
         if let Some(since) = disconnected_since {
             if Instant::now().duration_since(since) > Duration::from_secs(30) {
@@ -900,6 +918,7 @@ async fn run_peer(
                             contents: contents.try_into()?,
                         };
                         rtc.handle_input(Input::Receive(Instant::now(), receive))?;
+                        last_heard = Instant::now();
                         // An inbound packet may carry SCTP acks, which is what
                         // frees send-buffer space — retry any paused write.
                         dc_write_paused = false;
