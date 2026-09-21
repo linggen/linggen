@@ -43,7 +43,16 @@ export const YinyueAvatar: React.FC = () => {
     if (!canvasRef.current) return;
     const stage = new PetStage(canvasRef.current);
     stageRef.current = stage;
-    stage.load('/yinyue.vrm').catch((e) => console.warn('[yinyue] avatar model load failed', e));
+    // A page that stands her in a place (an iframe host) holds a placeholder
+    // until she is DRAWN — the iframe's own load fires long before: the peer
+    // connects, the presenter lock arrives, then the model loads. Tell it.
+    const tellHost = (event: 'ready' | 'gone') => {
+      if (window.parent !== window) window.parent.postMessage({ type: 'linggen-pet', event }, '*');
+    };
+    stage
+      .load('/yinyue.vrm')
+      .then(() => { if (stageRef.current === stage) tellHost('ready'); })
+      .catch((e) => console.warn('[yinyue] avatar model load failed', e));
 
     let raf = 0;
     const tick = () => {
@@ -56,6 +65,7 @@ export const YinyueAvatar: React.FC = () => {
       cancelAnimationFrame(raf);
       stage.dispose();
       stageRef.current = null;
+      tellHost('gone');
     };
   }, []);
 
