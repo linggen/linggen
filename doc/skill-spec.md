@@ -136,6 +136,7 @@ Three groups of fields. Standard fields work across tools; the others are extens
 | `install` | Script that runs once on installation |
 | `sync` | Declares a directory the engine serves to paired devices (see "Device sync") |
 | `cloud` | A save and/or a token meter kept on linggen.dev for the account (see "Cloud") |
+| `product` | The Linggen Cloud product its turns bill to (see "Product") |
 | `closing-ask` | `true`: the skill's tools hand each turn its closing question; the engine asks it when the model doesn't (see "Closing question") |
 | `queue` | `steer` (default) or `after-turn`: whether a message sent mid-turn steers the turn or waits for it (see "Queue") |
 | `requires` | External dependencies to resolve at install |
@@ -259,6 +260,10 @@ cloud:
 - **`save`** — pulled before a turn, synced after every model call and at the turn's end. The site versions it; a stale write is refused and the account's copy replaces the file. Ledger: `~/.linggen/sync/cloud-{skill}.json`. The path must stay inside the skill directory.
 - **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered — the prompt not served from the provider's cache, plus the output (`TokenUsage::metered`): a pace counts what the user did, not the cached world. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
 - The page reads `GET /api/skill-cloud/{skill}` (signed in, the meter's reading) and calls `POST /api/skill-cloud/{skill}/sync` on open and after a change it made itself.
+
+## Product
+
+`product: cfo` names the Linggen Cloud product a skill's turns bill to: the engine sends it as `X-Linggen-App` on every Linggen Cloud call in a session bound to the skill. Absent, turns bill the account's shared `linggen` bucket. linggen.dev accepts only products it knows (an unknown one is refused with 400 `unknown_app`), so declare one only when the site sells it. Unlike `cloud`, it needs no sign-in of its own.
 
 ## Closing question
 

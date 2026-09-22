@@ -369,6 +369,9 @@ struct SkillFrontmatter {
     /// `doc/skill-spec.md` § Cloud.
     #[serde(default)]
     cloud: Option<CloudConfig>,
+    /// The Linggen Cloud product this skill bills to — see `Skill::product`.
+    #[serde(default)]
+    product: Option<String>,
     #[serde(default)]
     suggestions: Vec<String>,
     /// The tools' results carry the turn's closing question — see
@@ -642,6 +645,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         install: frontmatter.install,
         sync: frontmatter.sync,
         cloud: frontmatter.cloud,
+        product: frontmatter.product,
         suggestions: frontmatter.suggestions,
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
@@ -886,6 +890,19 @@ trigger: "/commit"
 Help commit."#;
         let skill = parse_skill_text(text, SkillSource::Project).unwrap();
         assert_eq!(skill.trigger.as_deref(), Some("/commit"));
+    }
+
+    /// The billing product is the skill's own declaration — the engine keeps
+    /// no list of apps — and a skill that declares none bills the shared bucket.
+    #[test]
+    fn a_skill_declares_its_own_product() {
+        let text = "---\nname: cfo\ndescription: Money\nproduct: cfo\n---\nBody.";
+        let skill = parse_skill_text(text, SkillSource::Global).unwrap();
+        assert_eq!(skill.product.as_deref(), Some("cfo"));
+        assert!(skill.cloud.is_none(), "a product needs no cloud, so no sign-in gate");
+
+        let plain = parse_skill_text("---\nname: dj\ndescription: Music\n---\nBody.", SkillSource::Global).unwrap();
+        assert!(plain.product.is_none());
     }
 
     #[test]

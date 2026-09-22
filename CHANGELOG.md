@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- **A skill declares its billing product** — `product: cfo` in SKILL.md
+  names the Linggen Cloud product its turns bill to (`X-Linggen-App`). The
+  engine's hard-coded list of app names is gone; a skill without one bills
+  the shared bucket.
 - **ChatGPT built-ins are GPT-6 Sol and Luna** — the three GPT-5.6 models
   (Sol, Terra, Luna) are retired; `gpt-6-luna` is the default. Saved
   defaults, Yinyue's model and each paired phone's model list move on load

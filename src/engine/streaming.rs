@@ -158,13 +158,10 @@ pub(crate) fn check_context_staleness(prev_hash: Option<u64>, ws_root: &Path) ->
 
 impl AgentEngine {
     /// App product for per-app usage attribution on the Linggen Cloud proxy
-    /// (X-Linggen-App): the session's bound skill, when it is a branded-app
-    /// product. Everything else meters the shared 'linggen' bucket.
+    /// (X-Linggen-App): what the session's bound skill declares as its
+    /// `product`. Everything else meters the shared 'linggen' bucket.
     pub(crate) fn app_product(&self) -> Option<&str> {
-        self.active_skill
-            .as_ref()
-            .map(|s| s.name.as_str())
-            .filter(|n| crate::provider::models::is_app_product(n))
+        self.active_skill.as_ref()?.product.as_deref()
     }
 
     /// Stream model output with thinking-token forwarding.

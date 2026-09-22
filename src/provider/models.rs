@@ -1074,21 +1074,6 @@ pub fn canonical_model_id(id: &str) -> &str {
     }
 }
 
-/// Branded-app product ids accepted by the Linggen Cloud proxy's
-/// X-Linggen-App header — mirrors KNOWN_APPS in linggensite's entitlement
-/// layer. The proxy rejects unknown ids, so only these skill names are sent
-/// as usage attribution; every other session bills the shared 'linggen'
-/// bucket.
-pub fn is_app_product(skill_name: &str) -> bool {
-    // The shifu skill has been renamed twice; installs still reporting either
-    // older slug must keep billing to their own bucket rather than the shared
-    // one, so all three names count.
-    matches!(
-        skill_name,
-        "apple-shifu" | "mac-shifu" | "sys-doctor" | "cfo" | "pulse"
-    )
-}
-
 fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     const CLOUD_MODEL_ID: &str = LINGGEN_CLOUD_MODEL_ID;
     if configs.iter().any(|c| c.id == CLOUD_MODEL_ID) {

@@ -180,6 +180,12 @@ pub struct Skill {
     /// `CloudConfig`.
     #[serde(default)]
     pub cloud: Option<CloudConfig>,
+    /// The Linggen Cloud product this skill's turns bill to (sent as
+    /// X-Linggen-App). Absent: the shared 'linggen' bucket. Declared by the
+    /// skill so the engine never names an app — see `doc/skill-spec.md`
+    /// § Product.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
     /// Starter prompts shown as buttons above the skill's chat — see
     /// `doc/chat-spec.md` § Suggestions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
