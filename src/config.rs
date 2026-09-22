@@ -485,26 +485,30 @@ impl Config {
     /// Migrate persisted state left behind by a ChatGPT built-in generation
     /// bump: drop stale copies of a retired built-in (same id + chatgpt_oauth
     /// — a custom API-key entry that happens to reuse the id is kept), and
-    /// re-point routing defaults at the current built-in when the retired id
-    /// no longer resolves to any configured model.
+    /// move routing defaults and the pet's pin to the retired id's successor
+    /// when the retired id no longer resolves to any configured model.
     fn migrate_retired_chatgpt_builtins(&mut self) {
-        use crate::provider::models::{CHATGPT_BUILTIN_MODEL_ID, CHATGPT_RETIRED_MODEL_IDS};
-        let retired = |id: &str| CHATGPT_RETIRED_MODEL_IDS.contains(&id);
+        use crate::provider::models::chatgpt_successor;
 
-        self.models
-            .retain(|m| !(retired(&m.id) && m.auth_mode.as_deref() == Some("chatgpt_oauth")));
+        self.models.retain(|m| {
+            !(chatgpt_successor(&m.id).is_some() && m.auth_mode.as_deref() == Some("chatgpt_oauth"))
+        });
 
-        let surviving: std::collections::HashSet<&str> =
-            self.models.iter().map(|m| m.id.as_str()).collect();
+        let surviving: std::collections::HashSet<String> =
+            self.models.iter().map(|m| m.id.clone()).collect();
+        let successor = |id: &str| chatgpt_successor(id).filter(|_| !surviving.contains(id));
         for dm in &mut self.routing.default_models {
-            if retired(dm) && !surviving.contains(dm.as_str()) {
-                *dm = CHATGPT_BUILTIN_MODEL_ID.to_string();
+            if let Some(next) = successor(dm) {
+                *dm = next.to_string();
             }
         }
         let mut seen = std::collections::HashSet::new();
         self.routing
             .default_models
             .retain(|id| seen.insert(id.clone()));
+        if let Some(next) = successor(&self.pet.model) {
+            self.pet.model = next.to_string();
+        }
     }
 
     /// Re-point persisted references to a retired Linggen Cloud id (routing
@@ -949,6 +953,32 @@ mod tests {
             toml::to_string(&cfg).unwrap().trim(),
             "url = \"0.0.0.0:9600\""
         );
+    }
+
+    /// A GPT generation bump moves each retired built-in to its successor —
+    /// defaults and the pet's pin alike — and drops stale oauth copies; a
+    /// user's own model under a retired id is theirs and stays.
+    #[test]
+    fn retired_chatgpt_ids_follow_the_bump() {
+        let mut cfg = Config::default();
+        cfg.routing.default_models = vec![
+            "gpt-5.6-terra".into(),
+            "gpt-5.6-luna".into(),
+            "gpt-5.6-sol".into(),
+        ];
+        cfg.pet.model = "gpt-5.6-luna".into();
+        cfg.migrate_retired_chatgpt_builtins();
+        assert_eq!(
+            cfg.routing.default_models,
+            vec!["gpt-6-luna".to_string(), "gpt-6-sol".to_string()]
+        );
+        assert_eq!(cfg.pet.model, "gpt-6-luna");
+
+        let mut own = valid_config();
+        own.models[0].id = "gpt-5.6-sol".into();
+        own.routing.default_models = vec!["gpt-5.6-sol".into()];
+        own.migrate_retired_chatgpt_builtins();
+        assert_eq!(own.routing.default_models, vec!["gpt-5.6-sol".to_string()]);
     }
 
     /// A retired Linggen Cloud id persisted as a default or a pet pin follows

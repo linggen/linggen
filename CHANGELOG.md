@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **ChatGPT built-ins are GPT-6 Sol and Luna** — the three GPT-5.6 models
+  (Sol, Terra, Luna) are retired; `gpt-6-luna` is the default. Saved
+  defaults, Yinyue's model and each paired phone's model list move on load
+  (5.6 Sol → 6 Sol, Terra and Luna → 6 Luna). The Codex backend refuses
+  GPT-6 under older clients, so requests now identify as Codex 0.155.1.
+
 ## [1.8.2] - 2026-09-10 — a person's turn reaches the model verbatim
 
 - **A chat turn is no longer wrapped as a task** — every turn used to arrive

@@ -44,7 +44,7 @@ just sign in:
 ling account login  # Opens browser → sign in to linggen.dev
 ```
 
-The ChatGPT built-ins (`gpt-5.6-*`) are also present in every install and
+The ChatGPT built-ins (`gpt-6-sol`, `gpt-6-luna` — Luna is the default) are also present in every install and
 need only a ChatGPT sign-in (Settings → Models → Sign in with ChatGPT).
 
 The model is auto-configured. Tokens are stored in `~/.linggen/codex_auth.json` and auto-refresh. To sign out: `ling auth logout`.

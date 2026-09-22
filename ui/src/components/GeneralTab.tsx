@@ -23,7 +23,7 @@ export const GeneralTab: React.FC<{
   }, [config.agent.compact_threshold]);
 
   // Pet model picker: the built-in models (runtime-injected — ChatGPT
-  // gpt-5.6 family, Linggen Cloud) plus the user's actually-configured
+  // gpt-6 family, Linggen Cloud) plus the user's actually-configured
   // models, so we never offer an id that isn't wired up (an unconfigured
   // pick fails to resolve). "auto" is added directly in the <select>.
   const [builtins, setBuiltins] = React.useState<{ id: string; authOk: boolean }[]>([]);

@@ -885,7 +885,7 @@ impl ModelManager {
             return 200_000;
         }
         // GPT models
-        if m.contains("gpt-4o") || m.contains("gpt-5") || m.contains("gpt-4.1") {
+        if m.contains("gpt-4o") || m.contains("gpt-5") || m.contains("gpt-6") || m.contains("gpt-4.1") {
             return 128_000;
         }
         if m.contains("gpt-4-turbo") || m.contains("gpt-4-1106") {
@@ -984,6 +984,7 @@ impl ModelManager {
             || m.contains("gpt-4o")
             || m.contains("gpt-4.1")
             || m.contains("gpt-5")
+            || m.contains("gpt-6")
             || m.contains("claude")
             || m.contains("vision")
             || m.contains("-vl")
@@ -1110,28 +1111,40 @@ fn inject_linggen_cloud(configs: &mut Vec<ModelConfig>) {
     });
 }
 
-/// Primary built-in ChatGPT model — the migration target for retired ids
-/// and the one routing defaults re-point to after a generation bump.
-/// Bumping to a newer OpenAI generation: change the ids here AND move the
-/// old ids into CHATGPT_RETIRED_MODEL_IDS so persisted configs migrate on
-/// load, then release.
-pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-5.6-terra";
+/// Primary built-in ChatGPT model — the default routing target and the
+/// successor for any retired id without a closer match.
+/// Bumping to a newer OpenAI generation: change the ids here AND list each
+/// old id with its successor in CHATGPT_RETIRED_MODEL_IDS so persisted
+/// configs migrate on load, then release.
+pub const CHATGPT_BUILTIN_MODEL_ID: &str = "gpt-6-luna";
 
 /// All built-in ChatGPT models — always present, using the user's own
-/// ChatGPT Plus/Pro subscription via OAuth (no API key). The GPT-5.6
-/// family: Sol (flagship), Terra (balanced), Luna (fast/cheap). Unlike the
+/// ChatGPT subscription via OAuth (no API key). The GPT-6 family: Sol
+/// (flagship, paid plans) and Luna (fast, every plan). Unlike the
 /// Linggen Cloud built-in, these ALWAYS win: any user-configured entry
 /// with one of these ids is replaced, not deferred to, so it's never
 /// rendered as a raw editable duplicate — sign in and star one, nothing to
 /// configure. A user wanting a different/custom ChatGPT-backed model
 /// should give it a different id.
-pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+pub const CHATGPT_BUILTIN_MODEL_IDS: &[&str] = &["gpt-6-sol", "gpt-6-luna"];
 
-/// Previous ChatGPT built-in ids. Config::load migrates these: stale
-/// persisted copies of the old built-in are dropped and starred routing
-/// defaults follow the bump to CHATGPT_BUILTIN_MODEL_ID, so users don't
-/// end up with a dangling default + orphaned editable card after a bump.
-pub const CHATGPT_RETIRED_MODEL_IDS: &[&str] = &["gpt-5.5"];
+/// Previous ChatGPT built-in ids, each with the built-in it moves to.
+/// Config::load and the paired-device list migrate these, so a bump never
+/// leaves a dangling default, pet pin, or orphaned editable card.
+pub const CHATGPT_RETIRED_MODEL_IDS: &[(&str, &str)] = &[
+    ("gpt-5.5", CHATGPT_BUILTIN_MODEL_ID),
+    ("gpt-5.6-sol", "gpt-6-sol"),
+    ("gpt-5.6-terra", CHATGPT_BUILTIN_MODEL_ID),
+    ("gpt-5.6-luna", "gpt-6-luna"),
+];
+
+/// The current built-in a retired ChatGPT id moves to, if it is retired.
+pub fn chatgpt_successor(id: &str) -> Option<&'static str> {
+    CHATGPT_RETIRED_MODEL_IDS
+        .iter()
+        .find(|(old, _)| *old == id)
+        .map(|(_, new)| *new)
+}
 
 fn inject_chatgpt_builtin(configs: &mut Vec<ModelConfig>) {
     for id in CHATGPT_BUILTIN_MODEL_IDS {
@@ -1429,7 +1442,7 @@ mod tests {
 
         // Families that do see keep seeing without anyone editing a config.
         assert!(v(&[], "gemini-3.1-flash-lite-preview"));
-        assert!(v(&[], "gpt-5.6-terra"));
+        assert!(v(&[], "gpt-6-luna"));
         assert!(v(&[], "claude-sonnet-4-6"));
         assert!(v(&[], "qwen3-vl"));
         assert!(v(&[], "llava"));
@@ -1440,7 +1453,7 @@ mod tests {
 
         // What the config says always wins, in both directions.
         assert!(v(&["vision"], "some-local-thing"));
-        assert!(!v(&["no-vision"], "gpt-5.6-terra"));
+        assert!(!v(&["no-vision"], "gpt-6-luna"));
         assert!(!v(&["vision", "no-vision"], "anything"));
     }
 

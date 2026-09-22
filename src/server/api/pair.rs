@@ -116,11 +116,38 @@ pub fn load_devices() -> Vec<PairedDevice> {
             d.settings.append(&mut default_device_settings());
             seeded = true;
         }
+        seeded |= migrate_retired_models(&mut d.settings);
     }
     if seeded {
         let _ = save_devices(&devices);
     }
     devices
+}
+
+/// A GPT generation bump moves each retired ChatGPT id in a phone's
+/// allow-list to its successor (deduped), so the phone never keeps offering
+/// a model the backend no longer serves. True when the list changed.
+fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    use crate::provider::models::chatgpt_successor;
+    let Some(list) = settings.get_mut("models").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    if !list
+        .iter()
+        .any(|x| x.as_str().is_some_and(|id| chatgpt_successor(id).is_some()))
+    {
+        return false;
+    }
+    let mut seen = std::collections::HashSet::new();
+    *list = std::mem::take(list)
+        .into_iter()
+        .map(|x| match x.as_str().and_then(chatgpt_successor) {
+            Some(next) => serde_json::Value::from(next),
+            None => x,
+        })
+        .filter(|x| seen.insert(x.to_string()))
+        .collect();
+    true
 }
 
 fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
@@ -1177,4 +1204,29 @@ pub(crate) async fn post_pair_qr_confirm(
         "relay_grant": grant_for(&device).await,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_phone_allow_list_follows_the_gpt_bump() {
+        let mut s = serde_json::Map::new();
+        s.insert(
+            "models".into(),
+            serde_json::json!([
+                "deepseek-flash",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol"
+            ]),
+        );
+        assert!(migrate_retired_models(&mut s));
+        assert_eq!(
+            s["models"],
+            serde_json::json!(["deepseek-flash", "gpt-6-luna", "gpt-6-sol"])
+        );
+        assert!(!migrate_retired_models(&mut s));
+    }
 }

@@ -493,6 +493,7 @@ impl AgentEngine {
                 );
                 let m = self.model_id.to_lowercase();
                 let is_reasoning_model = m.contains("gpt-5")
+                    || m.contains("gpt-6")
                     || m.contains("o1")
                     || m.contains("o3")
                     || m.contains("o4")

@@ -174,13 +174,14 @@ impl OpenAiClient {
                 rb = rb.header("ChatGPT-Account-Id", account_id);
             }
             // The Codex backend routes model slugs by originator+version;
-            // with no originator, gpt-5.6-luna resolves to a missing
-            // internal engine and 404s ("Model not found") while sol/terra
-            // happen to resolve. Identify as the Codex CLI — the
-            // combination the backend routes every published model for
-            // (openai/codex#31967).
+            // with no originator, gpt-5.6-luna resolved to a missing
+            // internal engine and 404'd ("Model not found"), and a version
+            // older than a model's launch refuses it ("not supported when
+            // using Codex with a ChatGPT account" — gpt-6-* under 0.144.1).
+            // Identify as a current Codex CLI (openai/codex#31967); bump
+            // the version with each built-in generation.
             rb = rb.header("originator", "codex_cli_rs");
-            rb = rb.header("version", "0.144.1");
+            rb = rb.header("version", "0.155.1");
         } else if self.linggen_account_live {
             if let Some((token, _)) = crate::account::resolve_token() {
                 rb = rb.header("Authorization", format!("Bearer {}", token));
@@ -336,7 +337,7 @@ impl OpenAiClient {
     fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
         let m = model.to_lowercase();
         // OpenAI reasoning models
-        if m.contains("gpt-5") || m.contains("o3") || m.contains("o4") || m.contains("o1") {
+        if m.contains("gpt-5") || m.contains("gpt-6") || m.contains("o3") || m.contains("o4") || m.contains("o1") {
             return true;
         }
         // Gemini 2.5 thinking models
