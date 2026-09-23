@@ -33,6 +33,11 @@ export interface ChatInputProps {
   /** The session this chat shows. A skill page's embedded chat has its own;
    *  the app's global store is empty there, so the queue's ✕ did nothing. */
   sessionId?: string | null;
+  /** The question open in this chat (AskUser), if any. Words typed while it
+   *  is open ARE its answer — the "Other" text — never a message queued
+   *  behind it (his, 2026-09-23). A page tap takes another path and waits. */
+  openQuestion?: import('../../types').PendingAskUser | null;
+  onAnswerQuestion?: (questionId: string, answers: import('../../types').AskUserAnswer[]) => void;
   overlay?: string | null;
   onDismissOverlay?: () => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -57,6 +62,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   activePlan,
   visibleQueued,
   sessionId,
+  openQuestion,
+  onAnswerQuestion,
   overlay,
   onDismissOverlay,
   inputRef,
@@ -131,6 +138,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
 
     const targetAgent = mentionAgent || selectedAgent;
+    if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend && !mentionAgent
+        && normalizeAgentKey(openQuestion.agentId) === normalizeAgentKey(targetAgent)) {
+      onAnswerQuestion(openQuestion.questionId, openQuestion.questions.map((_, i) => ({
+        question_index: i, selected: [], custom_text: i === 0 ? userMessage : null,
+      })));
+      window.setTimeout(resizeInput, 0);
+      return;
+    }
     onSendMessage(userMessage, targetAgent, imagesToSend);
     window.setTimeout(resizeInput, 0);
   };

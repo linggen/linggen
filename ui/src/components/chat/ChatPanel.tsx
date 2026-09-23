@@ -992,6 +992,8 @@ export const ChatPanel: React.FC<{
         activePlan={activePlan}
         visibleQueued={visibleQueued}
         sessionId={sessionId}
+        openQuestion={pendingAskUser && !askUserBelongsToSubagent && pendingAskUser.questions[0]?.header !== 'Permission' ? pendingAskUser : null}
+        onAnswerQuestion={onRespondToAskUser}
         overlay={overlay}
         onDismissOverlay={onDismissOverlay}
         inputRef={inputRef}
