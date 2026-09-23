@@ -6,6 +6,7 @@ mod mcp;
 mod mcp_agent;
 pub(crate) mod rtc;
 mod state;
+mod yinyue_moments;
 mod yinyue_watch;
 
 pub use events::{AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent};
@@ -1279,6 +1280,7 @@ async fn prepare_server(
         .route("/api/bridge/status", get(bridge::status_handler))
         .route("/mcp", post(mcp::post_handler).get(mcp::get_handler))
         .route("/api/yinyue/chat", post(api::yinyue::chat_handler))
+        .route("/api/yinyue/event", post(api::yinyue::event_handler))
         .route("/api/presence", post(api::yinyue::presence_handler))
         .route("/api/rtc/whip", post(rtc::whip_handler))
         .route("/api/rtc/token", get(rtc::whip_token_handler))
@@ -1386,6 +1388,10 @@ async fn prepare_server(
         // now and then, makes one small unprompted remark in her own voice
         // (mostly she stays quiet). Sibling to the watch loop, not a mission.
         tokio::spawn(yinyue_watch::yinyue_ambient_loop(state.clone()));
+        // App moments: what an app posts to /api/yinyue/event waits until the
+        // user has gone quiet, then she is woken once to judge a word. See
+        // server/yinyue_moments.rs.
+        tokio::spawn(yinyue_moments::yinyue_moment_loop(state.clone()));
     }
 
     // Perception. Two loops: one tells the user's connected devices what is

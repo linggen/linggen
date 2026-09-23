@@ -29,6 +29,9 @@ pub(crate) struct SayRequest {
 pub fn emit_speak(state: &Arc<ServerState>, text: String, emotion: Option<String>) {
     // Muted, the line still goes out — as words only.
     let voice = !state.manager.pet_muted();
+    // Every line she says, from any path, restarts the quiet an app moment
+    // waits for — a line an app had her say directly counts too.
+    crate::server::yinyue_moments::note_spoke();
     // Err only means no surface is currently connected — nothing to hear her.
     let _ = state.events_tx.send(ServerEvent::PetSpeak {
         text,
@@ -77,6 +80,51 @@ pub(crate) async fn say_handler(
         req.text.len()
     );
     emit_speak(&state, req.text, req.emotion);
+    (StatusCode::OK, "ok").into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct EventRequest {
+    pub app: String,
+    pub text: String,
+    #[serde(default)]
+    pub big: bool,
+    #[serde(default)]
+    pub mood: Option<String>,
+}
+
+const EVENT_TEXT_MAX: usize = 300;
+
+/// POST /api/yinyue/event — `{ app, text, big?, mood? }`. An app tells Yinyue
+/// what just happened, as a plain fact. Nothing is said now: the moment waits
+/// until the user has gone quiet (or, `big`, until the screen settles), and
+/// then she judges whether a word fits (server/yinyue_moments.rs).
+pub(crate) async fn event_handler(
+    State(_state): State<Arc<ServerState>>,
+    Json(req): Json<EventRequest>,
+) -> impl IntoResponse {
+    let app = req.app.trim();
+    let text = req.text.trim();
+    if app.is_empty() || app.len() > 40 || text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "app and text are required").into_response();
+    }
+    let text: String = text.chars().take(EVENT_TEXT_MAX).collect();
+    // A mood is a word for her face; anything else is dropped, not refused.
+    let mood = req
+        .mood
+        .filter(|m| !m.is_empty() && m.len() <= 16 && m.chars().all(|c| c.is_ascii_lowercase()));
+    tracing::info!(
+        "[yinyue] app moment from {app} ({} chars, big={})",
+        text.len(),
+        req.big
+    );
+    crate::server::yinyue_moments::push(crate::server::yinyue_moments::Moment {
+        app: app.to_string(),
+        text,
+        big: req.big,
+        mood,
+        at: crate::util::now_ts_secs(),
+    });
     (StatusCode::OK, "ok").into_response()
 }
 

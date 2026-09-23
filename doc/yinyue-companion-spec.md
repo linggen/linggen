@@ -116,6 +116,29 @@ silent**, occasionally a varied line → `PetSpeak`. Anti-repeat via her last li
 Most ticks say nothing; a remark every 10 min on the dot is a cuckoo clock, not a
 companion.
 
+## App moments — an app tells her, she speaks when it has gone quiet
+
+`POST /api/yinyue/event { app, text, big?, mood? }` (`server/yinyue_moments.rs`).
+An app posts what just happened as a plain fact in the user's language — a
+game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
+(24 kept, 15 min stale) and a 5 s tick checks one gate, in code:
+
+- the user is at the screen (a fresh, focused beat) and **not typing**;
+- plain moments: idle ≥ **90 s**, no new moment for **20 s** (the app has
+  settled), and she said nothing for **10 min**;
+- `big` moments (a loss, an elite beaten): skip the idle wait, but the screen
+  settles **6 s** and the cooldown is **3 min**.
+
+Then she is woken once with everything queued (`wake_herald`), in her own
+voice, and may answer `SILENT`. Every `PetSpeak` stamps the cooldown
+(`emit_speak` → `note_spoke`), so a line an app had her say through
+`/api/yinyue/say` counts too. The engine names no app: it carries the app's
+words. Why a gate and not a wake per event: a model asked to respond always
+responds, and a companion told every event talks over the game — silence is
+decided here. `yinyue.md` § Beside them in what they play is how she answers.
+First user: Lingjing (fight outcomes, a 杀招 let go, 气血 at a quarter, too hurt
+to fight).
+
 ## `agent_chat` — general inter-agent messaging
 
 A built-in tool any agent can call: `agent_chat(to, message)`. Replaces a

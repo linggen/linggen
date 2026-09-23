@@ -395,7 +395,7 @@ async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool 
 /// worth a word; `SILENT` means say nothing (the never-nag discipline).
 /// True when she actually spoke — a caller that bought silence with a notice
 /// needs to know whether anyone heard it.
-async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
+pub(crate) async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
     let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
         return false; // run failed or she produced nothing
     };
