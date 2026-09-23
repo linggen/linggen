@@ -487,6 +487,12 @@ impl AgentEngine {
             match result {
                 Ok(result) => {
                     self.last_token_usage = result.token_usage.clone();
+                    if let Some(u) = result.token_usage.as_ref() {
+                        tracing::debug!(
+                            "model call {model_id}: prompt {:?}, cached {:?}, output {:?}",
+                            u.prompt_tokens, u.cached_tokens, u.completion_tokens
+                        );
+                    }
                     self.remember_call(&model_id, messages, tools.as_ref(), &result);
                     self.run_usage.add(&model_id, result.token_usage.as_ref());
                     crate::engine::cloud_meter::after_call(self, result.token_usage.as_ref());

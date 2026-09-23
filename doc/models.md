@@ -79,6 +79,15 @@ Optional fields:
 
 The easiest way to add models: open **Settings → Models** in the browser, click **Add Model**, pick a provider, paste your API key. The health indicator turns green when connected.
 
+## Prompt cache
+
+A provider bills a repeated beginning of a request at a fraction of the price, so the engine keeps each request's beginning the same from turn to turn:
+
+- Only the system messages a request opens with are its system prompt. A system message inside the conversation — a turn's memory recall, a reminder — stays where it is: a `developer` item on the Responses API, a `<system-reminder>` user block on Anthropic, in place on Chat Completions.
+- The ChatGPT backend caches nothing without a key: the engine sends `prompt_cache_key` and the `session_id` header (as Codex CLI does), from the system prompt's hash.
+- Anthropic caches only what a request marks: the engine sends the top-level `cache_control` (automatic caching).
+- OpenAI API keys, Gemini, DeepSeek and Ollama cache a repeated beginning on their own.
+
 ## Credentials
 
 API keys are stored in `~/.linggen/credentials.json` — **not** in the TOML config (which may be committed to git).

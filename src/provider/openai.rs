@@ -408,18 +408,9 @@ impl OpenAiClient {
             // ChatGPT Responses API format
             let url = format!("{}/responses", self.base_url);
             // Separate system instructions from input messages
-            let mut instructions = String::new();
-            let mut input_items: Vec<serde_json::Value> = Vec::new();
-            for msg in messages {
-                if msg.role == "system" {
-                    if !instructions.is_empty() {
-                        instructions.push('\n');
-                    }
-                    instructions.push_str(&msg.content);
-                } else {
-                    input_items.push(responses_api_input_item(msg));
-                }
-            }
+            let (instructions, conversation) = responses_instructions(messages);
+            let input_items: Vec<serde_json::Value> =
+                conversation.iter().map(responses_api_input_item).collect();
             let mut req = serde_json::json!({
                 "model": model,
                 "input": input_items,
@@ -626,15 +617,10 @@ impl OpenAiClient {
         let rb = if self.uses_responses_api() {
             // ChatGPT Responses API with tools
             let url = format!("{}/responses", self.base_url);
-            let mut instructions = String::new();
+            let (instructions, conversation) = responses_instructions(messages);
             let mut input_items: Vec<serde_json::Value> = Vec::new();
-            for msg in messages {
-                if msg.role == "system" {
-                    if !instructions.is_empty() {
-                        instructions.push('\n');
-                    }
-                    instructions.push_str(&msg.content);
-                } else if msg.role == "tool" {
+            for msg in conversation {
+                if msg.role == "tool" {
                     // Tool result messages → function_call_output items
                     let call_id = msg
                         .tool_call_id
@@ -997,10 +983,33 @@ impl OpenAiClient {
 
 /// Build a Responses API input item from a ChatMessage, including images if present.
 /// Responses API uses `input_image` content parts (not `image_url` like Chat Completions).
+/// The Responses API's `instructions`: the system messages the request opens
+/// with — nothing later. A system message inside the conversation (a turn's
+/// memory recall, a reminder) stays where it is, as a `developer` item, so
+/// the request's beginning is the same every turn and the prompt cache holds.
+/// Merging it into `instructions` put a new top on every turn: 0 cached.
+fn responses_instructions(
+    messages: &[crate::message::ChatMessage],
+) -> (String, &[crate::message::ChatMessage]) {
+    let start = messages.iter().position(|m| m.role != "system").unwrap_or(messages.len());
+    let texts: Vec<&str> = messages[..start].iter().map(|m| m.content.as_str()).collect();
+    (texts.join("\n"), &messages[start..])
+}
+
+/// A Responses API role: a system message inside the conversation is a
+/// developer message there.
+fn responses_role(role: &str) -> &str {
+    if role == "system" {
+        "developer"
+    } else {
+        role
+    }
+}
+
 fn responses_api_input_item(msg: &crate::message::ChatMessage) -> serde_json::Value {
     if msg.images.is_empty() {
         serde_json::json!({
-            "role": msg.role,
+            "role": responses_role(&msg.role),
             "content": msg.content,
         })
     } else {
@@ -1015,7 +1024,7 @@ fn responses_api_input_item(msg: &crate::message::ChatMessage) -> serde_json::Va
             }));
         }
         serde_json::json!({
-            "role": msg.role,
+            "role": responses_role(&msg.role),
             "content": content_parts,
         })
     }
@@ -1314,6 +1323,35 @@ fn prompt_cache_key(instructions: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_the_opening_system_messages_are_instructions() {
+        use crate::message::ChatMessage;
+        let turn = |recall: &str| {
+            vec![
+                ChatMessage::new("system", "You are Ling."),
+                ChatMessage::new("user", "hi"),
+                ChatMessage::new("assistant", "hello"),
+                ChatMessage::new("system", recall),
+                ChatMessage::new("user", "is NVDA too big?"),
+            ]
+        };
+        let (first, second) = (turn("From memory: holds NVDA"), turn("From memory: something else"));
+        let (a, rest) = responses_instructions(&first);
+        let (b, _) = responses_instructions(&second);
+        assert_eq!(a, "You are Ling.");
+        assert_eq!(a, b, "a turn's recall never changes the instructions");
+        let items: Vec<_> = rest.iter().map(responses_api_input_item).collect();
+        assert_eq!(items[2], json!({"role": "developer", "content": "From memory: holds NVDA"}));
+        assert_eq!(items.len(), 4, "the recall stays in place, between the turns");
+    }
+
+    #[test]
+    fn the_cache_key_follows_the_instructions() {
+        assert_eq!(prompt_cache_key("You are Ling."), prompt_cache_key("You are Ling."));
+        assert_ne!(prompt_cache_key("You are Ling."), prompt_cache_key("You are Yinyue."));
+        assert_eq!(prompt_cache_key("x").len(), 36, "shaped like a UUID");
+    }
 
     #[test]
     fn wire_tool_def_non_strict_when_any_optional() {

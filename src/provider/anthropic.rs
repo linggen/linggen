@@ -184,11 +184,16 @@ impl AnthropicClient {
         let url = format!("{}/v1/messages", self.base_url);
         let translated = translate_messages(messages);
 
+        // Automatic caching: Anthropic caches only what a request marks, and
+        // one top-level marker moves the breakpoint along the conversation.
+        // Every other provider Linggen speaks to caches a repeated beginning
+        // on its own.
         let mut req = serde_json::json!({
             "model": model,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "messages": translated.messages,
             "stream": true,
+            "cache_control": { "type": "ephemeral" },
         });
         if let Some(system) = translated.system {
             req["system"] = system;
@@ -329,9 +334,22 @@ fn translate_messages(messages: &[ChatMessage]) -> Translated {
 
     for msg in messages {
         match msg.role.as_str() {
-            "system" => {
+            // The request's opening system messages are the `system` field.
+            // One inside the conversation (a turn's memory recall) stays in
+            // place as a reminder the user turn carries — Claude Code's
+            // shape, valid on every model — so earlier turns keep matching
+            // the prompt cache instead of `system` changing every turn.
+            "system" if out.is_empty() => {
                 if !msg.content.is_empty() {
                     system_parts.push((msg.content.clone(), msg.cache_control.clone()));
+                }
+            }
+            "system" => {
+                if !msg.content.is_empty() {
+                    out.push(serde_json::json!({
+                        "role": "user",
+                        "content": format!("<system-reminder>\n{}\n</system-reminder>", msg.content),
+                    }));
                 }
             }
             "tool" => {
@@ -642,5 +660,25 @@ fn normalize_base(url: &str) -> String {
         claude_auth::ANTHROPIC_API_BASE.to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_system_message_inside_the_conversation_stays_in_place() {
+        let t = translate_messages(&[
+            ChatMessage::new("system", "You are Ling."),
+            ChatMessage::new("user", "hi"),
+            ChatMessage::new("assistant", "hello"),
+            ChatMessage::new("system", "From memory: holds NVDA"),
+            ChatMessage::new("user", "is NVDA too big?"),
+        ]);
+        assert_eq!(t.system, Some(serde_json::json!("You are Ling.")));
+        assert_eq!(t.messages.len(), 4);
+        assert_eq!(t.messages[2]["role"], "user");
+        assert_eq!(t.messages[2]["content"], "<system-reminder>\nFrom memory: holds NVDA\n</system-reminder>");
     }
 }
