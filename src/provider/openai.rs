@@ -426,11 +426,13 @@ impl OpenAiClient {
                 "stream": true,
                 "store": false,
             });
+            let cache_key = prompt_cache_key(&instructions);
+            req["prompt_cache_key"] = serde_json::Value::String(cache_key.clone());
             if !instructions.is_empty() {
                 req["instructions"] = serde_json::Value::String(instructions);
             }
             tracing::debug!("Responses API request to {}", url);
-            self.http.post(url).json(&req)
+            self.http.post(url).header("session_id", cache_key).json(&req)
         } else {
             // Standard Chat Completions format
             let url = format!("{}/chat/completions", self.base_url);
@@ -702,11 +704,13 @@ impl OpenAiClient {
                     req["reasoning"] = serde_json::json!({ "effort": e });
                 }
             }
+            let cache_key = prompt_cache_key(&instructions);
+            req["prompt_cache_key"] = serde_json::Value::String(cache_key.clone());
             if !instructions.is_empty() {
                 req["instructions"] = serde_json::Value::String(instructions);
             }
             tracing::debug!("Responses API tool request to {}", url);
-            self.http.post(url).json(&req)
+            self.http.post(url).header("session_id", cache_key).json(&req)
         } else {
             // Standard Chat Completions format
             let url = format!("{}/chat/completions", self.base_url);
@@ -1282,6 +1286,28 @@ struct OaiStreamToolCallFunction {
     name: Option<String>,
     #[serde(default)]
     arguments: Option<String>,
+}
+
+/// Routes requests that share a system prompt to the same cache: a turn's
+/// calls and the next-prompt fork after it (`engine/suggestion.rs`). Sent as
+/// `prompt_cache_key` and the `session_id` header, both where Codex CLI puts
+/// its conversation id, and shaped like one (a UUID).
+fn prompt_cache_key(instructions: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let half = |salt: u8| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (salt, instructions).hash(&mut h);
+        h.finish()
+    };
+    let (a, b) = (half(0), half(1));
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xffff,
+        b >> 48,
+        b & 0xffff_ffff_ffff
+    )
 }
 
 #[cfg(test)]

@@ -32,6 +32,9 @@ export function handleTextSegment(item: UiEvent): void {
 export function handleFollowups(item: UiEvent): void {
   if (!item.session_id) return;
   if (agentTracker.getParent(String(item.agent_id || ''))) return;
+  // The hint is forked after the turn ends; one landing after they already
+  // sent their next message answers a turn that's gone.
+  if (useServerStore.getState().pendingSends[item.session_id]) return;
   useSuggestionStore.getState().setFollowups(item.session_id, item.data?.items ?? []);
 }
 

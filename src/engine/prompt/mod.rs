@@ -673,16 +673,6 @@ impl AgentEngine {
             }
         }
 
-        // --- Follow-up buttons (only when this turn's surface shows them) ---
-        if self.suggest_followups {
-            if let Some(f) = self
-                .prompt_store
-                .get(crate::prompts::keys::RESPONSE_FORMAT_FOLLOWUPS)
-            {
-                system.push_str(f);
-            }
-        }
-
         // --- MCP server instructions ---
         // A connected server states its own rules in `initialize.instructions`;
         // inject them for every server with at least one tool advertised in

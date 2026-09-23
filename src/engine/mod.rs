@@ -4,7 +4,7 @@ mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
-pub mod followups;
+pub mod suggestion;
 pub mod mission;
 pub mod permission;
 mod plan;
@@ -447,7 +447,7 @@ impl AgentEngine {
             let stream_result = self
                 .stream_with_fallback(&state.messages, native_tools.clone())
                 .await?;
-            let raw = self.lift_followups(stream_result.full_text).await;
+            let raw = stream_result.full_text;
             let stream_first_action = stream_result.first_action;
             let native_tool_calls = stream_result.tool_calls;
 

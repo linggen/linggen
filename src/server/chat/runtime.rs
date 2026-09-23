@@ -40,6 +40,8 @@ pub(super) async fn run_loop_with_tracking(
                     .await;
                 if !was_cancelled {
                     crate::telemetry::global().bump("chat.turn_ok");
+                    // The input's grey hint, forked off this turn's last call.
+                    engine.spawn_next_suggestion();
                     // Let Yinyue's watch decide whether to herald it (she
                     // presence-gates: fires on every reply, only worth a word
                     // when away).
