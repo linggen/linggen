@@ -1,9 +1,10 @@
 /**
- * Suggestion buttons above the chat input.
+ * Suggestion buttons above the chat input, and the hint inside it.
  *
- * Three sources; the latest to change wins (doc/chat-spec.md § Suggestions):
- * a skill's starters (read from its frontmatter, not kept here), the page's
- * buttons for what is on screen, and the follow-ups the last reply offered.
+ * Three sources (doc/chat-spec.md § Suggestions): a skill's starters (read
+ * from its frontmatter, not kept here), the page's buttons for what is on
+ * screen, and the follow-ups the last reply offered. The first follow-up is
+ * the input's grey hint — Tab takes it; the row belongs to the page.
  */
 import { create } from 'zustand';
 
@@ -14,7 +15,8 @@ interface SuggestionState {
   /** Set by the app page around this chat — it outlives a New chat. Empty
    *  hands the row back to the starters. */
   page: string[];
-  /** Offered by each session's last reply; cleared when the person sends. */
+  /** Offered by each session's last reply; cleared when the person sends.
+   *  A page change leaves them: they live in the input, the page in the row. */
   followups: Record<string, string[]>;
   setPage: (sessionId: string | null, items: unknown) => void;
   setFollowups: (sessionId: string, items: unknown) => void;
@@ -32,21 +34,24 @@ export function cleanItems(items: unknown): string[] {
   return out.slice(0, MAX_SUGGESTIONS);
 }
 
-/** What the row shows: follow-ups, else the page's, else the starters. */
-export function visibleSuggestions(followups: string[] | undefined, page: string[], starters: string[] | undefined): string[] {
-  if (followups && followups.length > 0) return followups;
+/** The input's grey hint: the reply's first follow-up, what they would
+ *  most likely type next. */
+export function inputHint(followups: string[] | undefined): string | undefined {
+  return followups?.[0];
+}
+
+/** What the row shows: the page's, else the follow-ups the hint didn't
+ *  take ([hinted]: the input shows the first), else the starters. */
+export function visibleSuggestions(followups: string[] | undefined, page: string[], starters: string[] | undefined, hinted = true): string[] {
   if (page.length > 0) return page;
+  if (followups && followups.length > 0) return hinted ? followups.slice(1) : followups;
   return cleanItems(starters);
 }
 
 export const useSuggestionStore = create<SuggestionState>((set) => ({
   page: [],
   followups: {},
-  // A page change is the newest thing on screen — it replaces the follow-ups.
-  setPage: (sessionId, items) => set((s) => ({
-    page: cleanItems(items),
-    followups: sessionId ? { ...s.followups, [sessionId]: [] } : s.followups,
-  })),
+  setPage: (_sessionId, items) => set({ page: cleanItems(items) }),
   setFollowups: (sessionId, items) => set((s) => ({
     followups: { ...s.followups, [sessionId]: cleanItems(items) },
   })),

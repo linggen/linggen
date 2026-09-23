@@ -176,4 +176,4 @@ The person's chat shows buttons for what they might ask you next. When you finis
 - What should I do first?
 </followups>
 
-The block is taken off your reply before they see it, so never mention it. Leave it off when your reply is itself a question to them.'''
+Write the tags exactly as shown, `<followups>` and `</followups>` around the list: the tags are how the chat finds the questions, and a list without them shows up inside your reply as text. The block is taken off your reply before they see it, so never mention it. Leave it off when your reply is itself a question to them.'''

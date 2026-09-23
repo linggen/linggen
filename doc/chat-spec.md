@@ -218,11 +218,11 @@ It waits for the run to end instead when a question is open (a message never can
 
 A row of short buttons above the chat input, so a person can talk to an agent without composing a message. A tap sends the button's words as their own message. The row hides while they type and while a turn runs; at most four buttons.
 
-Three sources; the latest to change wins:
+Three sources. The row shows the page's buttons, else the follow-ups, else the starters. The first follow-up is also the input's grey hint (like Claude Code's): Tab puts it in the input, Enter sends — on the desktop; a phone keyboard has no Tab, so there it stays in the row.
 
 - **Starters** — a skill lists them in its frontmatter (`suggestions`). Shown in the skill's chat until something newer arrives. No model call.
 - **Page** — an app page sets the row for what is on screen (`chat.setSuggestions([...])`, e.g. CFO's Investments tab). An empty list hands the row back to the starters.
-- **Follow-ups** — after a reply, the agent's 2–3 next questions, in the person's voice. The surface asks for them on its turns (`followups` on the chat request); the engine adds a short instruction, the model ends its reply with a `<followups>` block, and the engine hides the block while streaming, lifts it off the saved reply and sends a `followups` event. No extra model call. A reply without them hands the row back to the page or the starters.
+- **Follow-ups** — after a reply, the agent's 2–3 next questions, in the person's voice. The surface asks for them on its turns (`followups` on the chat request); the engine adds a short instruction, the model ends its reply with a `<followups>` block, and the engine hides the block while streaming, lifts it off the saved reply and sends a `followups` event. No extra model call. A reply without them clears the hint and hands the row back to the page or the starters.
 
 Only the Mac chat asks in v1 — the main UI and app embeds. Missions, delegated agents, Yinyue and the phone never do. Settings → "Suggest follow-ups" (`agent.suggest_followups`, on by default) stops the asking; starters and page buttons stay.
 

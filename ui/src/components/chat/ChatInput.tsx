@@ -6,6 +6,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
 import { SuggestionRow } from './SuggestionRow';
+import { inputHint, useSuggestionStore } from '../../stores/suggestionStore';
 import { normalizeAgentKey } from './utils/message';
 import type {
   AgentInfo,
@@ -62,7 +63,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   mobile,
 }) => {
   const [chatInput, setChatInput] = useState('');
+  const hintSessionId = useSessionStore((s) => s.activeSessionId);
+  const followups = useSuggestionStore((s) => (hintSessionId ? s.followups[hintSessionId] : undefined));
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  // The grey hint, CC-style: desktop only — a phone keyboard has no Tab, so
+  // there the follow-ups stay in the row.
+  const hint = !mobile && !isRunning && chatInput === '' && pendingImages.length === 0 ? inputHint(followups) : undefined;
   const [showSkillDropdown, setShowSkillDropdown] = useState(false);
   const [skillFilter, setSkillFilter] = useState('');
   const [showAgentDropdown, setShowAgentDropdown] = useState(false);
@@ -479,6 +485,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         <SuggestionRow
           skills={skills}
           hidden={!!isRunning || chatInput.trim() !== '' || pendingImages.length > 0}
+          hinted={!mobile}
           onPick={(text) => onSendMessage(text)}
         />
         <div className="flex gap-2 bg-white dark:bg-black/20 p-1.5 rounded-xl border border-slate-300/80 dark:border-white/10 relative items-end">
@@ -689,6 +696,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyDown={(e) => {
               // Ignore Enter during IME composition (e.g. Chinese pinyin input)
               if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) return;
+              // Tab takes the grey hint into the input; Enter then sends it.
+              if (e.key === 'Tab' && !e.shiftKey && hint) {
+                e.preventDefault();
+                setChatInput(hint);
+                return;
+              }
               // Skill dropdown keyboard nav
               if (showSkillDropdown && skillSuggestions.length > 0) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -787,7 +800,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setShowFileDropdown(false);
               }
             }}
-            placeholder={mobile ? "Message..." : "Message... (/ for skills, @ for files, Shift+Enter for newline)"}
+            placeholder={hint ? `${hint}   ⇥ Tab` : mobile ? "Message..." : "Message... (/ for skills, @ for files, Shift+Enter for newline)"}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none outline-none resize-none leading-5 overflow-y-hidden",

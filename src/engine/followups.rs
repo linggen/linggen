@@ -13,10 +13,13 @@ const MAX_ITEMS: usize = 3;
 /// A button longer than this is a sentence, not a button — dropped.
 const MAX_CHARS: usize = 80;
 
+/// A bare list taken for the block has at most this many words a line.
+const BARE_MAX_WORDS: usize = 10;
+
 /// The reply without its follow-ups block, and the block's items.
 pub fn split(text: &str) -> (String, Vec<String>) {
     let Some(open) = text.rfind(OPEN) else {
-        return (text.to_string(), Vec::new());
+        return split_bare(text);
     };
     let body_start = open + OPEN.len();
     let (body, rest) = match text[body_start..].find(CLOSE) {
@@ -33,6 +36,32 @@ pub fn split(text: &str) -> (String, Vec<String>) {
         reply.push_str(rest);
     }
     (reply, items(body))
+}
+
+/// Some models (gpt-6, 2026-09) write the questions without the tags: the
+/// reply's last paragraph as 2–3 short bullets. Taken for the block only when
+/// every line is a bullet of a few words and the paragraph before doesn't
+/// introduce it with a colon — a list the reply leads into is the reply's.
+fn split_bare(text: &str) -> (String, Vec<String>) {
+    let unchanged = || (text.to_string(), Vec::new());
+    let trimmed = text.trim_end();
+    let Some(cut) = trimmed.rfind("\n\n") else {
+        return unchanged();
+    };
+    let (body, last) = (trimmed[..cut].trim_end(), &trimmed[cut + 2..]);
+    let lines: Vec<&str> = last.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let bare = (2..=MAX_ITEMS).contains(&lines.len())
+        && !body.is_empty()
+        && !body.ends_with(':')
+        && lines.iter().all(|l| is_bullet(l) && clean(l).split_whitespace().count() <= BARE_MAX_WORDS);
+    if !bare {
+        return unchanged();
+    }
+    (body.to_string(), items(last))
+}
+
+fn is_bullet(line: &str) -> bool {
+    line.starts_with("- ") || line.starts_with("* ") || line.starts_with("• ")
 }
 
 fn items(body: &str) -> Vec<String> {
@@ -109,6 +138,26 @@ fn partial_open_len(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifts_a_bare_closing_list_of_short_questions() {
+        let reply = "Trimming beats an all-or-nothing sale.\n\n- How concentrated am I?\n- What if I sell half?\n- Compare NVDA and TSLA";
+        let (text, items) = split(reply);
+        assert_eq!(text, "Trimming beats an all-or-nothing sale.");
+        assert_eq!(items, vec!["How concentrated am I?", "What if I sell half?", "Compare NVDA and TSLA"]);
+    }
+
+    #[test]
+    fn keeps_a_list_the_reply_leads_into_or_that_is_long() {
+        let led = "Two options:\n\n- Trim the position\n- Hold it";
+        assert_eq!(split(led), (led.to_string(), Vec::new()));
+        let long = "Here is why.\n\n- Revenue grew 106% year over year on data center demand and new chips\n- Margins held";
+        assert_eq!(split(long), (long.to_string(), Vec::new()));
+        let one = "Done.\n\n- Just one";
+        assert_eq!(split(one), (one.to_string(), Vec::new()));
+        let only = "- A\n- B";
+        assert_eq!(split(only), (only.to_string(), Vec::new()));
+    }
 
     #[test]
     fn lifts_the_block_and_cleans_each_button() {
