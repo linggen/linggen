@@ -345,12 +345,16 @@ pub struct AgentEngine {
     pub run_usage: crate::provider::models::RunUsage,
     /// This turn's surface shows the next-prompt hint: once the turn ends, its
     /// last call is forked to predict what the person types next
-    /// (`suggestion.rs`). Set per turn by the chat runtime; never on for
-    /// missions or delegated agents.
+    /// (`suggestion.rs`). Set for one turn by the web chat handler, which
+    /// resets it after — any other turn on this engine (an event turn, an
+    /// `agent_chat` delivery, a mission) never asks.
     pub suggest_followups: bool,
-    /// The turn's latest model request and what came back — the prefix the
-    /// next-prompt suggestion forks from. Kept only when `suggest_followups`.
+    /// The turn's last model call that ended in words — the prefix the
+    /// next-prompt suggestion forks from. Kept only when `suggest_followups`;
+    /// cleared when a turn begins and taken when one ends, on every path.
     pub last_call: Option<crate::engine::suggestion::LastCall>,
+    /// The running next-prompt fork, aborted when the next turn begins.
+    pub(crate) suggestion_fork: Option<tokio::task::AbortHandle>,
     /// Cached stable portion of the system prompt.
     pub(crate) cached_system_prompt: Option<CachedSystemPrompt>,
     /// Running token estimate accumulated incrementally during the loop.
@@ -555,6 +559,7 @@ impl AgentEngine {
             run_usage: Default::default(),
             suggest_followups: false,
             last_call: None,
+            suggestion_fork: None,
             cached_system_prompt: None,
             accumulated_token_estimate: 0,
             last_assistant_text: None,

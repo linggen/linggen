@@ -252,8 +252,8 @@ export function useChatActions(
       // so ChatPanel renders the busy state before the server's first
       // page_state push lands. Cleared by handleTurnComplete.
       useServerStore.getState().setPendingSend(sid, true);
-      // The last reply's buttons answered the turn before this one.
-      if (sid) useSuggestionStore.getState().clearFollowups(sid);
+      // The hint answered the turn before this one.
+      if (sid) useSuggestionStore.getState().clearHint(sid);
       const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
       const sessionModel = useUiStore.getState().sessionModel;
       const data = await getTransport().sendChat({

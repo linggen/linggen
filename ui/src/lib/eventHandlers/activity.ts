@@ -2,6 +2,7 @@ import type { UiEvent, SubagentToolStep } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
+import { useSuggestionStore } from '../../stores/suggestionStore';
 import type { AgentStatusValue } from '../../stores/serverStore';
 import { agentTracker } from '../agentTracker';
 import { normalizeAgentStatus } from '../messageUtils';
@@ -135,6 +136,10 @@ function applyTopLevelActivity(opts: {
   }
 
   if (sid) agentTracker.ensureRunStarted(sid);
+  // A turn is running: the last turn's hint no longer answers anything.
+  if (sid && phase !== 'done' && (nextStatus === 'model_loading' || nextStatus === 'thinking')) {
+    useSuggestionStore.getState().clearHint(sid);
+  }
 
   if (statusText.length > 0 && phase !== 'done') {
     if (nextStatus === 'model_loading' || nextStatus === 'thinking') {

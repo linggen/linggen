@@ -114,10 +114,13 @@ pub enum AgentEvent {
         agent_id: String,
         plan: Plan,
     },
-    /// The next questions a reply offers the person, as buttons.
+    /// What the person would most likely type next (the input's hint).
+    /// `run_id`: the turn it follows — a surface drops it once a newer turn
+    /// has started.
     Followups {
         agent_id: String,
         items: Vec<String>,
+        run_id: Option<String>,
     },
     ModelFallback {
         agent_id: String,

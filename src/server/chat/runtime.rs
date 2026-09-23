@@ -23,6 +23,8 @@ pub(super) async fn run_loop_with_tracking(
     engine.set_run_id(run_id.clone());
     let result = super::cloud_gate::run_gated(engine, session_id).await;
     engine.set_run_id(None);
+    // Taken on every path: only a finished, uncancelled turn forks it.
+    let last_call = engine.last_call.take();
 
     if let Some(run_id) = run_id {
         match &result {
@@ -41,7 +43,7 @@ pub(super) async fn run_loop_with_tracking(
                 if !was_cancelled {
                     crate::telemetry::global().bump("chat.turn_ok");
                     // The input's grey hint, forked off this turn's last call.
-                    engine.spawn_next_suggestion();
+                    engine.spawn_next_suggestion(last_call, &run_id);
                     // Let Yinyue's watch decide whether to herald it (she
                     // presence-gates: fires on every reply, only worth a word
                     // when away).

@@ -6,7 +6,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { MarkdownContent } from './MarkdownContent';
 import { TodoPanel } from './TodoPanel';
 import { SuggestionRow } from './SuggestionRow';
-import { inputHint, useSuggestionStore } from '../../stores/suggestionStore';
+import { useSuggestionStore } from '../../stores/suggestionStore';
 import { normalizeAgentKey } from './utils/message';
 import type {
   AgentInfo,
@@ -64,11 +64,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   const [chatInput, setChatInput] = useState('');
   const hintSessionId = useSessionStore((s) => s.activeSessionId);
-  const followups = useSuggestionStore((s) => (hintSessionId ? s.followups[hintSessionId] : undefined));
+  const nextPrompt = useSuggestionStore((s) => (hintSessionId ? s.hints[hintSessionId] : undefined));
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   // The grey hint, CC-style: desktop only — a phone keyboard has no Tab, so
-  // there the follow-ups stay in the row.
-  const hint = !mobile && !isRunning && chatInput === '' && pendingImages.length === 0 ? inputHint(followups) : undefined;
+  // there the hint stays in the row.
+  const hint = !mobile && !isRunning && chatInput === '' && pendingImages.length === 0 ? nextPrompt : undefined;
   const [showSkillDropdown, setShowSkillDropdown] = useState(false);
   const [skillFilter, setSkillFilter] = useState('');
   const [showAgentDropdown, setShowAgentDropdown] = useState(false);

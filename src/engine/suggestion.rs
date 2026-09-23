@@ -12,7 +12,7 @@ use crate::provider::models::{ModelManager, StreamChunk};
 use futures_util::StreamExt;
 use std::sync::Arc;
 
-/// A turn's latest model request and its answer.
+/// A turn's last model request that ended in words, and those words.
 #[derive(Clone)]
 pub struct LastCall {
     model_id: String,
@@ -22,7 +22,6 @@ pub struct LastCall {
     effort: Option<String>,
     app: Option<String>,
     reply: String,
-    ended_on_tool: bool,
 }
 
 /// A suggestion longer than this is not something a person types.
@@ -44,8 +43,20 @@ If the next step isn't obvious, or a suggestion could be unsafe or sensitive, re
 Reply with the suggestion only — no quotes, no explanation. Do not call any tool.";
 
 impl AgentEngine {
+    /// A turn begins: the last turn's hint is stale. Stop its fork if it is
+    /// still asking the model, and forget the call it would fork from.
+    pub(crate) fn begin_suggestion_turn(&mut self) {
+        if let Some(fork) = self.suggestion_fork.take() {
+            fork.abort();
+        }
+        self.last_call = None;
+    }
+
     /// Keep a model call as the fork's prefix, when this turn wants a
-    /// suggestion.
+    /// suggestion. Only a call that ended in words can be the turn's last
+    /// word, so only that one is copied; a call that ended on a tool clears
+    /// it (a question to them, a plan — nothing to predict after). A skill
+    /// that meters a cloud is never forked.
     pub(crate) fn remember_call(
         &mut self,
         model_id: &str,
@@ -53,7 +64,15 @@ impl AgentEngine {
         tools: Option<&Vec<serde_json::Value>>,
         result: &crate::engine::types::StreamResult,
     ) {
-        if !self.suggest_followups {
+        let metered_skill = self
+            .active_skill
+            .as_ref()
+            .is_some_and(|s| s.cloud.is_some());
+        if !self.suggest_followups || metered_skill {
+            return;
+        }
+        if !ended_in_words(result.tool_calls.is_empty(), &result.full_text) {
+            self.last_call = None;
             return;
         }
         self.last_call = Some(LastCall {
@@ -63,48 +82,44 @@ impl AgentEngine {
             effort: self.reasoning_effort.clone(),
             app: self.app_product().map(str::to_string),
             reply: result.full_text.clone(),
-            ended_on_tool: !result.tool_calls.is_empty(),
         });
     }
 
     /// After a finished turn: predict the person's next message in the
-    /// background and send it as a `followups` event of one item. Nothing
-    /// when the turn didn't ask, ended on a tool (a question to them, a plan),
-    /// its cache is cold, or its skill meters a cloud.
-    pub(crate) fn spawn_next_suggestion(&mut self) {
-        let Some(call) = self.last_call.take() else {
-            tracing::debug!("next-prompt suggestion: no call to fork (asked {})", self.suggest_followups);
+    /// background and send it as a `followups` event of one item, stamped
+    /// with the turn's run so a surface can tell a late one. Nothing when
+    /// the turn didn't ask or didn't end in words. The next turn on this
+    /// engine aborts the fork ([`Self::begin_suggestion_turn`]).
+    pub(crate) fn spawn_next_suggestion(&mut self, call: Option<LastCall>, run_id: &str) {
+        let Some(call) = call else {
+            tracing::debug!("next-prompt suggestion: no call to fork");
             return;
         };
-        let metered_skill = self.active_skill.as_ref().is_some_and(|s| s.cloud.is_some());
-        if !self.suggest_followups || metered_skill || !worth_forking(&call) {
-            tracing::debug!(
-                "next-prompt suggestion: not forked (asked {}, metered skill {metered_skill}, ended on tool {})",
-                self.suggest_followups,
-                call.ended_on_tool
-            );
-            return;
-        }
         let Some(manager) = self.tools.get_manager() else {
             return;
         };
         let models = self.model_manager.clone();
         let session_id = self.session_id.clone();
-        let agent_id = self.agent_id.clone().unwrap_or_else(|| "unknown".to_string());
-        tokio::spawn(async move {
+        let agent_id = self
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let run_id = run_id.to_string();
+        let fork = tokio::spawn(async move {
             match predict(&models, call).await {
                 Ok(Some(text)) => {
-                    manager
-                        .send_event(
-                            crate::engine::agent::AgentEvent::Followups { agent_id, items: vec![text] },
-                            session_id,
-                        )
-                        .await;
+                    let event = crate::engine::agent::AgentEvent::Followups {
+                        agent_id,
+                        items: vec![text],
+                        run_id: Some(run_id),
+                    };
+                    manager.send_event(event, session_id).await;
                 }
                 Ok(None) => {}
                 Err(e) => tracing::debug!("next-prompt suggestion skipped: {e:#}"),
             }
         });
+        self.suggestion_fork = Some(fork.abort_handle());
     }
 }
 
@@ -112,8 +127,8 @@ impl AgentEngine {
 /// OpenAI-style caches are written by the turn's own call, so the fork hits
 /// them (measured 2026-09-23 on gpt-6: 87–97% of the prompt cached) — as
 /// long as the request carries its cache key (`provider/openai.rs`).
-fn worth_forking(call: &LastCall) -> bool {
-    !call.ended_on_tool && !call.reply.trim().is_empty()
+fn ended_in_words(no_tool_calls: bool, reply: &str) -> bool {
+    no_tool_calls && !reply.trim().is_empty()
 }
 
 /// The fork: the turn's own request, its reply, and the ask. Same tools, so
@@ -124,8 +139,16 @@ async fn predict(models: &Arc<ModelManager>, call: LastCall) -> anyhow::Result<O
     messages.push(message("user", PROMPT));
     let (effort, app) = (call.effort.as_deref(), call.app.as_deref());
     let mut stream = match call.tools {
-        Some(tools) => models.chat_tool_stream(&call.model_id, &messages, tools, effort, app).await?,
-        None => models.chat_text_stream(&call.model_id, &messages, effort, app).await?,
+        Some(tools) => {
+            models
+                .chat_tool_stream(&call.model_id, &messages, tools, effort, app)
+                .await?
+        }
+        None => {
+            models
+                .chat_text_stream(&call.model_id, &messages, effort, app)
+                .await?
+        }
     };
     let mut text = String::new();
     while let Some(chunk) = stream.next().await {
@@ -134,7 +157,9 @@ async fn predict(models: &Arc<ModelManager>, call: LastCall) -> anyhow::Result<O
             StreamChunk::ToolCall(_) => return Ok(None),
             StreamChunk::Usage(u) => tracing::debug!(
                 "next-prompt suggestion: prompt {:?}, cached {:?}, output {:?}",
-                u.prompt_tokens, u.cached_tokens, u.completion_tokens
+                u.prompt_tokens,
+                u.cached_tokens,
+                u.completion_tokens
             ),
         }
     }
@@ -163,7 +188,9 @@ pub(crate) fn clean(raw: &str) -> Option<String> {
     let declined = line.is_empty()
         || line.contains('\n')
         || line.to_lowercase().trim_matches(['(', ')', '.', '[', ']']) == "none";
-    let own_voice = ["Let me", "I'll", "I will", "Here's", "Here is"].iter().any(|p| line.starts_with(p));
+    let own_voice = ["Let me", "I'll", "I will", "Here's", "Here is"]
+        .iter()
+        .any(|p| line.starts_with(p));
     let words = line.split_whitespace().count();
     let cjk_long = line.chars().count() > 40;
     if declined || own_voice || words > MAX_WORDS || (words == 1 && cjk_long) {
@@ -178,7 +205,10 @@ mod tests {
 
     #[test]
     fn keeps_a_short_line_in_their_voice() {
-        assert_eq!(clean("  \"trim half of NVDA\"\n"), Some("trim half of NVDA".to_string()));
+        assert_eq!(
+            clean("  \"trim half of NVDA\"\n"),
+            Some("trim half of NVDA".to_string())
+        );
         assert_eq!(clean("yes"), Some("yes".to_string()));
         assert_eq!(clean("那特斯拉呢？"), Some("那特斯拉呢？".to_string()));
     }
@@ -193,22 +223,17 @@ mod tests {
         assert_eq!(clean("a b c d e f g h i j k l m n"), None);
     }
 
-    fn call(reply: &str, ended_on_tool: bool) -> LastCall {
-        LastCall {
-            model_id: "m".into(),
-            messages: Vec::new(),
-            tools: None,
-            effort: None,
-            app: None,
-            reply: reply.into(),
-            ended_on_tool,
-        }
-    }
-
     #[test]
     fn forks_only_a_reply_that_ended_in_words() {
-        assert!(worth_forking(&call("NVDA is 21% of it.", false)));
-        assert!(!worth_forking(&call("", true)), "a turn that ended on a tool asked them something");
-        assert!(!worth_forking(&call("  ", false)));
+        assert!(ended_in_words(true, "NVDA is 21% of it."));
+        assert!(
+            !ended_in_words(false, ""),
+            "a turn that ended on a tool asked them something"
+        );
+        assert!(
+            !ended_in_words(false, "Let me check."),
+            "words before a tool call are not the last word"
+        );
+        assert!(!ended_in_words(true, "  "));
     }
 }

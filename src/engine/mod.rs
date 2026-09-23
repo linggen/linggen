@@ -4,7 +4,6 @@ mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
-pub mod suggestion;
 pub mod mission;
 pub mod permission;
 mod plan;
@@ -15,6 +14,7 @@ pub mod skill;
 pub mod skill_activation;
 pub mod skill_tool;
 mod streaming;
+pub mod suggestion;
 mod tool_exec;
 pub mod tool_registry;
 pub(crate) mod tool_render;
@@ -373,6 +373,7 @@ impl AgentEngine {
     }
 
     async fn run_agent_loop_unguarded(&mut self, session_id: Option<&str>) -> Result<AgentOutcome> {
+        self.begin_suggestion_turn();
         let mut state = self.initialize_loop(session_id).await?;
         self.kickoff_turn = KickoffTurn::opened_by_last(&state.messages);
         self.closing_ask = None;

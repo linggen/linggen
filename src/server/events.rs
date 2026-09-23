@@ -248,10 +248,12 @@ pub enum ServerEvent {
         widget_id: String,
         session_id: Option<String>,
     },
-    /// The next questions a reply offers the person, as buttons.
+    /// What the person would most likely type next (the input's hint),
+    /// stamped with the turn it follows.
     Followups {
         agent_id: String,
         items: Vec<String>,
+        run_id: Option<String>,
         session_id: Option<String>,
     },
     ModelFallback {
@@ -462,9 +464,14 @@ impl ServerEvent {
                 parent_id,
                 session_id,
             }),
-            AgentEvent::Followups { agent_id, items } => Some(Self::Followups {
+            AgentEvent::Followups {
                 agent_id,
                 items,
+                run_id,
+            } => Some(Self::Followups {
+                agent_id,
+                items,
+                run_id,
                 session_id,
             }),
             AgentEvent::ModelFallback {

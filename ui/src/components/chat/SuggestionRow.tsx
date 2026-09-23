@@ -11,7 +11,7 @@ interface SuggestionRowProps {
   skills: SkillInfo[];
   /** While they type or a turn runs, the row steps aside. */
   hidden: boolean;
-  /** The input shows the first follow-up as its hint (not on a phone). */
+  /** The input shows the next-prompt hint (not on a phone). */
   hinted: boolean;
   onPick: (text: string) => void;
 }
@@ -19,10 +19,10 @@ interface SuggestionRowProps {
 export const SuggestionRow: React.FC<SuggestionRowProps> = ({ skills, hidden, hinted, onPick }) => {
   const sessionId = useSessionStore((s) => s.activeSessionId);
   const skillName = useSessionStore((s) => s.activeSkillName);
-  const followups = useSuggestionStore((s) => (sessionId ? s.followups[sessionId] : undefined));
+  const hint = useSuggestionStore((s) => (sessionId ? s.hints[sessionId] : undefined));
   const page = useSuggestionStore((s) => s.page);
   const starters = skillName ? skills.find((sk) => sk.name === skillName)?.suggestions : undefined;
-  const items = visibleSuggestions(followups, page, starters, hinted);
+  const items = visibleSuggestions(hint, page, starters, hinted);
   if (hidden || items.length === 0) return null;
 
   return (

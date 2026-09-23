@@ -26,16 +26,27 @@ export function handleTextSegment(item: UiEvent): void {
 }
 
 // ---------------------------------------------------------------------------
-// Follow-ups — the buttons a reply offers
+// Next-prompt hint — forked after the turn, so it can land late
 // ---------------------------------------------------------------------------
 
 export function handleFollowups(item: UiEvent): void {
-  if (!item.session_id) return;
+  const sid = item.session_id;
+  if (!sid) return;
   if (agentTracker.getParent(String(item.agent_id || ''))) return;
-  // The hint is forked after the turn ends; one landing after they already
-  // sent their next message answers a turn that's gone.
-  if (useServerStore.getState().pendingSends[item.session_id]) return;
-  useSuggestionStore.getState().setFollowups(item.session_id, item.data?.items ?? []);
+  const runId = typeof item.data?.run_id === 'string' ? item.data.run_id : null;
+  if (sessionMovedOn(sid, runId)) return;
+  useSuggestionStore.getState().setHint(sid, item.data?.items ?? []);
+}
+
+/** A hint answers the turn it was forked from. Once they sent again, or a
+ *  newer turn is running (a queued one starts on its own), it is stale. */
+export function sessionMovedOn(sid: string, runId: string | null): boolean {
+  const { pendingSends, agentStatus, agentRuns } = useServerStore.getState();
+  if (pendingSends[sid]) return true;
+  const status = agentStatus[sid];
+  if (status && status !== 'idle') return true;
+  return agentRuns.some((r) => r.session_id === sid && r.status === 'running'
+    && !r.parent_run_id && r.run_id !== runId);
 }
 
 // ---------------------------------------------------------------------------
