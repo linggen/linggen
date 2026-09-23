@@ -65,6 +65,19 @@ pub fn shell_path() -> &'static str {
     })
 }
 
+/// Marks where a wrapped command's output ends and its final `pwd` begins.
+pub const CWD_SENTINEL: &str = "__LINGGEN_CWD__";
+
+/// `command`, then the sentinel and `pwd`, keeping the command's exit code.
+///
+/// Joined on a NEWLINE, never `;`: a command that ends in `&`, in a newline,
+/// or in a heredoc terminator made `…; __linggen_ec` a syntax error, and `sh`
+/// then ran nothing at all — a background `nohup … &` was simply never
+/// started (2026-09-23), a trailing newline failed the same way (2026-07-27).
+pub fn wrap_with_cwd_sentinel(command: &str) -> String {
+    format!("{command}\n__linggen_ec=$?; echo '{CWD_SENTINEL}'; pwd; exit $__linggen_ec")
+}
+
 /// Resolve a path. Expands a leading `~` to `$HOME` first, then follows
 /// symlinks via `canonicalize`. On macOS, `/tmp` → `/private/tmp`.
 ///
@@ -150,5 +163,36 @@ mod panic_tests {
     fn a_formatted_panic_keeps_its_words() {
         let payload = std::panic::catch_unwind(|| panic!("tool {} broke", "Read")).unwrap_err();
         assert_eq!(panic_message(&*payload), "tool Read broke");
+    }
+
+    /// Runs `command` wrapped, returning (exit code, stdout).
+    fn run_wrapped(command: &str) -> (i32, String) {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(wrap_with_cwd_sentinel(command))
+            .current_dir("/tmp")
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into(),
+        )
+    }
+
+    #[test]
+    fn a_wrapped_command_keeps_its_exit_code_and_reports_its_cwd() {
+        let (code, out) = run_wrapped("echo hi; false");
+        assert_eq!(code, 1);
+        assert!(out.starts_with("hi\n"));
+        assert!(out.contains(&format!("{CWD_SENTINEL}\n")));
+    }
+
+    #[test]
+    fn a_trailing_ampersand_newline_or_heredoc_still_runs() {
+        for command in ["sleep 0 &", "echo a\n", "cat <<EOF\nbody\nEOF"] {
+            let (code, out) = run_wrapped(command);
+            assert_eq!(code, 0, "{command:?} failed: {out}");
+            assert!(out.contains(CWD_SENTINEL), "{command:?} lost the sentinel");
+        }
     }
 }

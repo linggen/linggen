@@ -349,7 +349,7 @@ pub(crate) async fn run_bash_api(
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    const CWD_SENTINEL: &str = "__LINGGEN_CWD__";
+    use crate::util::CWD_SENTINEL;
 
     // Resolve cwd: use per-session stored cwd if available, else project_root.
     let base_cwd: PathBuf = if let Some(sid) = &req.session_id {
@@ -373,10 +373,7 @@ pub(crate) async fn run_bash_api(
     let timeout = Duration::from_millis(req.timeout_ms);
 
     // Wrap command with cwd sentinel (same as agent Bash tool).
-    let wrapped_cmd = format!(
-        "{}; __linggen_ec=$?; echo '{}'; pwd; exit $__linggen_ec",
-        &req.command, CWD_SENTINEL
-    );
+    let wrapped_cmd = crate::util::wrap_with_cwd_sentinel(&req.command);
 
     let child = Command::new("sh")
         .arg("-c")

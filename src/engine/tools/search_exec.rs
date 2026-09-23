@@ -143,7 +143,7 @@ impl Tools {
     fn run_command_inner(&self, args: RunCommandArgs) -> Result<ToolResult> {
         use std::io::BufRead;
 
-        const CWD_SENTINEL: &str = "__LINGGEN_CWD__";
+        use crate::util::CWD_SENTINEL;
 
         let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(30000));
         let cwd = {
@@ -162,10 +162,7 @@ impl Tools {
 
         // Wrap the user command to capture the final working directory.
         // Preserves the original exit code while appending a sentinel + pwd.
-        let wrapped_cmd = format!(
-            "{}; __linggen_ec=$?; echo '{}'; pwd; exit $__linggen_ec",
-            &args.cmd, CWD_SENTINEL
-        );
+        let wrapped_cmd = crate::util::wrap_with_cwd_sentinel(&args.cmd);
 
         let mut child = if cfg!(target_os = "windows") {
             Command::new("cmd")
