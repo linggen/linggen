@@ -30,6 +30,9 @@ export interface ChatInputProps {
   selectedMainRunningRunId?: string;
   activePlan?: Plan | null;
   visibleQueued: QueuedChatItem[];
+  /** The session this chat shows. A skill page's embedded chat has its own;
+   *  the app's global store is empty there, so the queue's ✕ did nothing. */
+  sessionId?: string | null;
   overlay?: string | null;
   onDismissOverlay?: () => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -53,6 +56,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   selectedMainRunningRunId,
   activePlan,
   visibleQueued,
+  sessionId,
   overlay,
   onDismissOverlay,
   inputRef,
@@ -395,7 +399,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   // Guard before the optimistic clear — if any required id is
                   // missing we skip both calls instead of clearing the local
                   // store while leaving the server queue intact.
-                  const { selectedProjectRoot, activeSessionId } = useSessionStore.getState();
+                  const store = useSessionStore.getState();
+                  const selectedProjectRoot = projectRoot || store.selectedProjectRoot;
+                  const activeSessionId = sessionId || store.activeSessionId;
                   if (!selectedProjectRoot || !activeSessionId || !selectedAgent) return;
                   useInteractionStore.getState().setQueuedMessages([]);
                   try {

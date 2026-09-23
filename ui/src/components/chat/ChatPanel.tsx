@@ -991,6 +991,7 @@ export const ChatPanel: React.FC<{
         selectedMainRunningRunId={selectedMainRunningRunId}
         activePlan={activePlan}
         visibleQueued={visibleQueued}
+        sessionId={sessionId}
         overlay={overlay}
         onDismissOverlay={onDismissOverlay}
         inputRef={inputRef}
