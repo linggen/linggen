@@ -15,6 +15,8 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useChatStore } from '../stores/chatStore';
 import { asEventKind } from './eventKinds';
 import { eventHandlers } from './eventHandlers';
+import { normalizeAgentStatus } from './messageUtils';
+import { agentTracker } from './agentTracker';
 
 export { suppressPermissionSync } from './eventHandlers/_shared';
 export { handleAskUser } from './eventHandlers';
@@ -78,8 +80,59 @@ export function relayConnectionToSkillIframe(
   }, '*');
 }
 
+/** A sign of life for the parent page: the agent is working even when no
+ *  text streams (thinking between tools, a queued turn starting). */
+type ActivityKind = 'turn_start' | 'thinking' | 'tool';
+
+/** At most one `activity` relay per session this often — a heartbeat, not
+ *  a stream. A turn start always goes (it opens a new round). */
+const ACTIVITY_RELAY_MS = 5000;
+const _lastActivityRelay = new Map<string, number>();
+
+function activityKind(item: UiEvent): ActivityKind | null {
+  if (item.phase === 'done') return null;
+  const own = ownActivity(item);
+  // A subagent working is its parent inside a tool call (Task), never a
+  // new round of the page's chat.
+  if (own && isSubagentEvent(item)) return 'tool';
+  return own;
+}
+
+function ownActivity(item: UiEvent): ActivityKind | null {
+  if (item.kind === 'token') return item.data?.thinking === true ? 'thinking' : null;
+  if (item.kind === 'content_block') return item.phase === 'start' && item.data?.block_type === 'tool_use' ? 'tool' : null;
+  if (item.kind !== 'activity') return null;
+  const status = normalizeAgentStatus(String(item.data?.status || ''));
+  if (status === 'model_loading') return 'turn_start';
+  if (status === 'thinking' || status === 'working') return 'thinking';
+  if (status === 'calling_tool') return 'tool';
+  return null;
+}
+
+function isSubagentEvent(item: UiEvent): boolean {
+  if (item.data?.parent_agent_id || item.data?.parent_id) return true;
+  const runId = item.data?.run_id ? String(item.data.run_id) : '';
+  return !!(agentTracker.getParent(runId) || agentTracker.getParent(String(item.agent_id || '')));
+}
+
+function relayActivity(item: UiEvent): void {
+  const kind = activityKind(item);
+  const sessionId = item.session_id;
+  if (!kind || !sessionId) return;
+  const now = Date.now();
+  const last = _lastActivityRelay.get(sessionId) ?? 0;
+  if (kind !== 'turn_start' && now - last < ACTIVITY_RELAY_MS) return;
+  _lastActivityRelay.set(sessionId, now);
+  window.parent.postMessage({
+    type: 'linggen-skill-event',
+    event: 'activity',
+    payload: { sessionId, kind },
+  }, '*');
+}
+
 function relayToSkillIframe(item: UiEvent): void {
   if (window.parent === window) return;
+  relayActivity(item);
 
   if (item.kind === 'token' && item.text) {
     window.parent.postMessage({
