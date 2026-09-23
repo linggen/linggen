@@ -105,47 +105,67 @@ pub(crate) fn ready(now: u64, room: Room, moments: &[Moment], last_voice: u64) -
     room.idle >= QUIET_SECS && settled >= SETTLE_SECS && since_voice >= COOLDOWN_SECS
 }
 
-/// The kickoff she is woken with. The app's facts, oldest first, and what she
-/// is there for — never an instruction to speak.
-pub(crate) fn kickoff(moments: &[Moment]) -> String {
-    let apps: Vec<&str> = {
-        let mut a: Vec<&str> = moments.iter().map(|m| m.app.as_str()).collect();
-        a.dedup();
-        a
-    };
-    let lines = moments
+/// The moments as the lines she reads, oldest first.
+fn fact_lines(moments: &[Moment]) -> String {
+    moments
         .iter()
         .map(|m| format!("- {}", m.text))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
+
+/// The apps the moments came from, in order, each once.
+fn app_names(moments: &[Moment]) -> String {
+    let mut apps: Vec<&str> = Vec::new();
+    for m in moments {
+        if !apps.contains(&m.app.as_str()) {
+            apps.push(&m.app);
+        }
+    }
+    apps.join(", ")
+}
+
+/// The kickoff she is woken with. The app's facts, oldest first, and what she
+/// is there for — never an instruction to speak.
+pub(crate) fn kickoff(moments: &[Moment]) -> String {
     format!(
-        "While the user was in {}, this happened (oldest first):\n{lines}\n\n\
+        "While the user was in {}, this happened (oldest first):\n{}\n\n\
          They are at the screen and have been quiet for a while. You are beside them in \
          this — not a narrator. If a word from you fits, say ONE short line in your own voice, \
          in the language these notes are written in: comfort after a loss or a wound, gladness \
          at something hard-won, a little courage before what's ahead, or just being there. \
          Never repeat what is already on their screen, never tell them what to do next, never \
          mention these notes or that you were told. If nothing is worth a word, SILENT.",
-        apps.join(", ")
+        app_names(moments),
+        fact_lines(moments)
     )
 }
 
-/// The kickoff when the user asked her for something: answer it, in her voice.
+/// The kickoff when the user asked her for something: answer it, in her
+/// voice. Worded for the answer contract (`yinyue_watch::wake_asked`): the
+/// answer is her final paragraph, the part spoken aloud.
 pub(crate) fn asked_kickoff(moments: &[Moment]) -> String {
-    let lines = moments
-        .iter()
-        .map(|m| format!("- {}", m.text))
-        .collect::<Vec<_>>()
-        .join("\n");
     format!(
-        "The user asked you, in {}, and here is what you have to go on:\n{lines}\n\n\
-         Answer them now, in your own voice, in the language of these notes — two or three \
-         short sentences at most, spoken aloud, plain prose. Read it for them the way you \
-         would: what it means, and one honest word for their day. Do not recite the notes, \
-         do not mention that you were told. This is an answer they are waiting for, so do \
-         not reply SILENT.",
-        moments[0].app
+        "The user asked you, in {}, and here is what you have to go on:\n{}\n\n\
+         Answer them now, in your own voice, in the language of these notes — one short \
+         paragraph of two or three sentences, plain prose, spoken aloud. Read it for them the \
+         way you would: what it means, and one honest word for their day. Do not recite the \
+         notes, do not mention that you were told. They are waiting for this answer.",
+        app_names(moments),
+        fact_lines(moments)
     )
+}
+
+/// What one wake takes, and what stays queued. When the user asked for
+/// something, only the asked moments are answered now; the rest wait for
+/// the quiet as if nothing had been asked. Otherwise the wake takes all.
+fn take_for_wake(moments: Vec<Moment>) -> (Vec<Moment>, Vec<Moment>) {
+    let (asked, waiting): (Vec<Moment>, Vec<Moment>) = moments.into_iter().partition(|m| m.asked);
+    if asked.is_empty() {
+        (waiting, Vec::new())
+    } else {
+        (asked, waiting)
+    }
 }
 
 /// The mood to wear: the newest moment that named one.
@@ -185,28 +205,30 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             if !ready(now, room_now(&state, now), &moments, last_voice) {
                 continue;
             }
+            let (taken, stay) = take_for_wake(moments);
             q.clear();
-            moments
+            q.extend(stay);
+            taken
         };
         if !state.manager.get_config_snapshot().await.pet.enabled {
             continue; // pet off: the moments are dropped, nobody to say them
         }
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
+        let asked = taken[0].asked;
         tracing::info!(
-            "[yinyue-moments] waking her with {} moment(s) from {}",
+            "[yinyue-moments] waking her with {} {}moment(s) from {}",
             taken.len(),
-            taken[0].app
+            if asked { "asked " } else { "" },
+            app_names(&taken)
         );
         let emotion = mood_of(&taken);
         let state = state.clone();
-        let asked = taken.iter().any(|m| m.asked);
         tokio::spawn(async move {
-            let text = if asked {
-                asked_kickoff(&taken)
+            if asked {
+                super::yinyue_watch::wake_asked(state, asked_kickoff(&taken), &emotion).await;
             } else {
-                kickoff(&taken)
-            };
-            super::yinyue_watch::wake_herald(state, text, &emotion).await;
+                super::yinyue_watch::wake_herald(state, kickoff(&taken), &emotion).await;
+            }
         });
     }
 }
@@ -352,6 +374,30 @@ mod tests {
         ));
         let k = asked_kickoff(&[asked]);
         assert!(k.contains("雷神放出雷霆"));
-        assert!(k.contains("do not reply SILENT"));
+        assert!(
+            !k.contains("SILENT"),
+            "the answer contract offers no silence"
+        );
+    }
+
+    #[test]
+    fn an_ask_takes_only_the_asked_and_names_their_app() {
+        let quiet = m(1, false);
+        let asked = Moment {
+            app: "cfo".into(),
+            text: "NVDA 21% of the portfolio".into(),
+            asked: true,
+            ..m(2, false)
+        };
+        let (taken, stay) = take_for_wake(vec![quiet.clone(), asked.clone()]);
+        assert_eq!(taken, vec![asked]);
+        assert_eq!(stay, vec![quiet.clone()], "the unasked wait for the quiet");
+        let k = asked_kickoff(&taken);
+        assert!(k.starts_with("The user asked you, in cfo,"));
+        assert!(!k.contains("雷神"));
+
+        let (taken, stay) = take_for_wake(vec![quiet.clone()]);
+        assert_eq!(taken, vec![quiet]);
+        assert!(stay.is_empty());
     }
 }

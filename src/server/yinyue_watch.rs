@@ -396,7 +396,22 @@ async fn ask_still_pending(state: &Arc<ServerState>, question_id: &str) -> bool 
 /// True when she actually spoke — a caller that bought silence with a notice
 /// needs to know whether anyone heard it.
 pub(crate) async fn wake_herald(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
-    let Some(reply) = run_yinyue_turn(&state, kickoff, "event").await else {
+    wake_and_speak(state, kickoff, emotion, "event").await
+}
+
+/// Wake her to answer what the user asked her for: the same spoken final
+/// paragraph, under the contract that offers no SILENT.
+pub(crate) async fn wake_asked(state: Arc<ServerState>, kickoff: String, emotion: &str) -> bool {
+    wake_and_speak(state, kickoff, emotion, "asked").await
+}
+
+async fn wake_and_speak(
+    state: Arc<ServerState>,
+    kickoff: String,
+    emotion: &str,
+    trigger_source: &str,
+) -> bool {
+    let Some(reply) = run_yinyue_turn(&state, kickoff, trigger_source).await else {
         return false; // run failed or she produced nothing
     };
     let Some(line) = spoken_line(&reply) else {
@@ -655,8 +670,20 @@ async fn ambient_glance(state: &Arc<ServerState>) {
 /// inferred — so a model that thinks in its output (deepseek-v4-flash on the
 /// fallback chain, 2026-09-08) is following the rules, not leaking.
 const SPOKEN_CONTRACT: &str = "If you need to think first, do it above a blank line: only your \
-    final paragraph is spoken aloud, the rest is discarded. If nothing is worth saying, make \
-    that final paragraph exactly SILENT.";
+    final paragraph is spoken aloud, the rest is discarded.";
+/// What an unasked kickoff adds: silence is an answer.
+const SILENT_CLAUSE: &str = "If nothing is worth saying, make that final paragraph exactly SILENT.";
+
+/// The kickoff as she reads it. A person's own words ("user") carry nothing;
+/// an answer they asked for ("asked") carries the spoken contract alone;
+/// every other engine-authored kickoff may also end in SILENT.
+fn with_contract(task: String, trigger_source: &str) -> String {
+    match trigger_source {
+        "user" => task,
+        "asked" => format!("{task} {SPOKEN_CONTRACT}"),
+        _ => format!("{task} {SPOKEN_CONTRACT} {SILENT_CLAUSE}"),
+    }
+}
 
 /// What a reply under [`SPOKEN_CONTRACT`] actually says: the final paragraph,
 /// unwrapped from quotes. `None` when it is — or ends in — SILENT.
@@ -755,13 +782,9 @@ pub(crate) async fn run_yinyue_turn(
         .await
         .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
 
-    // Engine-authored kickoffs (heralds, agent_chat) carry the spoken-line
-    // contract; a person's own words ("user") are never appended to.
-    let task = if trigger_source == "user" {
-        task
-    } else {
-        format!("{task} {SPOKEN_CONTRACT}")
-    };
+    // Engine-authored kickoffs (heralds, agent_chat, asked) carry the
+    // spoken-line contract; a person's own words are never appended to.
+    let task = with_contract(task, trigger_source);
 
     // Persist the incoming message to the session store so it survives reload
     // and the turn-core's restore sees a complete thread. (The turn core only
@@ -1000,7 +1023,16 @@ fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> Option<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::spoken_line;
+    use super::{spoken_line, with_contract};
+
+    #[test]
+    fn an_asked_turn_is_not_offered_silence() {
+        assert!(with_contract("k".into(), "event").contains("SILENT"));
+        let asked = with_contract("k".into(), "asked");
+        assert!(asked.contains("final paragraph is spoken"));
+        assert!(!asked.contains("SILENT"));
+        assert_eq!(with_contract("hi".into(), "user"), "hi");
+    }
 
     #[test]
     fn a_bare_silent_is_silence() {
