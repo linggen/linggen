@@ -45,6 +45,9 @@ pub(crate) struct Moment {
     pub app: String,
     pub text: String,
     pub big: bool,
+    /// The user asked HER for this — a reading, a word. It is answered at
+    /// once: no quiet to wait for, no cooldown, and silence is not an answer.
+    pub asked: bool,
     pub mood: Option<String>,
     pub at: u64,
 }
@@ -83,6 +86,10 @@ pub(crate) fn ready(now: u64, room: Room, moments: &[Moment], last_voice: u64) -
     let Some(newest) = moments.iter().map(|m| m.at).max() else {
         return false;
     };
+    // Asked for, it is answered now (they just tapped; they are here).
+    if moments.iter().any(|m| m.asked) {
+        return true;
+    }
     // Never to an empty room, never over their typing.
     if !room.at_screen || room.typing {
         return false;
@@ -120,6 +127,24 @@ pub(crate) fn kickoff(moments: &[Moment]) -> String {
          Never repeat what is already on their screen, never tell them what to do next, never \
          mention these notes or that you were told. If nothing is worth a word, SILENT.",
         apps.join(", ")
+    )
+}
+
+/// The kickoff when the user asked her for something: answer it, in her voice.
+pub(crate) fn asked_kickoff(moments: &[Moment]) -> String {
+    let lines = moments
+        .iter()
+        .map(|m| format!("- {}", m.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "The user asked you, in {}, and here is what you have to go on:\n{lines}\n\n\
+         Answer them now, in your own voice, in the language of these notes — two or three \
+         short sentences at most, spoken aloud, plain prose. Read it for them the way you \
+         would: what it means, and one honest word for their day. Do not recite the notes, \
+         do not mention that you were told. This is an answer they are waiting for, so do \
+         not reply SILENT.",
+        moments[0].app
     )
 }
 
@@ -174,8 +199,14 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         );
         let emotion = mood_of(&taken);
         let state = state.clone();
+        let asked = taken.iter().any(|m| m.asked);
         tokio::spawn(async move {
-            super::yinyue_watch::wake_herald(state, kickoff(&taken), &emotion).await;
+            let text = if asked {
+                asked_kickoff(&taken)
+            } else {
+                kickoff(&taken)
+            };
+            super::yinyue_watch::wake_herald(state, text, &emotion).await;
         });
     }
 }
@@ -189,6 +220,7 @@ mod tests {
             app: "lingjing".into(),
             text: "雷神放出雷霆".into(),
             big,
+            asked: false,
             mood: None,
             at,
         }
@@ -281,6 +313,7 @@ mod tests {
                 app: "lingjing".into(),
                 text: "打赢了夔".into(),
                 big: false,
+                asked: false,
                 mood: None,
                 at: 1,
             },
@@ -288,6 +321,7 @@ mod tests {
                 app: "lingjing".into(),
                 text: "气血只剩 6".into(),
                 big: true,
+                asked: false,
                 mood: Some("sad".into()),
                 at: 2,
             },
@@ -296,5 +330,28 @@ mod tests {
         assert!(k.find("打赢了夔").unwrap() < k.find("气血只剩 6").unwrap());
         assert!(k.contains("SILENT"));
         assert_eq!(mood_of(&[m(1, false)]), "neutral");
+    }
+
+    #[test]
+    fn asked_is_answered_at_once_and_never_with_silence() {
+        let now = 10_000;
+        let asked = Moment {
+            asked: true,
+            ..m(now, false)
+        };
+        // she spoke a minute ago, the user is mid-typing, the moment is a second old: still now
+        assert!(ready(
+            now,
+            Room {
+                typing: true,
+                idle: 0,
+                at_screen: false
+            },
+            &[asked.clone()],
+            now - 60
+        ));
+        let k = asked_kickoff(&[asked]);
+        assert!(k.contains("雷神放出雷霆"));
+        assert!(k.contains("do not reply SILENT"));
     }
 }

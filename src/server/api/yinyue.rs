@@ -89,13 +89,16 @@ pub(crate) struct EventRequest {
     pub text: String,
     #[serde(default)]
     pub big: bool,
+    /// The user asked her for this (a reading): answered at once.
+    #[serde(default)]
+    pub asked: bool,
     #[serde(default)]
     pub mood: Option<String>,
 }
 
 const EVENT_TEXT_MAX: usize = 300;
 
-/// POST /api/yinyue/event — `{ app, text, big?, mood? }`. An app tells Yinyue
+/// POST /api/yinyue/event — `{ app, text, big?, asked?, mood? }`. An app tells Yinyue
 /// what just happened, as a plain fact. Nothing is said now: the moment waits
 /// until the user has gone quiet (or, `big`, until the screen settles), and
 /// then she judges whether a word fits (server/yinyue_moments.rs).
@@ -122,6 +125,7 @@ pub(crate) async fn event_handler(
         app: app.to_string(),
         text,
         big: req.big,
+        asked: req.asked,
         mood,
         at: crate::util::now_ts_secs(),
     });

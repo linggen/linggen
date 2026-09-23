@@ -118,7 +118,7 @@ companion.
 
 ## App moments — an app tells her, she speaks when it has gone quiet
 
-`POST /api/yinyue/event { app, text, big?, mood? }` (`server/yinyue_moments.rs`).
+`POST /api/yinyue/event { app, text, big?, asked?, mood? }` (`server/yinyue_moments.rs`).
 An app posts what just happened as a plain fact in the user's language — a
 game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
 (24 kept, 15 min stale) and a 5 s tick checks one gate, in code:
@@ -128,6 +128,9 @@ game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
   settled), and she said nothing for **10 min**;
 - `big` moments (a loss, an elite beaten): skip the idle wait, but the screen
   settles **6 s** and the cooldown is **3 min**.
+
+- `asked` moments (the user asked HER — a reading, a word): woken at once,
+  no quiet, no cooldown, and told silence is not an answer.
 
 Then she is woken once with everything queued (`wake_herald`), in her own
 voice, and may answer `SILENT`. Every `PetSpeak` stamps the cooldown
