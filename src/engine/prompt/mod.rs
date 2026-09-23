@@ -125,6 +125,16 @@ fn turn_already_delivered(messages: &[ChatMessage], task: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Put a per-turn note just before the turn's own message, where a turn's
+/// memory recall sits too — the turn still ends on the person's words.
+fn insert_before_turn(messages: &mut Vec<ChatMessage>, note: ChatMessage) {
+    let at = match messages.last() {
+        Some(last) if last.role == "user" => messages.len() - 1,
+        _ => messages.len(),
+    };
+    messages.insert(at, note);
+}
+
 fn workspace_listing(ws_root: &std::path::Path) -> String {
     let entries = match std::fs::read_dir(ws_root) {
         Ok(e) => e,
@@ -544,51 +554,6 @@ impl AgentEngine {
         // Check if tools are available — skip all tool-related prompt sections when empty.
         let has_tools = allowed_tools.as_ref().map_or(true, |s| !s.is_empty());
 
-        // --- Right now (volatile — deliberately NOT in the cached stable prefix) ---
-        //
-        // This block IS the `sense` tool's answer, handed over before it can be
-        // asked for. `sense` takes no arguments and reads only local state, so
-        // nothing the model says can change its result — which is what makes
-        // injecting it equivalent to the call, minus a whole model round trip.
-        // Measured on the companion: a turn that called `sense` cost two round
-        // trips (5-11s), and the first produced no text at all.
-        //
-        // Gated on the session EXPLICITLY declaring `sense`, never on an agent's
-        // name: an unrestricted tool set (`None` = everything allowed) must not
-        // pull presence data into every coding session.
-        //
-        // The same block carries the world this machine is: what is true here
-        // now, and the doorbell saying whether the activity log is worth
-        // opening (`doc/perception-spec.md` §2, §4). One block, because the
-        // room and the machine are one perception — and because a second
-        // heading would invite the model to read one and skip the other.
-        //
-        // So the machine's lines ride on the room's: no manager, no block at
-        // all. Perception is additive within the block — an unreadable source
-        // costs one line — but it does not get a heading of its own when there
-        // is no session behind it to read one.
-        if allowed_tools.as_ref().is_some_and(|s| s.contains("sense")) {
-            if let Some(now) = tools::RightNow::gather(&self.tools.builtins) {
-                let world = crate::perception::state::block(
-                    self.tools.builtins.session_id.as_deref(),
-                    purpose == PromptPurpose::Turn,
-                )
-                .unwrap_or_default();
-                system.push_str(&self.prompt_store.render_or_fallback(
-                    crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
-                    &[
-                        ("presence", now.state),
-                        ("idle", &humanize_secs(now.idle_seconds)),
-                        ("active_runs", &now.active_runs.to_string()),
-                        ("runs_today", &now.runs_today.to_string()),
-                        ("local_time", &now.local_time),
-                        ("part_of_day", now.part_of_day),
-                        ("world", &world),
-                    ],
-                ));
-            }
-        }
-
         // --- Response Format ---
         if has_tools {
             if native_tools {
@@ -843,6 +808,13 @@ impl AgentEngine {
             serde_json::json!({ "source": "run_agent_loop" }),
         );
 
+        // Right now rides at the end of the request, never in the system
+        // prompt: its clock and idle time change every turn, and a system
+        // prompt that changes is a cache that never hits.
+        if let Some(block) = self.right_now_block(allowed_tools.as_ref(), purpose) {
+            insert_before_turn(&mut messages, ChatMessage::new("system", block));
+        }
+
         // Pre-populate read_paths from prior context.
         let mut read_paths: HashSet<String> = HashSet::new();
         let base_dir = self.tools.builtins.cwd();
@@ -882,6 +854,61 @@ impl AgentEngine {
         }
 
         (messages, allowed_tools, read_paths)
+    }
+
+    /// This turn's read of the room and the machine, for a session that
+    /// declares `sense` — `None` for every other.
+    ///
+    /// This block IS the `sense` tool's answer, handed over before it can be
+    /// asked for. `sense` takes no arguments and reads only local state, so
+    /// nothing the model says can change its result — which is what makes
+    /// injecting it equivalent to the call, minus a whole model round trip.
+    /// Measured on the companion: a turn that called `sense` cost two round
+    /// trips (5-11s), and the first produced no text at all.
+    ///
+    /// Gated on the session EXPLICITLY declaring `sense`, never on an agent's
+    /// name: an unrestricted tool set (`None` = everything allowed) must not
+    /// pull presence data into every coding session.
+    ///
+    /// The same block carries the world this machine is: what is true here
+    /// now, and the doorbell saying whether the activity log is worth
+    /// opening (`doc/perception-spec.md` §2, §4). One block, because the
+    /// room and the machine are one perception. The machine's lines ride on
+    /// the room's: no manager, no block at all.
+    ///
+    /// It goes to the model as a system message just before the turn's own
+    /// words (a developer item / system-reminder on the providers that split
+    /// them),
+    /// not into the system prompt: volatile values there would change the
+    /// request's beginning every turn, and nothing after it could be cached.
+    /// Built per request, never kept in history — the next turn has its own.
+    fn right_now_block(
+        &self,
+        allowed_tools: Option<&HashSet<String>>,
+        purpose: PromptPurpose,
+    ) -> Option<String> {
+        if !allowed_tools.is_some_and(|s| s.contains("sense")) {
+            return None;
+        }
+        let now = tools::RightNow::gather(&self.tools.builtins)?;
+        let world = crate::perception::state::block(
+            self.tools.builtins.session_id.as_deref(),
+            purpose == PromptPurpose::Turn,
+        )
+        .unwrap_or_default();
+        let block = self.prompt_store.render_or_fallback(
+            crate::prompts::keys::SYSTEM_RIGHT_NOW_BLOCK,
+            &[
+                ("presence", now.state),
+                ("idle", &humanize_secs(now.idle_seconds)),
+                ("active_runs", &now.active_runs.to_string()),
+                ("runs_today", &now.runs_today.to_string()),
+                ("local_time", &now.local_time),
+                ("part_of_day", now.part_of_day),
+                ("world", &world),
+            ],
+        );
+        Some(block.trim().to_string())
     }
 
     // -----------------------------------------------------------------------
@@ -1047,5 +1074,39 @@ mod right_now_tests {
             v.to_lowercase().contains("plain prose") || v.contains("like a person"),
             "voice layer lost its core directive"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::insert_before_turn;
+    use crate::message::ChatMessage;
+
+    fn roles(messages: &[ChatMessage]) -> Vec<&str> {
+        messages.iter().map(|m| m.role.as_str()).collect()
+    }
+
+    /// The system prompt stays what it was every turn; the turn's right-now
+    /// note goes beside the turn, which still ends on the person's words.
+    #[test]
+    fn a_per_turn_note_sits_before_the_turn_never_in_the_system_prompt() {
+        let turn = |text: &str, now: &str| {
+            let mut m = vec![
+                ChatMessage::new("system", "You are Yinyue."),
+                ChatMessage::new("user", "hi"),
+                ChatMessage::new("assistant", "hello"),
+                ChatMessage::new("user", text),
+            ];
+            insert_before_turn(&mut m, ChatMessage::new("system", now));
+            m
+        };
+        let (a, b) = (turn("first", "14:02"), turn("first", "14:09"));
+        assert_eq!(a[0].content, b[0].content, "the system prompt holds");
+        assert_eq!(roles(&a), ["system", "user", "assistant", "system", "user"]);
+        assert_eq!(a.last().unwrap().content, "first");
+
+        let mut no_turn = vec![ChatMessage::new("system", "s")];
+        insert_before_turn(&mut no_turn, ChatMessage::new("system", "now"));
+        assert_eq!(roles(&no_turn), ["system", "system"]);
     }
 }

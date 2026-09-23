@@ -235,7 +235,11 @@ impl OpenAiClient {
             }
         }
         let truncated = if text.len() > 500 {
-            format!("{}… ({} chars)", &text[..text.floor_char_boundary(500)], text.len())
+            format!(
+                "{}… ({} chars)",
+                &text[..text.floor_char_boundary(500)],
+                text.len()
+            )
         } else {
             text
         };
@@ -337,7 +341,12 @@ impl OpenAiClient {
     fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
         let m = model.to_lowercase();
         // OpenAI reasoning models
-        if m.contains("gpt-5") || m.contains("gpt-6") || m.contains("o3") || m.contains("o4") || m.contains("o1") {
+        if m.contains("gpt-5")
+            || m.contains("gpt-6")
+            || m.contains("o3")
+            || m.contains("o4")
+            || m.contains("o1")
+        {
             return true;
         }
         // Gemini 2.5 thinking models
@@ -423,7 +432,10 @@ impl OpenAiClient {
                 req["instructions"] = serde_json::Value::String(instructions);
             }
             tracing::debug!("Responses API request to {}", url);
-            self.http.post(url).header("session_id", cache_key).json(&req)
+            self.http
+                .post(url)
+                .header("session_id", cache_key)
+                .json(&req)
         } else {
             // Standard Chat Completions format
             let url = format!("{}/chat/completions", self.base_url);
@@ -545,7 +557,11 @@ impl OpenAiClient {
                     Ok(c) => c,
                     Err(e) => {
                         let truncated = if data.len() > 300 {
-                            format!("{}… ({} chars)", &data[..data.floor_char_boundary(300)], data.len())
+                            format!(
+                                "{}… ({} chars)",
+                                &data[..data.floor_char_boundary(300)],
+                                data.len()
+                            )
                         } else {
                             data.to_string()
                         };
@@ -576,7 +592,11 @@ impl OpenAiClient {
                         prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
                         completion_tokens: usage.completion_tokens.map(|v| v as usize),
                         total_tokens: usage.total_tokens.map(|v| v as usize),
-                        cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
+                        cached_tokens: usage
+                            .prompt_tokens_details
+                            .as_ref()
+                            .and_then(|d| d.cached_tokens)
+                            .map(|v| v as usize),
                     }))
                 })
             }
@@ -696,7 +716,10 @@ impl OpenAiClient {
                 req["instructions"] = serde_json::Value::String(instructions);
             }
             tracing::debug!("Responses API tool request to {}", url);
-            self.http.post(url).header("session_id", cache_key).json(&req)
+            self.http
+                .post(url)
+                .header("session_id", cache_key)
+                .json(&req)
         } else {
             // Standard Chat Completions format
             let url = format!("{}/chat/completions", self.base_url);
@@ -908,67 +931,72 @@ impl OpenAiClient {
                             prompt_tokens: usage.prompt_tokens.map(|v| v as usize),
                             completion_tokens: usage.completion_tokens.map(|v| v as usize),
                             total_tokens: usage.total_tokens.map(|v| v as usize),
-                            cached_tokens: usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens).map(|v| v as usize),
+                            cached_tokens: usage
+                                .prompt_tokens_details
+                                .as_ref()
+                                .and_then(|d| d.cached_tokens)
+                                .map(|v| v as usize),
                         }))
                     });
                     let deltas: Vec<Result<StreamChunk>> = (|| {
-                    // Extract Gemini thought_signature — check chunk level first, then choice level.
-                    let chunk_level_sig = chunk
-                        .extra_content
-                        .as_ref()
-                        .and_then(|ec| ec.google.as_ref())
-                        .and_then(|g| g.thought_signature.clone());
-
-                    let Some(choice) = chunk.choices.into_iter().next() else {
-                        tracing::trace!("SSE chunk with no choices: {}", &sanitized);
-                        return vec![];
-                    };
-
-                    let thought_sig = chunk_level_sig.or_else(|| {
-                        choice
+                        // Extract Gemini thought_signature — check chunk level first, then choice level.
+                        let chunk_level_sig = chunk
                             .extra_content
                             .as_ref()
                             .and_then(|ec| ec.google.as_ref())
-                            .and_then(|g| g.thought_signature.clone())
-                    });
+                            .and_then(|g| g.thought_signature.clone());
 
-                    // Emit ALL tool call deltas from this chunk (not just the first)
-                    if let Some(tool_calls) = choice.delta.tool_calls {
-                        let mut chunks: Vec<Result<StreamChunk>> = Vec::new();
-                        for tc in tool_calls.into_iter() {
-                            let name = tc.function.as_ref().and_then(|f| f.name.clone());
-                            let args_delta = tc.function.as_ref().and_then(|f| f.arguments.clone());
-                            // Extract thought_signature from the tool call's own extra_content
-                            // (Gemini puts it here), falling back to choice/chunk level.
-                            let sig = tc
+                        let Some(choice) = chunk.choices.into_iter().next() else {
+                            tracing::trace!("SSE chunk with no choices: {}", &sanitized);
+                            return vec![];
+                        };
+
+                        let thought_sig = chunk_level_sig.or_else(|| {
+                            choice
                                 .extra_content
                                 .as_ref()
                                 .and_then(|ec| ec.google.as_ref())
                                 .and_then(|g| g.thought_signature.clone())
-                                .or_else(|| thought_sig.clone());
-                            if sig.is_some() && name.is_some() {
-                                tracing::debug!(
-                                    "Gemini thought_signature captured for tool call '{}'",
-                                    name.as_deref().unwrap_or("?")
-                                );
-                            }
-                            chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
-                                index: tc.index,
-                                id: tc.id,
-                                name,
-                                arguments_delta: args_delta,
-                                thought_signature: sig,
-                            })));
-                        }
-                        return chunks;
-                    }
+                        });
 
-                    let content = choice.delta.content.unwrap_or_default();
-                    if content.is_empty() {
-                        vec![]
-                    } else {
-                        vec![Ok(StreamChunk::Token(content))]
-                    }
+                        // Emit ALL tool call deltas from this chunk (not just the first)
+                        if let Some(tool_calls) = choice.delta.tool_calls {
+                            let mut chunks: Vec<Result<StreamChunk>> = Vec::new();
+                            for tc in tool_calls.into_iter() {
+                                let name = tc.function.as_ref().and_then(|f| f.name.clone());
+                                let args_delta =
+                                    tc.function.as_ref().and_then(|f| f.arguments.clone());
+                                // Extract thought_signature from the tool call's own extra_content
+                                // (Gemini puts it here), falling back to choice/chunk level.
+                                let sig = tc
+                                    .extra_content
+                                    .as_ref()
+                                    .and_then(|ec| ec.google.as_ref())
+                                    .and_then(|g| g.thought_signature.clone())
+                                    .or_else(|| thought_sig.clone());
+                                if sig.is_some() && name.is_some() {
+                                    tracing::debug!(
+                                        "Gemini thought_signature captured for tool call '{}'",
+                                        name.as_deref().unwrap_or("?")
+                                    );
+                                }
+                                chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
+                                    index: tc.index,
+                                    id: tc.id,
+                                    name,
+                                    arguments_delta: args_delta,
+                                    thought_signature: sig,
+                                })));
+                            }
+                            return chunks;
+                        }
+
+                        let content = choice.delta.content.unwrap_or_default();
+                        if content.is_empty() {
+                            vec![]
+                        } else {
+                            vec![Ok(StreamChunk::Token(content))]
+                        }
                     })();
                     usage_chunk.into_iter().chain(deltas).collect()
                 }
@@ -991,8 +1019,14 @@ impl OpenAiClient {
 fn responses_instructions(
     messages: &[crate::message::ChatMessage],
 ) -> (String, &[crate::message::ChatMessage]) {
-    let start = messages.iter().position(|m| m.role != "system").unwrap_or(messages.len());
-    let texts: Vec<&str> = messages[..start].iter().map(|m| m.content.as_str()).collect();
+    let start = messages
+        .iter()
+        .position(|m| m.role != "system")
+        .unwrap_or(messages.len());
+    let texts: Vec<&str> = messages[..start]
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
     (texts.join("\n"), &messages[start..])
 }
 
@@ -1301,21 +1335,21 @@ struct OaiStreamToolCallFunction {
 /// calls and the next-prompt fork after it (`engine/suggestion.rs`). Sent as
 /// `prompt_cache_key` and the `session_id` header, both where Codex CLI puts
 /// its conversation id, and shaped like one (a UUID).
+///
+/// A stable hash (SHA-256), not `DefaultHasher`: the key must mean the same
+/// thing after a restart or a new build, or a warm cache goes cold for it.
 fn prompt_cache_key(instructions: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let half = |salt: u8| {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        (salt, instructions).hash(&mut h);
-        h.finish()
-    };
-    let (a, b) = (half(0), half(1));
+    use sha2::{Digest, Sha256};
+    let d = Sha256::digest(instructions.as_bytes());
+    let hex =
+        |r: std::ops::Range<usize>| d[r].iter().map(|b| format!("{b:02x}")).collect::<String>();
     format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-        a >> 32,
-        (a >> 16) & 0xffff,
-        a & 0xffff,
-        b >> 48,
-        b & 0xffff_ffff_ffff
+        "{}-{}-{}-{}-{}",
+        hex(0..4),
+        hex(4..6),
+        hex(6..8),
+        hex(8..10),
+        hex(10..16)
     )
 }
 
@@ -1336,21 +1370,42 @@ mod tests {
                 ChatMessage::new("user", "is NVDA too big?"),
             ]
         };
-        let (first, second) = (turn("From memory: holds NVDA"), turn("From memory: something else"));
+        let (first, second) = (
+            turn("From memory: holds NVDA"),
+            turn("From memory: something else"),
+        );
         let (a, rest) = responses_instructions(&first);
         let (b, _) = responses_instructions(&second);
         assert_eq!(a, "You are Ling.");
         assert_eq!(a, b, "a turn's recall never changes the instructions");
         let items: Vec<_> = rest.iter().map(responses_api_input_item).collect();
-        assert_eq!(items[2], json!({"role": "developer", "content": "From memory: holds NVDA"}));
-        assert_eq!(items.len(), 4, "the recall stays in place, between the turns");
+        assert_eq!(
+            items[2],
+            json!({"role": "developer", "content": "From memory: holds NVDA"})
+        );
+        assert_eq!(
+            items.len(),
+            4,
+            "the recall stays in place, between the turns"
+        );
     }
 
     #[test]
     fn the_cache_key_follows_the_instructions() {
-        assert_eq!(prompt_cache_key("You are Ling."), prompt_cache_key("You are Ling."));
-        assert_ne!(prompt_cache_key("You are Ling."), prompt_cache_key("You are Yinyue."));
+        assert_eq!(
+            prompt_cache_key("You are Ling."),
+            prompt_cache_key("You are Ling.")
+        );
+        assert_ne!(
+            prompt_cache_key("You are Ling."),
+            prompt_cache_key("You are Yinyue.")
+        );
         assert_eq!(prompt_cache_key("x").len(), 36, "shaped like a UUID");
+        // SHA-256("x") — the same key on every build and every restart.
+        assert_eq!(
+            prompt_cache_key("x"),
+            "2d711642-b726-b044-0162-7ca9fbac32f5"
+        );
     }
 
     #[test]

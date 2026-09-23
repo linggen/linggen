@@ -83,9 +83,11 @@ The easiest way to add models: open **Settings → Models** in the browser, clic
 
 A provider bills a repeated beginning of a request at a fraction of the price, so the engine keeps each request's beginning the same from turn to turn:
 
+- The system prompt holds nothing that changes per turn. A session's "Right now" (clock, presence) goes beside the turn as a system message, like memory recall.
 - Only the system messages a request opens with are its system prompt. A system message inside the conversation — a turn's memory recall, a reminder — stays where it is: a `developer` item on the Responses API, a `<system-reminder>` user block on Anthropic, in place on Chat Completions.
-- The ChatGPT backend caches nothing without a key: the engine sends `prompt_cache_key` and the `session_id` header (as Codex CLI does), from the system prompt's hash.
-- Anthropic caches only what a request marks: the engine sends the top-level `cache_control` (automatic caching).
+- The ChatGPT backend caches nothing without a key: the engine sends `prompt_cache_key` and the `session_id` header (as Codex CLI does), from the system prompt's SHA-256.
+- Anthropic caches only what a request marks: the engine sends the top-level `cache_control` (automatic caching) to api.anthropic.com only; a compatible gateway may not take it.
+- A capped session (Yinyue) trims its history in chunks, so the beginning holds between cuts.
 - OpenAI API keys, Gemini, DeepSeek and Ollama cache a repeated beginning on their own.
 
 ## Credentials

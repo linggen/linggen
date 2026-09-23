@@ -184,17 +184,19 @@ impl AnthropicClient {
         let url = format!("{}/v1/messages", self.base_url);
         let translated = translate_messages(messages);
 
-        // Automatic caching: Anthropic caches only what a request marks, and
-        // one top-level marker moves the breakpoint along the conversation.
-        // Every other provider Linggen speaks to caches a repeated beginning
-        // on its own.
         let mut req = serde_json::json!({
             "model": model,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "messages": translated.messages,
             "stream": true,
-            "cache_control": { "type": "ephemeral" },
         });
+        // Automatic caching: Anthropic caches only what a request marks, and
+        // one top-level marker moves the breakpoint along the conversation.
+        // Only Anthropic's own API is known to take it; a compatible gateway
+        // may reject the unknown field, so it keeps the per-block markers.
+        if takes_top_level_cache_control(&self.base_url) {
+            req["cache_control"] = serde_json::json!({ "type": "ephemeral" });
+        }
         if let Some(system) = translated.system {
             req["system"] = system;
         }
@@ -654,6 +656,18 @@ fn build_http() -> Client {
         .unwrap_or_else(|_| Client::new())
 }
 
+/// Whether this endpoint is Anthropic's own API, the one that takes the
+/// request-level `cache_control`.
+fn takes_top_level_cache_control(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h.eq_ignore_ascii_case("api.anthropic.com"))
+        })
+        .unwrap_or(false)
+}
+
 fn normalize_base(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
     if trimmed.is_empty() {
@@ -668,6 +682,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_anthropics_own_api_gets_the_top_level_cache_marker() {
+        assert!(takes_top_level_cache_control(
+            claude_auth::ANTHROPIC_API_BASE
+        ));
+        assert!(takes_top_level_cache_control(&normalize_base("")));
+        assert!(takes_top_level_cache_control("https://API.anthropic.com/"));
+        assert!(!takes_top_level_cache_control("https://openrouter.ai/api"));
+        assert!(!takes_top_level_cache_control("http://localhost:4000"));
+        assert!(!takes_top_level_cache_control(
+            "https://api.anthropic.com.evil.test"
+        ));
+    }
+
+    #[test]
     fn a_system_message_inside_the_conversation_stays_in_place() {
         let t = translate_messages(&[
             ChatMessage::new("system", "You are Ling."),
@@ -679,6 +707,9 @@ mod tests {
         assert_eq!(t.system, Some(serde_json::json!("You are Ling.")));
         assert_eq!(t.messages.len(), 4);
         assert_eq!(t.messages[2]["role"], "user");
-        assert_eq!(t.messages[2]["content"], "<system-reminder>\nFrom memory: holds NVDA\n</system-reminder>");
+        assert_eq!(
+            t.messages[2]["content"],
+            "<system-reminder>\nFrom memory: holds NVDA\n</system-reminder>"
+        );
     }
 }

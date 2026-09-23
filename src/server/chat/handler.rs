@@ -724,7 +724,8 @@ async fn dispatch_turn(
 /// day of accumulated turns + stale recall blocks into every quick reply, making
 /// each turn re-process a huge, ever-growing context. Her older context lives on
 /// disk and in recalled memory, so trimming the prompt costs nothing she can't
-/// recall — and keeps every turn fast.
+/// recall — and keeps every turn fast. The cap is kept in chunks (up to half
+/// again over it between cuts, [`trim_live_history`]) so the prompt cache holds.
 /// Re-bind the session's mission context (session meta `mission_id`) so a
 /// chat turn in a mission session sees what the mission run saw: the mission
 /// body via `active_mission`, its allowed-tools, and the mission prompt
@@ -788,14 +789,23 @@ pub(crate) async fn run_session_turn(
     // After restore (and before this turn's user message + fresh recall are
     // pushed), the buffer holds only completed prior turns — safe to trim.
     if let Some(cap) = max_live_msgs {
-        let len = engine.chat_history.len();
-        if len > cap {
-            engine.chat_history.drain(0..len - cap);
-        }
+        trim_live_history(&mut engine.chat_history, cap);
     }
     apply_session_bound_skill(engine, ctx).await;
     apply_session_bound_mission(engine, ctx).await;
     dispatch_turn(ctx, engine, manager, &ctx.clean_msg).await;
+}
+
+/// Keep a capped session's live history near `cap` messages — in chunks.
+/// Trimming a message or two from the front every turn would give each
+/// request a new beginning and the provider's prompt cache nothing to match;
+/// letting it grow half a cap past before cutting back to `cap` keeps the
+/// prefix the same for several turns between cuts.
+fn trim_live_history<T>(history: &mut Vec<T>, cap: usize) {
+    let len = history.len();
+    if len > cap + cap / 2 {
+        history.drain(0..len - cap);
+    }
 }
 
 /// Who a turn belongs to: "mission", "skill" or "user". The request names it
@@ -1034,6 +1044,9 @@ pub(crate) async fn chat_handler(
         };
 
         run_session_turn(&ctx, &mut engine, &manager, None).await;
+        // The ask was this turn's: the next turn on this engine may be an
+        // event turn or a delivery, which shows no hint.
+        engine.suggest_followups = false;
 
         // Emit TurnComplete so the Web UI has a single finalizer.
         let _ = state_clone.events_tx.send(ServerEvent::TurnComplete {
@@ -1063,7 +1076,9 @@ pub(crate) async fn chat_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::{auto_session_title, parse_explicit_target_prefix, turn_creator};
+    use super::{
+        auto_session_title, parse_explicit_target_prefix, trim_live_history, turn_creator,
+    };
     use super::{busy_message, BusyMessage};
     use crate::engine::skill::QueueMode;
 
@@ -1084,6 +1099,20 @@ mod tests {
         assert_eq!(
             busy_message(QueueMode::AfterTurn, true),
             BusyMessage::WaitForRun
+        );
+    }
+
+    #[test]
+    fn a_capped_history_is_trimmed_in_chunks_so_its_prefix_holds() {
+        let mut h: Vec<u32> = (0..12).collect();
+        trim_live_history(&mut h, 10);
+        assert_eq!(h.len(), 12, "within the slack: untouched, the prefix holds");
+        h.extend(12..16);
+        trim_live_history(&mut h, 10);
+        assert_eq!(
+            h,
+            (6..16).collect::<Vec<_>>(),
+            "past it: cut back to the cap, newest kept"
         );
     }
 
