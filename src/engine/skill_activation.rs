@@ -151,7 +151,9 @@ impl AgentEngine {
 /// **Collision policy:** if two skills declare a tool with the same
 /// name, the newer activation overwrites the older entry and a warning
 /// is logged. No skill ships colliding names today; the warning is a
-/// future tripwire.
+/// future tripwire. A skill re-activated in the same session re-registers
+/// its own tools — that is a refresh, not a collision, and says nothing
+/// (it logged one warning per tool on every Pulse goal until 2026-09-23).
 fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
     if skill.disable_model_invocation {
         return;
@@ -159,12 +161,14 @@ fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
     for tool_def in &skill.tool_defs {
         if let Some(existing) = engine.tools.skill_tools.get(&tool_def.name) {
             let prev_owner = existing.skill_name.as_deref().unwrap_or("<unknown>");
-            tracing::warn!(
-                "skill tool name collision: '{}' from skill '{}' overwrites entry from '{}'",
-                tool_def.name,
-                skill.name,
-                prev_owner,
-            );
+            if prev_owner != skill.name {
+                tracing::warn!(
+                    "skill tool name collision: '{}' from skill '{}' overwrites entry from '{}'",
+                    tool_def.name,
+                    skill.name,
+                    prev_owner,
+                );
+            }
         }
         let mut def = tool_def.clone();
         def.skill_name = Some(skill.name.clone());
