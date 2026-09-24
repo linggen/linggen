@@ -12,7 +12,10 @@
 //   import '/shared/chat-bridge.js';
 //   import { mount } from '/shared/chat-bridge.js';
 
-import { createSession, removeSkillSession } from './api.js';
+// Absolute, like the pages' own import: the linggen.dev relay inlines modules
+// by their resolved path, so '/shared/api.js' and '/shared/./api.js' would be
+// bundled twice and clash.
+import { createSession, removeSkillSession } from '/shared/api.js';
 
 /**
  * Mount a chat iframe into the given element.
