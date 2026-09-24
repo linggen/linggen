@@ -50,7 +50,7 @@ export function completeFileMention(input: string, path: string, complete: boole
 export type MentionInProgress =
   | { kind: 'agent'; filter: string }
   | { kind: 'file-browse'; dir: string; filter: string }
-  | { kind: 'file-search'; query: string };
+  | { kind: 'file-search'; query: string; atStart: boolean };
 
 /** The mention being typed at the end of the input, if any. */
 export function mentionInProgress(val: string): MentionInProgress | null {
@@ -61,5 +61,30 @@ export function mentionInProgress(val: string): MentionInProgress | null {
   if (after.startsWith('@')) return null;
   const slash = after.lastIndexOf('/');
   if (slash >= 0) return { kind: 'file-browse', dir: after.substring(0, slash + 1), filter: after.substring(slash + 1) };
-  return { kind: 'file-search', query: after };
+  return { kind: 'file-search', query: after, atStart: val.substring(0, lastAt).trim() === '' };
+}
+
+/** Whether `filter` (what follows a leading `@`) could name this agent: a
+ *  prefix-free substring of its id or any alias. Plain `includes`, so CJK
+ *  (`@银` → 银月) matches as well as Latin (`@yin` → yinyue). */
+export function agentMatches(agent: MentionableAgent, filter: string): boolean {
+  const f = filter.trim().toLowerCase();
+  if (!f) return true;
+  return [agent.name, ...(agent.aliases ?? [])].some((n) => n.trim().toLowerCase().includes(f));
+}
+
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+
+/** The name to write after `@` for this agent in the UI's language: a CJK
+ *  alias when the language is CJK and the agent has one, else its id,
+ *  capitalized. */
+export function agentMentionLabel(agent: MentionableAgent, lang: string): string {
+  const cjkLang = /^(zh|ja|ko)/i.test(lang);
+  const alias = cjkLang ? (agent.aliases ?? []).find((a) => CJK.test(a)) : undefined;
+  return alias?.trim() || agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
+}
+
+/** The input with its leading `@partial` replaced by `@Label `. */
+export function completeLeadingAgentMention(input: string, label: string): string {
+  return `${input.substring(0, input.lastIndexOf('@'))}@${label} `;
 }

@@ -18,7 +18,15 @@ import type {
 } from '../../types';
 import { sessionApi, workspaceApi } from '../../lib/endpoints';
 import { readImageForSend } from '../../lib/imageEncode';
-import { completeAgentMention, completeFileMention, leadingAgentMention, mentionInProgress } from '../../lib/chatMentions';
+import {
+  agentMatches,
+  agentMentionLabel,
+  completeAgentMention,
+  completeFileMention,
+  completeLeadingAgentMention,
+  leadingAgentMention,
+  mentionInProgress,
+} from '../../lib/chatMentions';
 
 export interface ChatInputProps {
   projectRoot?: string | null;
@@ -97,6 +105,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
   const [fileEntriesLoading, setFileEntriesLoading] = useState(false);
   const [fileSearchMode, setFileSearchMode] = useState(false);
+  // An `@` opening the message may address an agent, so its dropdown offers
+  // the main agents above any files.
+  const [mentionAtStart, setMentionAtStart] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [activeSkillHint, setActiveSkillHint] = useState<string | null>(null);
@@ -229,6 +240,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
     return entries;
   }, [fileEntries, fileFilter, fileSearchMode]);
+
+  const mainAgents = useMemo(
+    () => agents.filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name))),
+    [agents, mainAgentIds],
+  );
+
+  // Agents a leading `@partial` could address (only in search mode — a path
+  // with `/` is never an agent's name).
+  const leadAgents = useMemo(
+    () => (mentionAtStart && fileSearchMode ? mainAgents.filter((a) => agentMatches(a, fileFilter)) : []),
+    [mainAgents, mentionAtStart, fileSearchMode, fileFilter],
+  );
+  // Without a project root (a skill page's chat) there are no files to find:
+  // the `@` dropdown is agents only, and closed when none match.
+  const fileRows = projectRoot ? filteredFileEntries : [];
+  const mentionRowCount = leadAgents.length + fileRows.length;
+  const fileDropdownVisible = showFileDropdown && (!!projectRoot || leadAgents.length > 0);
+
+  const closeFileDropdown = () => {
+    setShowFileDropdown(false);
+    setFileFilter('');
+    setFileBrowsePath('');
+    setFileSearchMode(false);
+  };
+
+  const applyLeadAgent = (agent: AgentInfo) => {
+    setChatInput(completeLeadingAgentMention(chatInput, agentMentionLabel(agent, navigator.language)));
+    closeFileDropdown();
+    inputRef.current?.focus();
+  };
 
   const skillSuggestions = useMemo(() => {
     const suggestions: {
@@ -476,17 +517,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 ))}
             </div>
           )}
-          {showFileDropdown && (
+          {fileDropdownVisible && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-56 overflow-y-auto z-[70]">
-              {!fileSearchMode && fileBrowsePath && (
+              {leadAgents.map((agent, idx) => {
+                const label = agentMentionLabel(agent, navigator.language);
+                const others = [agent.name, ...(agent.aliases ?? [])].filter((n) => n.toLowerCase() !== label.toLowerCase());
+                return (
+                  <button
+                    key={`agent-${agent.name}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyLeadAgent(agent)}
+                    className={cn(
+                      'w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-white/5 text-xs border-b border-slate-200 dark:border-white/5 last:border-none flex items-center gap-2',
+                      idx === selectedSuggestionIndex && 'bg-blue-500/10'
+                    )}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300 flex items-center justify-center text-[11px] font-semibold shrink-0">
+                      {label.charAt(0)}
+                    </span>
+                    <span className="font-semibold text-purple-600 dark:text-purple-300">@{label}</span>
+                    {others.length > 0 && <span className="text-slate-400 text-[11px]">{others.join(' · ')}</span>}
+                    <span className="text-slate-500 text-[11px] truncate min-w-0 flex-1">{agent.description}</span>
+                  </button>
+                );
+              })}
+              {projectRoot && !fileSearchMode && fileBrowsePath && (
                 <div className="px-3 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-white/5 font-mono truncate">
                   {fileBrowsePath}
                 </div>
               )}
-              {fileEntriesLoading ? (
+              {!projectRoot ? null : fileEntriesLoading ? (
                 <div className="p-3 text-[11px] text-slate-500 italic">Loading...</div>
               ) : filteredFileEntries.length === 0 ? (
-                <div className="p-3 text-[11px] text-slate-500 italic">No matching files</div>
+                leadAgents.length === 0 && <div className="p-3 text-[11px] text-slate-500 italic">No matching files</div>
               ) : (
                 filteredFileEntries.map((entry) => (
                   <button
@@ -513,7 +576,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     }}
                     className={cn(
                       'w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-white/5 text-xs border-b border-slate-200 dark:border-white/5 last:border-none flex items-center gap-2',
-                      filteredFileEntries.indexOf(entry) === selectedSuggestionIndex && 'bg-blue-500/10'
+                      leadAgents.length + filteredFileEntries.indexOf(entry) === selectedSuggestionIndex && 'bg-blue-500/10'
                     )}
                   >
                     {entry.isDir ? (
@@ -577,6 +640,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   setFileBrowsePath('');
                   searchFiles(mention.query);
                 }
+                setMentionAtStart(mention.kind === 'file-search' && mention.atStart);
                 return;
               }
 
@@ -635,17 +699,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 }
               }
 
-              // File dropdown keyboard nav
-              if (showFileDropdown && filteredFileEntries.length > 0) {
+              // `@` dropdown keyboard nav: agents (leading `@` only), then files
+              if (fileDropdownVisible && mentionRowCount > 0) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault();
                   const delta = e.key === 'ArrowDown' ? 1 : -1;
-                  setSelectedSuggestionIndex((prev) => (prev + delta + filteredFileEntries.length) % filteredFileEntries.length);
+                  setSelectedSuggestionIndex((prev) => (prev + delta + mentionRowCount) % mentionRowCount);
                   return;
                 }
-                if (e.key === 'Enter' || (e.key === 'Tab' && filteredFileEntries[selectedSuggestionIndex]?.isDir)) {
+                const agent = leadAgents[selectedSuggestionIndex];
+                if (agent && (e.key === 'Enter' || e.key === 'Tab')) {
                   e.preventDefault();
-                  const entry = filteredFileEntries[selectedSuggestionIndex];
+                  applyLeadAgent(agent);
+                  return;
+                }
+                const entry = fileRows[selectedSuggestionIndex - leadAgents.length];
+                if (e.key === 'Enter' || (e.key === 'Tab' && entry?.isDir)) {
+                  e.preventDefault();
                   if (!entry) return;
                   const lastAt = chatInput.lastIndexOf('@');
                   const beforeAt = chatInput.substring(0, lastAt);
@@ -694,7 +764,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               }
 
               // Send on Enter (only when no dropdown open)
-              if (e.key === 'Enter' && !e.shiftKey && !showSkillDropdown && !showAgentDropdown && !showFileDropdown) {
+              if (e.key === 'Enter' && !e.shiftKey && !showSkillDropdown && !showAgentDropdown && !fileDropdownVisible) {
                 e.preventDefault();
                 send();
               }
