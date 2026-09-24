@@ -61,6 +61,10 @@ pub(crate) struct Moment {
     /// The user asked HER for this — a reading, a word. It is answered at
     /// once: no quiet to wait for, no cooldown, and silence is not an answer.
     pub asked: bool,
+    /// A big moment the app is showing right now (a seal, a burst): woken at
+    /// once, like `asked`, so her line meets the picture — but worded as a
+    /// moment, not a question, and she may still stay silent.
+    pub now: bool,
     pub mood: Option<String>,
     pub at: u64,
     /// The app's chat session: her line lands there as a message from her.
@@ -139,6 +143,10 @@ pub(crate) fn ready(now: u64, room: &Room, moments: &[Moment], last_voice: u64) 
     };
     // Asked for, it is answered now (they just tapped; they are here).
     if moments.iter().any(|m| m.asked) {
+        return true;
+    }
+    // Shown right now: her word belongs with the picture, not after it.
+    if moments.iter().any(|m| m.now) && room.sees(moments) {
         return true;
     }
     // Never to an empty room or another app's screen, never over their typing.
@@ -477,6 +485,7 @@ mod tests {
             text: "雷神放出雷霆".into(),
             big,
             asked: false,
+            now: false,
             mood: None,
             at,
             session: None,
@@ -489,6 +498,24 @@ mod tests {
         idle: 100,
         app: None,
     };
+
+    #[test]
+    fn a_now_moment_wakes_her_at_once_while_it_is_seen() {
+        let shown = Moment {
+            now: true,
+            ..m(1000, true)
+        };
+        // No settle, no cooldown: the seal is on the screen this second.
+        assert!(ready(1000, &HERE, std::slice::from_ref(&shown), 999));
+        // Not to an empty room.
+        let away = Room {
+            at_screen: false,
+            ..HERE
+        };
+        assert!(!ready(1000, &away, std::slice::from_ref(&shown), 999));
+        // A plain big moment still waits for the screen to settle.
+        assert!(!ready(1000, &HERE, &[m(1000, true)], 0));
+    }
 
     #[test]
     fn nothing_to_say_without_moments() {
@@ -573,6 +600,7 @@ mod tests {
                 text: "打赢了夔".into(),
                 big: false,
                 asked: false,
+                now: false,
                 mood: None,
                 at: 1,
                 session: None,
@@ -583,6 +611,7 @@ mod tests {
                 text: "气血只剩 6".into(),
                 big: true,
                 asked: false,
+                now: false,
                 mood: Some("sad".into()),
                 at: 2,
                 session: None,
@@ -602,6 +631,7 @@ mod tests {
         let idle = m(1, false);
         let asked = Moment {
             asked: true,
+            now: false,
             ..m(1, false)
         };
         for k in [kickoff(&[idle]), asked_kickoff(&[asked])] {
@@ -615,6 +645,7 @@ mod tests {
         let now = 10_000;
         let asked = Moment {
             asked: true,
+            now: false,
             ..m(now, false)
         };
         // she spoke a minute ago, the user is mid-typing, the moment is a second old: still now
@@ -659,6 +690,7 @@ mod tests {
     fn a_double_tap_is_one_ask() {
         let ask = Moment {
             asked: true,
+            now: false,
             ..m(1, false)
         };
         let queued: VecDeque<Moment> = [ask.clone()].into_iter().collect();
@@ -682,6 +714,7 @@ mod tests {
             app: "cfo".into(),
             text: "NVDA 21% of the portfolio".into(),
             asked: true,
+            now: false,
             ..m(2, false)
         };
         let (taken, stay) = take_for_wake(vec![quiet.clone(), asked.clone()]);

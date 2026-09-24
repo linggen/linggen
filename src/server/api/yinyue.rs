@@ -92,6 +92,9 @@ pub(crate) struct EventRequest {
     /// The user asked her for this (a reading): answered at once.
     #[serde(default)]
     pub asked: bool,
+    /// A big moment on the screen right now: she is woken at once.
+    #[serde(default)]
+    pub now: bool,
     #[serde(default)]
     pub mood: Option<String>,
     /// The app's chat session: her line lands there too, as her message.
@@ -150,6 +153,7 @@ pub(crate) async fn event_handler(
         text,
         big: req.big,
         asked: req.asked,
+        now: req.now && req.big,
         mood,
         at: crate::util::now_ts_secs(),
         converse: req.converse && session.is_some(),
