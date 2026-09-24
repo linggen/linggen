@@ -146,6 +146,16 @@ export const AgentMessage: React.FC<{
         <div className="flex items-start gap-2">
           <span className="mt-0.5 shrink-0 text-red-500 dark:text-red-400">&#x26A0;</span>
           <MarkdownContent text={errorText} />
+          {msg.resend && planProps.onResend && (
+            <button
+              type="button"
+              onClick={() => planProps.onResend?.(msg)}
+              title="Resend"
+              className="ml-auto shrink-0 flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50"
+            >
+              <span aria-hidden>&#x21BB;</span> Resend
+            </button>
+          )}
         </div>
       </div>
     );

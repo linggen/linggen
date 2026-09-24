@@ -52,6 +52,8 @@ interface ChatState {
   syncPersisted: (persisted: ChatMessage[]) => void;
   addMessage: (message: ChatMessage) => void;
   removeLastUserMessage: (text: string, agentId: string) => void;
+  /** Drop one message — matched by timestamp and text, as rows are rebuilt on merge. */
+  removeMessage: (target: ChatMessage) => void;
   upsertGenerating: (agentId: string, text: string, activityLine?: string) => void;
   appendActivity: (agentId: string, activityLine: string) => void;
   appendActivityWithSegments: (agentId: string, activityLine: string) => void;
@@ -119,6 +121,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Match last user message by trimmed text (agentId match relaxed for robustness)
     const trimmed = text.trim();
     const idx = msgs.findLastIndex((m) => m.role === 'user' && m.text.trim() === trimmed);
+    if (idx < 0) return msgs;
+    const next = [...msgs];
+    next.splice(idx, 1);
+    return next;
+  })),
+
+  removeMessage: (target) => set(mutate((msgs) => {
+    const idx = msgs.findIndex((m) => m.timestampMs === target.timestampMs && m.text === target.text);
     if (idx < 0) return msgs;
     const next = [...msgs];
     next.splice(idx, 1);

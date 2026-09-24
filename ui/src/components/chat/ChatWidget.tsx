@@ -69,6 +69,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     approvePlan,
     rejectPlan,
     editPlan,
+    resendMessage,
   } = useChatActions(scrollToBottom, runningMainRunIds, effectiveRoot);
 
   const effectiveSessionId = sessionId || null;
@@ -123,6 +124,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       onApprovePlan={approvePlan}
       onRejectPlan={rejectPlan}
       onEditPlan={editPlan}
+      onResend={resendMessage}
       pendingAskUser={pendingAskUser}
       onRespondToAskUser={respondToAskUser}
       verboseMode={verboseMode}

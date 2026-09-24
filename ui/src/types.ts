@@ -84,6 +84,8 @@ export interface ChatMessage {
   content?: ContentBlock[];
   /** True when the message represents an error (agent loop failure, etc.). */
   isError?: boolean;
+  /** On a "Message failed to send" line: what was sent, so a tap can resend it. */
+  resend?: { text: string; agentId: string; images?: string[] };
 }
 
 export interface UiEvent {

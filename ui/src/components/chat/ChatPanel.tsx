@@ -169,6 +169,7 @@ export const ChatPanel: React.FC<{
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
   onEditPlan?: (text: string) => void;
+  onResend?: (failed: import('../../types').ChatMessage) => void;
   pendingAskUser?: import('../../types').PendingAskUser | null;
   onRespondToAskUser?: (questionId: string, answers: import('../../types').AskUserAnswer[]) => void;
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
@@ -213,6 +214,7 @@ export const ChatPanel: React.FC<{
   onApprovePlan,
   onRejectPlan,
   onEditPlan,
+  onResend,
   pendingAskUser,
   onRespondToAskUser,
   onCancelAgentRun,
@@ -426,6 +428,7 @@ export const ChatPanel: React.FC<{
           onApprovePlan={onApprovePlan}
           onRejectPlan={onRejectPlan}
           onEditPlan={onEditPlan}
+          onResend={onResend}
           inputRef={inputRef}
         />
         {streamingMessage && (

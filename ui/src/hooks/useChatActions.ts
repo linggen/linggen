@@ -11,7 +11,7 @@ import { useSuggestionStore } from '../stores/suggestionStore';
 import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
-import type { ContentBlock } from '../types';
+import type { ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage } from '../lib/api';
 import { postToParent } from '../lib/parentFrame';
@@ -63,7 +63,7 @@ export function useChatActions(
     } catch (e) { console.error('Error clearing chat:', e); }
   }, [runningMainRunIds]);
 
-  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[]) => {
+  const sendChatMessage = useCallback(async (userMessage: string, targetAgent?: string, images?: string[], opts?: { resend?: boolean }) => {
     if (!userMessage.trim() && !(images && images.length > 0)) return;
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
@@ -75,7 +75,8 @@ export function useChatActions(
     const ui = useUiStore.getState();
     const chat = useChatStore.getState();
 
-    if (trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!')) {
+    // A resend's bubble is already on screen from the first try.
+    if (!opts?.resend && trimmed !== '/help' && trimmed !== '/status' && trimmed !== '/clear' && trimmed !== '/compact' && !trimmed.startsWith('/compact ') && !trimmed.startsWith('/model') && !trimmed.startsWith('!')) {
       chat.addMessage({
         role: 'user', from: 'user', to: agentToUse, text: userMessage,
         timestamp: now.toLocaleTimeString(), timestampMs: now.getTime(), isGenerating: false,
@@ -283,8 +284,8 @@ export function useChatActions(
         const reason = String((e as Error)?.message ?? '');
         const text = reason.includes('CompressionStream')
           ? 'Message failed to send — this browser cannot send attachments that large.'
-          : reason.startsWith('Control channel')
-            ? 'Message failed to send — the connection to the server was interrupted. Try again.'
+          : reason.startsWith('Control channel') || reason === 'Transport disconnected'
+            ? 'Message failed to send — the connection to the server was interrupted.'
             // The server refused it (permission, budget, unknown session). Say
             // what it said rather than blaming the network.
             : `Message failed to send — ${reason}`;
@@ -292,10 +293,19 @@ export function useChatActions(
           role: 'agent', from: 'system', to: 'user',
           text, isError: true,
           timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
+          resend: { text: userMessage, agentId: agentToUse, ...(images && images.length > 0 ? { images } : {}) },
         });
       }
     }
   }, [scrollToBottom, clearChat]);
+
+  /** The failed line's resend button: drop the line, send the same message again. */
+  const resendMessage = useCallback((failed: ChatMessage) => {
+    if (!failed.resend) return;
+    useChatStore.getState().removeMessage(failed);
+    const { text, agentId, images } = failed.resend;
+    sendChatMessage(text, agentId, images, { resend: true });
+  }, [sendChatMessage]);
 
   const respondToAskUser = useCallback(async (questionId: string, answers: any[]) => {
     try {
@@ -425,6 +435,7 @@ export function useChatActions(
 
   return {
     sendChatMessage,
+    resendMessage,
     clearChat,
     respondToAskUser,
     approvePlan,

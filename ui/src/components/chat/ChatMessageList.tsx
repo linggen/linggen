@@ -49,6 +49,7 @@ export const ChatMessageRow = React.memo<{
     onApprovePlan?: () => void;
     onRejectPlan?: () => void;
     onEditPlan?: (text: string) => void;
+    onResend?: (failed: ChatMessage) => void;
     inputRef: React.RefObject<HTMLTextAreaElement | null>;
   };
 }>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
@@ -127,9 +128,10 @@ export const ChatMessageList = React.memo<{
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
   onEditPlan?: (text: string) => void;
+  onResend?: (failed: ChatMessage) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
-}>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }) => {
-  const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef]);
+}>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }) => {
+  const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef]);
   // The user's name, as core memory states it — labels their bubbles. Until
   // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
   // persona explains it and asks for the real one).
