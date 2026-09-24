@@ -24,6 +24,7 @@ fn default_creator() -> String {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
