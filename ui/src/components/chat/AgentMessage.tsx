@@ -156,14 +156,17 @@ export const AgentMessage: React.FC<{
       {/* Thinking indicator is now shown as the bottom spinner above the input box */}
 
       {hasToolBlocks && segments.map((seg, idx) => {
+        // A tool block keys by its id, so a row's state survives segments
+        // regrouping around it; text segments are append-only by position.
+        const key = seg.kind === 'tool' && seg.block.id ? `tool-${seg.block.id}` : `seg-${idx}`;
         if (seg.kind === 'text') {
           const specialBlock = tryRenderSpecialBlock(seg.text, planProps);
-          if (specialBlock) return <React.Fragment key={`seg-${idx}`}>{specialBlock}</React.Fragment>;
-          return <MarkdownContent key={`seg-${idx}`} text={seg.text} />;
+          if (specialBlock) return <React.Fragment key={key}>{specialBlock}</React.Fragment>;
+          return <MarkdownContent key={key} text={seg.text} />;
         }
         return (
           <ContentBlockView
-            key={`seg-${idx}`}
+            key={key}
             block={seg.block}
             isLast={idx === segments.length - 1}
           />

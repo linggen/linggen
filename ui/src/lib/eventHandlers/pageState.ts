@@ -2,6 +2,9 @@
  * page_state — aggregated state push from the server over the control channel.
  * Replaces individual HTTP polling for session list, models, skills, etc.
  */
+import type {
+  AgentInfo, AgentRunInfo, ModelInfo, QueuedChatItem, SessionInfo, SkillInfo,
+} from '../../types';
 import type { UiEvent } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
@@ -12,8 +15,28 @@ import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
 import { isPermissionSuppressed } from './_shared';
 
+/** The page_state push (server/rtc/page_state.rs `PageState`). Every field
+ *  is optional: the server omits what didn't change or doesn't apply. */
+interface PageState {
+  permission?: string;
+  room_name?: string | null;
+  room_enabled?: boolean | null;
+  all_sessions?: SessionInfo[];
+  models?: ModelInfo[];
+  default_models?: string[];
+  skills?: SkillInfo[];
+  missions?: unknown[];
+  pending_ask_user?: Array<{ question_id: string; agent_id?: string; questions?: any[]; session_id?: string | null }>;
+  busy_sessions?: Record<string, string>;
+  agents?: AgentInfo[];
+  agent_runs?: AgentRunInfo[];
+  queued?: Array<{ agent_id?: string; items?: QueuedChatItem[] }>;
+  sessions?: SessionInfo[];
+  session_permission?: { effective_mode?: string } | null;
+}
+
 export function handlePageState(item: UiEvent): void {
-  const ps = item.data;
+  const ps = item.data as PageState | undefined;
   if (!ps) return;
 
   applyPermission(ps);
@@ -24,7 +47,7 @@ export function handlePageState(item: UiEvent): void {
   applyScopedState(ps);
 }
 
-function applyPermission(ps: any): void {
+function applyPermission(ps: PageState): void {
   // userType is set once by user_info at connection time, not by page_state.
   if (!ps.permission) return;
   const userStore = useUserStore.getState();
@@ -41,7 +64,7 @@ function applyPermission(ps: any): void {
   }
 }
 
-function applyGlobalLists(ps: any): void {
+function applyGlobalLists(ps: PageState): void {
   if (ps.all_sessions) {
     useSessionStore.setState({ allSessions: ps.all_sessions });
     // Auto-select session if none is active (e.g. on init/restart):
@@ -50,7 +73,7 @@ function applyGlobalLists(ps: any): void {
     const store = useSessionStore.getState();
     if (!store.activeSessionId && ps.all_sessions.length > 0) {
       const saved = window.localStorage.getItem('linggen:active-session');
-      const match = saved && ps.all_sessions.find((s: any) => s.id === saved);
+      const match = saved && ps.all_sessions.find((s) => s.id === saved);
       store.setActiveSessionId(match ? saved! : ps.all_sessions[0].id);
     }
   }
@@ -60,13 +83,13 @@ function applyGlobalLists(ps: any): void {
   if (ps.missions) useUiStore.getState().bumpMissionRefreshKey();
 }
 
-function applyPendingAskUser(ps: any): void {
+function applyPendingAskUser(ps: PageState): void {
   if (ps.pending_ask_user === undefined) return;
   // Restore pending ask-user from server state — only for the active session.
   // Without session filtering, prompts from other sessions leak into skill iframes.
   const activeSessionId = useSessionStore.getState().activeSessionId;
   const items = (Array.isArray(ps.pending_ask_user) ? ps.pending_ask_user : [])
-    .filter((it: any) => !it.session_id || it.session_id === activeSessionId);
+    .filter((it) => !it.session_id || it.session_id === activeSessionId);
   const interaction = useInteractionStore.getState();
   if (items.length > 0 && !interaction.pendingAskUser) {
     const first = items[0];
@@ -78,7 +101,7 @@ function applyPendingAskUser(ps: any): void {
   }
 }
 
-function applyBusySessions(ps: any): void {
+function applyBusySessions(ps: PageState): void {
   if (!ps.busy_sessions) return;
   useServerStore.getState().setBusySessions(ps.busy_sessions);
 }
@@ -94,15 +117,15 @@ function applyBusySessions(ps: any): void {
 /// re-read the queue — so a client that missed the drain (channel closed,
 /// reconnected as a fresh peer) kept showing a queue the server had already
 /// thrown away, and refused every new message as "agent is busy".
-function applyQueued(ps: any): void {
+function applyQueued(ps: PageState): void {
   if (ps.queued === undefined) return;
-  const items = (Array.isArray(ps.queued) ? ps.queued : []).flatMap((entry: any) =>
+  const items = (Array.isArray(ps.queued) ? ps.queued : []).flatMap((entry) =>
     Array.isArray(entry?.items) ? entry.items : []
   );
   useInteractionStore.getState().setQueuedMessages(items);
 }
 
-function applyScopedState(ps: any): void {
+function applyScopedState(ps: PageState): void {
   if (ps.agents) {
     useServerStore.setState({ agents: ps.agents });
     // Auto-select the first agent on a fresh client where no agent has
@@ -120,7 +143,7 @@ function applyScopedState(ps: any): void {
     const data = Array.isArray(ps.agent_runs) ? ps.agent_runs : [];
     if (
       data.length !== prev.length ||
-      !data.every((r: any, i: number) => r.run_id === prev[i]?.run_id && r.status === prev[i]?.status)
+      !data.every((r, i) => r.run_id === prev[i]?.run_id && r.status === prev[i]?.status)
     ) {
       useServerStore.setState({ agentRuns: data });
     }
@@ -167,11 +190,11 @@ export function armInterruptCheck(): void {
  * server-authoritative, so use each push to retire streaming state that the
  * runs say cannot still be live.
  */
-function reconcileStreamingState(runs: any[]): void {
+function reconcileStreamingState(runs: AgentRunInfo[]): void {
   const running = new Set(
     runs
-      .filter((r: any) => !r.parent_run_id && r.status === 'running')
-      .map((r: any) => r.session_id),
+      .filter((r) => !r.parent_run_id && r.status === 'running')
+      .map((r) => r.session_id),
   );
   // The first runs list after a reconnect settles the turn that was busy when
   // the link dropped: still running means it survived a blip; absent means it

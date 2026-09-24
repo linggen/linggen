@@ -17,6 +17,8 @@ import type {
   SkillInfo,
 } from '../../types';
 import { sessionApi, workspaceApi } from '../../lib/endpoints';
+import { readImageForSend } from '../../lib/imageEncode';
+import { completeAgentMention, completeFileMention, leadingAgentMention, mentionInProgress } from '../../lib/chatMentions';
 
 export interface ChatInputProps {
   projectRoot?: string | null;
@@ -77,7 +79,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [chatInput, setChatInput] = useState('');
   const hintSessionId = useSessionStore((s) => s.activeSessionId);
   const nextPrompt = useSuggestionStore((s) => (hintSessionId ? s.hints[hintSessionId] : undefined));
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  // Each attachment keeps an id, so removing one from the middle keeps the
+  // other previews' identity (they were keyed by index).
+  const [pendingImages, setPendingImages] = useState<{ id: number; data: string }[]>([]);
+  const nextImageId = useRef(0);
+  const addImage = (data: string) => setPendingImages((prev) => [...prev, { id: nextImageId.current++, data }]);
   // The grey hint, CC-style: desktop only — a phone keyboard has no Tab, so
   // there the hint stays in the row.
   const hint = !mobile && !isRunning && chatInput === '' && pendingImages.length === 0 ? nextPrompt : undefined;
@@ -117,7 +123,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const send = () => {
     if (!chatInput.trim() && pendingImages.length === 0) return;
     const userMessage = chatInput.trim();
-    const imagesToSend = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const imagesToSend = pendingImages.length > 0 ? pendingImages.map((img) => img.data) : undefined;
     setChatInput('');
     setPendingImages([]);
     setShowSkillDropdown(false);
@@ -128,15 +134,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setFileBrowsePath('');
     setFileEntries([]);
 
-    const mentionMatch = userMessage.trim().match(/^@@([a-zA-Z0-9_-]+)\b/);
-    let mentionAgent: string | undefined;
-    if (mentionMatch?.[1]) {
-      const mentioned = normalizeAgentKey(mentionMatch[1]);
-      if (mainAgentIds.includes(mentioned)) {
-        mentionAgent = mentioned;
-        setSelectedAgent(mentioned);
-      }
-    }
+    const mentionAgent = leadingAgentMention(userMessage, mainAgentIds);
+    if (mentionAgent) setSelectedAgent(mentionAgent);
 
     const targetAgent = mentionAgent || selectedAgent;
     if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend && !mentionAgent
@@ -151,76 +150,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     window.setTimeout(resizeInput, 0);
   };
 
-  const readFileAsBase64 = (file: File | Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(',')[1] || result;
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
-  /**
-   * Read an image for sending, downscaled.
-   *
-   * Vision models resample anything larger than ~1568px on the long edge
-   * anyway, so the extra pixels buy no accuracy — they only cost upload
-   * size and tokens. A phone photo drops from megabytes to a couple of
-   * hundred KB here.
-   *
-   * PNG screenshots re-encode to JPEG; an image that is already small
-   * enough is passed through untouched, so a deliberately-attached small
-   * PNG keeps its exact bytes and its alpha.
-   */
-  const readImageForSend = async (file: File): Promise<string> => {
-    const MAX_EDGE = 1568;
-    const PASSTHROUGH_BYTES = 256 * 1024;
-
-    let bitmap: ImageBitmap;
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      // Not decodable here (exotic format, or createImageBitmap missing) —
-      // send the original rather than dropping the user's attachment.
-      return readFileAsBase64(file);
-    }
-
-    const longEdge = Math.max(bitmap.width, bitmap.height);
-    if (longEdge <= MAX_EDGE && file.size <= PASSTHROUGH_BYTES) {
-      bitmap.close();
-      return readFileAsBase64(file);
-    }
-
-    const scale = Math.min(1, MAX_EDGE / longEdge);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      bitmap.close();
-      return readFileAsBase64(file);
-    }
-    // JPEG has no alpha; paint white so transparent PNGs don't come out black.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-
-    const blob = await new Promise<Blob | null>((res) =>
-      canvas.toBlob(res, 'image/jpeg', 0.85)
-    );
-    if (!blob) return readFileAsBase64(file);
-    // Keep whichever is actually smaller — re-encoding a small graphic can
-    // grow it.
-    if (blob.size >= file.size) return readFileAsBase64(file);
-    return readFileAsBase64(blob);
-  };
-
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -229,8 +158,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          const base64 = await readImageForSend(file);
-          setPendingImages(prev => [...prev, base64]);
+          addImage(await readImageForSend(file));
         }
       }
     }
@@ -242,8 +170,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     for (const file of Array.from(files)) {
       if (file.type.startsWith('image/')) {
         e.preventDefault();
-        const base64 = await readImageForSend(file);
-        setPendingImages(prev => [...prev, base64]);
+        addImage(await readImageForSend(file));
       }
     }
   };
@@ -441,14 +368,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         {pendingImages.length > 0 && (
           <div className="flex gap-1.5 px-2 py-1.5 flex-wrap">
             {pendingImages.map((img, idx) => (
-              <div key={idx} className="relative group">
+              <div key={img.id} className="relative group">
                 <img
-                  src={`data:image/png;base64,${img}`}
+                  src={`data:image/png;base64,${img.data}`}
                   alt={`Pending ${idx + 1}`}
                   className="w-16 h-16 object-cover rounded-md border border-slate-200 dark:border-white/10"
                 />
                 <button
-                  onClick={() => setPendingImages(prev => prev.filter((_, i) => i !== idx))}
+                  onClick={() => setPendingImages(prev => prev.filter((p) => p.id !== img.id))}
                   className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Remove image"
                 >
@@ -467,14 +394,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <div className="px-3 py-1.5 text-[11px] text-slate-500 border-b border-slate-200 dark:border-white/10">
                 /{skillName} • Click a command or type it after /{skillName}
               </div>
-              {subcommands.map((cmd, idx) => {
+              {subcommands.map((cmd) => {
                 const colonIdx = cmd.indexOf(':');
                 const cmdText = colonIdx >= 0 ? cmd.substring(0, colonIdx).trim() : cmd;
                 const desc = colonIdx >= 0 ? cmd.substring(colonIdx + 1).trim() : '';
                 const cmdName = cmdText.split(/\s/)[0];
                 return (
                   <button
-                    key={idx}
+                    key={cmd}
                     onClick={() => {
                       setChatInput(`/${skillName} ${cmdName} `);
                       setActiveSkillHint(null);
@@ -531,10 +458,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   <button
                     key={agent.name}
                     onClick={() => {
-                      const doubleAtIdx = chatInput.lastIndexOf('@@');
-                      const beforeAt = doubleAtIdx >= 0 ? chatInput.substring(0, doubleAtIdx) : chatInput;
-                      const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
-                      setChatInput(`${beforeAt}@@${label} `);
+                      setChatInput(completeAgentMention(chatInput, agent.name));
                       setShowAgentDropdown(false);
                       setSelectedAgent(agent.name.toLowerCase());
                     }}
@@ -562,12 +486,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   <button
                     key={entry.path}
                     onClick={() => {
-                      const lastAt = chatInput.lastIndexOf('@');
-                      const beforeAt = chatInput.substring(0, lastAt);
                       if (entry.isDir) {
                         // Navigate into directory
                         const newPath = fileSearchMode ? entry.path + '/' : fileBrowsePath + entry.name + '/';
-                        setChatInput(`${beforeAt}@${newPath}`);
+                        setChatInput(completeFileMention(chatInput, newPath, false));
                         setFileBrowsePath(newPath);
                         setFileFilter('');
                         setFileSearchMode(false);
@@ -576,7 +498,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       } else {
                         // Complete file mention
                         const fullPath = fileSearchMode ? entry.path : fileBrowsePath + entry.name;
-                        setChatInput(`${beforeAt}@${fullPath} `);
+                        setChatInput(completeFileMention(chatInput, fullPath, true));
                         setShowFileDropdown(false);
                         setFileFilter('');
                         setFileBrowsePath('');
@@ -628,54 +550,28 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 }
               }
 
-              // Find last `@` not preceded by a space-after check
-              const lastAt = val.lastIndexOf('@');
-              if (lastAt >= 0 && !val.includes(' ', lastAt)) {
-                // Check for `@@` (agent mention)
-                if (lastAt > 0 && val[lastAt - 1] === '@') {
-                  const afterDoubleAt = val.substring(lastAt + 1);
-                  // Only show agent dropdown if no space after @@
-                  if (!afterDoubleAt.includes(' ')) {
-                    setAgentFilter(afterDoubleAt.toLowerCase());
-                    setShowAgentDropdown(true);
-                    setShowSkillDropdown(false);
-                    setShowFileDropdown(false);
-                    setSelectedSuggestionIndex(0);
-                    return;
+              const mention = mentionInProgress(val);
+              if (mention) {
+                setShowAgentDropdown(mention.kind === 'agent');
+                setShowFileDropdown(mention.kind !== 'agent');
+                setShowSkillDropdown(false);
+                setSelectedSuggestionIndex(0);
+                if (mention.kind === 'agent') {
+                  setAgentFilter(mention.filter);
+                } else if (mention.kind === 'file-browse') {
+                  setFileFilter(mention.filter);
+                  setFileSearchMode(false);
+                  if (mention.dir !== fileBrowsePath || fileEntries.length === 0) {
+                    setFileBrowsePath(mention.dir);
+                    fetchFileEntries(mention.dir);
                   }
+                } else {
+                  setFileFilter(mention.query);
+                  setFileSearchMode(true);
+                  setFileBrowsePath('');
+                  searchFiles(mention.query);
                 }
-
-                // Single `@` — file mention
-                const afterAt = val.substring(lastAt + 1);
-                // Don't trigger file dropdown if next char is also `@`
-                if (!afterAt.startsWith('@') && !afterAt.includes(' ')) {
-                  const pathText = afterAt;
-                  const lastSlashInPath = pathText.lastIndexOf('/');
-
-                  setShowFileDropdown(true);
-                  setShowAgentDropdown(false);
-                  setShowSkillDropdown(false);
-                  setSelectedSuggestionIndex(0);
-
-                  if (lastSlashInPath >= 0) {
-                    // Has `/` → directory browse mode
-                    const browsePath = pathText.substring(0, lastSlashInPath + 1);
-                    const filterText = pathText.substring(lastSlashInPath + 1);
-                    setFileFilter(filterText);
-                    setFileSearchMode(false);
-                    if (browsePath !== fileBrowsePath || fileEntries.length === 0) {
-                      setFileBrowsePath(browsePath);
-                      fetchFileEntries(browsePath);
-                    }
-                  } else {
-                    // No `/` → recursive search mode
-                    setFileFilter(pathText);
-                    setFileSearchMode(true);
-                    setFileBrowsePath('');
-                    searchFiles(pathText);
-                  }
-                  return;
-                }
+                return;
               }
 
               // No dropdown — but check for skill argument hint
@@ -783,10 +679,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     e.preventDefault();
                     const agent = filteredAgents[selectedSuggestionIndex];
                     if (!agent) return;
-                    const doubleAtIdx = chatInput.lastIndexOf('@@');
-                    const beforeAt = doubleAtIdx >= 0 ? chatInput.substring(0, doubleAtIdx) : chatInput;
-                    const label = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
-                    setChatInput(`${beforeAt}@@${label} `);
+                    setChatInput(completeAgentMention(chatInput, agent.name));
                     setShowAgentDropdown(false);
                     setSelectedAgent(agent.name.toLowerCase());
                     return;
