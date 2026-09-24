@@ -159,6 +159,8 @@ export interface AgentInfo {
   name: string;
   description: string;
   model?: string | null;
+  /** Other names a message may address it by (`@银月`). */
+  aliases?: string[];
 }
 
 export interface AgentFileInfo {

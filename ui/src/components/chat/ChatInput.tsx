@@ -134,8 +134,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setFileBrowsePath('');
     setFileEntries([]);
 
-    const mentionAgent = leadingAgentMention(userMessage, mainAgentIds);
-    if (mentionAgent) setSelectedAgent(mentionAgent);
+    // `@@agent` moves the chat to that agent; `@agent` / `@银月` addresses it
+    // for this message only — the chat stays with whom it was with.
+    const mention = leadingAgentMention(
+      userMessage,
+      agents.filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name))),
+    );
+    const mentionAgent = mention?.agent;
+    if (mention?.sticky) setSelectedAgent(mention.agent);
 
     const targetAgent = mentionAgent || selectedAgent;
     if (openQuestion && onAnswerQuestion && userMessage && !imagesToSend && !mentionAgent

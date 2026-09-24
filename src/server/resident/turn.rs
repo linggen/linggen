@@ -71,6 +71,36 @@ struct Seat {
     guest: bool,
 }
 
+/// Her engine for a seat. Her own thread is her session's engine. A guest
+/// seat gets a fresh engine of hers: a session holds ONE engine, built for
+/// the agent that runs it — asking it for hers in an app's chat hands back
+/// Ling's, with his prompt and the app's tools (seen 2026-09-24). A fresh one
+/// costs nothing a guest keeps: her thread there is rebuilt each turn.
+async fn engine_for(
+    state: &Arc<ServerState>,
+    seat: &Seat,
+) -> anyhow::Result<Arc<tokio::sync::Mutex<crate::engine::AgentEngine>>> {
+    if !seat.guest {
+        return state
+            .manager
+            .get_or_create_session_agent(&seat.session_id, &seat.root, YINYUE_AGENT)
+            .await;
+    }
+    let mut engine = state
+        .manager
+        .spawn_delegation_engine(&seat.root, YINYUE_AGENT)
+        .await?;
+    // Top level, not a delegate: her reply is persisted to the table.
+    let max_depth = state
+        .manager
+        .get_config_snapshot()
+        .await
+        .agent
+        .max_delegation_depth;
+    engine.set_delegation_depth(0, max_depth);
+    Ok(Arc::new(tokio::sync::Mutex::new(engine)))
+}
+
 /// One turn of hers at `seat`, through the shared turn-core, on her model.
 /// Returns her final text, trimmed; `None` when she produced none.
 async fn run_at(
@@ -83,11 +113,7 @@ async fn run_at(
     let Seat {
         session_id, root, ..
     } = seat;
-    let agent = match state
-        .manager
-        .get_or_create_session_agent(session_id, root, YINYUE_AGENT)
-        .await
-    {
+    let agent = match engine_for(state, seat).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!("[yinyue] could not create Yinyue agent: {e}");

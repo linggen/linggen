@@ -1,11 +1,37 @@
 // The chat input's mention grammar, as pure functions:
-//   @@agent  — address a main agent (only at the start of a message)
+//   @agent   — address a main agent by id or declared alias (`@银月 …`), for
+//              this message only (only at the start of a message)
+//   @@agent  — the same, and the chat stays with that agent
 //   @path    — a file: `@src/` browses a directory, `@name` searches
+// The server reads the same grammar (chat/handler.rs parse_explicit_target_prefix),
+// so a page that sends `@银月 …` through the embed reaches her either way.
 
-/** The main agent a message opens with (`@@ling …`), if it names one. */
-export function leadingAgentMention(text: string, mainAgentIds: string[]): string | undefined {
-  const name = text.trim().match(/^@@([a-zA-Z0-9_-]+)\b/)?.[1]?.toLowerCase();
-  return name && mainAgentIds.includes(name) ? name : undefined;
+/** A main agent and the names it answers to besides its id. */
+export interface MentionableAgent {
+  name: string;
+  aliases?: string[];
+}
+
+/** What may close an `@name` besides whitespace (matches the server). */
+const NAME_END = /[\s,:，：、]/;
+
+/** The agent a message opens by addressing, if any: its id, and whether the
+ *  chat should stay with it (`@@`). A `@path` never matches — a path is not
+ *  an agent's name. */
+export function leadingAgentMention(
+  text: string,
+  agents: MentionableAgent[],
+): { agent: string; sticky: boolean } | undefined {
+  const t = text.trim();
+  if (!t.startsWith('@')) return undefined;
+  const sticky = t.startsWith('@@');
+  const rest = t.slice(sticky ? 2 : 1);
+  const end = rest.search(NAME_END);
+  if (end <= 0 || !rest.slice(end).replace(/^[\s,:，：、]+/, '')) return undefined;
+  const name = rest.slice(0, end).toLowerCase();
+  const hit = agents.find((a) =>
+    a.name.toLowerCase() === name || (a.aliases ?? []).some((al) => al.trim().toLowerCase() === name));
+  return hit ? { agent: hit.name.toLowerCase(), sticky } : undefined;
 }
 
 /** The input with its trailing `@@partial` completed to `@@Agent `. */

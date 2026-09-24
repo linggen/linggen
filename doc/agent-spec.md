@@ -33,6 +33,7 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 | `description` | yes | What the agent does (used for discovery and delegation) |
 | `tools` | yes | Tool declarations (used for prompt assembly). The session's effective path mode controls actual access — see `permission-spec.md`. |
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
+| `aliases` | no | Other names a message may address it by at its start (`@银月 …`), beside its id |
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 

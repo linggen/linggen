@@ -15,6 +15,7 @@ import type { ChatMessage, ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage } from '../lib/api';
 import { postToParent } from '../lib/parentFrame';
+import { leadingAgentMention } from '../lib/chatMentions';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -68,7 +69,11 @@ export function useChatActions(
     const root = getProjectRoot(projectRootRef.current);
     const { activeSessionId: sid } = useSessionStore.getState();
     const agent = useServerStore.getState().selectedAgent;
-    const agentToUse = targetAgent || agent;
+    // A message that opens with `@name` goes to that agent — also when it came
+    // from a page through the embed bridge, not the input (`@银月 …`).
+    const agentToUse = targetAgent
+      || leadingAgentMention(userMessage, useServerStore.getState().agents)?.agent
+      || agent;
     if (!agentToUse) return;
     const now = new Date();
     const trimmed = userMessage.trim();
@@ -112,7 +117,7 @@ export function useChatActions(
         "- `/mute` / `/unmute` — Yinyue's voice on this Mac off / back on (she still writes)",
         '- `/plan <task>` — Ask agent to create a plan (read-only)', '- `/image <path>` — Attach an image file',
         '- `!command` — Run a shell command directly',
-        '- `@path` — Mention a file', '- `@@agent message` — Send to specific agent', '', '**Skills:** Type `/` to see available skills.',
+        '- `@path` — Mention a file', '- `@agent message` — Say it to one agent (`@@agent` stays with it)', '', '**Skills:** Type `/` to see available skills.',
       ].join('\n'));
       return;
     }
@@ -260,7 +265,10 @@ export function useChatActions(
       if (sid) {
         useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
       }
-      useChatStore.getState().upsertGenerating(agentToUse, 'Model loading...', 'Model loading...');
+      // The server says who took the turn: an `@name` it resolved may not be
+      // the agent this surface sent to.
+      const ranAs = typeof data?.agent_id === 'string' && data.agent_id ? data.agent_id : agentToUse;
+      useChatStore.getState().upsertGenerating(ranAs, 'Model loading...', 'Model loading...');
     } catch (e) {
       console.error('Error in chat:', e);
       // The send never reached the server (transport rejected: channel

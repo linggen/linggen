@@ -320,6 +320,14 @@ Three launcher types: `web` (static files in an embedded panel), `bash` (run a s
 
 Interactive apps are **session-bound** — every message in the session activates the skill (tool restrictions, prompt injection). The app talks to the agent through the same HTTP/WebRTC surface as the main UI; no custom endpoints needed.
 
+**Addressing someone else in the app's chat.** A message that opens `@name`
+(an agent's id or a declared alias — `@银月 …`) goes to that agent in the same
+session; with no mention it goes to the session's agent. The companion answers
+there as a guest, with none of the skill's tools. A page's own ask box sends
+its text into the chat as `@银月 …` through the chat bridge. An app moment for
+her can carry `session` (and `converse`) so her line lands in this chat —
+`doc/yinyue-companion-spec.md` § App moments.
+
 Every app skill receives a built-in `PageUpdate` data tool — the agent calls it whenever state the user should see changes, and the iframe re-renders. Each app defines its own page layout schema in its SKILL.md.
 
 ### App-mode (`?app_mode=1`)

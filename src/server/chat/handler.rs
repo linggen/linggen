@@ -976,8 +976,12 @@ pub(crate) async fn start_turn(
             req.message.clone(),
         )
         .await;
-        return Json(serde_json::json!({ "status": "started", "session_id": session_id }))
-            .into_response();
+        return Json(serde_json::json!({
+            "status": "started",
+            "session_id": session_id,
+            "agent_id": target_id,
+        }))
+        .into_response();
     }
 
     // A relayed message names its speaker (an agent id like "yinyue"); the
@@ -1041,6 +1045,7 @@ pub(crate) async fn start_turn(
     // chat before the agent picks them up.
 
     let session_id_response = session_id.clone();
+    let target_id_response = target_id.clone();
     let events_tx_clone = events_tx.clone();
     let target_id_clone = target_id.clone();
     let clean_msg_clone = clean_msg.clone();
@@ -1189,7 +1194,14 @@ pub(crate) async fn start_turn(
     });
 
     let status = if was_busy { "queued" } else { "started" };
-    Json(serde_json::json!({ "status": status, "session_id": session_id_response })).into_response()
+    // `agent_id`: who the turn went to — a leading `@name` may have
+    // addressed someone other than the agent the surface sent it to.
+    Json(serde_json::json!({
+        "status": status,
+        "session_id": session_id_response,
+        "agent_id": target_id_response,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]

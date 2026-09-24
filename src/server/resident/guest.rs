@@ -54,6 +54,7 @@ pub(crate) async fn answer_as_guest(
                 ),
             );
             if let Some(line) = spoken_line(&reply) {
+                tracing::info!("[yinyue] answered as a guest in {session_id}");
                 crate::server::api::yinyue::emit_speak(&state, line, None);
             }
         }

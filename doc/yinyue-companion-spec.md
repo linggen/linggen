@@ -118,7 +118,8 @@ companion.
 
 ## App moments — an app tells her, she speaks when it has gone quiet
 
-`POST /api/yinyue/event { app, text, big?, asked?, mood? }` (`server/yinyue_moments.rs`).
+`POST /api/yinyue/event { app, text, big?, asked?, mood?, session?, converse? }`
+(`server/yinyue_moments.rs`).
 An app posts what just happened as a plain fact in the user's language — a
 game's loss, a hard win, a wound. **Nothing is said then.** The moments queue
 (24 kept, 15 min stale) and a 5 s tick checks one gate, in code:
@@ -141,6 +142,22 @@ responds, and a companion told every event talks over the game — silence is
 decided here. `yinyue.md` § Beside them in what they play is how she answers.
 First user: Lingjing (fight outcomes, a 杀招 let go, 气血 at a quarter, too hurt
 to fight).
+
+**In the app's chat.** `session` (the app's chat session id; unknown → 400)
+has her spoken line also land there as a message from her — `[Yinyue]` in the
+embed chat, and in Ling's context on his next turn — without starting a Ling
+run. SILENT lands nothing. `converse: true` (with `session`, for big moments)
+then gives the session's agent **one** hidden kickoff to answer her in a line,
+in-world, or `SILENT` (nothing shown, nothing kept). It waits behind a running
+turn, never interrupts, never wakes her back, and a session gets at most one
+exchange per **2 min**.
+
+**Addressed in an app's chat.** A message opening `@Yinyue` / `@银月` (id or a
+spec `aliases:` name) goes to her, in the same session, as a **guest**: her own
+engine and tools (never the session's skill, its tools or prompt), the thread
+rebuilt from the transcript, her reply persisted as hers and spoken
+(`PetSpeak`). Ling is not woken; what was said reaches him at the start of his
+next turn (`chat/side_lines.rs`). No mention → Ling, as always.
 
 ## `agent_chat` — general inter-agent messaging
 
