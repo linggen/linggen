@@ -298,7 +298,7 @@ states + one frame.
 ## Event-reactive supervision
 
 Yinyue reacts to runtime events instead of polling. The watch loop
-(`src/server/yinyue_watch.rs`, spawned in `src/server/mod.rs`) subscribes to the
+(`src/server/resident/triggers.rs`, spawned in `src/server/background.rs`) subscribes to the
 `ServerEvent` broadcast bus (`state.events_tx`) — the same feed the UI rides.
 
 **Reaction discipline.** She reacts only to **background / async** work — a mission
@@ -423,9 +423,9 @@ user's region and time without asking.
 | Concern | Location |
 |---|---|
 | Agent definition | `linggen/agents/yinyue.md` |
-| Event-reactive watch loop | `linggen/src/server/yinyue_watch.rs` |
+| Event-reactive watch loop | `linggen/src/server/resident/triggers.rs` |
 | Shared turn-core (`run_session_turn`) | `linggen/src/server/chat/` (extracted from `handler.rs`/`runtime.rs`, planned) |
-| Rolling-session resolver | `linggen/src/server/yinyue_watch.rs` (planned) |
+| Rolling-session resolver | `linggen/src/server/resident/session_roll.rs` |
 | Session persistence (`messages.jsonl`) | `linggen/src/state_fs/sessions.rs` (reused) |
 | Environment block | `linggen/prompts/system-prompt.toml`, `linggen/src/engine/prompt/mod.rs` |
 | Desktop pet (body) | `linggen-app/shell/src/pet.rs` — thin native window → core `?pet=1` |

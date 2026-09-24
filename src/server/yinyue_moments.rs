@@ -176,7 +176,7 @@ pub(crate) fn kickoff(moments: &[Moment]) -> String {
 }
 
 /// The kickoff when the user asked her for something: answer it, in her
-/// voice. Worded for the answer contract (`yinyue_watch::wake_asked`): the
+/// voice. Worded for the answer contract (`resident::wake_asked`): the
 /// answer is her final paragraph, the part spoken aloud.
 pub(crate) fn asked_kickoff(moments: &[Moment]) -> String {
     format!(
@@ -282,9 +282,9 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         let state = state.clone();
         tokio::spawn(async move {
             if asked {
-                super::yinyue_watch::wake_asked(state, asked_kickoff(&taken), &emotion).await;
+                super::resident::wake_asked(state, asked_kickoff(&taken), &emotion).await;
             } else {
-                super::yinyue_watch::wake_herald(state, kickoff(&taken), &emotion).await;
+                super::resident::wake_herald(state, kickoff(&taken), &emotion).await;
             }
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
         });

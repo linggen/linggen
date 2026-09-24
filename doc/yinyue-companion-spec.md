@@ -25,7 +25,7 @@ Every proactive surface funnels through one rule:
 She **always phrases her own lines** — never a hardcoded/templated string. The
 trigger decides she *takes a look*; **presence governs the response**.
 
-Inputs converge on her existing watch loop (`server/yinyue_watch.rs`) and
+Inputs converge on her existing watch loop (`server/resident/`) and
 `run_yinyue_turn`:
 
 - **events** (system) — terminal/blocked run signals on the broadcast bus
@@ -72,7 +72,7 @@ The web UI watches `keydown` / `pointermove` / `focus` / `visibilitychange`
 
 ## Herald — watch the bus, don't call-site-inject
 
-Terminal/blocked run events are already broadcast; `yinyue_watch.rs` subscribes
+Terminal/blocked run events are already broadcast; `server/resident/triggers.rs` subscribes
 and matches the few that matter. The engine stays ignorant of Yinyue; any agent
 heralds for free.
 
@@ -148,7 +148,7 @@ A built-in tool any agent can call: `agent_chat(to, message)`. Replaces a
 Yinyue-specific report tool — *any* agent can message *any* other.
 
 - **Delivery is by recipient.** The tool emits `ServerEvent::AgentChat
-  { from, to, message }` on the bus; `yinyue_watch.rs` routes it:
+  { from, to, message }` on the bus; `server/resident/triggers.rs` routes it:
   - **to Yinyue** → she receives it as addressed to her and *acts on it* —
     speaks (`PetSpeak`), moves (`Express`), or stays silent.
   - **to a chat agent** (Ling, …) → it lands in that agent's chat as a
@@ -196,5 +196,5 @@ Refinements shipped on top of the plan:
 ## Reuses (already shipped)
 
 `PetSpeak` / `PetExpress` (the `Express` tool + speak spine), `run_yinyue_turn` +
-`emit_speak` + the SILENT-check in `yinyue_watch.rs`, the WebRTC data channel, the
+`emit_speak` + the SILENT-check in `server/resident/spoken.rs`, the WebRTC data channel, the
 `AskUser` answer plumbing.

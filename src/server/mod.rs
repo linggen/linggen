@@ -12,7 +12,7 @@ mod shared_pages;
 mod state;
 mod ui_events;
 mod yinyue_moments;
-mod yinyue_watch;
+mod resident;
 
 pub use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
 pub use state::ServerState;

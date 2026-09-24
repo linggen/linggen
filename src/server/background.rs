@@ -1,7 +1,7 @@
 //! Everything the daemon runs beside the HTTP server: the loops, watchers
 //! and pre-warms `prepare_server` starts once the state exists.
 
-use super::{api, rtc, yinyue_moments, yinyue_watch, ServerState};
+use super::{api, resident, rtc, yinyue_moments, ServerState};
 use crate::engine::agent::AgentEvent;
 use crate::engine::events::{AgentStatusKind, ServerEvent};
 use crate::mcp_client::McpServerConfig;
@@ -294,13 +294,13 @@ async fn count_tokens(state: &Arc<ServerState>, event: &AgentEvent, session_id: 
 /// Yinyue's event-reactive loops. The watch loop taps the event bus and, on
 /// a coarse trigger (first slice: a non-Yinyue mission finishing), wakes the
 /// Yinyue agent to decide whether to tell the user. Guards against self-loops
-/// and ignores the per-token firehose. See server/yinyue_watch.rs.
+/// and ignores the per-token firehose. See server/resident/.
 fn spawn_companion(state: &Arc<ServerState>) {
-    tokio::spawn(yinyue_watch::yinyue_watch_loop(state.clone()));
+    tokio::spawn(resident::yinyue_watch_loop(state.clone()));
     // Ambient life-signs: on a jittered cadence she glances at the day and,
     // now and then, makes one small unprompted remark in her own voice
     // (mostly she stays quiet). Sibling to the watch loop, not a mission.
-    tokio::spawn(yinyue_watch::yinyue_ambient_loop(state.clone()));
+    tokio::spawn(resident::yinyue_ambient_loop(state.clone()));
     // App moments: what an app posts to /api/yinyue/event waits until the
     // user has gone quiet, then she is woken once to judge a word. See
     // server/yinyue_moments.rs.
