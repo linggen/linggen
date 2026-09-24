@@ -151,60 +151,91 @@ pub(super) fn spawn_get(
             .get(format!("http://127.0.0.1:{port}{url}"))
             .send()
             .await;
-        let (status, bytes) = match resp {
-            Ok(r) => {
-                let s = r.status().as_u16();
-                match r.bytes().await {
-                    Ok(b) => (s, b),
-                    Err(e) => {
-                        let _ = out
-                            .send(super::response::DcWrite::text(
-                                channel,
-                                json!({"type": "get_err", "id": id, "error": format!("read: {e}")})
-                                    .to_string(),
-                            ))
-                            .await;
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                let _ = out
-                    .send(super::response::DcWrite::text(
-                        channel,
-                        json!({"type": "get_err", "id": id, "error": format!("fetch: {e}")})
-                            .to_string(),
-                    ))
-                    .await;
-                return;
-            }
+        let result = match resp {
+            Ok(r) => relay_response(r, &id, channel, &out).await,
+            Err(e) => Err(format!("fetch: {e}")),
         };
-
-        let _ = out
-            .send(super::response::DcWrite::text(
-                channel,
-                json!({"type": "get_begin", "id": id, "status": status, "size": bytes.len()})
-                    .to_string(),
-            ))
-            .await;
-        for chunk in bytes.chunks(DOWNLOAD_CHUNK) {
-            if out
-                .send(super::response::DcWrite::binary(channel, chunk.to_vec()))
-                .await
-                .is_err()
-            {
-                return; // peer gone
+        let done = match result {
+            Ok(Some(n)) => {
+                tracing::info!("[media] get done: {n} bytes");
+                json!({"type": "get_end", "id": id})
             }
-        }
-        tracing::info!("[media] get done: {} bytes", bytes.len());
+            Ok(None) => return, // peer gone
+            Err(e) => json!({"type": "get_err", "id": id, "error": e}),
+        };
         let _ = out
-            .send(super::response::DcWrite::text(
-                channel,
-                json!({"type": "get_end", "id": id}).to_string(),
-            ))
+            .send(super::response::DcWrite::text(channel, done.to_string()))
             .await;
     });
     true
+}
+
+/// Send `get_begin`, then the body as ≤16 KiB binary chunks. A body with a
+/// declared length is streamed — a large file never sits whole in memory —
+/// otherwise it is read first to learn its size. `Ok(None)` = peer gone.
+async fn relay_response(
+    r: reqwest::Response,
+    id: &str,
+    channel: str0m::channel::ChannelId,
+    out: &tokio::sync::mpsc::Sender<super::response::DcWrite>,
+) -> Result<Option<u64>, String> {
+    use super::response::DcWrite;
+    use futures_util::StreamExt;
+    let status = r.status().as_u16();
+    let begin = |size: u64| {
+        DcWrite::text(
+            channel,
+            json!({"type": "get_begin", "id": id, "status": status, "size": size}).to_string(),
+        )
+    };
+    let Some(size) = r.content_length() else {
+        let bytes = r.bytes().await.map_err(|e| format!("read: {e}"))?;
+        if out.send(begin(bytes.len() as u64)).await.is_err() {
+            return Ok(None);
+        }
+        for chunk in bytes.chunks(DOWNLOAD_CHUNK) {
+            if out
+                .send(DcWrite::binary(channel, chunk.to_vec()))
+                .await
+                .is_err()
+            {
+                return Ok(None);
+            }
+        }
+        return Ok(Some(bytes.len() as u64));
+    };
+    if out.send(begin(size)).await.is_err() {
+        return Ok(None);
+    }
+    let mut sent = 0u64;
+    let mut buf = Vec::with_capacity(DOWNLOAD_CHUNK);
+    let mut stream = r.bytes_stream();
+    while let Some(piece) = stream.next().await {
+        let piece = piece.map_err(|e| format!("read: {e}"))?;
+        let mut rest = &piece[..];
+        while !rest.is_empty() {
+            let take = (DOWNLOAD_CHUNK - buf.len()).min(rest.len());
+            buf.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+            if buf.len() == DOWNLOAD_CHUNK {
+                sent += buf.len() as u64;
+                let full = std::mem::replace(&mut buf, Vec::with_capacity(DOWNLOAD_CHUNK));
+                if out.send(DcWrite::binary(channel, full)).await.is_err() {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    if !buf.is_empty() {
+        sent += buf.len() as u64;
+        if out.send(DcWrite::binary(channel, buf)).await.is_err() {
+            return Ok(None);
+        }
+    }
+    if sent != size {
+        return Err(format!("short body: {sent} of {size} bytes"));
+    }
+    Ok(Some(sent))
 }
 
 /// What a media `get` may fetch: our own API, plus the skill-app and

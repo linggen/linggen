@@ -55,7 +55,8 @@ pub(crate) fn publish_topic(
 /// Watch a directory and announce changes on a topic, so devices stop polling
 /// for them. Debounced, because one logical change (an album copied in, a scan
 /// rewriting its state file) fires a burst of filesystem events. `filter` picks
-/// which paths matter; `None` means every change counts.
+/// which paths matter; `None` means every change counts. Returns whether the
+/// watcher is live, so a caller can try again later (e.g. once the dir exists).
 pub(crate) fn watch_dir(
     state: Arc<ServerState>,
     dir: PathBuf,
@@ -63,7 +64,8 @@ pub(crate) fn watch_dir(
     op: String,
     debounce: Duration,
     filter: Option<fn(&std::path::Path) -> bool>,
-) {
+) -> bool {
+    use notify::Watcher;
     if !dir.is_dir() {
         // Say so. Returning in silence here meant a fresh install armed no
         // watcher at all, and the devices that depend on the announcement had
@@ -72,36 +74,37 @@ pub(crate) fn watch_dir(
             "[topic] not watching {} for {topic}/{op} — directory does not exist",
             dir.display()
         );
-        return;
+        return false;
     }
-    tokio::spawn(async move {
-        use notify::Watcher;
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                let Ok(ev) = res else { return };
-                if !(ev.kind.is_create() || ev.kind.is_remove() || ev.kind.is_modify()) {
-                    return;
-                }
-                let relevant = match filter {
-                    Some(f) => ev.paths.iter().any(|p| f(p)),
-                    None => true,
-                };
-                if relevant {
-                    let _ = tx.send(());
-                }
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    tracing::warn!("[topic] watcher for {topic}/{op} unavailable: {e}");
-                    return;
-                }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut watcher =
+        match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            let Ok(ev) = res else { return };
+            if !(ev.kind.is_create() || ev.kind.is_remove() || ev.kind.is_modify()) {
+                return;
+            }
+            let relevant = match filter {
+                Some(f) => ev.paths.iter().any(|p| f(p)),
+                None => true,
             };
-        if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::Recursive) {
-            tracing::warn!("[topic] watching {} failed: {e}", dir.display());
-            return;
-        }
-        tracing::info!("[topic] watching {} → {topic}/{op}", dir.display());
+            if relevant {
+                let _ = tx.send(());
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("[topic] watcher for {topic}/{op} unavailable: {e}");
+                return false;
+            }
+        };
+    if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::Recursive) {
+        tracing::warn!("[topic] watching {} failed: {e}", dir.display());
+        return false;
+    }
+    tracing::info!("[topic] watching {} → {topic}/{op}", dir.display());
+    tokio::spawn(async move {
+        // The watcher lives as long as this loop.
+        let _watcher = watcher;
         while rx.recv().await.is_some() {
             // Drain the burst before announcing once.
             while tokio::time::timeout(debounce, rx.recv())
@@ -112,6 +115,7 @@ pub(crate) fn watch_dir(
             tracing::info!("[topic] {topic}/{op} — devices notified");
         }
     });
+    true
 }
 
 /// Where a retained `topic`/`op` is kept. `None` when either name could escape

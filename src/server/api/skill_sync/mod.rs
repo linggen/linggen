@@ -11,16 +11,22 @@
 //! Read-only by design: ingest (a device writing into the Mac) carries
 //! delete-safety semantics a declaration can't express.
 
+mod ledger;
+mod listing;
+
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use crate::util::LockExt;
 
 use crate::engine::skill::SyncConfig;
 use crate::server::ServerState;
@@ -71,16 +77,6 @@ impl Surface {
     }
 }
 
-fn read_names(dir: &std::path::Path) -> Vec<String> {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect()
-}
-
 fn has_ext(name: &str, exts: &[String]) -> bool {
     name.rsplit_once('.')
         .is_some_and(|(_, e)| exts.iter().any(|x| x.eq_ignore_ascii_case(e)))
@@ -100,55 +96,68 @@ pub(crate) async fn get_items(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let names = read_names(&s.base);
-
-    // One listing per distinct companion directory, not per companion.
-    let mut listings: HashMap<Option<String>, Vec<String>> = HashMap::new();
-    listings.insert(None, names.clone());
-    for c in &s.cfg.companions {
-        listings.entry(c.subdir.clone()).or_insert_with(|| {
-            s.dir_for(c.subdir.as_deref())
-                .map(|d| read_names(&d))
-                .unwrap_or_default()
-        });
-    }
-
-    let mut items = Vec::new();
-    for name in names.iter().filter(|n| has_ext(n, &s.cfg.items)) {
-        let base_stem = stem(name);
-        let mut item = serde_json::Map::new();
-        item.insert("name".into(), name.clone().into());
-        item.insert(
-            "size".into(),
-            std::fs::metadata(s.base.join(name))
-                .map(|m| m.len())
-                .unwrap_or(0)
-                .into(),
-        );
-        for c in &s.cfg.companions {
-            let pool = listings.get(&c.subdir).map(Vec::as_slice).unwrap_or(&[]);
-            let prefix = format!("{base_stem}{}", c.suffix.as_deref().unwrap_or(""));
-            let found = c
-                .exts
-                .iter()
-                .map(|e| format!("{prefix}.{e}"))
-                .find(|f| pool.contains(f));
-            // The size travels with the name. A companion was presence-only, so
-            // a device that already had one never fetched it again — a lyrics
-            // file corrected on the Mac could not reach the phone (2026-09-18).
-            if let Some(name) = &found {
-                let size = s
-                    .dir_for(c.subdir.as_deref())
-                    .map(|d| std::fs::metadata(d.join(name)).map(|m| m.len()).unwrap_or(0))
-                    .unwrap_or(0);
-                item.insert(format!("{}_size", c.name), size.into());
-            }
-            item.insert(c.name.clone(), found.into());
-        }
-        items.push(serde_json::Value::Object(item));
-    }
-    items.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    // A skill installed (or a dir created) after startup gets its watcher
+    // the first time a device asks.
+    arm_watcher(&state, &s.cfg);
+    let items = tokio::task::spawn_blocking(move || build_items(&s, listing::list))
+        .await
+        .unwrap_or_default();
     Json(serde_json::json!({ "items": items })).into_response()
+}
+
+/// The `/items` rows. `list` yields a directory's files with their sizes.
+fn build_items(
+    s: &Surface,
+    list: impl Fn(&std::path::Path) -> Arc<listing::Listing>,
+) -> Vec<serde_json::Value> {
+    let names = list(&s.base);
+    // One listing per distinct companion directory, not per companion.
+    let mut pools: HashMap<Option<String>, Arc<listing::Listing>> = HashMap::new();
+    pools.insert(None, names.clone());
+    for c in &s.cfg.companions {
+        if !pools.contains_key(&c.subdir) {
+            let pool = s
+                .dir_for(c.subdir.as_deref())
+                .map(|d| list(&d))
+                .unwrap_or_default();
+            pools.insert(c.subdir.clone(), pool);
+        }
+    }
+
+    // `names` is ordered, so the rows come out sorted by name.
+    names
+        .iter()
+        .filter(|(n, _)| has_ext(n, &s.cfg.items))
+        .map(|(name, size)| item_row(s, name, *size, &pools))
+        .collect()
+}
+
+fn item_row(
+    s: &Surface,
+    name: &str,
+    size: u64,
+    pools: &HashMap<Option<String>, Arc<listing::Listing>>,
+) -> serde_json::Value {
+    let base_stem = stem(name);
+    let mut item = serde_json::Map::new();
+    item.insert("name".into(), name.into());
+    item.insert("size".into(), size.into());
+    for c in &s.cfg.companions {
+        let pool = pools.get(&c.subdir);
+        let prefix = format!("{base_stem}{}", c.suffix.as_deref().unwrap_or(""));
+        let found = c.exts.iter().find_map(|e| {
+            let f = format!("{prefix}.{e}");
+            pool.and_then(|p| p.get(&f)).map(|size| (f, *size))
+        });
+        // The size travels with the name. A companion was presence-only, so
+        // a device that already had one never fetched it again — a corrected
+        // companion on the Mac could not reach the phone (2026-09-18).
+        if let Some((_, size)) = &found {
+            item.insert(format!("{}_size", c.name), (*size).into());
+        }
+        item.insert(c.name.clone(), found.map(|(f, _)| f).into());
+    }
+    serde_json::Value::Object(item)
 }
 
 #[derive(Deserialize)]
@@ -178,16 +187,54 @@ pub(crate) async fn get_file(
     let Some(base) = s.dir_for(q.dir.as_deref()) else {
         return (StatusCode::BAD_REQUEST, "bad dir").into_response();
     };
-    let Ok(bytes) = tokio::fs::read(base.join(&q.name)).await else {
+    let Some((file, len)) = open_file(&base.join(&q.name)).await else {
         return (StatusCode::NOT_FOUND, "no such file").into_response();
     };
     // Only base-dir fetches count toward coverage — companions are extras.
     if q.dir.is_none() {
         if let Some(device) = device_from_headers(&headers) {
-            record_fetch(&s.skill, &device.id, &q.name);
+            ledger::record_fetch(&s.skill, &device.id, &q.name);
         }
     }
-    ([(header::CONTENT_TYPE, mime_for(&q.name))], bytes).into_response()
+    // Streamed, not read whole: an item can be hundreds of MB.
+    let body = Body::from_stream(file_chunks(file));
+    (
+        [
+            (header::CONTENT_TYPE, mime_for(&q.name).to_string()),
+            (header::CONTENT_LENGTH, len.to_string()),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Read size per chunk of a streamed file.
+const STREAM_CHUNK: usize = 64 * 1024;
+
+/// A file as a stream of chunks, ending after the first read error.
+fn file_chunks(
+    file: tokio::fs::File,
+) -> impl futures_util::Stream<Item = std::io::Result<axum::body::Bytes>> {
+    use tokio::io::AsyncReadExt;
+    futures_util::stream::unfold(Some(file), |file| async move {
+        let mut file = file?;
+        let mut buf = vec![0u8; STREAM_CHUNK];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(buf.into()), Some(file)))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    })
+}
+
+/// Open a regular file for streaming, with its length.
+async fn open_file(path: &std::path::Path) -> Option<(tokio::fs::File, u64)> {
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let meta = file.metadata().await.ok()?;
+    meta.is_file().then(|| (file, meta.len()))
 }
 
 fn mime_for(name: &str) -> &'static str {
@@ -214,41 +261,7 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
-// ── Per-device sync ledger ───────────────────────────────────────────────────
-//
-// `~/.linggen/sync/<skill>.json`: which of the skill's items each paired device
-// holds. Written on every base-dir fetch; the skill's own UI reads it back via
-// `/devices` to show true per-phone coverage. Keyed by `PairedDevice.id`, so
-// revoking a device orphans (not corrupts) its row.
-
-#[derive(serde::Serialize, Deserialize, Default, Clone)]
-struct DeviceSync {
-    files: Vec<String>,
-    last_fetch: i64,
-}
-
-fn ledger_path(skill: &str) -> PathBuf {
-    let dir = crate::paths::linggen_home().join("sync");
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join(format!("{skill}.json"))
-}
-
-/// Serializes read-modify-write of the ledgers; devices sync sequentially, but
-/// nothing enforces that, and several skills can be syncing at once.
-static SYNC_LOCK: Mutex<()> = Mutex::new(());
-
-fn load_ledger(skill: &str) -> HashMap<String, DeviceSync> {
-    std::fs::read_to_string(ledger_path(skill))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
-}
-
-fn save_ledger(skill: &str, ledger: &HashMap<String, DeviceSync>) -> bool {
-    serde_json::to_string_pretty(ledger)
-        .map(|t| std::fs::write(ledger_path(skill), t).is_ok())
-        .unwrap_or(false)
-}
+// ── Per-device sync ledger (see `ledger`) ────────────────────────────────────
 
 /// Which paired device is asking. Loopback callers — the Mac's own UI and
 /// skills — are nobody's device and resolve to None.
@@ -295,17 +308,6 @@ fn device_from_headers(headers: &HeaderMap) -> Option<super::pair::PairedDevice>
     devices.into_iter().find(|d| d.id == id)
 }
 
-fn record_fetch(skill: &str, device_id: &str, name: &str) {
-    let _guard = SYNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut ledger = load_ledger(skill);
-    let entry = ledger.entry(device_id.to_string()).or_default();
-    if !entry.files.iter().any(|f| f == name) {
-        entry.files.push(name.to_string());
-    }
-    entry.last_fetch = chrono::Utc::now().timestamp();
-    save_ledger(skill, &ledger);
-}
-
 #[derive(Deserialize)]
 pub(crate) struct HaveBody {
     files: Vec<String>,
@@ -328,12 +330,13 @@ pub(crate) async fn post_have(
     let Some(device) = device_from_headers(&headers) else {
         return (StatusCode::UNAUTHORIZED, "paired devices only").into_response();
     };
-    let _guard = SYNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut ledger = load_ledger(&s.skill);
-    let entry = ledger.entry(device.id).or_default();
-    entry.files = body.files;
-    entry.last_fetch = chrono::Utc::now().timestamp();
-    if !save_ledger(&s.skill, &ledger) {
+    let now = chrono::Utc::now().timestamp();
+    let saved = tokio::task::spawn_blocking(move || {
+        ledger::STORE.replace(&s.skill, &device.id, body.files, now)
+    })
+    .await
+    .unwrap_or(false);
+    if !saved {
         return (StatusCode::INTERNAL_SERVER_ERROR, "persist failed").into_response();
     }
     Json(serde_json::json!({ "status": "ok" })).into_response()
@@ -350,7 +353,7 @@ pub(crate) async fn get_devices(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let ledger = load_ledger(&s.skill);
+    let ledger = ledger::STORE.snapshot(&s.skill);
     // Whether the device is here RIGHT NOW, which the ledger cannot say — it
     // records what was last fetched, not who is holding a channel. A page that
     // pushes work at a device has to tell the difference to describe what it
@@ -377,16 +380,73 @@ pub(crate) async fn get_devices(
 /// `topic`, so paired devices are pushed to instead of polling.
 pub(crate) async fn spawn_watchers(state: Arc<ServerState>) {
     for skill in state.skills.list_skills().await {
-        let Some(cfg) = skill.sync else { continue };
-        let Some(topic) = cfg.topic else { continue };
-        let dir = crate::util::resolve_path(std::path::Path::new(&cfg.dir));
-        super::topic::watch_dir(
-            state.clone(),
-            dir,
-            topic,
-            "library-changed".to_string(),
-            std::time::Duration::from_secs(2),
-            None,
-        );
+        if let Some(cfg) = skill.sync {
+            arm_watcher(&state, &cfg);
+        }
     }
 }
+
+/// `(dir, topic)` pairs with a live watcher.
+static ARMED: Mutex<Option<HashSet<(PathBuf, String)>>> = Mutex::new(None);
+
+/// Watch a skill's sync dir if it declared a topic and nothing watches it yet.
+/// The dir is the skill's own declaration, so a missing one is created —
+/// otherwise a fresh install armed nothing and devices never heard a change
+/// until the daemon restarted. Idempotent; cheap after the first call.
+fn arm_watcher(state: &Arc<ServerState>, cfg: &SyncConfig) {
+    let Some(topic) = cfg.topic.clone() else {
+        return;
+    };
+    let dir = crate::util::resolve_path(std::path::Path::new(&cfg.dir));
+    let key = (dir.clone(), topic.clone());
+    let mut armed = ARMED.lock_ok();
+    let armed = armed.get_or_insert_with(HashSet::new);
+    if armed.contains(&key) {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("[skill-sync] cannot create {}: {e}", dir.display());
+        return;
+    }
+    let armed_ok = super::topic::watch_dir(
+        state.clone(),
+        dir.clone(),
+        topic,
+        "library-changed".to_string(),
+        std::time::Duration::from_secs(2),
+        Some(counts_as_change),
+    );
+    if armed_ok {
+        listing::mark_watched(&dir);
+        armed.insert(key);
+    }
+}
+
+/// Whether a filesystem event under a sync dir is a real change. In-progress
+/// downloads and temp files churn for minutes and would ring the topic over
+/// and over; the rename that finishes them is what counts. A real change also
+/// drops the cached listings.
+fn counts_as_change(path: &std::path::Path) -> bool {
+    if is_scratch(path) {
+        return false;
+    }
+    listing::invalidate();
+    true
+}
+
+/// Dotfiles and the usual partial-download / temp-file names.
+fn is_scratch(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    const SCRATCH_EXTS: &[&str] = &["part", "tmp", "temp", "crdownload", "download", "ytdl"];
+    name.starts_with('.')
+        || lower.contains(".part-")
+        || lower
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| SCRATCH_EXTS.contains(&ext))
+}
+
+#[cfg(test)]
+mod tests;
