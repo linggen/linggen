@@ -25,33 +25,15 @@ import {
   StateField,
   type EditorState,
 } from '@codemirror/state';
+import { getMermaid } from '../lib/mermaid';
 
-// Lazy mermaid import to avoid blocking
-let mermaidInstance: typeof import('mermaid').default | null = null;
-let mermaidInitialized = false;
-
-async function getMermaid() {
-  if (!mermaidInstance) {
-    try {
-      const mermaidModule = await import('mermaid');
-      mermaidInstance = mermaidModule.default;
-      if (!mermaidInitialized) {
-        const isDark =
-          document.documentElement.classList.contains('dark') ||
-          window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-        mermaidInstance.initialize({
-          startOnLoad: false,
-          theme: isDark ? 'dark' : 'default',
-          securityLevel: 'loose',
-        });
-        mermaidInitialized = true;
-      }
-    } catch (err) {
-      console.error('Failed to load mermaid:', err);
-      return null;
-    }
-  }
-  return mermaidInstance;
+/** Error text goes in as text, never markup: it can echo the diagram source. */
+function showMermaidError(container: HTMLElement, message: string) {
+  const el = document.createElement('div');
+  el.style.color = '#ef4444';
+  el.style.padding = '8px';
+  el.textContent = message;
+  container.replaceChildren(el);
 }
 
 // === Widget Classes for replaced content ===
@@ -119,15 +101,14 @@ class MermaidWidget extends WidgetType {
     try {
       const mermaid = await getMermaid();
       if (!mermaid) {
-        container.innerHTML =
-          '<div style="color:#ef4444;padding:8px">Mermaid not available</div>';
+        showMermaidError(container, 'Mermaid not available');
         return;
       }
       const cleanCode = this.code.trim();
       const { svg } = await mermaid.render(this.id, cleanCode);
       container.innerHTML = svg;
     } catch (err) {
-      container.innerHTML = `<div style="color:#ef4444;padding:8px">Mermaid Error: ${err instanceof Error ? err.message : String(err)}</div>`;
+      showMermaidError(container, `Mermaid Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

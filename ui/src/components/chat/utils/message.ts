@@ -161,6 +161,28 @@ export const sanitizeAgentMessageText = (text: string) => {
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
+// Derived rows are cached per source message (and per synthesized key) so
+// the same input row yields the same output object on every pass; without
+// it every agent row was a new object per streamed token and no row memo
+// could hold.
+const derivedCache = new WeakMap<ChatMessage, { sig: string; out: ChatMessage }>();
+const derive = (msg: ChatMessage, sig: string, build: () => ChatMessage): ChatMessage => {
+  const hit = derivedCache.get(msg);
+  if (hit && hit.sig === sig) return hit.out;
+  const out = build();
+  derivedCache.set(msg, { sig, out });
+  return out;
+};
+const synthCache = new Map<string, ChatMessage>();
+const synth = (sig: string, build: () => ChatMessage): ChatMessage => {
+  const hit = synthCache.get(sig);
+  if (hit) return hit;
+  if (synthCache.size > 500) synthCache.clear();
+  const out = build();
+  synthCache.set(sig, out);
+  return out;
+};
+
 export const collapseProgressMessages = (messages: ChatMessage[]): ChatMessage[] => {
   const out: ChatMessage[] = [];
   const pendingByAgent = new Map<string, string[]>();
@@ -179,7 +201,8 @@ export const collapseProgressMessages = (messages: ChatMessage[]): ChatMessage[]
       pendingGeneratingByAgent.delete(agentId);
       return;
     }
-    out.push({
+    const sig = [agentId, to || 'user', ts ?? '', isGenerating ? 1 : 0, ...deduped].join('\u0001');
+    out.push(synth(sig, () => ({
       role: roleFromSender(agentId),
       from: agentId,
       to: to || 'user',
@@ -189,7 +212,7 @@ export const collapseProgressMessages = (messages: ChatMessage[]): ChatMessage[]
       isGenerating,
       activityEntries: deduped,
       activitySummary: summarizeCollapsedActivity(deduped, isGenerating),
-    });
+    })));
     pendingByAgent.delete(agentId);
     pendingTsByAgent.delete(agentId);
     pendingGeneratingByAgent.delete(agentId);
@@ -240,7 +263,8 @@ export const collapseProgressMessages = (messages: ChatMessage[]): ChatMessage[]
       pendingByAgent.delete(agentId);
       pendingTsByAgent.delete(agentId);
       pendingGeneratingByAgent.delete(agentId);
-      out.push({
+      const sig = ['merged', isGenerating ? 1 : 0, ...merged].join('\u0001');
+      out.push(derive(msg, sig, () => ({
         ...msg,
         isGenerating,
         activityEntries: merged.length > 0 ? merged : msg.activityEntries,
@@ -248,18 +272,19 @@ export const collapseProgressMessages = (messages: ChatMessage[]): ChatMessage[]
           merged.length > 0
             ? summarizeCollapsedActivity(merged, isGenerating)
             : msg.activitySummary,
-      });
+      })));
       continue;
     }
 
-    out.push({
+    if (entries.length === 0) {
+      out.push(msg);
+      continue;
+    }
+    out.push(derive(msg, ['solo', ...entries].join('\u0001'), () => ({
       ...msg,
-      activityEntries: entries.length > 0 ? entries : msg.activityEntries,
-      activitySummary:
-        entries.length > 0
-          ? summarizeCollapsedActivity(entries, !!msg.isGenerating)
-          : msg.activitySummary,
-    });
+      activityEntries: entries,
+      activitySummary: summarizeCollapsedActivity(entries, !!msg.isGenerating),
+    })));
   }
 
   for (const key of Array.from(pendingByAgent.keys())) {

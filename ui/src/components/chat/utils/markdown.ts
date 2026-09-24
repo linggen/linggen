@@ -1,22 +1,3 @@
-let mermaidInstance: any = null;
-let mermaidInitialized = false;
-
-export async function getMermaid() {
-  if (!mermaidInstance) {
-    const module = await import('mermaid');
-    mermaidInstance = module.default;
-  }
-  if (!mermaidInitialized) {
-    mermaidInstance.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: 'default',
-    });
-    mermaidInitialized = true;
-  }
-  return mermaidInstance;
-}
-
 export const hashText = (text: string) => {
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) {

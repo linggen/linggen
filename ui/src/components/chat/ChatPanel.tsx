@@ -26,6 +26,7 @@ import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
 import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
+import { useStableArray } from '../../hooks/useStableArray';
 import { useChatStore } from '../../stores/chatStore';
 import { sessions as sessionsApi } from '../../lib/api';
 
@@ -175,6 +176,8 @@ function agentLabel(msg: ChatMessage, panelAgent: string): string | null {
   return label;
 }
 
+const noopToggle = () => {};
+
 /** Render a single message row. */
 const ChatMessageRow = React.memo<{
   msg: ChatMessage;
@@ -182,7 +185,7 @@ const ChatMessageRow = React.memo<{
   isUser: boolean;
   senderTag?: string | null;
   isExpanded: boolean;
-  onToggle: () => void;
+  onToggle: (msgKey: string) => void;
   userMsgIndex?: number;
   userMsgRefs?: React.RefObject<Map<number, HTMLDivElement>>;
   planProps: {
@@ -194,6 +197,7 @@ const ChatMessageRow = React.memo<{
     inputRef: React.RefObject<HTMLTextAreaElement | null>;
   };
 }>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
+  const toggle = useCallback(() => onToggle(msgKey), [onToggle, msgKey]);
   const registerRef = useCallback((el: HTMLDivElement | null) => {
     if (userMsgIndex == null || !userMsgRefs?.current) return;
     if (el) userMsgRefs.current.set(userMsgIndex, el);
@@ -248,7 +252,7 @@ const ChatMessageRow = React.memo<{
             )}
           </>
         ) : (
-          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={onToggle} planProps={planProps} />
+          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} />
         )}
       </div>
     </div>
@@ -275,6 +279,16 @@ const ChatMessageList = React.memo<{
   // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
   // persona explains it and asks for the real one).
   const coreName = useUserStore((s) => s.coreName);
+  // One toggle for every row (keyed by the row's key), so a row's props
+  // stay equal across renders and its memo holds.
+  const toggleExpanded = useCallback((key: string) => {
+    setExpandedMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, [setExpandedMessages]);
   return (
     <>
       {messages.length === 0 && (
@@ -306,14 +320,7 @@ const ChatMessageList = React.memo<{
                 : agentLabel(msg, selectedAgent)
             }
             isExpanded={isExpanded}
-            onToggle={() => {
-              setExpandedMessages((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            }}
+            onToggle={toggleExpanded}
             userMsgIndex={userMsgIndex}
             userMsgRefs={userMsgRefs}
             planProps={planProps}
@@ -641,17 +648,22 @@ export const ChatPanel: React.FC<{
     };
   }, []);
 
-  // Split messages: historical (stable, memoized) vs streaming (re-renders per token)
-  const { historicalMessages, streamingMessage } = useMemo(() => {
+  // Split messages: historical (stable, memoized) vs streaming (re-renders per token).
+  // The historical slice keeps its previous identity while its rows are the
+  // same objects, so ChatMessageList's memo holds for the whole stream.
+  const { rawHistorical, streamingMessage } = useMemo(() => {
     const len = filteredMainMessages.length;
-    if (len > 0 && filteredMainMessages[len - 1].isGenerating) {
-      return {
-        historicalMessages: filteredMainMessages.slice(0, len - 1),
-        streamingMessage: filteredMainMessages[len - 1],
-      };
-    }
-    return { historicalMessages: filteredMainMessages, streamingMessage: null };
+    const streaming = len > 0 && filteredMainMessages[len - 1].isGenerating;
+    return {
+      rawHistorical: streaming ? filteredMainMessages.slice(0, len - 1) : filteredMainMessages,
+      streamingMessage: streaming ? filteredMainMessages[len - 1] : null,
+    };
   }, [filteredMainMessages]);
+  const historicalMessages = useStableArray(rawHistorical);
+  const streamingPlanProps = useMemo(
+    () => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }),
+    [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef],
+  );
 
   // Subagent pane visibility. Show whenever any message in this session
   // has a subagent tree; auto-collapse 5s after the LAST subagent goes
@@ -891,8 +903,8 @@ export const ChatPanel: React.FC<{
             msgKey={`${streamingMessage.timestamp}-${filteredMainMessages.length - 1}-${streamingMessage.from || streamingMessage.role}-${streamingMessage.text.slice(0, 24)}`}
             isUser={false}
             isExpanded={verboseMode || false}
-            onToggle={() => {}}
-            planProps={{ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }}
+            onToggle={noopToggle}
+            planProps={streamingPlanProps}
           />
         )}
         {pendingAskUser && onRespondToAskUser && !askUserBelongsToSubagent && (
