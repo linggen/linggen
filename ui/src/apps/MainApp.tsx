@@ -19,7 +19,7 @@ import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
 import { startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
-import { useServerStore } from '../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
@@ -86,11 +86,11 @@ export const MainApp: React.FC = () => {
 
   // Shortcuts
   const { selectedProjectRoot, sessions, allSessions, activeSessionId, isMissionSession, isSkillSession } = projectStore;
-  const { agents, models, skills, selectedAgent, agentStatus, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = agentStore;
+  const { agents, models, skills, selectedAgent, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = agentStore;
   const { messages: chatMessages } = chatStore;
   const { showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath } = uiStore;
 
-  const isRunning = agentStore.isRunning();
+  const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
   const mainAgents = agents;
 
   // Session-change tracking (for clear-on-switch)
@@ -99,14 +99,10 @@ export const MainApp: React.FC = () => {
   // --- Derived memos (sidebar only) ---
   const activeModelId = useMemo(() => {
     if (!activeSessionId) return undefined;
-    const status = agentStatus[activeSessionId];
-    if (status && status !== 'idle') {
-      const text = agentStatusText[activeSessionId] || '';
-      const match = text.match(/\(([^)]+)\)/);
-      if (match) return match[1];
-    }
-    return undefined;
-  }, [agentStatus, agentStatusText, activeSessionId]);
+    const text = agentStatusText[activeSessionId] || '';
+    if (!text || text === 'Idle') return undefined;
+    return text.match(/\(([^)]+)\)/)?.[1];
+  }, [agentStatusText, activeSessionId]);
 
   const mainAgentIds = useMemo(() => agents.map((a) => a.name.toLowerCase()), [agents]);
 
@@ -161,7 +157,6 @@ export const MainApp: React.FC = () => {
         interaction.setPendingPlanAgentId(null);
         const prevSid = prevSessionIdRef.current;
         if (prevSid) {
-          useServerStore.getState().setAgentStatus((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
           useServerStore.getState().setAgentStatusText((prev) => { const n = { ...prev }; delete n[prevSid]; return n; });
         }
       }

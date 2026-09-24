@@ -195,16 +195,14 @@ export function useChatActions(
 
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       const focus = trimmed.slice('/compact'.length).trim() || undefined;
-      const { setAgentStatus, setAgentStatusText } = useServerStore.getState();
+      const { setAgentStatusText } = useServerStore.getState();
       if (sid) {
-        setAgentStatus((s) => ({ ...s, [sid]: 'thinking' as const }));
         setAgentStatusText((s) => ({ ...s, [sid]: 'Compacting conversation' }));
       }
       try {
         const data = await getTransport().sendCompact(root, sid, agentToUse, focus) as any;
         const clearStatus = () => {
           if (!sid) return;
-          setAgentStatus((s) => ({ ...s, [sid]: 'idle' as const }));
           setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
         };
         clearStatus();
@@ -231,7 +229,6 @@ export function useChatActions(
         scrollToBottom();
       } catch (e) {
         if (sid) {
-          setAgentStatus((s) => ({ ...s, [sid]: 'idle' as const }));
           setAgentStatusText((s) => { const n = { ...s }; delete n[sid]; return n; });
         }
         console.error('Compact error:', e);
@@ -281,7 +278,6 @@ export function useChatActions(
         return;
       }
       if (sid) {
-        useServerStore.getState().setAgentStatus((prev) => ({ ...prev, [sid]: 'model_loading' }));
         useServerStore.getState().setAgentStatusText((prev) => ({ ...prev, [sid]: 'Model Loading' }));
       }
       useChatStore.getState().upsertGenerating(agentToUse, 'Model loading...', 'Model loading...');

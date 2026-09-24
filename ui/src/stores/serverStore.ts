@@ -27,8 +27,12 @@ interface ServerState {
   agentTreesByProject: Record<string, Record<string, AgentTreeItem>>;
 
   // Agent activity (live status) — all keyed by **session ID**, not agent name.
-  agentStatus: Record<string, AgentStatusValue>;       // key: session ID
-  agentStatusText: Record<string, string>;              // key: session ID
+  // Whether a session is busy is never stored: `isSessionBusy` derives it
+  // from pendingSends + agentRuns + the server's busySessions.
+  /** page_state.busy_sessions, replaced wholesale on every push: the only
+   *  cross-session busy signal (a transport's agentRuns cover its own session). */
+  busySessions: Record<string, string>;
+  agentStatusText: Record<string, string>;              // key: session ID (display only)
   agentContext: Record<string, { tokens: number; messages: number; tokenLimit?: number }>; // key: session ID
   tokensPerSec: number; // global — not per-session
 
@@ -59,12 +63,9 @@ interface ServerState {
   markRunInterrupted: (sessionId: string) => void;
   consumeRunInterrupted: (sessionId: string) => void;
 
-  // Derived
-  isRunning: () => boolean;
-
   // Actions
   setSelectedAgent: (agent: string) => void;
-  setAgentStatus: (updater: StateSetter<Record<string, AgentStatusValue>>) => void;
+  setBusySessions: (busy: Record<string, string>) => void;
   setAgentStatusText: (updater: StateSetter<Record<string, string>>) => void;
   setAgentContext: (updater: StateSetter<Record<string, { tokens: number; messages: number; tokenLimit?: number }>>) => void;
   resetStatus: () => void;
@@ -103,7 +104,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   reloadingAgents: false,
   agentTreesByProject: {},
 
-  agentStatus: {},
+  busySessions: {},
   agentStatusText: {},
   agentContext: {},
   tokensPerSec: 0,
@@ -135,22 +136,18 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return { runInterruptedAt: next };
     }),
 
-  isRunning: () => Object.values(get().agentStatus).some((s) => s !== 'idle'),
-
   setSelectedAgent: (agent) => {
     window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, agent);
     set({ selectedAgent: agent });
   },
-  setAgentStatus: (updater) => set((s) => ({
-    agentStatus: typeof updater === 'function' ? updater(s.agentStatus) : updater,
-  })),
+  setBusySessions: (busy) => set({ busySessions: busy }),
   setAgentStatusText: (updater) => set((s) => ({
     agentStatusText: typeof updater === 'function' ? updater(s.agentStatusText) : updater,
   })),
   setAgentContext: (updater) => set((s) => ({
     agentContext: typeof updater === 'function' ? updater(s.agentContext) : updater,
   })),
-  resetStatus: () => set({ agentStatus: {}, agentStatusText: {} }),
+  resetStatus: () => set({ busySessions: {}, agentStatusText: {} }),
   recordTokenEvent: () => {
     agentTracker.recordTokenSample(1);
   },
@@ -295,3 +292,24 @@ export const useServerStore = create<ServerState>((set, get) => ({
     } catch { /* ignore */ }
   },
 }));
+
+type BusyInputs = Pick<ServerState, 'pendingSends' | 'agentStatusText' | 'agentRuns' | 'busySessions'>;
+
+/** Is this session's agent working? The one answer every surface uses.
+ *  - a send in flight (optimistic, until TurnComplete) → busy
+ *  - a session this transport has run records for (page_state scopes
+ *    agent_runs to the viewed session) → a top-level running run, unless
+ *    TurnComplete already said "Idle" (a stale push can re-assert the row);
+ *    subagent runs drive the SubagentPane, not the main spinner
+ *  - any other session → the server's busy_sessions */
+export function isSessionBusy(s: BusyInputs, sid: string | null | undefined): boolean {
+  if (!sid) return false;
+  if (s.pendingSends[sid]) return true;
+  const runs = s.agentRuns.filter((r) => r.session_id === sid);
+  if (runs.length > 0) {
+    if (s.agentStatusText[sid] === 'Idle') return false;
+    return runs.some((r) => !r.parent_run_id && r.status === 'running');
+  }
+  const busy = s.busySessions[sid];
+  return !!busy && busy !== 'idle';
+}

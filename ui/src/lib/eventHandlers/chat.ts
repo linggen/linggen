@@ -3,7 +3,6 @@ import { useChatStore } from '../../stores/chatStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useSuggestionStore } from '../../stores/suggestionStore';
-import type { AgentStatusValue } from '../../stores/serverStore';
 import { agentTracker } from '../agentTracker';
 import {
   stripEmbeddedStructuredJson,
@@ -41,10 +40,8 @@ export function handleFollowups(item: UiEvent): void {
 /** A hint answers the turn it was forked from. Once they sent again, or a
  *  newer turn is running (a queued one starts on its own), it is stale. */
 export function sessionMovedOn(sid: string, runId: string | null): boolean {
-  const { pendingSends, agentStatus, agentRuns } = useServerStore.getState();
+  const { pendingSends, agentRuns } = useServerStore.getState();
   if (pendingSends[sid]) return true;
-  const status = agentStatus[sid];
-  if (status && status !== 'idle') return true;
   return agentRuns.some((r) => r.session_id === sid && r.status === 'running'
     && !r.parent_run_id && r.run_id !== runId);
 }
@@ -257,7 +254,6 @@ function applyContentBlockStart(item: UiEvent, data: any): void {
   const sid = getSessionId(item);
   if (!sid) return;
   const agentStore = useServerStore.getState();
-  agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'calling_tool' as AgentStatusValue }));
   agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: activityLine }));
   agentTracker.ensureRunStarted(sid);
 }
@@ -315,7 +311,6 @@ export function handleTurnComplete(item: UiEvent): void {
   // event may arrive late or be missed, leaving the spinner stuck on "Thinking…".
   if (!sid) return;
   const agentStore = useServerStore.getState();
-  agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' }));
   agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
   // Mark the matching top-level agent_run as completed in the local
   // mirror. The spinner reads agentRuns directly (see ChatPanel), and

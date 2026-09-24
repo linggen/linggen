@@ -80,25 +80,7 @@ function applyPendingAskUser(ps: any): void {
 
 function applyBusySessions(ps: any): void {
   if (!ps.busy_sessions) return;
-  // Merge busy_sessions into agentStatus so session list shows spinners.
-  // Only set status for sessions not already tracked (real-time activity events
-  // are authoritative for the active session).
-  useServerStore.getState().setAgentStatus((prev) => {
-    const next = { ...prev };
-    // Clear sessions that are no longer busy
-    for (const sid of Object.keys(next)) {
-      if (!(sid in ps.busy_sessions) && next[sid] !== 'idle') {
-        next[sid] = 'idle';
-      }
-    }
-    // Add/update busy sessions
-    for (const [sid, status] of Object.entries(ps.busy_sessions)) {
-      if (!next[sid] || next[sid] === 'idle') {
-        next[sid] = status as any;
-      }
-    }
-    return next;
-  });
+  useServerStore.getState().setBusySessions(ps.busy_sessions);
 }
 
 /// The server's authoritative queue for the scoped session, as

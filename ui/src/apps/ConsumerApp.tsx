@@ -37,7 +37,6 @@ export const ConsumerApp: React.FC = () => {
       interaction.setActivePlan(null);
       interaction.setPendingPlan(null);
       interaction.setPendingPlanAgentId(null);
-      useServerStore.getState().setAgentStatus((p) => { const n = { ...p }; delete n[prev]; return n; });
       useServerStore.getState().setAgentStatusText((p) => { const n = { ...p }; delete n[prev]; return n; });
     }
     cs.fetchSessionState();

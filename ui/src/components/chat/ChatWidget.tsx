@@ -9,7 +9,7 @@ import { useChatActions } from '../../hooks/useChatActions';
 import { useRunInfo } from '../../hooks/useRunInfo';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useServerStore } from '../../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../../stores/serverStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
@@ -34,12 +34,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const models = useServerStore((s) => s.models);
   const skills = useServerStore((s) => s.skills);
   const selectedAgent = useServerStore((s) => s.selectedAgent);
-  const agentStatus = useServerStore((s) => s.agentStatus);
   const agentContext = useServerStore((s) => s.agentContext);
   const defaultModels = useServerStore((s) => s.defaultModels);
   const cancellingRunIds = useServerStore((s) => s.cancellingRunIds);
   const tokensPerSec = useServerStore((s) => s.tokensPerSec);
-  const isRunning = useServerStore((s) => s.isRunning());
+  const isRunning = useServerStore((s) => isSessionBusy(s, sessionId || null));
   const agentTreesByProject = useServerStore((s) => s.agentTreesByProject);
   const selectedProjectRoot = useSessionStore((s) => s.selectedProjectRoot);
 
@@ -134,7 +133,6 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       pendingAskUser={pendingAskUser}
       onRespondToAskUser={respondToAskUser}
       verboseMode={verboseMode}
-      agentStatus={agentStatus}
       overlay={overlay}
       onDismissOverlay={() => { useUiStore.getState().setOverlay(null); useUiStore.getState().setModelPickerOpen(false); }}
       modelPickerOpen={modelPickerOpen}

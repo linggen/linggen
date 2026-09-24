@@ -4,7 +4,7 @@ import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
 import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useServerStore } from '../../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
@@ -359,7 +359,6 @@ export const ChatPanel: React.FC<{
   onCancelAgentRun?: (runId: string) => void | Promise<void>;
   isRunning?: boolean;
   verboseMode?: boolean;
-  agentStatus?: Record<string, string>;
   overlay?: string | null;
   onDismissOverlay?: () => void;
   modelPickerOpen?: boolean;
@@ -404,7 +403,6 @@ export const ChatPanel: React.FC<{
   onCancelAgentRun,
   isRunning,
   verboseMode,
-  agentStatus,
   overlay,
   onDismissOverlay,
   modelPickerOpen,
@@ -461,40 +459,10 @@ export const ChatPanel: React.FC<{
   // it may have died with the engine. A counting "Thinking… (2m 26s)" then
   // claims work that may not exist, so the line says what is actually true.
   const reconnecting = useUserStore((s) => s.connectionStatus === 'reconnecting');
-  const currentStatus = agentStatus?.[sessionId || ''];
-  // Bind the spinner to the server's authoritative agent_runs records,
-  // NOT the agentStatus proxy: that proxy is set from too many paths
-  // (handleTurnComplete, handleSubagentResult, applyTopLevelActivity,
-  // pageState.busy_sessions, …) and drifted out of sync, leaving the
-  // spinner stuck while text already said "Idle". `useServerStore.isRunning()`
-  // is itself derived from agentStatus, so it inherits the same drift.
-  // The truth: a *top-level* run record (parent_run_id null) with
-  // status='running' for THIS session ⇒ spinner. Subagent runs
-  // (parent_run_id set) drive the SubagentPane, not the main spinner.
-  const agentRuns = useServerStore((s) => s.agentRuns);
-  const pendingSends = useServerStore((s) => s.pendingSends);
-  const isAgentActive = useMemo(() => {
-    if (!sessionId) return false;
-    // Optimistic path — set by sendChatMessage, cleared by
-    // handleTurnComplete. Bridges the page_state polling lag so the
-    // spinner appears the instant the user sends, even before the
-    // server's run record has propagated. Without this the spinner
-    // sometimes never shows for fast turns that complete inside the
-    // poll window.
-    if (pendingSends[sessionId]) return true;
-    // Defensive: if the status text says "Idle", the session genuinely
-    // isn't working — don't show the spinner even if a stale page_state
-    // poll re-asserted a `running` row. handleTurnComplete is the
-    // authoritative "turn finished" signal; agentStatusText is set
-    // synchronously there.
-    if (agentStatusText?.[sessionId] === 'Idle') return false;
-    return agentRuns.some(
-      (r) =>
-        r.session_id === sessionId &&
-        !r.parent_run_id &&
-        r.status === 'running',
-    );
-  }, [agentRuns, sessionId, pendingSends, agentStatusText]);
+  // One definition of busy for every surface (serverStore.isSessionBusy):
+  // the optimistic send flag, then the session's top-level run records,
+  // with TurnComplete's "Idle" winning over a stale push.
+  const isAgentActive = useServerStore((s) => isSessionBusy(s, sessionId));
   const [spinnerVerb, setSpinnerVerb] = useState('');
   const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number; interrupted?: boolean } | null>(null);
   // A run that died server-side without a terminal event (daemon killed or
@@ -722,24 +690,6 @@ export const ChatPanel: React.FC<{
     return () => clearTimeout(t);
   }, [anyRunning, subagentEntries.length, askUserBelongsToSubagent]);
 
-  // Defensive idle reset: when no subagents are running for this
-  // session, force the session-level agentStatus to `idle` even if a
-  // late event polluted it. handleSubagentResult tries this once per
-  // SubagentResult event, but a straggler ContentBlock or AgentStatus
-  // event arriving after my unregister deferral could re-set the
-  // session to 'thinking'/'calling_tool'. Re-asserting on the derived
-  // "all done" transition is cheap and idempotent.
-  useEffect(() => {
-    if (!sessionId) return;
-    if (subagentEntries.length === 0) return;
-    if (anyRunning) return;
-    const store = useServerStore.getState();
-    const current = store.agentStatus[sessionId];
-    if (current && current !== 'idle') {
-      store.setAgentStatus((prev) => ({ ...prev, [sessionId]: 'idle' }));
-      store.setAgentStatusText((prev) => ({ ...prev, [sessionId]: 'Idle' }));
-    }
-  }, [sessionId, anyRunning, subagentEntries.length]);
 
   const filteredSubagentMessages = useMemo(() => {
     const q = subagentMessageFilter.trim().toLowerCase();
@@ -953,7 +903,7 @@ export const ChatPanel: React.FC<{
           <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
             <span className="text-blue-500">✶</span>
             <span>
-              {agentStatusText?.[sessionId || ''] || (currentStatus === 'model_loading' ? 'Loading model' : spinnerVerb || 'Thinking')}…
+              {agentStatusText?.[sessionId || ''] || spinnerVerb || 'Thinking'}…
               {(thinkingElapsed > 0 || (agentContext?.[sessionId || '']?.tokens ?? 0) > 0) && (
                 <span className="font-normal text-slate-400 dark:text-slate-500 ml-1">
                   ({[

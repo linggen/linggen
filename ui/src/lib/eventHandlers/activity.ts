@@ -128,7 +128,6 @@ function applyTopLevelActivity(opts: {
   const chatStore = useChatStore.getState();
 
   if (statusRaw && sid && (phase !== 'done' || nextStatus === 'idle')) {
-    agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: nextStatus }));
     agentStore.setAgentStatusText((prev) => ({
       ...prev,
       [sid]: resolveStatusText(nextStatus, statusText),

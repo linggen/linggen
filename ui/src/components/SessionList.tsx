@@ -14,7 +14,8 @@ import {
 import { cn } from '../lib/cn';
 import type { SessionInfo, CronMission } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
-import { useServerStore } from '../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../stores/serverStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useOpenMissionEditor } from '../hooks/useOpenMissionEditor';
 
 // ---------------------------------------------------------------------------
@@ -118,21 +119,27 @@ export const SessionList: React.FC<{
 }> = ({ activeSessionId, onSelectSession, onCreateSession, onDeleteSession, onOpenSettings, filterSessions, hideMissions, hideFilters }) => {
   const storeSessions = useSessionStore((s) => s.allSessions);
   const allSessions = filterSessions ?? storeSessions;
-  // Which sessions have an agent in flight. Sourced from agentStatus, which
-  // is fed by page_state.busy_sessions — the server scopes that by
-  // permission (owner sees every session, a consumer only their own, an
-  // embed iframe only its pinned session) plus live activity for the active
-  // session. Using it (instead of the session-scoped agent_runs) is what
-  // lets the standalone session-sidebar iframe show spinners at all, since
-  // a single transport only ever receives one session's agent_runs.
-  const agentStatus = useServerStore((s) => s.agentStatus);
+  // Which sessions have an agent in flight — serverStore.isSessionBusy, the
+  // same answer the chat spinner uses. For sessions this transport has no run
+  // records for it falls back to page_state.busy_sessions, which the server
+  // scopes by permission; that is what lets the standalone session-sidebar
+  // iframe show spinners at all.
+  const busyInputs = useServerStore(useShallow((s) => ({
+    pendingSends: s.pendingSends,
+    agentStatusText: s.agentStatusText,
+    agentRuns: s.agentRuns,
+    busySessions: s.busySessions,
+  })));
   const runningSessionIds = useMemo(() => {
     const out = new Set<string>();
-    for (const [sid, status] of Object.entries(agentStatus)) {
-      if (status && status !== 'idle') out.add(sid);
-    }
+    const candidates = new Set([
+      ...Object.keys(busyInputs.pendingSends),
+      ...Object.keys(busyInputs.busySessions),
+      ...busyInputs.agentRuns.map((r) => r.session_id).filter((x): x is string => !!x),
+    ]);
+    for (const sid of candidates) if (isSessionBusy(busyInputs, sid)) out.add(sid);
     return out;
-  }, [agentStatus]);
+  }, [busyInputs]);
   const openMissionEditor = useOpenMissionEditor();
   // When filters are hidden the consumer is pre-filtering via filterSessions,
   // so default to 'all' to avoid the 'user'-only default clipping the list.

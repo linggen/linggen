@@ -5,7 +5,6 @@ import { useInteractionStore } from '../../stores/interactionStore';
 import { agentTracker } from '../agentTracker';
 import { getSessionId } from './_shared';
 import { markRunsCompletedForSession } from './chat';
-import type { AgentStatusValue } from '../../stores/serverStore';
 
 export function handleRun(item: UiEvent): void {
   switch (item.phase) {
@@ -180,18 +179,12 @@ function handleSubagentResult(item: UiEvent): void {
   // subagent that reuses the same run_id.
   setTimeout(() => agentTracker.unregisterSubagent(trackingId), 2000);
 
-  // Defense for the stuck-Idle-spinner case: a subagent status event
-  // that arrived BEFORE its SubagentSpawned could pollute the
-  // session-level `agentStatus[sid] = 'thinking'`. Subagent-routed
-  // events never reset that. So when this subagent finishes, clear the
-  // session status back to idle. Safe because the parent's own turn
-  // has already emitted its TurnComplete by the time the encoder /
-  // dream subagent gets here — there's no other foreground agent.
+  // Busy is derived from run records (serverStore.isSessionBusy), so a
+  // subagent's own status events can no longer pin the session busy, and
+  // this must not write "Idle": a Task subagent finishing mid-turn would
+  // hide the parent's spinner while the parent keeps working.
   const sid = getSessionId(item);
   if (sid) {
-    const agentStore = useServerStore.getState();
-    agentStore.setAgentStatus((prev) => ({ ...prev, [sid]: 'idle' as AgentStatusValue }));
-    agentStore.setAgentStatusText((prev) => ({ ...prev, [sid]: 'Idle' }));
     // Reactive mirror update — flip the subagent's run record from
     // 'running' to 'completed' so the spinner / session-list badge
     // doesn't wait for the next page_state poll (5–10s lag).

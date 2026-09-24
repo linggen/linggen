@@ -13,7 +13,7 @@ import { Plus } from 'lucide-react';
 import { ChatWidget } from '../components/chat';
 import { ToastContainer } from '../components/ToastContainer';
 import { useSessionStore } from '../stores/sessionStore';
-import { useServerStore } from '../stores/serverStore';
+import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
@@ -37,7 +37,7 @@ export const EmbedApp: React.FC = () => {
 
   const { sessions, activeSessionId } = projectStore;
   const { agents, selectedAgent } = agentStore;
-  const isRunning = agentStore.isRunning();
+  const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
 
   // --- Run info + chat actions (for clipboard bridge) ---
   const { runningMainRunIds } = useRunInfo();
