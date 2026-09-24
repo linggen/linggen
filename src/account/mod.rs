@@ -12,6 +12,7 @@
 //! it at boot and after sign-in — there is nothing to persist and nothing that
 //! can go stale. See linggensite/doc/entitlement-spec.md.
 
+use crate::util::LockExt;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -116,7 +117,7 @@ pub fn load_account() -> Option<AccountConfig> {
 
 pub fn save_account(config: &AccountConfig) -> Result<()> {
     // A freshly saved key is a new fact; the site has not judged it yet.
-    *TOKEN_REJECTED.lock().unwrap() = None;
+    *TOKEN_REJECTED.lock_ok() = None;
     let path = account_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create ~/.linggen")?;
@@ -188,7 +189,9 @@ pub enum TokenSource {
 /// one device row and nothing else. Silent on any failure — a sign-out must
 /// not hang on the network, and a key that stays alive unused is harmless.
 pub async fn revoke_own_token() {
-    let Some((token, _)) = resolve_token() else { return };
+    let Some((token, _)) = resolve_token() else {
+        return;
+    };
     let _ = http()
         .delete(format!("{}/api/auth/token", site_url()))
         .bearer_auth(token)
@@ -256,7 +259,7 @@ static ENT_CACHE: Mutex<Option<CachedEntitlement>> = Mutex::new(None);
 const ENT_TTL: Duration = Duration::from_secs(60);
 
 fn invalidate_entitlement_cache() {
-    *ENT_CACHE.lock().unwrap() = None;
+    *ENT_CACHE.lock_ok() = None;
 }
 
 /// The token linggen.dev last refused with 401, if any. A key on disk is
@@ -270,7 +273,7 @@ static TOKEN_REJECTED: Mutex<Option<String>> = Mutex::new(None);
 
 /// linggen.dev answered 401 to [token].
 pub fn note_token_rejected(token: &str) {
-    let mut g = TOKEN_REJECTED.lock().unwrap();
+    let mut g = TOKEN_REJECTED.lock_ok();
     if g.as_deref() != Some(token) {
         tracing::warn!("linggen.dev refused the account key; sign in again to replace it");
         *g = Some(token.to_string());
@@ -279,7 +282,7 @@ pub fn note_token_rejected(token: &str) {
 
 /// linggen.dev accepted [token]: any earlier refusal was of a key since replaced.
 pub fn note_token_accepted(token: &str) {
-    let mut g = TOKEN_REJECTED.lock().unwrap();
+    let mut g = TOKEN_REJECTED.lock_ok();
     if g.as_deref() == Some(token) {
         *g = None;
     }
@@ -287,7 +290,7 @@ pub fn note_token_accepted(token: &str) {
 
 /// Whether the key on disk is one the site has refused since it was saved.
 pub fn token_rejected(token: &str) -> bool {
-    TOKEN_REJECTED.lock().unwrap().as_deref() == Some(token)
+    TOKEN_REJECTED.lock_ok().as_deref() == Some(token)
 }
 
 async fn fetch_entitlement(token: &str) -> Result<serde_json::Value> {
@@ -312,14 +315,14 @@ async fn fetch_entitlement(token: &str) -> Result<serde_json::Value> {
 /// flagged offline — consumers bound the grace via `current_period_end` /
 /// `expires_at`. None = offline with nothing cached.
 pub async fn entitlement_cached(token: &str) -> Option<(serde_json::Value, bool)> {
-    if let Some(c) = ENT_CACHE.lock().unwrap().as_ref() {
+    if let Some(c) = ENT_CACHE.lock_ok().as_ref() {
         if c.fetched.elapsed() < ENT_TTL {
             return Some((c.value.clone(), false));
         }
     }
     match fetch_entitlement(token).await {
         Ok(v) => {
-            *ENT_CACHE.lock().unwrap() = Some(CachedEntitlement {
+            *ENT_CACHE.lock_ok() = Some(CachedEntitlement {
                 fetched: Instant::now(),
                 value: v.clone(),
             });
@@ -328,7 +331,7 @@ pub async fn entitlement_cached(token: &str) -> Option<(serde_json::Value, bool)
         }
         Err(e) => {
             tracing::warn!("entitlement fetch failed, serving last known state: {e:#}");
-            if let Some(c) = ENT_CACHE.lock().unwrap().as_ref() {
+            if let Some(c) = ENT_CACHE.lock_ok().as_ref() {
                 return Some((c.value.clone(), true));
             }
             let disk = std::fs::read_to_string(entitlement_snapshot_path()).ok()?;
@@ -393,18 +396,24 @@ mod token_verdict_tests {
     /// dead until a fetch accepts it or a new key is saved.
     #[test]
     fn a_refused_key_is_dead_until_accepted_or_replaced() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        *TOKEN_REJECTED.lock().unwrap() = None;
+        let _guard = TEST_LOCK.lock_ok();
+        *TOKEN_REJECTED.lock_ok() = None;
         assert!(!token_rejected("usr_a"));
         note_token_rejected("usr_a");
         assert!(token_rejected("usr_a"));
-        assert!(!token_rejected("usr_b"), "another key is not judged by this one's refusal");
+        assert!(
+            !token_rejected("usr_b"),
+            "another key is not judged by this one's refusal"
+        );
         note_token_accepted("usr_b");
-        assert!(token_rejected("usr_a"), "accepting a different key clears nothing");
+        assert!(
+            token_rejected("usr_a"),
+            "accepting a different key clears nothing"
+        );
         note_token_accepted("usr_a");
         assert!(!token_rejected("usr_a"));
         note_token_rejected("usr_a");
-        *TOKEN_REJECTED.lock().unwrap() = None; // what save_account does
+        *TOKEN_REJECTED.lock_ok() = None; // what save_account does
         assert!(!token_rejected("usr_a"));
     }
 

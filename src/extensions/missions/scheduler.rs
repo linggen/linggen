@@ -1,6 +1,7 @@
 use crate::engine::mission::record::{Mission, MissionRunEntry};
 use crate::provider::models::RunUsage;
 use crate::server::{ServerEvent, ServerState};
+use crate::util::LockExt;
 use chrono::Local;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -44,7 +45,7 @@ struct InFlightGuard(String);
 impl InFlightGuard {
     /// Claim `mission_id`; `None` when a run is already in flight.
     fn claim(mission_id: &str) -> Option<Self> {
-        let mut set = IN_FLIGHT.lock().expect("IN_FLIGHT lock poisoned");
+        let mut set = IN_FLIGHT.lock_ok();
         set.insert(mission_id.to_string())
             .then(|| Self(mission_id.to_string()))
     }

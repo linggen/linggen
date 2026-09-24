@@ -1,4 +1,5 @@
 mod builtin;
+use crate::util::LockExt;
 pub use builtin::builtin_tier;
 pub(crate) use builtin::tool_cacheable;
 pub(crate) use builtin::tool_max_duration;
@@ -471,7 +472,7 @@ impl Tools {
     }
 
     pub fn cwd(&self) -> PathBuf {
-        let map = self.cwd_by_session.lock().unwrap();
+        let map = self.cwd_by_session.lock_ok();
         if let Some(sid) = &self.session_id {
             map.get(sid).cloned().unwrap_or_else(|| self.root.clone())
         } else {
@@ -486,7 +487,7 @@ impl Tools {
     /// Callers should pass an absolute, expanded path.
     pub fn seed_session_cwd_if_unset(&self, path: PathBuf) {
         let Some(sid) = &self.session_id else { return };
-        let mut map = self.cwd_by_session.lock().unwrap();
+        let mut map = self.cwd_by_session.lock_ok();
         map.entry(sid.clone()).or_insert(path);
     }
 

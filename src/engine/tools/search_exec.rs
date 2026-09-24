@@ -1,5 +1,6 @@
 use super::tool_helpers::{build_globset, to_rel_string};
 use super::{SearchMatch, ToolResult, Tools};
+use crate::util::LockExt;
 use anyhow::Result;
 use grep::regex::RegexMatcher;
 use grep::searcher::sinks::UTF8;
@@ -296,10 +297,9 @@ impl Tools {
                 let new_cwd = PathBuf::from(s[after_sent..pwd_end].to_string());
                 if new_cwd.is_absolute() && new_cwd.exists() {
                     if let Some(sid) = &self.session_id {
-                        let old_cwd = self.cwd_by_session.lock().unwrap().get(sid).cloned();
+                        let old_cwd = self.cwd_by_session.lock_ok().get(sid).cloned();
                         self.cwd_by_session
-                            .lock()
-                            .unwrap()
+                            .lock_ok()
                             .insert(sid.clone(), new_cwd.clone());
                         // Emit working folder change if cwd actually changed
                         if old_cwd.as_ref() != Some(&new_cwd) {

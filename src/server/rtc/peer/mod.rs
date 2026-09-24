@@ -8,6 +8,7 @@
 //! - "control": session lifecycle, heartbeat, RPC (request/response)
 //! - "sess-{id}": per-session chat events, bridged to events_tx
 
+use crate::util::LockExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -526,7 +527,7 @@ async fn run_peer(
                                 }
                                 // Copy the actor out before awaiting — the
                                 // guard is not Send and would poison the task.
-                                let who = peer_actor.lock().unwrap().clone();
+                                let who = peer_actor.lock_ok().clone();
                                 media_channel::handle_text(&text, &mut media_transfer, who).await
                             };
                             if let Some(msg) = reply {
@@ -738,7 +739,7 @@ async fn run_peer(
                             // Read on the loop thread, where identify also
                             // runs, so the label this message carries is the
                             // one in force when it arrived.
-                            let identified = peer_actor.lock().unwrap().is_some();
+                            let identified = peer_actor.lock_ok().is_some();
                             tokio::spawn(async move {
                                 handle_session_message(
                                     &text,
@@ -814,7 +815,7 @@ async fn run_peer(
                 let tx = ctrl_resp_tx.clone();
                 let user_ctx_clone = user_ctx.clone();
                 let ctx = view_ctx.clone();
-                let identified = peer_actor.lock().unwrap().is_some();
+                let identified = peer_actor.lock_ok().is_some();
                 tokio::spawn(async move {
                     let ps = super::page_state::build_page_state(
                         &st,
@@ -993,7 +994,7 @@ async fn run_peer(
                         let tx = ctrl_resp_tx.clone();
                         let user_ctx_clone = user_ctx.clone();
                         let ctx = view_ctx.clone();
-                        let identified = peer_actor.lock().unwrap().is_some();
+                        let identified = peer_actor.lock_ok().is_some();
                         tokio::spawn(async move {
                             let ps = super::page_state::build_page_state(
                                 &st, &ctx, flags, &user_ctx_clone, identified,

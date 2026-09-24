@@ -8,6 +8,7 @@
 //!   the main loop can run them off-loop and deliver the response via the
 //!   `ctrl_resp` mpsc channel.
 
+use crate::util::LockExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -88,7 +89,7 @@ pub(super) fn handle_control_message(
             if resolved.is_none() && !token.is_empty() {
                 tracing::warn!("[rtc] identify with an unknown device token — staying anonymous");
             }
-            let was_identified = actor.lock().unwrap().is_some();
+            let was_identified = actor.lock_ok().is_some();
             let now_identified = resolved.is_some();
             // This is the moment the Mac learns a device is on the other end,
             // on the LAN as over the relay — so it is where perception learns
@@ -96,7 +97,7 @@ pub(super) fn handle_control_message(
             if let Some(a) = &resolved {
                 crate::perception::devices::arrived(&a.device, peer_id);
             }
-            *actor.lock().unwrap() = resolved;
+            *actor.lock_ok() = resolved;
 
             // On the relay the Mac already knew this was a paired device; on
             // the LAN it could not, and greeted the phone as the owner. Now it
@@ -141,7 +142,7 @@ pub(super) fn handle_control_message(
             // Remember the focused session so agent_chat can deliver into the
             // chat the user actually has open.
             if let Some(sid) = &view_ctx.session_id {
-                *state.current_view.lock().unwrap() = Some((
+                *state.current_view.lock_ok() = Some((
                     sid.clone(),
                     view_ctx.project_root.clone().unwrap_or_default(),
                 ));
@@ -338,7 +339,7 @@ pub(super) async fn process_control_request_async(
             // speaks only WebRTC, so without this a handler cannot tell which
             // paired device is asking — which is what per-phone state, like the
             // delete queue, needs to be correct with more than one phone.
-            let actor_device = actor.lock().unwrap().as_ref().map(|a| a.device.clone());
+            let actor_device = actor.lock_ok().as_ref().map(|a| a.device.clone());
             let tag = |b: reqwest::RequestBuilder| match &actor_device {
                 Some(d) => b.header(crate::server::api::pair::ACTOR_DEVICE_HEADER, d),
                 None => b,
@@ -374,7 +375,7 @@ pub(super) async fn process_control_request_async(
             };
             // Inject user_type and user_id into the request body
             let mut body = req.body.clone();
-            let identified = actor.lock().unwrap().is_some();
+            let identified = actor.lock_ok().is_some();
             body["user_type"] =
                 serde_json::Value::String(user_ctx.user_type_for(identified).to_string());
             body["user_id"] = serde_json::Value::String(user_ctx.user_id.clone());

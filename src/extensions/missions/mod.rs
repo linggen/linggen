@@ -6,6 +6,7 @@ mod report;
 pub mod scheduler;
 mod skill_missions;
 
+use crate::util::LockExt;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use std::fs;
@@ -86,7 +87,7 @@ impl MissionLoader {
 
     pub fn reload(&self) {
         let missions = self.scan_disk().unwrap_or_default();
-        *self.cache.lock().unwrap() = missions;
+        *self.cache.lock_ok() = missions;
     }
 
     /// Re-parse one mission's `mission.md` from disk and update the cache
@@ -98,7 +99,7 @@ impl MissionLoader {
         let mission_file = self.mission_path(id);
         if !mission_file.exists() {
             // Drop a stale cache entry if the dir was deleted out from under us.
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock_ok();
             cache.retain(|m| m.id != id);
             return None;
         }
@@ -110,7 +111,7 @@ impl MissionLoader {
                 return None;
             }
         };
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock_ok();
         if let Some(slot) = cache.iter_mut().find(|m| m.id == id) {
             *slot = parsed.clone();
         } else {
@@ -377,14 +378,13 @@ impl MissionLoader {
     }
 
     pub fn list_all_missions(&self) -> Result<Vec<Mission>> {
-        Ok(self.cache.lock().unwrap().clone())
+        Ok(self.cache.lock_ok().clone())
     }
 
     pub fn list_enabled_missions(&self) -> Result<Vec<Mission>> {
         Ok(self
             .cache
-            .lock()
-            .unwrap()
+            .lock_ok()
             .iter()
             .filter(|m| m.enabled)
             .cloned()

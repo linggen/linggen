@@ -5,6 +5,7 @@ use crate::provider::anthropic::AnthropicClient;
 use crate::provider::codex_auth;
 use crate::provider::ollama::OllamaClient;
 use crate::provider::openai::OpenAiClient;
+use crate::util::LockExt;
 use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -885,7 +886,11 @@ impl ModelManager {
             return 200_000;
         }
         // GPT models
-        if m.contains("gpt-4o") || m.contains("gpt-5") || m.contains("gpt-6") || m.contains("gpt-4.1") {
+        if m.contains("gpt-4o")
+            || m.contains("gpt-5")
+            || m.contains("gpt-6")
+            || m.contains("gpt-4.1")
+        {
             return 128_000;
         }
         if m.contains("gpt-4-turbo") || m.contains("gpt-4-1106") {
@@ -1247,15 +1252,14 @@ pub fn note_unavailable(model_id: &str, err: &anyhow::Error) {
     // for the life of the daemon, and the user can always pick it by hand.
     let wait = wait.min(Duration::from_secs(60 * 60));
     COOLDOWNS
-        .lock()
-        .unwrap()
+        .lock_ok()
         .insert(model_id.to_string(), SystemTime::now() + wait);
 }
 
 /// Is this model still inside a refusal it told us about? Expired entries are
 /// dropped as they are read — nothing else sweeps this map.
 pub fn in_cooldown(model_id: &str) -> bool {
-    let mut map = COOLDOWNS.lock().unwrap();
+    let mut map = COOLDOWNS.lock_ok();
     match map.get(model_id) {
         Some(until) if *until > SystemTime::now() => true,
         Some(_) => {
@@ -1269,7 +1273,7 @@ pub fn in_cooldown(model_id: &str) -> bool {
 /// Test seam — the map is process-wide and tests must not inherit each other.
 #[cfg(test)]
 pub(crate) fn clear_cooldowns() {
-    COOLDOWNS.lock().unwrap().clear();
+    COOLDOWNS.lock_ok().clear();
 }
 
 #[cfg(test)]
@@ -1361,12 +1365,12 @@ mod tests {
     #[test]
     fn an_expired_bench_lets_the_model_back() {
         clear_cooldowns();
-        COOLDOWNS.lock().unwrap().insert(
+        COOLDOWNS.lock_ok().insert(
             "bench-e".to_string(),
             SystemTime::now() - Duration::from_secs(1),
         );
         assert!(!in_cooldown("bench-e"));
-        assert!(!COOLDOWNS.lock().unwrap().contains_key("bench-e"));
+        assert!(!COOLDOWNS.lock_ok().contains_key("bench-e"));
     }
 
     #[test]
@@ -1445,16 +1449,30 @@ mod tests {
     #[test]
     fn usage_merges_split_reports_and_meters_what_was_not_cached() {
         // Anthropic: prompt at message_start, output at message_delta.
-        let start = TokenUsage { prompt_tokens: Some(19_000), cached_tokens: Some(17_500), ..Default::default() };
-        let delta = TokenUsage { completion_tokens: Some(400), ..Default::default() };
+        let start = TokenUsage {
+            prompt_tokens: Some(19_000),
+            cached_tokens: Some(17_500),
+            ..Default::default()
+        };
+        let delta = TokenUsage {
+            completion_tokens: Some(400),
+            ..Default::default()
+        };
         let u = start.merged(delta);
         assert_eq!(u.total_tokens, Some(19_400));
         assert_eq!(u.metered(), 1_900); // 19,000 − 17,500 + 400
-        // No cache accounting: the whole prompt counts.
-        let plain = TokenUsage { prompt_tokens: Some(100), completion_tokens: Some(50), ..Default::default() };
+                                        // No cache accounting: the whole prompt counts.
+        let plain = TokenUsage {
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            ..Default::default()
+        };
         assert_eq!(plain.metered(), 150);
         // Only a total known: it is what we have.
-        let total = TokenUsage { total_tokens: Some(77), ..Default::default() };
+        let total = TokenUsage {
+            total_tokens: Some(77),
+            ..Default::default()
+        };
         assert_eq!(total.metered(), 77);
     }
 

@@ -7,6 +7,7 @@ use crate::extensions::agents::AgentLoader;
 use crate::extensions::skills::SkillLoader;
 use crate::provider::models::ModelManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
+use crate::util::LockExt;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -251,7 +252,7 @@ impl AgentManager {
     }
 
     fn make_run_id(&self, agent_id: &str) -> String {
-        let mut counters = self.run_id_counters.lock().unwrap();
+        let mut counters = self.run_id_counters.lock_ok();
         let seq = counters.entry(agent_id.to_string()).or_insert(0);
         *seq += 1;
         format!("{}{:02}", agent_id, *seq)
@@ -398,14 +399,13 @@ impl AgentManager {
     pub fn register_tool_cancel_flag(&self, block_id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         self.tool_cancel_flags
-            .lock()
-            .unwrap()
+            .lock_ok()
             .insert(block_id.to_string(), Arc::clone(&flag));
         flag
     }
 
     pub fn trigger_tool_cancel(&self, block_id: &str) -> bool {
-        if let Some(flag) = self.tool_cancel_flags.lock().unwrap().get(block_id) {
+        if let Some(flag) = self.tool_cancel_flags.lock_ok().get(block_id) {
             flag.store(true, Ordering::Relaxed);
             true
         } else {
@@ -414,7 +414,7 @@ impl AgentManager {
     }
 
     pub fn clear_tool_cancel_flag(&self, block_id: &str) {
-        self.tool_cancel_flags.lock().unwrap().remove(block_id);
+        self.tool_cancel_flags.lock_ok().remove(block_id);
     }
 
     /// Record a presence beat from a client surface. `idle_ms` is how long since
@@ -422,7 +422,7 @@ impl AgentManager {
     /// keystroke content — only recency, focus, and a typing flag.
     pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64) {
         let now = crate::util::now_ts_secs();
-        let mut p = self.presence.lock().unwrap();
+        let mut p = self.presence.lock_ok();
         // Presence is one reading for the whole machine, and several surfaces
         // report into it — the Linggen UI, every skill page, the app shell. Last
         // writer wins would let a BLURRED tab erase the focused one beside it:
@@ -452,34 +452,30 @@ impl AgentManager {
 
     /// Current presence snapshot, for the `sense` tool.
     pub fn presence_snapshot(&self) -> Presence {
-        self.presence.lock().unwrap().clone()
+        self.presence.lock_ok().clone()
     }
 
     /// Mark a session's current turn as woken by an `agent_chat` (loop-break).
     pub fn mark_agent_chat_session(&self, session_id: &str) {
         self.agent_chat_sessions
-            .lock()
-            .unwrap()
+            .lock_ok()
             .insert(session_id.to_string());
     }
 
     /// Clear the agent_chat mark once the turn finishes.
     pub fn clear_agent_chat_session(&self, session_id: &str) {
-        self.agent_chat_sessions.lock().unwrap().remove(session_id);
+        self.agent_chat_sessions.lock_ok().remove(session_id);
     }
 
     /// True while this session's current turn was woken by an `agent_chat` — the
     /// `agent_chat` tool refuses to relay onward, so the chain stops at one hop.
     pub fn is_agent_chat_session(&self, session_id: &str) -> bool {
-        self.agent_chat_sessions
-            .lock()
-            .unwrap()
-            .contains(session_id)
+        self.agent_chat_sessions.lock_ok().contains(session_id)
     }
 
     /// Record the agent's current top-level session (for `agent_chat` delivery).
     pub fn record_latest_session(&self, agent_id: &str, session_id: &str, repo_path: &str) {
-        self.latest_session_by_agent.lock().unwrap().insert(
+        self.latest_session_by_agent.lock_ok().insert(
             agent_id.to_string(),
             (session_id.to_string(), repo_path.to_string()),
         );
@@ -488,8 +484,7 @@ impl AgentManager {
     /// The agent's most recent top-level `(session_id, repo_path)`, if any.
     pub fn latest_session(&self, agent_id: &str) -> Option<(String, String)> {
         self.latest_session_by_agent
-            .lock()
-            .unwrap()
+            .lock_ok()
             .get(agent_id)
             .cloned()
     }

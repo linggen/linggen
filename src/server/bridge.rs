@@ -491,6 +491,7 @@ pub(crate) async fn status_handler(State(state): State<Arc<ServerState>>) -> imp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::LockExt;
 
     #[tokio::test]
     async fn progress_reaches_its_caller_and_leaves_with_the_call() {
@@ -504,7 +505,7 @@ mod tests {
             "tabs",
             json!({}),
             1_000,
-            Some(Box::new(move |line| sink.lock().unwrap().push(line))),
+            Some(Box::new(move |line| sink.lock_ok().push(line))),
         );
         let extension = async {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -519,12 +520,9 @@ mod tests {
         };
         let (res, _) = tokio::join!(call, extension);
         assert!(res.ok);
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec!["Waiting for your OK".to_string()]
-        );
+        assert_eq!(*seen.lock_ok(), vec!["Waiting for your OK".to_string()]);
         assert!(
-            hub.progress.lock().unwrap().is_empty(),
+            hub.progress.lock_ok().is_empty(),
             "the listener leaves with the call"
         );
     }

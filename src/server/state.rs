@@ -5,6 +5,7 @@
 use crate::engine::agent::AgentManager;
 use crate::server::bridge::BridgeHub;
 use crate::server::rtc;
+use crate::util::LockExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -162,7 +163,7 @@ impl ServerState {
 
     /// The peer currently holding the Yinyue presenter lock, if any.
     pub fn yinyue_holder(&self) -> Option<u64> {
-        yinyue_holder_of(&self.yinyue_presenters.lock().unwrap())
+        yinyue_holder_of(&self.yinyue_presenters.lock_ok())
     }
 
     /// Subscribe a peer as a Yinyue presenter candidate. A surface with a
@@ -173,7 +174,7 @@ impl ServerState {
     /// the holder.
     pub fn yinyue_subscribe(&self, peer_id: u64, stage: bool) {
         let changed = {
-            let mut reg = self.yinyue_presenters.lock().unwrap();
+            let mut reg = self.yinyue_presenters.lock_ok();
             match reg.iter_mut().find(|p| p.peer_id == peer_id) {
                 Some(p) if p.stage == stage => false,
                 Some(p) => {
@@ -193,7 +194,7 @@ impl ServerState {
 
     /// Say who holds her now, then tell every peer to re-evaluate.
     fn yinyue_changed(&self) {
-        let reg = self.yinyue_presenters.lock().unwrap();
+        let reg = self.yinyue_presenters.lock_ok();
         match yinyue_holder_of(&reg) {
             Some(id) => tracing::info!(
                 "[yinyue] presenter → peer {id} (stage={}) of {}",
@@ -211,7 +212,7 @@ impl ServerState {
     /// never subscribed.
     pub fn yinyue_release(&self, peer_id: u64) {
         let changed = {
-            let mut reg = self.yinyue_presenters.lock().unwrap();
+            let mut reg = self.yinyue_presenters.lock_ok();
             let before = reg.len();
             reg.retain(|p| p.peer_id != peer_id);
             reg.len() != before

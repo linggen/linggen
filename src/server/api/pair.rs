@@ -9,6 +9,7 @@
 //! deleting their row in `~/.linggen/paired-devices.json`, and IP-agnostic
 //! (DHCP churn doesn't unpair).
 
+use crate::util::LockExt;
 use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
@@ -444,7 +445,7 @@ pub(crate) async fn post_pair_request(Json(req): Json<PairRequest>) -> impl Into
     let pair_id = uuid::Uuid::new_v4().to_string();
     let name = req.device_name.chars().take(64).collect::<String>();
     show_code(&code, &name);
-    *PENDING.lock().unwrap() = Some(PendingPair {
+    *PENDING.lock_ok() = Some(PendingPair {
         pair_id: pair_id.clone(),
         code,
         device_name: name,
@@ -473,7 +474,7 @@ pub(crate) async fn post_pair_confirm(Json(req): Json<PairConfirm>) -> impl Into
     // Everything touching the lock happens in here: the guard is not Send, and
     // minting the relay grant below is an await.
     let claimed = {
-        let mut pending = PENDING.lock().unwrap();
+        let mut pending = PENDING.lock_ok();
         let Some(p) = pending.as_mut() else {
             return err(StatusCode::NOT_FOUND, "no pairing in progress");
         };
@@ -1020,7 +1021,7 @@ async fn mint_relay_grant(device_name: &str) -> Option<String> {
 /// that goes quiet lets [`pair_window_watch`] shut it.
 pub(crate) async fn post_pair_window_keepalive() -> impl IntoResponse {
     let alive = {
-        let mut pending = QR_PENDING.lock().unwrap();
+        let mut pending = QR_PENDING.lock_ok();
         match pending.as_mut() {
             Some(p) => {
                 p.seen = std::time::Instant::now();
@@ -1049,7 +1050,7 @@ pub fn pair_window_watch() {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let expired = {
-                let mut pending = QR_PENDING.lock().unwrap();
+                let mut pending = QR_PENDING.lock_ok();
                 match pending.as_ref() {
                     Some(p) if p.seen.elapsed() > QR_IDLE_SHUT => {
                         *pending = None;
@@ -1077,7 +1078,7 @@ pub fn pair_window_watch() {
 fn mint_qr(port: u16) -> (String, String, String) {
     let secret = random_hex(16);
     {
-        let mut pending = QR_PENDING.lock().unwrap();
+        let mut pending = QR_PENDING.lock_ok();
         *pending = Some(QrPending {
             secret: secret.clone(),
             seen: std::time::Instant::now(),
@@ -1094,11 +1095,7 @@ fn mint_qr(port: u16) -> (String, String, String) {
 /// Rendering must not mint, or two open surfaces would rotate each other for
 /// ever: each would see the other's new code, redraw, and mint again.
 fn current_qr(port: u16) -> (String, String, String) {
-    let existing = QR_PENDING
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|p| p.secret.clone());
+    let existing = QR_PENDING.lock_ok().as_ref().map(|p| p.secret.clone());
     match existing {
         Some(secret) => render_qr(port, &secret),
         None => mint_qr(port),
@@ -1204,8 +1201,7 @@ pub(crate) async fn post_pair_qr_confirm(
     Json(req): Json<QrConfirm>,
 ) -> impl IntoResponse {
     let matches = QR_PENDING
-        .lock()
-        .unwrap()
+        .lock_ok()
         .as_ref()
         .is_some_and(|p| p.secret == req.secret);
     if !matches {

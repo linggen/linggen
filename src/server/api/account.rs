@@ -4,6 +4,7 @@
 
 use crate::account;
 use crate::server::ServerState;
+use crate::util::LockExt;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -64,7 +65,10 @@ fn gate_for(ent: &serde_json::Value, app: &str) -> serde_json::Value {
     }
     // The developer account (linggensite: users.tier = admin) is entitled
     // everywhere and metered nowhere; the site says so on the payload.
-    let developer = ent.get("developer").and_then(|d| d.as_bool()).unwrap_or(false);
+    let developer = ent
+        .get("developer")
+        .and_then(|d| d.as_bool())
+        .unwrap_or(false);
     let entitled = developer || account::app_entitled(ent, app, unix_now());
     let trial = ent
         .get("trial")
@@ -89,7 +93,7 @@ fn gate_for(ent: &serde_json::Value, app: &str) -> serde_json::Value {
 /// poll GET /api/account until signed_in flips.
 pub(crate) async fn post_account_login(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     let csrf = uuid::Uuid::new_v4().to_string();
-    *PENDING_LOGIN.lock().unwrap() = Some(PendingLogin {
+    *PENDING_LOGIN.lock_ok() = Some(PendingLogin {
         csrf: csrf.clone(),
         created: Instant::now(),
     });
@@ -113,7 +117,7 @@ pub(crate) async fn get_account_callback(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let state_ok = {
-        let mut guard = PENDING_LOGIN.lock().unwrap();
+        let mut guard = PENDING_LOGIN.lock_ok();
         match guard.take() {
             Some(p) => {
                 p.created.elapsed() < LOGIN_WINDOW

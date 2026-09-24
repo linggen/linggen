@@ -17,6 +17,7 @@
 //!    (`Token` / `TextSegment` / `ContentBlock*`) falls through the `else` arm at
 //!    near-zero cost. The LLM is woken only on a narrow trigger.
 
+use crate::util::LockExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -534,7 +535,7 @@ async fn deliver_to_chat_agent(
 /// The session the user is currently viewing (`set_view_context`), if any — so
 /// agent_chat lands in the chat they have open.
 fn focused_session(state: &Arc<ServerState>) -> Option<(String, std::path::PathBuf)> {
-    let (sid, root) = state.current_view.lock().unwrap().clone()?;
+    let (sid, root) = state.current_view.lock_ok().clone()?;
     if sid.is_empty() {
         return None;
     }

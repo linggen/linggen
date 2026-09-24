@@ -3,6 +3,7 @@
 //! skill bundle never calls out. Both take the account token, like the LLM
 //! proxy — see linggensite `saves.ts` and `meters.ts`.
 
+use crate::util::LockExt;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -34,14 +35,14 @@ fn token() -> Result<String> {
 }
 
 fn remember(r: &MeterReading) {
-    let mut guard = READINGS.lock().unwrap();
+    let mut guard = READINGS.lock_ok();
     guard
         .get_or_insert_with(HashMap::new)
         .insert(r.meter.clone(), (r.clone(), Instant::now()));
 }
 
 fn cached(meter: &str) -> Option<(MeterReading, Instant)> {
-    READINGS.lock().unwrap().as_ref()?.get(meter).cloned()
+    READINGS.lock_ok().as_ref()?.get(meter).cloned()
 }
 
 /// The last reading of `meter` this machine holds, however old.

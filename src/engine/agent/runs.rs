@@ -1,3 +1,4 @@
+use crate::util::LockExt;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,15 +47,13 @@ impl RunStore {
     pub fn add_run(&self, record: &AgentRunRecord) {
         if let Some(ref parent_id) = record.parent_run_id {
             self.children
-                .lock()
-                .unwrap()
+                .lock_ok()
                 .entry(parent_id.clone())
                 .or_default()
                 .push(record.run_id.clone());
         }
         self.runs
-            .lock()
-            .unwrap()
+            .lock_ok()
             .insert(record.run_id.clone(), record.clone());
     }
 
@@ -65,7 +64,7 @@ impl RunStore {
         detail: Option<String>,
         ended_at: Option<u64>,
     ) {
-        let mut runs = self.runs.lock().unwrap();
+        let mut runs = self.runs.lock_ok();
         if let Some(run) = runs.get_mut(run_id) {
             run.status = status;
             if detail.is_some() {
@@ -78,15 +77,15 @@ impl RunStore {
     }
 
     pub fn get_run(&self, run_id: &str) -> Option<AgentRunRecord> {
-        self.runs.lock().unwrap().get(run_id).cloned()
+        self.runs.lock_ok().get(run_id).cloned()
     }
 
     pub fn remove_run(&self, run_id: &str) {
-        let mut runs = self.runs.lock().unwrap();
+        let mut runs = self.runs.lock_ok();
         if let Some(run) = runs.remove(run_id) {
             // Also clean up the children index.
             if let Some(ref parent_id) = run.parent_run_id {
-                let mut children = self.children.lock().unwrap();
+                let mut children = self.children.lock_ok();
                 if let Some(siblings) = children.get_mut(parent_id) {
                     siblings.retain(|id| id != run_id);
                     if siblings.is_empty() {
@@ -95,12 +94,12 @@ impl RunStore {
                 }
             }
             // Remove any children entries for this run.
-            self.children.lock().unwrap().remove(run_id);
+            self.children.lock_ok().remove(run_id);
         }
     }
 
     pub fn list_runs(&self, session_id: Option<&str>) -> Vec<AgentRunRecord> {
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock_ok();
         let mut result: Vec<AgentRunRecord> = runs
             .values()
             .filter(|r| {
@@ -123,7 +122,7 @@ impl RunStore {
     /// but never finished it (panics, dropped futures, missing
     /// `finish_agent_run` on a new exit path).
     pub fn sweep_stale_running(&self, now_secs: u64, max_age_secs: u64) -> Vec<String> {
-        let mut runs = self.runs.lock().unwrap();
+        let mut runs = self.runs.lock_ok();
         let mut reaped = Vec::new();
         for (run_id, run) in runs.iter_mut() {
             if run.status != AgentRunStatus::Running {
@@ -145,7 +144,7 @@ impl RunStore {
         for id in &reaped {
             if let Some(run) = runs.remove(id) {
                 if let Some(ref parent_id) = run.parent_run_id {
-                    let mut children = self.children.lock().unwrap();
+                    let mut children = self.children.lock_ok();
                     if let Some(siblings) = children.get_mut(parent_id) {
                         siblings.retain(|x| x != id);
                         if siblings.is_empty() {
@@ -153,7 +152,7 @@ impl RunStore {
                         }
                     }
                 }
-                self.children.lock().unwrap().remove(id);
+                self.children.lock_ok().remove(id);
             }
         }
         reaped
@@ -162,12 +161,11 @@ impl RunStore {
     pub fn list_children(&self, parent_run_id: &str) -> Vec<AgentRunRecord> {
         let child_ids = self
             .children
-            .lock()
-            .unwrap()
+            .lock_ok()
             .get(parent_run_id)
             .cloned()
             .unwrap_or_default();
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock_ok();
         let mut result: Vec<AgentRunRecord> = child_ids
             .iter()
             .filter_map(|id| runs.get(id).cloned())

@@ -13,6 +13,7 @@
 
 use super::client::McpClient;
 use super::config::McpServerConfig;
+use crate::util::RwLockExt;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -178,7 +179,7 @@ impl McpRegistry {
         }
         servers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        *self.state.write().unwrap() = State {
+        *self.state.write_ok() = State {
             clients,
             tools,
             servers,
@@ -200,7 +201,7 @@ impl McpRegistry {
     /// Returns the servers that came up, for the caller to log.
     pub async fn retry_failed(&self, configs: &BTreeMap<String, McpServerConfig>) -> Vec<String> {
         let pending: Vec<(String, McpServerConfig)> = {
-            let state = self.state.read().unwrap();
+            let state = self.state.read_ok();
             state
                 .servers
                 .iter()
@@ -232,7 +233,7 @@ impl McpRegistry {
             let Ok((name, found, error)) = joined else {
                 continue;
             };
-            let mut state = self.state.write().unwrap();
+            let mut state = self.state.write_ok();
             let Some(i) = state.servers.iter().position(|s| s.name == name) else {
                 continue;
             };
@@ -263,8 +264,7 @@ impl McpRegistry {
     /// Is every enabled server connected? The retry watcher's stop condition.
     pub fn all_connected(&self) -> bool {
         self.state
-            .read()
-            .unwrap()
+            .read_ok()
             .servers
             .iter()
             .all(|s| !s.enabled || s.connected)
@@ -273,12 +273,12 @@ impl McpRegistry {
     /// Every configured server and what became of it — what the Settings tab
     /// renders, including the ones that failed.
     pub fn status(&self) -> Vec<ServerStatus> {
-        self.state.read().unwrap().servers.clone()
+        self.state.read_ok().servers.clone()
     }
 
     /// Everything currently on offer, for the advertised tool list.
     pub fn advertised(&self) -> Vec<AdvertisedTool> {
-        self.state.read().unwrap().tools.clone()
+        self.state.read_ok().tools.clone()
     }
 
     /// One tool as discovery found it — its owning server and the schema that
@@ -289,8 +289,7 @@ impl McpRegistry {
     /// declared is never invented for it.
     pub fn advertised_tool(&self, qualified: &str) -> Option<AdvertisedTool> {
         self.state
-            .read()
-            .unwrap()
+            .read_ok()
             .tools
             .iter()
             .find(|t| t.qualified == qualified)
@@ -299,7 +298,7 @@ impl McpRegistry {
 
     /// Which server owns a qualified name, and what it calls the tool.
     fn route(&self, qualified: &str) -> Option<(Arc<McpClient>, String)> {
-        let state = self.state.read().unwrap();
+        let state = self.state.read_ok();
         let tool = state.tools.iter().find(|t| t.qualified == qualified)?;
         let client = state.clients.get(&tool.server)?.clone();
         Some((client, tool.original.clone()))
@@ -319,7 +318,7 @@ impl McpRegistry {
     /// same declaration the config and the Settings tab show. An unknown name
     /// is gated: a tool we cannot attribute is not one to wave through.
     pub fn is_gated(&self, qualified: &str) -> bool {
-        let state = self.state.read().unwrap();
+        let state = self.state.read_ok();
         let Some(tool) = state.tools.iter().find(|t| t.qualified == qualified) else {
             return true;
         };
@@ -335,7 +334,7 @@ impl McpRegistry {
     /// (server, instructions). This is how a server states its own rules
     /// instead of the host hand-copying them.
     pub fn instructions(&self) -> Vec<(String, String)> {
-        let state = self.state.read().unwrap();
+        let state = self.state.read_ok();
         state
             .clients
             .iter()
