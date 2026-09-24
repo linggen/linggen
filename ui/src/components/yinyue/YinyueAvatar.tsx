@@ -117,6 +117,9 @@ export const YinyueAvatar: React.FC = () => {
       }
       if (steps.length) void stage.playSequence(steps);
     });
+    // Replays only when a new expression arrives (its id), not when the store
+    // hands back an equal object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [express?.id]);
 
   // A reply is in flight → hold the pondering pose until she responds.

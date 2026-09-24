@@ -1,13 +1,5 @@
 import type { ChatMessage } from '../../types';
 import type { MessagePhase } from './types';
-import { dedupeActivityEntries, isProgressLineText } from './utils/activity';
-
-export const activityEntriesForMessage = (msg: ChatMessage): string[] => {
-  const entries = Array.isArray(msg.activityEntries) ? msg.activityEntries : [];
-  if (entries.length > 0) return dedupeActivityEntries(entries);
-  if (isProgressLineText(msg.text)) return dedupeActivityEntries([msg.text]);
-  return [];
-};
 
 export const isTransientStatus = (entry: string): boolean => {
   const t = entry.trim();

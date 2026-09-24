@@ -21,14 +21,11 @@ export const LIVE_MESSAGE_GRACE_MS = 10_000;
  *  a compaction notice. They sit in the thread but never answer anyone. */
 export const UNSPOKEN_SENDERS = new Set(['system', 'memory', 'memory-recall', 'compaction']);
 export const TOKEN_RATE_WINDOW_MS = 8_000;
-export const TOKEN_RATE_IDLE_RESET_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Tool parsing helpers
 // ---------------------------------------------------------------------------
 
-const TOOL_JSON_EMBEDDED_RE = /\{"type":"tool","tool":"([^"]+)","args":\{[\s\S]*?\}\}/g;
-const TOOL_RESULT_LINE_RE = /^(Tool\s+[A-Za-z0-9_.:-]+\s*:|tool_error:|tool_not_allowed:)/i;
 
 export const parseToolNameFromParsedPayload = (parsed: any): string | null => {
   if (!parsed || typeof parsed !== 'object') return null;
@@ -54,50 +51,6 @@ export const parseToolNameFromMessage = (text: string): string | null => {
     // Non-JSON messages are ignored.
   }
   return null;
-};
-
-export const extractToolNamesFromText = (text: string): string[] => {
-  const names: string[] = [];
-  const direct = parseToolNameFromMessage(text.trim());
-  if (direct) names.push(direct);
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  for (const line of lines) {
-    const n = parseToolNameFromMessage(line);
-    if (n) names.push(n);
-  }
-  let m: RegExpExecArray | null = null;
-  TOOL_JSON_EMBEDDED_RE.lastIndex = 0;
-  while ((m = TOOL_JSON_EMBEDDED_RE.exec(text)) !== null) {
-    if (m[1]) names.push(m[1]);
-  }
-  return Array.from(new Set(names));
-};
-
-export const stripToolPayloadLines = (text: string): string => {
-  const withoutEmbedded = text.replace(TOOL_JSON_EMBEDDED_RE, '').trim();
-  const cleaned = withoutEmbedded
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => {
-      const t = line.trim();
-      if (!t) return false;
-      if (parseToolNameFromMessage(t)) return false;
-      if (TOOL_RESULT_LINE_RE.test(t)) return false;
-      return true;
-    })
-    .join('\n')
-    .trim();
-  return cleaned;
-};
-
-export const isToolResultMessage = (from?: string, text?: string) => {
-  if (!text) return false;
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  return TOOL_RESULT_LINE_RE.test(trimmed) || (from === 'system' && trimmed.startsWith('Tool '));
 };
 
 // ---------------------------------------------------------------------------

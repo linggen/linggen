@@ -20,16 +20,6 @@ export const sortMessagesByTime = (messages: ChatMessage[]) =>
     })
     .map((entry) => entry.msg);
 
-export const hasStrongContentOverlap = (aText: string, bText: string) => {
-  if (!aText || !bText) return false;
-  if (aText === bText) return true;
-  const [shorter, longer] =
-    aText.length <= bText.length ? [aText, bText] : [bText, aText];
-  if (shorter.length < 80) return false;
-  if (!longer.includes(shorter)) return false;
-  return shorter.length / longer.length >= 0.45;
-};
-
 export const roleFromSender = (sender: string): ChatMessage['role'] => {
   const key = normalizeAgentKey(sender);
   if (key === 'user') return 'user';

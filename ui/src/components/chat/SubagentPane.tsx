@@ -135,7 +135,7 @@ export const SubagentPane: React.FC<Props> = ({
   // resultText drive the streaming-text growth signal. Swap to a fresh
   // hook identity when the active tab changes via `key={active.subagentId}`
   // on the scroll container so the hook resets cleanly.
-  const autoScroll = useAutoScroll(
+  const { chatEndRef, showScrollButton, scrollToBottom } = useAutoScroll(
     { length: active?.toolSteps?.length ?? 0 },
     {
       isGenerating: active?.status === 'running',
@@ -362,10 +362,10 @@ export const SubagentPane: React.FC<Props> = ({
         )}
         {/* Sentinel for auto-scroll-to-bottom — kept as the last child of
          *  the scroll container so the hook's scrollIntoView targets it. */}
-        <div ref={autoScroll.chatEndRef} />
-        {autoScroll.showScrollButton && (
+        <div ref={chatEndRef} />
+        {showScrollButton && (
           <button
-            onClick={autoScroll.scrollToBottom}
+            onClick={scrollToBottom}
             className="sticky bottom-2 left-1/2 -translate-x-1/2 z-30 w-8 h-8 rounded-full bg-white dark:bg-[#1a1a1a] border border-slate-300 dark:border-white/15 shadow-lg flex items-center justify-center hover:bg-slate-50 dark:hover:bg-white/10 transition-all opacity-80 hover:opacity-100"
             title="Scroll to bottom"
             aria-label="Scroll to bottom"

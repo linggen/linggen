@@ -136,8 +136,3 @@ export function installFetchProxy(): void {
     return _originalFetch(input, init);
   }) as typeof window.fetch;
 }
-
-/** Restore the original fetch (for testing/cleanup). */
-export function uninstallFetchProxy(): void {
-  window.fetch = _originalFetch;
-}

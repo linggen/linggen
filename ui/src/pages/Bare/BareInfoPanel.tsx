@@ -4,7 +4,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
-import { recordSkillUsage } from '../../components/SkillsCard';
+import { recordSkillUsage } from '../../lib/skillUsage';
 import type { SkillInfo } from '../../types';
 
 /** Bare /info-panel route — for skill apps to iframe the models/skills

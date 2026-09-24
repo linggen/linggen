@@ -10,6 +10,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
+import { isPermissionSuppressed } from './_shared';
 
 export function handlePageState(item: UiEvent): void {
   const ps = item.data;
@@ -147,7 +148,8 @@ function applyScopedState(ps: any): void {
 
   if (!ps.session_permission) return;
   const perm = ps.session_permission;
-  if (perm.effective_mode) {
+  // A mode the user just picked wins until its PATCH has propagated.
+  if (perm.effective_mode && !isPermissionSuppressed()) {
     useUiStore.getState().setSessionMode(perm.effective_mode);
   }
 }

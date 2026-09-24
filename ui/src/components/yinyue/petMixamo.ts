@@ -119,12 +119,12 @@ export async function loadMixamoAnimation(url: string, vrm: VRM): Promise<THREE.
           values[i + 2] = -values[i + 2]; // flip z
         }
       }
-      tracks.push(new THREE.QuaternionKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times.slice(), values));
+      tracks.push(new THREE.QuaternionKeyframeTrack(`${vrmNodeName}.${propertyName}`, Array.from(track.times), Array.from(values)));
     } else if (track instanceof THREE.VectorKeyframeTrack) {
       // In-place: keep the vertical bob (y), zero horizontal travel (x, z) so a
       // walk/run loops on the spot instead of drifting the docked avatar away.
       const values = track.values.map((v, i) => (i % 3 === 1 ? v * hipsPositionScale : 0));
-      tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times.slice(), values));
+      tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, Array.from(track.times), Array.from(values)));
     }
   });
 

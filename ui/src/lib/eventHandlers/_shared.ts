@@ -16,7 +16,7 @@ export function suppressPermissionSync(): void {
   _permissionSuppressedUntil = Date.now() + 3000;
 }
 
-/** Returns true while the permission-change suppression window is active. */
+/** True while the suppression window is active. */
 export function isPermissionSuppressed(): boolean {
   return Date.now() < _permissionSuppressedUntil;
 }

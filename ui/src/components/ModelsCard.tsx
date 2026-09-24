@@ -32,12 +32,15 @@ export const ModelsCard: React.FC<{
 }> = ({ models, ollamaStatus, activeModelId, defaultModels = [], onToggleDefault, onChangeReasoningEffort }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // Scroll to the default (starred) model on mount
+  // Scroll to the default (starred) model once, when it is first known
+  const scrolledRef = React.useRef(false);
+  const hasDefault = defaultModels.length > 0;
   React.useEffect(() => {
-    if (!scrollContainerRef.current || defaultModels.length === 0) return;
+    if (scrolledRef.current || !scrollContainerRef.current || !hasDefault) return;
+    scrolledRef.current = true;
     const el = scrollContainerRef.current.querySelector('[data-default-model]');
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, []);
+  }, [hasDefault]);
 
   return (
     <div ref={scrollContainerRef} className="px-3 py-2 space-y-2 max-h-48 overflow-y-auto">

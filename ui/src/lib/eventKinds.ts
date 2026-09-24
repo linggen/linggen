@@ -57,11 +57,6 @@ export const EVENT_KINDS = [
 
 export type EventKind = (typeof EVENT_KINDS)[number];
 
-/** Exhaustiveness helper — forces the switch/map to cover every `EventKind`. */
-export function assertNever(x: never): never {
-  throw new Error(`Unreachable: unexpected event kind ${JSON.stringify(x)}`);
-}
-
 /** Narrow an unknown kind string to a known `EventKind`, or null. */
 export function asEventKind(kind: unknown): EventKind | null {
   return typeof kind === 'string' && (EVENT_KINDS as readonly string[]).includes(kind)

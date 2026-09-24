@@ -30,15 +30,6 @@ export function folderLabel(path: string | null | undefined): string | null {
   return path.split('/').pop() || path;
 }
 
-export const CRON_PRESETS = [
-  { label: 'Every 30 min', value: '*/30 * * * *' },
-  { label: 'Every hour', value: '0 * * * *' },
-  { label: 'Every 2 hours', value: '0 */2 * * *' },
-  { label: 'Daily at 9am', value: '0 9 * * *' },
-  { label: 'Weekdays 9am', value: '0 9 * * 1-5' },
-  { label: 'Weekly Sunday', value: '0 0 * * 0' },
-];
-
 export const PERMISSION_MODES = [
   { value: 'read', label: 'Read-only', desc: 'Analyze and report only — no Write, Edit, or Bash.', color: 'green' },
   { value: 'edit', label: 'Edit', desc: 'Write + edit files within the working directory and declared paths.', color: 'blue' },

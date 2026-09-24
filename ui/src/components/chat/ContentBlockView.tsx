@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../../lib/cn';
-import DiffView, { diffStats } from '../DiffView';
+import DiffView from '../DiffView';
+import { diffStats } from '../../lib/diffStats';
 import type { ChatMessage, ContentBlock } from '../../types';
 import { truncateDetail, contentBlockSummary, buildInlineDiff } from './utils/content-block';
 

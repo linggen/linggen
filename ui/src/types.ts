@@ -330,8 +330,6 @@ export type ManagementTab = 'models' | 'agents' | 'skills' | 'tools' | 'mcp' | '
 
 // --- Mission types (cron-based) ---
 
-export type MissionTab = 'list' | 'create' | 'edit' | 'runs' | 'agent';
-
 /** Permission block — mirrors SkillPermission. See doc/mission-spec.md.
  *  The backend returns per-path grants `{path, mode}` (no top-level
  *  mode). The editor displays paths bare and uses a separate dropdown
@@ -377,21 +375,6 @@ export interface CronMission {
 
   created_at: number;
 }
-
-export interface MissionRunEntry {
-  run_id: string;
-  session_id?: string | null;
-  triggered_at: number;
-  status: string;
-  skipped: boolean;
-}
-
-export const MISSION_POLICIES = ['strict', 'trusted', 'sandbox', 'interactive'] as const;
-export const MISSION_PERMISSION_MODES = ['read', 'edit', 'admin'] as const;
-export const MISSION_TOOL_CATALOG = [
-  'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch',
-  'Memory_add', 'Memory_get', 'Memory_search', 'Memory_list', 'Memory_update', 'Memory_delete',
-] as const;
 
 // --- Storage browser types ---
 

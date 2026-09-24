@@ -25,22 +25,6 @@ export async function fetchMissions(): Promise<CronMission[]> {
   }
 }
 
-export function createMission(args: MissionCreateArgs): Promise<CronMission | null> {
-  return apiPost<CronMission | null>('/api/missions', {
-    name: args.name || null,
-    description: args.description || '',
-    schedule: args.schedule,
-    prompt: args.prompt || null,
-    model: args.model || null,
-    cwd: args.cwd || null,
-    entry: args.entry || null,
-    permission_mode: args.permission_mode || 'admin',
-    permission_paths: args.permission_paths || [],
-    permission_warning: args.permission_warning || null,
-    allowed_tools: args.allowed_tools || [],
-  });
-}
-
 export function updateMission(id: string, updates: Record<string, any>): Promise<CronMission | null> {
   return apiPut<CronMission | null>(`/api/missions/${encodeURIComponent(id)}`, updates);
 }

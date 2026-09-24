@@ -36,5 +36,10 @@ module.exports = tseslint.config(
         { allowConstantExport: true },
       ],
     },
+  },
+  // Entry points mount the app; they export nothing by design.
+  {
+    files: ['src/entries/**/*.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   }
 );

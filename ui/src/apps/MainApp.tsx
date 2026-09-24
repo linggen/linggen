@@ -15,7 +15,7 @@ import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { AppPanel } from '../components/AppPanel';
 import { InfoPanel } from '../components/InfoPanel';
 import { RoomChatPanel } from '../components/RoomChatPanel';
-import { recordSkillUsage } from '../components/SkillsCard';
+import { recordSkillUsage } from '../lib/skillUsage';
 import { buildAgentWorkInfo } from '../lib/messageUtils';
 import { startPresenceBeat } from '../lib/presence';
 import { useSessionStore } from '../stores/sessionStore';
@@ -85,7 +85,7 @@ export const MainApp: React.FC = () => {
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
 
   // Shortcuts
-  const { selectedProjectRoot, sessions, allSessions, activeSessionId, isMissionSession } = projectStore;
+  const { selectedProjectRoot, sessions, allSessions, activeSessionId, isMissionSession, isSkillSession } = projectStore;
   const { agents, models, skills, selectedAgent, agentStatus, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = agentStore;
   const { messages: chatMessages } = chatStore;
   const { showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath } = uiStore;
@@ -144,7 +144,6 @@ export const MainApp: React.FC = () => {
 
   // --- React to session changes ---
   useEffect(() => {
-    const { isSkillSession } = projectStore;
     if (selectedProjectRoot || isMissionSession || isSkillSession || activeSessionId) {
       const prev = prevSessionIdRef.current;
       prevSessionIdRef.current = activeSessionId;
@@ -169,7 +168,7 @@ export const MainApp: React.FC = () => {
       cs.fetchSessionState();
       sendViewContext();
     }
-  }, [activeSessionId, selectedProjectRoot, isMissionSession, projectStore.isSkillSession]);
+  }, [activeSessionId, selectedProjectRoot, isMissionSession, isSkillSession]);
 
   // --- Restore persisted session-level model override ---
   // Look up the active session in `allSessions` (unified cross-project list),

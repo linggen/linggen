@@ -250,8 +250,9 @@ export function useChatActions(
     try {
       // Optimistic spinner trigger — set the pendingSends flag immediately
       // so ChatPanel renders the busy state before the server's first
-      // page_state push lands. Cleared by handleTurnComplete.
-      useServerStore.getState().setPendingSend(sid, true);
+      // page_state push lands. Cleared by handleTurnComplete. A new chat has
+      // no session id yet — it's flagged once the server returns one.
+      if (sid) useServerStore.getState().setPendingSend(sid, true);
       // The hint answered the turn before this one.
       if (sid) useSuggestionStore.getState().clearHint(sid);
       const { isMissionSession, activeMissionId, isSkillSession, activeSkillName } = useSessionStore.getState();
@@ -268,6 +269,7 @@ export function useChatActions(
         followups: true,
       }) as any;
       if (data?.session_id && !sid) {
+        if (data.status !== 'queued') useServerStore.getState().setPendingSend(data.session_id, true);
         useSessionStore.getState().setActiveSessionId(data.session_id);
         useSessionStore.getState().fetchSessions();
         if (window.parent !== window) {

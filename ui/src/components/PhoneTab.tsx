@@ -102,7 +102,7 @@ export const PhoneTab: React.FC<{
     beat();
     const t = setInterval(beat, 5000);
     return () => clearInterval(t);
-  }, [qr]);
+  }, [qr, fetchQr]);
 
   // Available models to offer as each phone's allow-list.
   React.useEffect(() => {
