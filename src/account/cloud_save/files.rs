@@ -24,6 +24,8 @@ pub struct Layout {
     pub entries: Vec<String>,
     /// The single-file form: the body is the file's text.
     pub one: bool,
+    /// File or folder names left out at any depth (`cloud.skip`).
+    pub skip: Vec<String>,
 }
 
 /// Files the engine and the scripts leave beside a save — never part of it.
@@ -49,6 +51,7 @@ impl Layout {
     /// Whether `rel` falls under what the save declares.
     fn covers(&self, rel: &str) -> bool {
         plain(rel)
+            && !rel.split('/').any(|name| self.skips(name))
             && self.entries.iter().any(|e| {
                 rel == e
                     || rel
@@ -57,13 +60,41 @@ impl Layout {
             })
     }
 
+    /// A name the save leaves on the device.
+    fn skips(&self, name: &str) -> bool {
+        self.skip.iter().any(|s| s == name)
+    }
+
     /// Every file the save covers, as it is on disk now.
     pub fn read(&self) -> Files {
         let mut files = Files::new();
         for entry in &self.entries {
-            collect(&self.root, &self.root.join(entry), &mut files);
+            self.collect(&self.root.join(entry), &mut files);
         }
         files
+    }
+
+    fn collect(&self, path: &Path, files: &mut Files) {
+        let Ok(meta) = std::fs::symlink_metadata(path) else {
+            return;
+        };
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if self.skips(name) {
+            return;
+        }
+        if meta.is_file() && !is_scratch(name) {
+            let rel = path.strip_prefix(&self.root).ok().and_then(Path::to_str);
+            if let (Some(rel), Ok(bytes)) = (rel, std::fs::read(path)) {
+                files.insert(rel.replace('\\', "/"), bytes);
+            }
+        } else if meta.is_dir() {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                self.collect(&entry.path(), files);
+            }
+        }
     }
 
     pub fn fingerprint(&self, files: &Files) -> u64 {
@@ -158,26 +189,6 @@ impl Layout {
     }
 }
 
-fn collect(root: &Path, path: &Path, files: &mut Files) {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return;
-    };
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if meta.is_file() && !is_scratch(name) {
-        let rel = path.strip_prefix(root).ok().and_then(Path::to_str);
-        if let (Some(rel), Ok(bytes)) = (rel, std::fs::read(path)) {
-            files.insert(rel.replace('\\', "/"), bytes);
-        }
-    } else if meta.is_dir() {
-        let Ok(entries) = std::fs::read_dir(path) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            collect(root, &entry.path(), files);
-        }
-    }
-}
-
 fn encode_file(bytes: &[u8]) -> Value {
     match std::str::from_utf8(bytes) {
         Ok(text) => json!({ "text": text }),
@@ -223,6 +234,7 @@ mod tests {
             root: root.to_path_buf(),
             entries: vec!["data/state.json".into(), "data/worlds".into()],
             one: false,
+            skip: Vec::new(),
         }
     }
 
@@ -247,6 +259,35 @@ mod tests {
         );
         let body = l.encode(&files);
         assert_eq!(l.decode(&body).unwrap(), files);
+    }
+
+    #[test]
+    fn a_skipped_name_stays_on_the_device_through_push_and_pull() {
+        let root = scratch("skip");
+        let l = Layout {
+            skip: vec!["art".into()],
+            ..bundle(&root)
+        };
+        write_atomic(&root.join("data/state.json"), b"{}").unwrap();
+        write_atomic(&root.join("data/worlds/w/world.json"), b"{}").unwrap();
+        write_atomic(&root.join("data/worlds/w/art/kui.webp"), &[0xff, 0x00]).unwrap();
+        let here = l.read();
+        assert_eq!(
+            here.keys().cloned().collect::<Vec<_>>(),
+            vec!["data/state.json", "data/worlds/w/world.json"],
+            "the picture is never pushed"
+        );
+        // A body that names a skipped file is not written; a pull of a body
+        // without it does not remove the device's copy.
+        let body = json!({ "bundle": 1, "files": {
+            "data/state.json": { "text": "{}" },
+            "data/worlds/w/art/other.webp": { "b64": "AAA=" },
+        }});
+        let incoming = l.decode(&body).unwrap();
+        assert!(!incoming.contains_key("data/worlds/w/art/other.webp"));
+        l.write(&here, &incoming).unwrap();
+        assert!(root.join("data/worlds/w/art/kui.webp").exists());
+        assert!(!root.join("data/worlds/w/art/other.webp").exists());
     }
 
     #[test]
@@ -278,6 +319,7 @@ mod tests {
             root: "/s/g".into(),
             entries: vec!["data/state.json".into()],
             one: true,
+            skip: Vec::new(),
         };
         let mut files = Files::new();
         files.insert("data/state.json".into(), b"hello".to_vec());

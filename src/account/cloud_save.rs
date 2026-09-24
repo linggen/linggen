@@ -129,6 +129,7 @@ pub fn target(skill: &Skill) -> Option<SaveTarget> {
             root: skill.skill_dir.clone()?,
             entries,
             one: paths.is_one(),
+            skip: skill.cloud.as_ref()?.skip.clone(),
         },
     })
 }
@@ -304,6 +305,7 @@ mod tests {
             skill.cloud = Some(crate::engine::skill::CloudConfig {
                 save: Some(bad.into()),
                 meter: None,
+                skip: Vec::new(),
             });
             assert!(target(&skill).is_none(), "{bad}");
         }

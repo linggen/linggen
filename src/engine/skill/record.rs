@@ -85,6 +85,11 @@ pub struct CloudConfig {
     /// of files and folders stored together as one bundle.
     #[serde(default)]
     pub save: Option<SavePaths>,
+    /// Names under the save never kept in the cloud — a file or folder with
+    /// one of these names, at any depth, is neither pushed, pulled nor
+    /// removed by a pull (`skip: [art]`: pictures stay on the device).
+    #[serde(default)]
+    pub skip: Vec<String>,
     /// A rolling token window on linggen.dev, named by the site. Each turn's
     /// tokens are reported to it; a spent window refuses the next turn.
     #[serde(default)]
