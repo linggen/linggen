@@ -289,6 +289,16 @@ impl AgentEngine {
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
 
+        // --- guest gate (defense-in-depth) ---
+        // A guest takes up no skill at a table that isn't its own, even when
+        // its list is `*` (no allowed set to check above) — the skill's
+        // habits would come with it.
+        if canonical_tool == "Skill" && self.is_guest_seat() {
+            let msg = "tool_not_allowed: tool=Skill reason=guest: a guest brings only its own tools to this session".to_string();
+            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+            return PreExecOutcome::Blocked(LoopControl::Continue);
+        }
+
         // --- consumer skill restriction gate (defense-in-depth) ---
         // When consumer_allowed_skills is set, block Skill invocations not in the list.
         if canonical_tool == "Skill" {

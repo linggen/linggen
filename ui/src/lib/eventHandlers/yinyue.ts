@@ -74,7 +74,31 @@ function flushExpress(): void {
  *  guards her voice/expression below. */
 export function handleYinyuePresent(item: UiEventOf<'yinyue_present'>): void {
   const present = !!(item.data as { present?: boolean } | undefined)?.present;
+  // Her voice follows the lock: a surface that hands her over goes quiet at
+  // once — the clip it is playing and any line still being synthesized. Two
+  // Lingjing tabs spoke at once (2026-09-24): each stage reload moves the lock,
+  // and the old holder kept talking over the new one.
+  if (!present) hush();
   useUiStore.getState().setYinyuePresenter(present);
+}
+
+/// Every clip this surface started or is still synthesizing; bumped to drop
+/// the in-flight ones.
+let voiceGeneration = 0;
+
+/// Stop her voice here: the playing clip, and any line still on its way.
+function hush(): void {
+  voiceGeneration++;
+  synthInFlight = false;
+  current?.stop();
+  current = null;
+  playback = null;
+  useUiStore.getState().setPetSpeaking(false);
+}
+
+/// Whether a clip started at `generation` may still sound on this surface.
+function mayStillSpeak(generation: number): boolean {
+  return generation === voiceGeneration && useUiStore.getState().yinyuePresenter;
 }
 
 export function handlePetExpress(item: UiEventOf<'pet_express'>): void {
@@ -126,10 +150,7 @@ export function handlePetSpeak(item: UiEventOf<'pet_speak'>): void {
 /// surface hears it: muting cuts off whatever she is saying now.
 export function handlePetVoice(item: UiEventOf<'pet_voice'>): void {
   if (item.data?.muted !== true) return;
-  current?.stop();
-  current = null;
-  playback = null;
-  useUiStore.getState().setPetSpeaking(false);
+  hush();
 }
 
 /// Her line as words only — the bubble and any held gesture, no talking loop.
@@ -145,6 +166,7 @@ async function play(text: string, emotion: string): Promise<void> {
   // Speech is coming → hold any pending gesture for the voice onset (not the
   // short silent-gesture fallback), and keep her in thinking until then.
   synthInFlight = true;
+  const generation = voiceGeneration;
   if (pendingTimer !== undefined) {
     clearTimeout(pendingTimer);
     pendingTimer = undefined;
@@ -176,6 +198,9 @@ async function play(text: string, emotion: string): Promise<void> {
     const ctx = (audioCtx ??= new AudioContext());
     if (ctx.state === 'suspended') await ctx.resume();
     const decoded = await ctx.decodeAudioData(bytes);
+    // The lock moved (or she was muted) while the line was synthesized: the
+    // surface that holds her now speaks; this one stays quiet.
+    if (!mayStillSpeak(generation)) return;
 
     current?.stop(); // cut off any clip still playing
     const src = ctx.createBufferSource();

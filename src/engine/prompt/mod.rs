@@ -961,14 +961,28 @@ impl AgentEngine {
             .iter()
             .flat_map(|tool| self.resolve_declared_tool(tool))
             .collect::<HashSet<String>>();
+        // A guest at another session's table brings exactly its own list: the
+        // extras below reach past it (`Skill` takes up a skill — and its
+        // habits — at a table that isn't the guest's; seen 2026-09-23).
+        if !self.is_guest_seat() {
+            self.add_owner_extras(&mut allowed);
+        }
+        Some(allowed)
+    }
 
+    /// Whether this engine sits as a guest in a session that isn't its own —
+    /// the seat it brought its permissions to (`seat_permissions`).
+    pub(crate) fn is_guest_seat(&self) -> bool {
+        self.seat_permissions.is_some()
+    }
+
+    /// What every agent in its own session gets beyond its declared list.
+    fn add_owner_extras(&self, allowed: &mut HashSet<String>) {
         // Skill tool is always allowed so the model can discover/invoke skills.
         allowed.insert("Skill".to_string());
         // A person can ask anyone to mute Yinyue.
         allowed.insert("Voice".to_string());
-        self.inject_memory_tools(&mut allowed);
-
-        Some(allowed)
+        self.inject_memory_tools(allowed);
     }
 
     /// One name a declaration can carry, resolved to what the model will be

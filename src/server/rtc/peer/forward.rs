@@ -100,9 +100,7 @@ pub(super) fn forward_event_to_channels(
     // surfaces open (tabs, apps, the desktop pet) she renders and speaks in just
     // one place. Applies to every peer, admin included (the gate sits above the
     // user-filter, which otherwise whitelists these global kinds to all peers).
-    if matches!(ui_msg.kind.as_str(), "pet_speak" | "pet_express")
-        && state.yinyue_holder() != Some(filter.peer_id)
-    {
+    if !yinyue_cue_reaches(&ui_msg.kind, state.yinyue_holder(), filter.peer_id) {
         return;
     }
 
@@ -345,4 +343,64 @@ pub(super) fn forward_event_to_channels(
 /// carry the final state and ARE buffered normally.
 fn is_ephemeral_stream(kind: &str) -> bool {
     matches!(kind, "token" | "text_segment" | "tool_progress")
+}
+
+/// Whether an event of `kind` reaches `peer_id` given who holds her now. Her
+/// voice and expression go to the holder alone — never to every surface that
+/// hosts her, and to nobody while nobody holds her. Everything else passes.
+fn yinyue_cue_reaches(kind: &str, holder: Option<u64>, peer_id: u64) -> bool {
+    !matches!(kind, "pet_speak" | "pet_express") || holder == Some(peer_id)
+}
+
+#[cfg(test)]
+mod yinyue_cue_tests {
+    use super::yinyue_cue_reaches;
+    use crate::server::state::{yinyue_holder_of, YinyuePresenter};
+
+    /// Two Lingjing tabs, each a stage (2026-09-24): her line is addressed
+    /// to the newest stage only; the other tab, and the desktop corner, get
+    /// nothing to speak.
+    #[test]
+    fn her_voice_reaches_the_presenter_alone() {
+        let reg = [
+            YinyuePresenter {
+                peer_id: 1,
+                stage: false,
+            },
+            YinyuePresenter {
+                peer_id: 4,
+                stage: true,
+            },
+            YinyuePresenter {
+                peer_id: 10,
+                stage: true,
+            },
+        ];
+        let holder = yinyue_holder_of(&reg);
+        let hear: Vec<u64> = reg
+            .iter()
+            .map(|p| p.peer_id)
+            .filter(|&id| yinyue_cue_reaches("pet_speak", holder, id))
+            .collect();
+        assert_eq!(hear, [10]);
+        assert!(!yinyue_cue_reaches("pet_express", holder, 4));
+        assert!(
+            !yinyue_cue_reaches("pet_speak", None, 1),
+            "nobody holds her"
+        );
+        assert!(
+            yinyue_cue_reaches("pet_voice", holder, 4),
+            "mute reaches all"
+        );
+    }
+
+    /// The desktop pet window, alone, holds her and speaks there.
+    #[test]
+    fn a_lone_desktop_pet_speaks() {
+        let reg = [YinyuePresenter {
+            peer_id: 2,
+            stage: false,
+        }];
+        assert!(yinyue_cue_reaches("pet_speak", yinyue_holder_of(&reg), 2));
+    }
 }

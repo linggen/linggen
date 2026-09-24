@@ -1320,4 +1320,60 @@ mod seat_tests {
             PermissionCheckResult::NeedsPrompt(_)
         ));
     }
+
+    /// Her real spec, on an engine — seated as a guest or at home.
+    fn yinyue_engine(guest: bool) -> AgentEngine {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        let (spec, _) =
+            crate::extensions::agents::parse_agent_markdown(include_str!("../../agents/yinyue.md"))
+                .unwrap();
+        engine.spec = Some(spec);
+        if guest {
+            let her = dirs::home_dir().unwrap().join(".linggen");
+            engine.seat_permissions = Some(SessionPermissions::seat(
+                &her.to_string_lossy(),
+                PermissionMode::Read,
+            ));
+        }
+        engine
+    }
+
+    /// A guest is offered exactly her spec's list: no `Skill` to take up the
+    /// table's skill (2026-09-23: she loaded lingjing and copied Ling's
+    /// AskUser habit). At home the owner extras still apply.
+    #[test]
+    fn a_guest_is_offered_only_her_own_list() {
+        let guest = yinyue_engine(true).allowed_tool_names().unwrap();
+        assert!(!guest.contains("Skill"), "{guest:?}");
+        assert!(guest.contains("WebSearch") && guest.contains("Express"));
+        let home = yinyue_engine(false).allowed_tool_names().unwrap();
+        assert!(home.contains("Skill"));
+    }
+
+    /// Execute time holds the line too — even with no allowed set to check
+    /// (a `*` guest), a guest's `Skill` call is refused, never run.
+    #[tokio::test]
+    async fn a_guest_skill_call_is_refused_at_execute_time() {
+        let mut engine = yinyue_engine(true);
+        let mut messages = Vec::new();
+        let outcome = engine
+            .pre_execute_tool(
+                "Skill".to_string(),
+                serde_json::json!({"skill": "lingjing"}),
+                &None,
+                &mut messages,
+                &mut std::collections::HashMap::new(),
+                &mut std::collections::HashSet::new(),
+                &mut String::new(),
+                &mut 0,
+                None,
+                Some("t1".to_string()),
+            )
+            .await;
+        assert!(matches!(outcome, super::types::PreExecOutcome::Blocked(_)));
+        assert!(messages
+            .iter()
+            .any(|m| m.content.contains("tool_not_allowed: tool=Skill")));
+    }
 }
