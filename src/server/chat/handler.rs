@@ -1125,13 +1125,10 @@ mod tests {
 
     #[test]
     fn turn_creator_keeps_a_skill_bound_session_the_skills() {
-        // A turn typed into a lingjing session from the main chat or the
+        // A turn typed into a game's session from the main chat or the
         // phone carries no skill_name — it is still the skill's turn.
-        assert_eq!(turn_creator(None, None, Some("lingjing")), "skill");
-        assert_eq!(
-            turn_creator(Some("dream"), None, Some("lingjing")),
-            "mission"
-        );
+        assert_eq!(turn_creator(None, None, Some("game")), "skill");
+        assert_eq!(turn_creator(Some("dream"), None, Some("game")), "mission");
     }
 
     #[test]

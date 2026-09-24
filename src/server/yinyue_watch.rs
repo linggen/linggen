@@ -789,24 +789,25 @@ pub(crate) async fn run_yinyue_turn(
     // spoken-line contract; a person's own words are never appended to.
     let task = with_contract(task, trigger_source);
 
-    // Persist the incoming message to the session store so it survives reload
-    // and the turn-core's restore sees a complete thread. (The turn core only
-    // mirrors it into in-memory history; disk persistence happens here — the
-    // same split the Web-UI chat handler uses.)
-    crate::server::chat::helpers::persist_message_only(
-        &state.manager,
-        &root,
-        YINYUE_AGENT,
-        "user",
-        YINYUE_AGENT,
-        &task,
-        Some(&session_id),
-        false,
-    )
-    .await;
-
     let spoken = {
         let mut engine = agent.lock().await;
+        // Persist the incoming message to the session store so it survives
+        // reload and the turn-core's restore sees a complete thread. (The turn
+        // core only mirrors it into in-memory history; disk persistence
+        // happens here — the same split the Web-UI chat handler uses.) Inside
+        // the lock: two wakes racing for her engine keep each kickoff next to
+        // its own turn, never both kickoffs ahead of both answers.
+        crate::server::chat::helpers::persist_message_only(
+            &state.manager,
+            &root,
+            YINYUE_AGENT,
+            "user",
+            YINYUE_AGENT,
+            &task,
+            Some(&session_id),
+            false,
+        )
+        .await;
         // Loop-break: if this turn was woken by an agent_chat, mark the session so
         // the agent_chat tool refuses to relay onward (one hop; user re-arms).
         // Mark/clear INSIDE the lock so the flag's lifetime matches exactly the

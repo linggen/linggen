@@ -103,7 +103,7 @@ const EVENT_TEXT_MAX: usize = 300;
 /// until the user has gone quiet (or, `big`, until the screen settles), and
 /// then she judges whether a word fits (server/yinyue_moments.rs).
 pub(crate) async fn event_handler(
-    State(_state): State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Json(req): Json<EventRequest>,
 ) -> impl IntoResponse {
     let app = req.app.trim();
@@ -121,6 +121,11 @@ pub(crate) async fn event_handler(
         text.len(),
         req.big
     );
+    // Asked while the pet is off: nobody will answer — say so now, rather
+    // than let the page wait on a silence.
+    if req.asked && !state.manager.get_config_snapshot().await.pet.enabled {
+        return (StatusCode::SERVICE_UNAVAILABLE, "unanswered: pet off").into_response();
+    }
     crate::server::yinyue_moments::push(crate::server::yinyue_moments::Moment {
         app: app.to_string(),
         text,
@@ -206,6 +211,10 @@ pub(crate) struct PresenceBeat {
     /// Milliseconds since the user's last input (key/pointer), measured client-side.
     #[serde(default)]
     pub idle_ms: u64,
+    /// The app (skill) this surface shows, if it is one — lets an app's
+    /// moments wait until that app is the one in front.
+    #[serde(default)]
+    pub app: Option<String>,
 }
 
 /// POST /api/presence — a throttled liveness beat from a client surface. Carries
@@ -217,9 +226,12 @@ pub(crate) async fn presence_handler(
     State(state): State<Arc<ServerState>>,
     Json(beat): Json<PresenceBeat>,
 ) -> impl IntoResponse {
-    state
-        .manager
-        .update_presence(beat.focused, beat.typing, beat.idle_ms);
+    state.manager.update_presence(
+        beat.focused,
+        beat.typing,
+        beat.idle_ms,
+        beat.app.filter(|a| !a.is_empty() && a.len() <= 40),
+    );
     (StatusCode::OK, "ok").into_response()
 }
 

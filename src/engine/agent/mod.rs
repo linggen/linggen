@@ -109,6 +109,9 @@ pub struct Presence {
     pub typing: bool,
     /// Unix secs of the last beat — a stale value means no live client.
     pub updated_at: u64,
+    /// The app (skill) the focused surface shows, when its beat names one.
+    /// None: a surface that says nothing about which app is in front.
+    pub app: Option<String>,
 }
 
 /// How long a focused beat outranks an unfocused one from another surface.
@@ -425,7 +428,7 @@ impl AgentManager {
     /// Record a presence beat from a client surface. `idle_ms` is how long since
     /// the user's last input (key/pointer), measured client-side. Carries no
     /// keystroke content — only recency, focus, and a typing flag.
-    pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64) {
+    pub fn update_presence(&self, focused: bool, typing: bool, idle_ms: u64, app: Option<String>) {
         let now = crate::util::now_ts_secs();
         let mut p = self.presence.lock_ok();
         // Presence is one reading for the whole machine, and several surfaces
@@ -442,6 +445,7 @@ impl AgentManager {
         p.focused = focused;
         p.typing = typing;
         p.updated_at = now;
+        p.app = app;
     }
 
     /// A person who just typed to an agent is present, wherever they typed it.
@@ -452,7 +456,8 @@ impl AgentManager {
     /// (2026-09-10, chatting with Ling on the DJ page). A message is the least
     /// deniable presence signal there is: they typed it a moment ago.
     pub fn mark_user_turn_presence(&self) {
-        self.update_presence(true, true, 0);
+        let app = self.presence_snapshot().app;
+        self.update_presence(true, true, 0, app);
     }
 
     /// Current presence snapshot, for the `sense` tool.
@@ -982,6 +987,7 @@ mod tests {
             focused,
             typing,
             updated_at: at,
+            app: None,
         }
     }
 

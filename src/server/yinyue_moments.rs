@@ -63,8 +63,28 @@ pub(crate) fn note_spoke() {
     LAST_SPOKE_AT.store(crate::util::now_ts_secs(), Ordering::Relaxed);
 }
 
+/// The asked moments a wake is answering right now. While it runs, no other
+/// wake starts — what arrives meanwhile waits and goes in one wake after it.
+static IN_FLIGHT: Mutex<Vec<Moment>> = Mutex::new(Vec::new());
+
+/// The same ask again — a double tap — while the first is queued or being
+/// answered: one answer covers both.
+fn is_repeat_ask(moment: &Moment, queued: &VecDeque<Moment>, in_flight: &[Moment]) -> bool {
+    let same = |m: &Moment| m.asked && m.app == moment.app && m.text == moment.text;
+    moment.asked && (queued.iter().any(same) || in_flight.iter().any(same))
+}
+
 pub(crate) fn push(moment: Moment) {
     let mut q = MOMENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let in_flight = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    if is_repeat_ask(&moment, &q, &in_flight) {
+        tracing::info!(
+            "[yinyue-moments] the same ask from {} again; one answer covers it",
+            moment.app
+        );
+        return;
+    }
+    drop(in_flight);
     q.push_back(moment);
     while q.len() > MAX_MOMENTS {
         q.pop_front();
@@ -72,17 +92,31 @@ pub(crate) fn push(moment: Moment) {
 }
 
 /// What the gate reads of the room — the presence beat, reduced.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Room {
     /// A live, focused surface: the user can see the app.
     pub at_screen: bool,
     pub typing: bool,
     /// Seconds since their last key or pointer input.
     pub idle: u64,
+    /// The app the focused surface shows, when its beat names one.
+    pub app: Option<String>,
+}
+
+impl Room {
+    /// The user can see where these moments happened: at the screen, and
+    /// the app in front is one of theirs (or the beat names none).
+    fn sees(&self, moments: &[Moment]) -> bool {
+        self.at_screen
+            && self
+                .app
+                .as_deref()
+                .is_none_or(|app| moments.iter().any(|m| m.app == app))
+    }
 }
 
 /// Whether to wake her now. Pure, so the thresholds are tested, not trusted.
-pub(crate) fn ready(now: u64, room: Room, moments: &[Moment], last_voice: u64) -> bool {
+pub(crate) fn ready(now: u64, room: &Room, moments: &[Moment], last_voice: u64) -> bool {
     let Some(newest) = moments.iter().map(|m| m.at).max() else {
         return false;
     };
@@ -90,8 +124,8 @@ pub(crate) fn ready(now: u64, room: Room, moments: &[Moment], last_voice: u64) -
     if moments.iter().any(|m| m.asked) {
         return true;
     }
-    // Never to an empty room, never over their typing.
-    if !room.at_screen || room.typing {
+    // Never to an empty room or another app's screen, never over their typing.
+    if !room.sees(moments) || room.typing {
         return false;
     }
     let since_voice = now.saturating_sub(last_voice);
@@ -184,6 +218,20 @@ fn room_now(state: &Arc<ServerState>, now: u64) -> Room {
         at_screen: fresh && p.focused,
         typing: p.typing,
         idle: now.saturating_sub(p.last_input_at),
+        app: p.app,
+    }
+}
+
+/// Asked moments nobody will answer — the pet is off. The page that asked
+/// hears so (`device_topic` yinyue/unanswered) instead of waiting on silence.
+pub(crate) fn tell_unanswered(state: &Arc<ServerState>, moments: &[Moment]) {
+    for m in moments.iter().filter(|m| m.asked) {
+        let _ = state.events_tx.send(super::ServerEvent::DeviceTopic {
+            topic: "yinyue".to_string(),
+            op: "unanswered".to_string(),
+            payload: serde_json::json!({ "app": m.app, "text": m.text, "reason": "pet-off" }),
+            from_device: None,
+        });
     }
 }
 
@@ -192,6 +240,13 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
     loop {
         tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
         let now = crate::util::now_ts_secs();
+        if !IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+        {
+            continue; // one wake at a time; what arrives meanwhile goes next, together
+        }
         let taken = {
             let mut q = MOMENTS.lock().unwrap_or_else(|e| e.into_inner());
             q.retain(|m| now.saturating_sub(m.at) < STALE_SECS);
@@ -202,7 +257,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
                 .load(Ordering::Relaxed)
                 .max(LAST_WAKE_AT.load(Ordering::Relaxed));
             let moments: Vec<Moment> = q.iter().cloned().collect();
-            if !ready(now, room_now(&state, now), &moments, last_voice) {
+            if !ready(now, &room_now(&state, now), &moments, last_voice) {
                 continue;
             }
             let (taken, stay) = take_for_wake(moments);
@@ -211,6 +266,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             taken
         };
         if !state.manager.get_config_snapshot().await.pet.enabled {
+            tell_unanswered(&state, &taken);
             continue; // pet off: the moments are dropped, nobody to say them
         }
         LAST_WAKE_AT.store(now, Ordering::Relaxed);
@@ -222,6 +278,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             app_names(&taken)
         );
         let emotion = mood_of(&taken);
+        *IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()) = taken.clone();
         let state = state.clone();
         tokio::spawn(async move {
             if asked {
@@ -229,6 +286,7 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             } else {
                 super::yinyue_watch::wake_herald(state, kickoff(&taken), &emotion).await;
             }
+            IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
         });
     }
 }
@@ -239,7 +297,7 @@ mod tests {
 
     fn m(at: u64, big: bool) -> Moment {
         Moment {
-            app: "lingjing".into(),
+            app: "game".into(),
             text: "雷神放出雷霆".into(),
             big,
             asked: false,
@@ -251,21 +309,22 @@ mod tests {
         at_screen: true,
         typing: false,
         idle: 100,
+        app: None,
     };
 
     #[test]
     fn nothing_to_say_without_moments() {
-        assert!(!ready(10_000, HERE, &[], 0));
+        assert!(!ready(10_000, &HERE, &[], 0));
     }
 
     #[test]
     fn a_plain_moment_waits_for_quiet_settling_and_the_cooldown() {
         let now = 10_000;
-        assert!(ready(now, HERE, &[m(now - 30, false)], 0));
+        assert!(ready(now, &HERE, &[m(now - 30, false)], 0));
         // still typing, or away, or the tab hidden: never
         assert!(!ready(
             now,
-            Room {
+            &Room {
                 typing: true,
                 ..HERE
             },
@@ -274,7 +333,7 @@ mod tests {
         ));
         assert!(!ready(
             now,
-            Room {
+            &Room {
                 at_screen: false,
                 ..HERE
             },
@@ -284,18 +343,18 @@ mod tests {
         // not quiet long enough
         assert!(!ready(
             now,
-            Room { idle: 40, ..HERE },
+            &Room { idle: 40, ..HERE },
             &[m(now - 30, false)],
             0
         ));
         // the app still posting
-        assert!(!ready(now, HERE, &[m(now - 5, false)], 0));
+        assert!(!ready(now, &HERE, &[m(now - 5, false)], 0));
         // she spoke five minutes ago
-        assert!(!ready(now, HERE, &[m(now - 30, false)], now - 300));
+        assert!(!ready(now, &HERE, &[m(now - 30, false)], now - 300));
         // quiet a long while at the screen is still quiet — no upper bound
         assert!(ready(
             now,
-            Room {
+            &Room {
                 idle: 1_000,
                 ..HERE
             },
@@ -308,18 +367,18 @@ mod tests {
     fn a_big_moment_skips_the_quiet_wait_but_not_the_screen_or_cooldown() {
         let now = 10_000;
         let busy = Room { idle: 8, ..HERE };
-        assert!(ready(now, busy, &[m(now - 10, true)], 0));
+        assert!(ready(now, &busy, &[m(now - 10, true)], 0));
         assert!(
-            !ready(now, busy, &[m(now - 2, true)], 0),
+            !ready(now, &busy, &[m(now - 2, true)], 0),
             "the screen settles first"
         );
         assert!(
-            !ready(now, busy, &[m(now - 10, true)], now - 60),
+            !ready(now, &busy, &[m(now - 10, true)], now - 60),
             "a shorter cooldown still holds"
         );
         assert!(!ready(
             now,
-            Room {
+            &Room {
                 typing: true,
                 ..busy
             },
@@ -332,7 +391,7 @@ mod tests {
     fn the_kickoff_carries_the_facts_in_order_and_never_orders_her_to_speak() {
         let k = kickoff(&[
             Moment {
-                app: "lingjing".into(),
+                app: "game".into(),
                 text: "打赢了夔".into(),
                 big: false,
                 asked: false,
@@ -340,7 +399,7 @@ mod tests {
                 at: 1,
             },
             Moment {
-                app: "lingjing".into(),
+                app: "game".into(),
                 text: "气血只剩 6".into(),
                 big: true,
                 asked: false,
@@ -348,7 +407,7 @@ mod tests {
                 at: 2,
             },
         ]);
-        assert!(k.starts_with("While the user was in lingjing,"));
+        assert!(k.starts_with("While the user was in game,"));
         assert!(k.find("打赢了夔").unwrap() < k.find("气血只剩 6").unwrap());
         assert!(k.contains("SILENT"));
         assert_eq!(mood_of(&[m(1, false)]), "neutral");
@@ -364,10 +423,11 @@ mod tests {
         // she spoke a minute ago, the user is mid-typing, the moment is a second old: still now
         assert!(ready(
             now,
-            Room {
+            &Room {
                 typing: true,
                 idle: 0,
-                at_screen: false
+                at_screen: false,
+                app: None,
             },
             &[asked.clone()],
             now - 60
@@ -377,6 +437,44 @@ mod tests {
         assert!(
             !k.contains("SILENT"),
             "the answer contract offers no silence"
+        );
+    }
+
+    #[test]
+    fn a_moment_waits_until_its_own_app_is_in_front() {
+        let now = 10_000;
+        let other = Room {
+            app: Some("player".into()),
+            ..HERE
+        };
+        assert!(
+            !ready(now, &other, &[m(now - 30, false)], 0),
+            "another app is in front"
+        );
+        let own = Room {
+            app: Some("game".into()),
+            ..HERE
+        };
+        assert!(ready(now, &own, &[m(now - 30, false)], 0));
+    }
+
+    #[test]
+    fn a_double_tap_is_one_ask() {
+        let ask = Moment {
+            asked: true,
+            ..m(1, false)
+        };
+        let queued: VecDeque<Moment> = [ask.clone()].into_iter().collect();
+        assert!(is_repeat_ask(&ask, &queued, &[]), "queued");
+        assert!(
+            is_repeat_ask(&ask, &VecDeque::new(), &[ask.clone()]),
+            "being answered"
+        );
+        assert!(!is_repeat_ask(&ask, &VecDeque::new(), &[]));
+        let plain = m(1, false);
+        assert!(
+            !is_repeat_ask(&plain, &[plain.clone()].into_iter().collect(), &[]),
+            "only asks coalesce"
         );
     }
 

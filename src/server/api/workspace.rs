@@ -405,6 +405,19 @@ fn default_bash_timeout() -> u64 {
     30_000
 }
 
+/// Kill a timed-out command's whole process group (it was spawned leading one).
+fn kill_group(pgid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pgid) = pgid {
+        // SAFETY: a signal to a group this server created; no memory is touched.
+        unsafe {
+            libc::kill(-(pgid as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pgid;
+}
+
 /// POST /api/bash — run a shell command directly (CC `!` shortcut).
 ///
 /// Tracks cwd per session (same sentinel as the agent Bash tool) so that
@@ -415,7 +428,7 @@ pub(crate) async fn run_bash_api(
 ) -> impl IntoResponse {
     use crate::engine::tools::search_exec_find_git_root;
     use crate::server::ServerEvent;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     use std::time::Duration;
 
     use crate::util::CWD_SENTINEL;
@@ -444,14 +457,19 @@ pub(crate) async fn run_bash_api(
     // Wrap command with cwd sentinel (same as agent Bash tool).
     let wrapped_cmd = crate::util::wrap_with_cwd_sentinel(&req.command);
 
-    let child = Command::new("sh")
-        .arg("-c")
+    // Own process group + kill-on-drop: a timeout kills the command and every
+    // child it started, instead of leaving them running behind the reply.
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
         .arg(&wrapped_cmd)
         .current_dir(&base_cwd)
         .env("PATH", crate::util::shell_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn();
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let child = cmd.spawn();
 
     let child = match child {
         Ok(c) => c,
@@ -464,20 +482,23 @@ pub(crate) async fn run_bash_api(
             .into_response();
         }
     };
+    let pgid = child.id();
 
-    let result = tokio::task::spawn_blocking(move || child.wait_with_output());
-
-    let (code, mut stdout, stderr) = match tokio::time::timeout(timeout, result).await {
-        Ok(Ok(Ok(output))) => {
-            let code = output.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            (code, stdout, stderr)
-        }
-        Ok(Ok(Err(e))) => (-1, String::new(), format!("Command error: {e}")),
-        Ok(Err(e)) => (-1, String::new(), format!("Task error: {e}")),
-        Err(_) => (-1, String::new(), "Command timed out".to_string()),
-    };
+    let (code, mut stdout, stderr) =
+        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => {
+                let code = output.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                (code, stdout, stderr)
+            }
+            Ok(Err(e)) => (-1, String::new(), format!("Command error: {e}")),
+            Err(_) => {
+                // The dropped future already killed `sh`; take its group too.
+                kill_group(pgid);
+                (-1, String::new(), "Command timed out".to_string())
+            }
+        };
 
     // Strip the cwd sentinel and update per-session cwd. Use substring match
     // (not whole-line) so commands whose last line of output has no trailing
