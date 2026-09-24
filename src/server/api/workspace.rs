@@ -120,16 +120,14 @@ pub(crate) async fn list_files(
 
     let mut entries = Vec::new();
     if let Ok(dir) = std::fs::read_dir(full_path) {
-        for entry in dir {
-            if let Ok(entry) = entry {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                entries.push(serde_json::json!({
-                    "name": name,
-                    "isDir": is_dir,
-                    "path": if rel_path.is_empty() { name } else { format!("{}/{}", rel_path, name) }
-                }));
-            }
+        for entry in dir.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            entries.push(serde_json::json!({
+                "name": name,
+                "isDir": is_dir,
+                "path": if rel_path.is_empty() { name } else { format!("{}/{}", rel_path, name) }
+            }));
         }
     }
     Json(entries).into_response()

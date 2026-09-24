@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::engine::agent::locks::LockManager;
 use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use crate::engine::agent::registry::AgentRegistry;
-use crate::engine::{AgentEngine, AgentOutcome, AgentRole, EngineConfig, InterfaceMode, Plan};
+use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode, Plan};
 use crate::extensions::agents::AgentLoader;
 use crate::extensions::skills::SkillLoader;
 use crate::provider::models::ModelManager;

@@ -406,7 +406,7 @@ impl SkillLoader {
             let global_dir = crate::paths::global_skills_dir();
             migrate_declared_renames(&global_dir);
             let _ = self
-                .load_from_dir_nested(&global_dir, SkillSource::Global, &mut *skills)
+                .load_from_dir_nested(&global_dir, SkillSource::Global, &mut skills)
                 .await;
         }
 
@@ -416,7 +416,7 @@ impl SkillLoader {
                 label: label.to_string(),
             };
             let _ = self
-                .load_from_dir_nested(&compat_dir, source, &mut *skills)
+                .load_from_dir_nested(&compat_dir, source, &mut skills)
                 .await;
         }
 
@@ -430,7 +430,7 @@ impl SkillLoader {
                 for dir_name in &[".claude/skills", ".codex/skills", ".linggen/skills"] {
                     let project_dir = root.join(dir_name);
                     let _ = self
-                        .load_from_dir_nested(&project_dir, SkillSource::Project, &mut *skills)
+                        .load_from_dir_nested(&project_dir, SkillSource::Project, &mut skills)
                         .await;
                 }
             }
@@ -688,7 +688,7 @@ fn cloud_if_allowed(
 /// needs to load a skill from disk — keeps the file/dir branching and the
 /// `skill_dir` plumbing in one place.
 pub fn load_skill_from_path(path: &Path, source: SkillSource) -> Result<Option<Skill>> {
-    if path.is_file() && path.extension().map_or(false, |e| e == "md") {
+    if path.is_file() && path.extension().is_some_and(|e| e == "md") {
         let text = std::fs::read_to_string(path)?;
         let mut skill = parse_skill_text(&text, source)?;
         if let Some(parent) = path.parent() {

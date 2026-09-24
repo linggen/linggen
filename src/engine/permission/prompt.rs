@@ -7,7 +7,9 @@ use crate::engine::render::normalize_tool_path_arg;
 use crate::engine::tools::{AskUserOption, AskUserQuestion};
 use std::path::Path;
 
-use super::model::{PermissionAction, PermissionMode};
+#[cfg(test)]
+use super::model::PermissionAction;
+use super::model::PermissionMode;
 
 pub fn permission_target_summary(tool: &str, args: &serde_json::Value, cwd: &Path) -> String {
     match tool {
