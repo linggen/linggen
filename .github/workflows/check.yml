@@ -57,5 +57,8 @@ jobs:
       - name: Lint
         working-directory: ui
         run: npm run lint
+      - name: UI unit tests
+        working-directory: ui
+        run: node --test tests/*.test.mts
       - name: Shared page helpers
         run: node --test tests/shared/*.test.mjs

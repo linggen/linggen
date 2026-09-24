@@ -11,7 +11,7 @@ module.exports = tseslint.config(
   { ignores: ['dist', 'src/types/generated'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ['**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx,mts}'],
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,

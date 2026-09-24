@@ -31,6 +31,7 @@ if [ "$what" = all ] || [ "$what" = ui ]; then
   [ -d ui/node_modules ] || (cd ui && npm ci)
   step bash -c 'cd ui && npx tsc --noEmit'
   step bash -c 'cd ui && npm run lint'
+  step bash -c 'cd ui && node --test tests/*.test.mts'
 fi
 
 if [ "$what" = all ] || [ "$what" = js ]; then

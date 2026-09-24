@@ -11,6 +11,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { UNSPOKEN_SENDERS } from '../messageUtils';
+import { interruptedResend, INTERRUPTED_TEXT } from '../interruptedTurn.mts';
 import { isPermissionSuppressed } from './_shared';
 
 
@@ -223,24 +224,20 @@ async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
   // The last row that SPEAKS. A memory recall is persisted right after the
   // user's message, before any reply — counting it as an answer hid every
   // interrupted turn once auto-recall landed.
-  const msgs = useChatStore.getState().messages.filter(
-    (m) => !m.isError && !UNSPOKEN_SENDERS.has(m.from || ''),
+  // The server kept the question, so a resend is a new message: it shows its own bubble.
+  const resend = interruptedResend(
+    useChatStore.getState().messages,
+    UNSPOKEN_SENDERS,
+    useServerStore.getState().selectedAgent,
   );
-  const last = msgs[msgs.length - 1];
-  if (!last || last.role !== 'user') return;
+  if (!resend) return;
   useServerStore.getState().markRunInterrupted(sessionId);
   const ts = new Date();
   useChatStore.getState().addMessage({
     role: 'agent', from: 'system', to: 'user',
-    text: 'No response — the run was interrupted (server restarted mid-turn).',
+    text: INTERRUPTED_TEXT,
     isError: true,
-    // The server kept the question, so a resend is a new message: it shows its own bubble.
-    resend: {
-      text: last.text,
-      agentId: last.to || useServerStore.getState().selectedAgent,
-      ...(last.images && last.images.length > 0 ? { images: last.images } : {}),
-      persisted: true,
-    },
+    resend,
     timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
   });
 }
