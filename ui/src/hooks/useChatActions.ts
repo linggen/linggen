@@ -303,8 +303,9 @@ export function useChatActions(
   const resendMessage = useCallback((failed: ChatMessage) => {
     if (!failed.resend) return;
     useChatStore.getState().removeMessage(failed);
-    const { text, agentId, images } = failed.resend;
-    sendChatMessage(text, agentId, images, { resend: true });
+    const { text, agentId, images, persisted } = failed.resend;
+    // A send that never landed already has its bubble; a persisted one gets a new one.
+    sendChatMessage(text, agentId, images, { resend: !persisted });
   }, [sendChatMessage]);
 
   const respondToAskUser = useCallback(async (questionId: string, answers: any[]) => {

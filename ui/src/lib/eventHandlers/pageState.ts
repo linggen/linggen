@@ -253,8 +253,15 @@ async function markInterruptedIfUnanswered(sessionId: string): Promise<void> {
   const ts = new Date();
   useChatStore.getState().addMessage({
     role: 'agent', from: 'system', to: 'user',
-    text: 'No response — the run was interrupted (server restarted mid-turn). Send the message again.',
+    text: 'No response — the run was interrupted (server restarted mid-turn).',
     isError: true,
+    // The server kept the question, so a resend is a new message: it shows its own bubble.
+    resend: {
+      text: last.text,
+      agentId: last.to || useServerStore.getState().selectedAgent,
+      ...(last.images && last.images.length > 0 ? { images: last.images } : {}),
+      persisted: true,
+    },
     timestamp: ts.toLocaleTimeString(), timestampMs: ts.getTime(), isGenerating: false,
   });
 }
