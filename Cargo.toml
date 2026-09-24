@@ -11,8 +11,14 @@ repository = "https://github.com/linggen/linggen"
 # linggen.dev/api/track). See src/telemetry/mod.rs for the exact field list.
 # Disable at runtime: env LINGGEN_NO_TELEMETRY=1 OR file ~/.linggen/no-telemetry.
 # Disable at compile time: cargo build --no-default-features.
-default = ["telemetry"]
+default = ["telemetry", "kokoro"]
 telemetry = []
+# Kokoro-82M on candle — the local voice Yinyue falls back to when the GPU
+# voice (Qwen3-TTS in the managed runtime's MLX sidecar) isn't there: Intel
+# Macs, Linux, a first run before the runtime has downloaded, or a sidecar
+# failure. Shipped builds keep it. `--no-default-features --features telemetry`
+# drops candle and any-tts entirely; the fallback is then `say`.
+kokoro = ["dep:any-tts"]
 
 [[bin]]
 name = "ling"
@@ -74,10 +80,10 @@ flate2 = "1.1.9"
 # — they pull in objc2*, which `compile_error!`s on non-Apple targets — so enable
 # them only on macOS. Other platforms build the portable CPU candle backend.
 [target.'cfg(target_os = "macos")'.dependencies]
-any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
+any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download", "metal", "accelerate"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-any-tts = { version = "0.1.2", default-features = false, features = ["kokoro", "download"] }
+any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
 
 # Optimize dependencies even in dev builds. The engine crate itself stays at
 # opt-level 0 (fast incremental compiles), but numerical deps like candle

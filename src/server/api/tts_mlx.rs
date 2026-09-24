@@ -20,7 +20,7 @@ use base64::Engine as _;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
-use super::tts::{KokoroProvider, TtsProvider};
+use super::tts::TtsProvider;
 
 const SIDECAR_SRC: &str = include_str!("../../runtime_py/mlx_tts.py");
 
@@ -56,14 +56,14 @@ struct Sidecar {
 
 pub struct MlxTtsProvider {
     sidecar: Arc<Mutex<Option<Sidecar>>>,
-    fallback: KokoroProvider,
+    fallback: Box<dyn TtsProvider>,
 }
 
 impl MlxTtsProvider {
     pub fn new() -> Self {
         Self {
             sidecar: Arc::new(Mutex::new(None)),
-            fallback: KokoroProvider::new(),
+            fallback: super::tts::fallback_provider(),
         }
     }
 

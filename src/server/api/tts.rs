@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "kokoro")]
 use any_tts::{ModelType, SynthesisRequest, TtsConfig, TtsModel};
 use async_trait::async_trait;
 use axum::extract::State;
@@ -23,6 +24,7 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
+#[cfg(feature = "kokoro")]
 use tokio::sync::OnceCell;
 
 use crate::server::ServerState;
@@ -135,6 +137,19 @@ impl TtsProvider for SystemSayProvider {
     }
 }
 
+/// What speaks when the GPU voice can't: Kokoro when the build carries it
+/// (the `kokoro` feature, on by default), else `say` directly.
+pub fn fallback_provider() -> Box<dyn TtsProvider> {
+    #[cfg(feature = "kokoro")]
+    {
+        Box::new(KokoroProvider::new())
+    }
+    #[cfg(not(feature = "kokoro"))]
+    {
+        Box::new(SystemSayProvider)
+    }
+}
+
 /// Kokoro-82M (StyleTTS2) running locally via candle (the `any-tts` crate) —
 /// the production voice. Pure-Rust phonemizer (no espeak-ng) and a candle
 /// backend (no ONNX Runtime), so there's nothing native to bundle.
@@ -147,11 +162,13 @@ impl TtsProvider for SystemSayProvider {
 /// disabled nothing loads until she actually speaks. If it can't load
 /// (offline, download failed), synthesis falls back to `say` so the pet always
 /// has a voice.
+#[cfg(feature = "kokoro")]
 pub struct KokoroProvider {
     model: OnceCell<Arc<dyn TtsModel>>,
     fallback: SystemSayProvider,
 }
 
+#[cfg(feature = "kokoro")]
 impl KokoroProvider {
     pub fn new() -> Self {
         Self {
@@ -223,6 +240,7 @@ impl KokoroProvider {
     }
 }
 
+#[cfg(feature = "kokoro")]
 #[async_trait]
 impl TtsProvider for KokoroProvider {
     async fn synthesize(&self, text: &str, voice: Option<&str>) -> anyhow::Result<Vec<u8>> {
