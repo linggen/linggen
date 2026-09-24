@@ -97,11 +97,24 @@ pub(crate) struct ActiveStatusRecord {
     detail: Option<String>,
 }
 /// One surface that can show Yinyue: its RTC peer and whether it has a stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YinyuePresenter {
     pub peer_id: u64,
     /// The surface stands her in a place (a scene), not a pet corner.
     pub stage: bool,
+    /// The app chat session of the page the stage stands on, when it has one.
+    pub session: Option<String>,
+}
+
+/// The app chat she is presenting in: the holder's, when the holder is a
+/// stage on a page with a chat. What the user says to her then belongs to
+/// that chat — one conversation per app; otherwise it is her own thread's.
+pub fn yinyue_stage_session_of(reg: &[YinyuePresenter]) -> Option<&str> {
+    let holder = yinyue_holder_of(reg)?;
+    reg.iter()
+        .find(|p| p.peer_id == holder && p.stage)
+        .and_then(|p| p.session.as_deref())
+        .filter(|s| !s.is_empty())
 }
 
 /// Who holds her among the subscribed surfaces: the LATEST with a stage, else
@@ -132,23 +145,32 @@ impl ServerState {
         yinyue_holder_of(&self.yinyue_presenters.lock_ok())
     }
 
+    /// The app chat session she is presenting in, if any
+    /// ([`yinyue_stage_session_of`]).
+    pub fn yinyue_stage_session(&self) -> Option<String> {
+        yinyue_stage_session_of(&self.yinyue_presenters.lock_ok()).map(str::to_string)
+    }
+
     /// Subscribe a peer as a Yinyue presenter candidate. A surface with a
     /// `stage` — one that stands her in a place rather than a pet corner —
     /// outranks one without; among equals the earlier subscriber holds. A
-    /// re-subscribe may change the peer's stage. Broadcasts
-    /// `YinyuePresenterChanged` so every peer re-evaluates whether it is now
-    /// the holder.
-    pub fn yinyue_subscribe(&self, peer_id: u64, stage: bool) {
+    /// re-subscribe may change the peer's stage, or the app chat `session`
+    /// of its page (which moves no one). Broadcasts `YinyuePresenterChanged`
+    /// so every peer re-evaluates whether it is now the holder.
+    pub fn yinyue_subscribe(&self, peer_id: u64, stage: bool, session: Option<String>) {
         let changed = {
             let mut reg = self.yinyue_presenters.lock_ok();
             match reg.iter_mut().find(|p| p.peer_id == peer_id) {
-                Some(p) if p.stage == stage => false,
                 Some(p) => {
-                    p.stage = stage;
-                    true
+                    p.session = session;
+                    std::mem::replace(&mut p.stage, stage) != stage
                 }
                 None => {
-                    reg.push(YinyuePresenter { peer_id, stage });
+                    reg.push(YinyuePresenter {
+                        peer_id,
+                        stage,
+                        session,
+                    });
                     true
                 }
             }
@@ -354,7 +376,45 @@ impl ServerState {
 mod yinyue_presenter_tests {
     use super::*;
     fn p(peer_id: u64, stage: bool) -> YinyuePresenter {
-        YinyuePresenter { peer_id, stage }
+        YinyuePresenter {
+            peer_id,
+            stage,
+            session: None,
+        }
+    }
+    fn on_page(peer_id: u64, stage: bool, session: &str) -> YinyuePresenter {
+        YinyuePresenter {
+            session: Some(session.to_string()),
+            ..p(peer_id, stage)
+        }
+    }
+    /// She presents on an app page with a chat: what the user says to her
+    /// goes to that chat. Anywhere else — a pet corner, a stage with no
+    /// chat, a chat page that is not the one holding her — her own thread.
+    #[test]
+    fn what_she_hears_goes_to_the_chat_of_the_page_presenting_her() {
+        assert_eq!(
+            yinyue_stage_session_of(&[p(1, false), on_page(2, true, "sess-a")]),
+            Some("sess-a")
+        );
+        assert_eq!(yinyue_stage_session_of(&[p(1, false)]), None, "a corner");
+        assert_eq!(yinyue_stage_session_of(&[]), None, "nobody presents");
+        assert_eq!(
+            yinyue_stage_session_of(&[p(1, false), p(2, true)]),
+            None,
+            "a stage with no chat"
+        );
+        assert_eq!(
+            yinyue_stage_session_of(&[on_page(1, true, "sess-a"), p(2, true)]),
+            None,
+            "the newest stage holds her, and it has no chat"
+        );
+        assert_eq!(
+            yinyue_stage_session_of(&[on_page(1, false, "sess-a")]),
+            None,
+            "only a stage stands her on its page"
+        );
+        assert_eq!(yinyue_stage_session_of(&[on_page(2, true, "")]), None);
     }
     #[test]
     fn first_arrival_holds_without_a_stage() {

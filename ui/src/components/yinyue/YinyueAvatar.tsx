@@ -7,7 +7,9 @@
  *
  * Click her to talk: a small input opens and the message is sent to the Yinyue
  * agent (`POST /api/yinyue/chat`); her reply comes back over the event spine
- * (she speaks + the bubble). The click also satisfies browser autoplay so her
+ * (she speaks + the bubble). While a stage on an app page with a chat holds
+ * her, the engine says it in that chat instead — as the user's `@银月 …` line,
+ * answered there. The click also satisfies browser autoplay so her
  * voice can play.
  *
  * Loads `/yinyue.vrm` — Yinyue's original VRoid model (authored in-house).

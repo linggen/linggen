@@ -13,12 +13,29 @@
 import React, { useEffect } from 'react';
 import { YinyueAvatar } from '../components/yinyue/YinyueAvatar';
 import { YinyueBubble } from '../components/YinyueBubble';
-import { useYinyuePresenter } from '../hooks/useTransport';
+import { setYinyueStageSession, useYinyuePresenter } from '../hooks/useTransport';
+import { fromParent, postToParent } from '../lib/parentFrame';
 
 /** `?pet=1&stage=1`: this surface is a stage (a scene that stands her in a place). */
 const isStage = new URLSearchParams(window.location.search).get('stage') === '1';
 
+/** A stage learns its page's app chat session from the page (the chat bridge
+ *  answers `which`, and tells again whenever the chat's session changes). */
+function useStageChatSession(): void {
+  useEffect(() => {
+    if (!isStage) return;
+    const onMessage = (e: MessageEvent) => {
+      if (!fromParent(e) || e.data?.type !== 'linggen-app-chat' || e.data.event) return;
+      setYinyueStageSession(typeof e.data.session === 'string' ? e.data.session : null);
+    };
+    window.addEventListener('message', onMessage);
+    postToParent({ type: 'linggen-app-chat', event: 'which' });
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+}
+
 export const PetApp: React.FC = () => {
+  useStageChatSession();
   // Subscribe to the server's presenter lock — one device, one voice. The pet
   // window normally holds her (it opens first / stays open); a page that stands
   // her in a place loads this same view with `&stage=1` and outranks the corner,

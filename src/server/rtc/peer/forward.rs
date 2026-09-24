@@ -366,14 +366,17 @@ mod yinyue_cue_tests {
             YinyuePresenter {
                 peer_id: 1,
                 stage: false,
+                session: None,
             },
             YinyuePresenter {
                 peer_id: 4,
                 stage: true,
+                session: None,
             },
             YinyuePresenter {
                 peer_id: 10,
                 stage: true,
+                session: None,
             },
         ];
         let holder = yinyue_holder_of(&reg);
@@ -400,6 +403,7 @@ mod yinyue_cue_tests {
         let reg = [YinyuePresenter {
             peer_id: 2,
             stage: false,
+            session: None,
         }];
         assert!(yinyue_cue_reaches("pet_speak", yinyue_holder_of(&reg), 2));
     }

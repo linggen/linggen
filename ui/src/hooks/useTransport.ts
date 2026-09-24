@@ -43,10 +43,22 @@ export function sendViewContext() {
 let yinyuePresenterWanted = false;
 /** Whether the wanting surface has a stage (stands her in a place). */
 let yinyuePresenterStage = false;
+/** The app chat session of the page the stage stands on — told by the page
+ *  (shared/chat-bridge.js). While this stage holds her, what the user says to
+ *  her goes to that chat. */
+let yinyuePresenterSession: string | null = null;
 
 /** Join / leave the server's Yinyue presenter registry — one device, one voice. */
 function sendYinyueSubscribe(stage: boolean) {
-  try { getTransport().sendYinyueSubscribe?.(stage); } catch { /* transport not ready — onReconnect re-sends */ }
+  try { getTransport().sendYinyueSubscribe?.(stage, yinyuePresenterSession); } catch { /* transport not ready — onReconnect re-sends */ }
+}
+
+/** The page this stage stands on has an app chat session (or no longer has
+ *  one): say so with the presenter subscription. */
+export function setYinyueStageSession(session: string | null): void {
+  if (session === yinyuePresenterSession) return;
+  yinyuePresenterSession = session;
+  if (yinyuePresenterWanted) sendYinyueSubscribe(yinyuePresenterStage);
 }
 function sendYinyueRelease() {
   try { getTransport().sendYinyueRelease?.(); } catch { /* transport not ready */ }
@@ -143,7 +155,7 @@ export function useTransport({ sessionId, onReconnect, onParseError }: UseTransp
         // Re-assert Yinyue presenter candidacy now that we're connected (the
         // mount-time subscribe is lost if it raced ahead of transport creation).
         if (yinyuePresenterWanted) {
-          try { getTransport().sendYinyueSubscribe?.(yinyuePresenterStage); } catch { /* not ready */ }
+          try { getTransport().sendYinyueSubscribe?.(yinyuePresenterStage, yinyuePresenterSession); } catch { /* not ready */ }
         }
         // Fetch workspace state immediately (chat history — not included in page_state)
         // Skip for consumer mode — HTTP fetch blocked by WebRTC tunnel permissions.

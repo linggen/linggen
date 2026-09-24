@@ -175,6 +175,10 @@ pub(crate) async fn chat_handler(
         run_voice_command(&state, muted).await;
         return (StatusCode::OK, "ok").into_response();
     }
+    if let Some(session_id) = presenting_in_chat(&state).await {
+        say_at_table(&state, session_id, &text).await;
+        return (StatusCode::OK, "ok").into_response();
+    }
     tracing::info!("[yinyue] chat from user ({} chars)", text.len());
     // If a worker agent is currently blocked on a prompt, frame this turn so she
     // can relay the answer with `answer_prompt` rather than just chatting — the
@@ -188,6 +192,75 @@ pub(crate) async fn chat_handler(
         }
     });
     (StatusCode::OK, "ok").into_response()
+}
+
+/// The app chat she is presenting in — a stage on an app page with a chat
+/// holds her — when that chat is there and she is on. One conversation per
+/// app: what the user says to her then is said in that chat.
+async fn presenting_in_chat(state: &Arc<ServerState>) -> Option<String> {
+    let sid = state.yinyue_stage_session()?;
+    if crate::server::resident::is_own_session(&sid)
+        || !state.manager.get_config_snapshot().await.pet.enabled
+    {
+        return None;
+    }
+    let meta = state
+        .manager
+        .global_sessions
+        .get_session_meta(&sid)
+        .ok()??;
+    Some(meta.id)
+}
+
+/// Say `text` to her in the app chat, exactly as if typed there addressed to
+/// her (`@银月 …`): the user's line in the chat, her answer there as a guest,
+/// spoken.
+async fn say_at_table(state: &Arc<ServerState>, session_id: String, text: &str) {
+    tracing::info!(
+        "[yinyue] chat from user ({} chars) → the app chat {session_id}",
+        text.len()
+    );
+    state.last_user_turn_at.store(
+        crate::util::now_ts_secs(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    state.manager.mark_user_turn_presence();
+    let name = her_address(state, text).await;
+    crate::server::resident::answer_as_guest(state.clone(), session_id, format!("@{name} {text}"))
+        .await;
+}
+
+/// The name she is addressed by in a chat line: an alias in the script the
+/// user writes in (`银月` for Chinese), else her display name.
+async fn her_address(state: &Arc<ServerState>, text: &str) -> String {
+    let id = crate::engine::agent::COMPANION_AGENT_ID;
+    let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
+    let aliases = state
+        .manager
+        .list_agent_specs(&root)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| s.agent_id == id)
+        .map(|s| s.spec.aliases)
+        .unwrap_or_default();
+    address_name(id, &aliases, text)
+}
+
+/// Pure: the alias written in the text's script (CJK text, CJK alias), else
+/// the id as a name ("Yinyue").
+fn address_name(id: &str, aliases: &[String], text: &str) -> String {
+    let cjk = |s: &str| s.chars().any(is_cjk);
+    if cjk(text) {
+        if let Some(alias) = aliases.iter().find(|a| cjk(a)) {
+            return alias.trim().to_string();
+        }
+    }
+    crate::server::chat::sender_label(id)
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c, '\u{3040}'..='\u{30ff}' | '\u{3400}'..='\u{9fff}' | '\u{ac00}'..='\u{d7af}')
 }
 
 /// If another agent is parked on a prompt, wrap the user's message with that
@@ -272,5 +345,21 @@ mod voice_tests {
         ] {
             assert_eq!(voice_command(other), None, "{other:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::address_name;
+
+    #[test]
+    fn she_is_addressed_in_the_script_the_user_writes() {
+        let aliases = vec!["银月".to_string()];
+        assert_eq!(address_name("yinyue", &aliases, "哪里有水边?"), "银月");
+        assert_eq!(
+            address_name("yinyue", &aliases, "where is water?"),
+            "Yinyue"
+        );
+        assert_eq!(address_name("yinyue", &[], "哪里有水边?"), "Yinyue");
     }
 }

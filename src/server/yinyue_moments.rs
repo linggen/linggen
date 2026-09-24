@@ -281,6 +281,47 @@ fn landings(moments: &[Moment], spoke: bool) -> Vec<(&str, bool)> {
     out
 }
 
+/// The app chats the moments name, each once, in order, with its app.
+fn chats_named(moments: &[Moment]) -> Vec<(&str, &str)> {
+    let mut out: Vec<(&str, &str)> = Vec::new();
+    for m in moments {
+        let Some(sid) = m.session.as_deref() else {
+            continue;
+        };
+        if !out.iter().any(|(_, s)| *s == sid) {
+            out.push((m.app.as_str(), sid));
+        }
+    }
+    out
+}
+
+/// One app chat's dialogue, as she reads it beside the moment.
+fn aside_for(app: &str, transcript: &str) -> String {
+    format!(
+        "The chat in {app} so far, oldest first — everything the user sees there, you \
+         included:\n{transcript}"
+    )
+}
+
+/// What she reads beside the moments: the visible dialogue of each app chat
+/// they name (`chat::table`). One conversation per app — the user, the
+/// app's agent and her — so her line fits where it lands. Read for the turn
+/// only, never kept on her thread. `None` when no chat is named or said.
+async fn aside(state: &Arc<ServerState>, moments: &[Moment]) -> Option<String> {
+    let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
+    let mut parts = Vec::new();
+    for (app, sid) in chats_named(moments) {
+        let rows = crate::server::chat::table::read(&state.manager, &root, sid).await;
+        if !rows.is_empty() {
+            parts.push(aside_for(
+                app,
+                &crate::server::chat::table::as_transcript(&rows),
+            ));
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
 /// When each session last had a conversational exchange.
 static LAST_CONVERSE: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
 
@@ -416,8 +457,10 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
             } else {
                 kickoff(&taken)
             };
+            let aside = aside(&state, &taken).await;
             let line =
-                super::resident::wake_for_moment(state.clone(), words, &emotion, asked).await;
+                super::resident::wake_for_moment(state.clone(), (words, aside), &emotion, asked)
+                    .await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
             land_in_chats(&state, &taken, line.as_deref()).await;
         });
@@ -678,6 +721,24 @@ mod tests {
             landings(&[in_chat(None, true)], true).is_empty(),
             "no session, no chat"
         );
+    }
+
+    #[test]
+    fn a_moment_turn_reads_each_named_chat_once_with_its_app() {
+        let mut a = in_chat(Some("s1"), false);
+        a.app = "lingjing".into();
+        let mut b = in_chat(Some("s1"), true);
+        b.app = "lingjing".into();
+        let none = in_chat(None, false);
+        let mut c = in_chat(Some("s2"), false);
+        c.app = "dj".into();
+        assert_eq!(
+            chats_named(&[a, none.clone(), b, c]),
+            [("lingjing", "s1"), ("dj", "s2")]
+        );
+        assert!(chats_named(&[none]).is_empty(), "no chat, nothing to read");
+        let text = aside_for("lingjing", "[User]: 去临淄\n[Ling]: 到了。");
+        assert!(text.contains("lingjing") && text.ends_with("[Ling]: 到了。"));
     }
 
     #[test]

@@ -80,6 +80,8 @@ export class RtcTransport implements Transport {
   private yinyueSubscribed = false;
   /** This surface stands her in a place (a scene), not a pet corner. */
   private yinyueStage = false;
+  /** The app chat session of the page a stage stands on, if any. */
+  private yinyueSession: string | null = null;
   private sessionChannels = new Map<string, RTCDataChannel>();
   private _status: TransportStatus = 'disconnected';
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -201,11 +203,12 @@ export class RtcTransport implements Transport {
   /** Join the Yinyue presenter registry — this surface renders her if it holds
    *  the lock (a stage outranks a pet corner; otherwise first arrival). Intent
    *  is sticky so it re-subscribes after a reconnect. */
-  sendYinyueSubscribe(stage = false): void {
+  sendYinyueSubscribe(stage = false, session: string | null = null): void {
     this.yinyueSubscribed = true;
     this.yinyueStage = stage;
+    this.yinyueSession = session;
     if (this.controlChannel?.readyState === 'open') {
-      this.controlChannel.send(JSON.stringify({ type: 'yinyue_subscribe', stage }));
+      this.controlChannel.send(JSON.stringify({ type: 'yinyue_subscribe', stage, session }));
     }
   }
 
@@ -337,7 +340,7 @@ export class RtcTransport implements Transport {
       this.flushPendingViewContext();
       // Re-assert Yinyue presenter candidacy after a (re)connect.
       if (this.yinyueSubscribed) {
-        this.controlChannel?.send(JSON.stringify({ type: 'yinyue_subscribe', stage: this.yinyueStage }));
+        this.controlChannel?.send(JSON.stringify({ type: 'yinyue_subscribe', stage: this.yinyueStage, session: this.yinyueSession }));
       }
       this.callbacks.onReconnect?.();
       this.startHeartbeat();

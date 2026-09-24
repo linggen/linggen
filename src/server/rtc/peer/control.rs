@@ -180,7 +180,13 @@ pub(super) fn handle_control_message(
         // blank.
         "yinyue_subscribe" => {
             let stage = msg.get("stage").and_then(|v| v.as_bool()).unwrap_or(false);
-            state.yinyue_subscribe(peer_id, stage);
+            // A stage on an app page names the page's chat session: what the
+            // user says to her while it holds her goes to that chat.
+            let session = msg
+                .get("session")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            state.yinyue_subscribe(peer_id, stage, session);
             None
         }
         "yinyue_release" => {

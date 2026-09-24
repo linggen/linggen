@@ -362,6 +362,7 @@ async fn run_approved_plan_task(
         sender: None,
         guest: false,
         silence_ok: false,
+        aside: None,
     };
     run_plan_execution(&ctx, &mut engine).await;
 

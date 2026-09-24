@@ -146,9 +146,29 @@ export async function mount(el, options) {
     session_created(payload) {
       if (!payload?.sessionId) return;
       sessionId = payload.sessionId;
+      tellStages();
       if (onSessionCreated) onSessionCreated(sessionId);
     },
   };
+
+  // ── Yinyue's stage on this page ──
+  // A stage framed here (the engine's pet view, `?pet=1&stage=1`) is told
+  // this chat's session: while it holds her, what the user says to her
+  // lands in this chat — one conversation per app. Only our own origin's
+  // frames hear it; the chat's own iframe is not a stage.
+  const STAGE_MSG = 'linggen-app-chat';
+  function tellStages() {
+    for (const f of document.querySelectorAll('iframe')) {
+      if (f === iframe) continue;
+      try { f.contentWindow?.postMessage({ type: STAGE_MSG, session: sessionId }, window.location.origin); } catch { /* not ours */ }
+    }
+  }
+  function onStageAsks(e) {
+    if (e.data?.type !== STAGE_MSG || e.data.event !== 'which') return;
+    if (e.origin !== window.location.origin || !e.source || e.source.parent !== window) return;
+    e.source.postMessage({ type: STAGE_MSG, session: sessionId }, e.origin);
+  }
+  window.addEventListener('message', onStageAsks);
 
   function handleMessage(e) {
     if (e.data?.type !== 'linggen-skill-event') return;
@@ -173,6 +193,7 @@ export async function mount(el, options) {
       if (!sessionId) {
         const data = await createSession(options.title || `${skillName} session`, skillName);
         sessionId = data.id;
+        tellStages();
         if (onSessionCreated) onSessionCreated(sessionId);
       }
       iframe = document.createElement('iframe');
@@ -191,6 +212,7 @@ export async function mount(el, options) {
   }
 
   if (!lazy) await ensureMounted();
+  tellStages();
 
   // A page whose sessions are one-offs (a match, a draft) deletes its session
   // on leave — otherwise every visit would leave one behind.
@@ -236,6 +258,9 @@ export async function mount(el, options) {
     setSuggestions,
     destroy() {
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('message', onStageAsks);
+      sessionId = null;
+      tellStages();
       window.removeEventListener('pagehide', onPageHide);
       if (localPanel) { localPanel.remove(); localPanel = null; }
       if (iframe) iframe.remove();
@@ -244,6 +269,7 @@ export async function mount(el, options) {
       if (!sessionId) return;
       try { await removeSkillSession(skillName, sessionId); } catch { /* ignore */ }
       sessionId = null;
+      tellStages();
     },
     getSessionId() { return sessionId; },
     setOptions(opts) {
@@ -254,6 +280,7 @@ export async function mount(el, options) {
     async setSession(sid) {
       if (!sid || sid === sessionId) return;
       sessionId = sid;
+      tellStages();
       streamBuffer = '';
       if (!iframe) return; // lazy and not yet mounted: the first send uses it
       embedAlive = false;

@@ -115,7 +115,7 @@ export interface Transport {
 
   /** Join the Yinyue presenter registry — this surface can render her. The
    *  server grants the singleton lock to the first subscriber (FCFS). */
-  sendYinyueSubscribe?(stage?: boolean): void;
+  sendYinyueSubscribe?(stage?: boolean, session?: string | null): void;
   /** Leave the Yinyue presenter registry (on unmount / before unload). */
   sendYinyueRelease?(): void;
 }

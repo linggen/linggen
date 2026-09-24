@@ -18,18 +18,21 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, task, trigger_source, Reach::Open).await
+    run_home(state, task, None, trigger_source, Reach::Open).await
 }
 
 /// Her turn on her own thread, woken by an app moment: her line is all she
 /// gives — spoken, and landed in the app's chat by the moment path — or
 /// SILENT. She reaches no other agent from it ([`Reach::Sealed`]).
+/// `aside` is what she reads for this turn only — the app chat's dialogue —
+/// and never kept on her thread.
 pub(crate) async fn run_moment_turn(
     state: &Arc<ServerState>,
     task: String,
+    aside: Option<String>,
     trigger_source: &str,
 ) -> Option<String> {
-    run_home(state, task, trigger_source, Reach::Sealed).await
+    run_home(state, task, aside, trigger_source, Reach::Sealed).await
 }
 
 /// What a turn of hers may reach past her own line.
@@ -60,6 +63,7 @@ pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
 async fn run_home(
     state: &Arc<ServerState>,
     task: String,
+    aside: Option<String>,
     trigger_source: &str,
     reach: Reach,
 ) -> Option<String> {
@@ -84,7 +88,7 @@ async fn run_home(
         guest: false,
         reach,
     };
-    run_at(state, &seat, &pet, task, trigger_source).await
+    run_at(state, &seat, &pet, (task, aside), trigger_source).await
 }
 
 /// Run her turn as a guest in another session — an app's chat where the user
@@ -108,7 +112,7 @@ pub(crate) async fn run_guest_turn(
         guest: true,
         reach: Reach::Sealed,
     };
-    run_at(state, &seat, &pet, message, "user").await
+    run_at(state, &seat, &pet, (message, None), "user").await
 }
 
 /// Her own folder: where her turns run, and what her permissions cover.
@@ -168,13 +172,14 @@ fn guest_permissions(
     )
 }
 
-/// One turn of hers at `seat`, through the shared turn-core, on her model.
-/// Returns her final text, trimmed; `None` when she produced none.
+/// One turn of hers at `seat`, through the shared turn-core, on her model:
+/// the task, and an aside read for this turn only. Returns her final text,
+/// trimmed; `None` when she produced none.
 async fn run_at(
     state: &Arc<ServerState>,
     seat: &Seat,
     pet: &crate::config::PetConfig,
-    task: String,
+    (task, aside): (String, Option<String>),
     trigger_source: &str,
 ) -> Option<String> {
     let Seat {
@@ -274,6 +279,7 @@ async fn run_at(
             sender: None,
             guest: seat.guest,
             silence_ok: false,
+            aside,
         };
         crate::server::chat::run_session_turn(
             &ctx,

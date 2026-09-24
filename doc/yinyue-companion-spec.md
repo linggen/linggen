@@ -159,9 +159,23 @@ so she can't message Ling into the app's chat; `converse` is the only exchange.
 **Addressed in an app's chat.** A message opening `@Yinyue` / `@银月` (id or a
 spec `aliases:` name) goes to her, in the same session, as a **guest**: her own
 engine and tools (never the session's skill, its tools or prompt), the thread
-rebuilt from the transcript, her reply persisted as hers and spoken
-(`PetSpeak`). Ling is not woken; what was said reaches him at the start of his
-next turn (`chat/side_lines.rs`). No mention → Ling, as always.
+rebuilt from the chat's visible dialogue, her reply persisted as hers and
+spoken (`PetSpeak`). Ling is not woken; what was said reaches him at the start
+of his next turn (`chat/side_lines.rs`). No mention → Ling, as always.
+
+**One conversation per app.** She reads the whole visible dialogue of an app's
+chat (`chat/table.rs`): the user's lines, Ling's replies, hers, other agents' —
+never a system prompt, tool call or result, `[HIDDEN]` kickoff or recall row.
+Cut from the front to ~24k tokens in 32-row chunks (a stable prefix for the
+cache). A guest turn's thread is it; a moment turn naming a `session` reads it
+beside the kickoff for that turn only (never kept on her thread).
+
+**Spoken to on a stage.** A stage on an app page with a chat learns the chat's
+session from the page (`shared/chat-bridge.js` ⇄ the pet view, `linggen-app-chat`
+messages) and sends it with `yinyue_subscribe`. While that stage holds her,
+`/api/yinyue/chat` (her pet box, the desktop pet) lands in that chat as the
+user's `@银月 …` line and she answers there as a guest. Otherwise → her own
+thread.
 
 ## `agent_chat` — general inter-agent messaging
 

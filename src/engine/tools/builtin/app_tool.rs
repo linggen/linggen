@@ -73,7 +73,7 @@ impl Tool for AppTool {
                 .ok_or_else(|| anyhow::anyhow!(Refusal::no_skill(app).to_string()))?],
             None => manager.skills.list_skills().await,
         };
-        let Some(tool) = args.tool.as_deref() else {
+        let Some(tool) = named_tool(args.tool.as_deref()) else {
             return Ok(ToolResult::Success(listing(&skills)));
         };
         let [skill] = skills.as_slice() else {
@@ -87,6 +87,13 @@ impl Tool for AppTool {
             .await
             .map_err(|r| anyhow::anyhow!(r.to_string()))
     }
+}
+
+/// The tool the call names. An empty or blank `tool` names none — the
+/// same as leaving it out: list what the apps offer (seen 2026-09-24:
+/// `{app: "lingjing", tool: ""}` was refused as a tool named '').
+fn named_tool(tool: Option<&str>) -> Option<&str> {
+    tool.map(str::trim).filter(|t| !t.is_empty())
 }
 
 /// Every tool the given apps offer the companion, as JSON lines.
@@ -109,4 +116,17 @@ fn listing(skills: &[Skill]) -> String {
         return "No app offers you a tool right now.".to_string();
     }
     rows.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::named_tool;
+
+    #[test]
+    fn a_blank_tool_is_no_tool_and_lists_instead() {
+        assert_eq!(named_tool(None), None);
+        assert_eq!(named_tool(Some("")), None);
+        assert_eq!(named_tool(Some("  ")), None);
+        assert_eq!(named_tool(Some(" Progress ")), Some("Progress"));
+    }
 }

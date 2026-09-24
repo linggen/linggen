@@ -29,6 +29,7 @@ mod runtime;
 pub(crate) mod side_lines;
 mod skill_dispatch;
 mod structured;
+pub(crate) mod table;
 mod types;
 
 pub(crate) use admin::{
@@ -69,6 +70,10 @@ pub(super) struct ChatRunCtx {
     /// The kickoff offers silence: a reply that is exactly `SILENT` is
     /// neither streamed, shown nor kept.
     pub(super) silence_ok: bool,
+    /// Read for this turn only, just before its message, then taken out of
+    /// the thread again (an app chat's dialogue, for a moment of the
+    /// companion's on her own thread). Never persisted.
+    pub(super) aside: Option<String>,
 }
 
 impl ChatRunCtx {
