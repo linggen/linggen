@@ -3,8 +3,7 @@
 //! Contract: `linggen-mobile/doc/shifu.md`. The load-bearing ones are manifest
 //! (what does the Mac need / already hold), reconcile (the phone's whole roll,
 //! which prunes what it deleted), backup, and verify (which uploads are now
-//! safe to delete on-phone). Bytes arrive on the media channel; `ingest`, the
-//! multipart route, predates that and currently has no caller.
+//! safe to delete on-phone). Bytes arrive on the media channel.
 //!
 //! Files land in the apple-shifu Media pipeline's own staging + archive, so the
 //! Mac review UI and the phone share one source of truth:
@@ -16,7 +15,6 @@
 //!   phone's delete gate is exactly the USB flow's delete gate.
 
 use axum::{
-    extract::Multipart,
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -27,7 +25,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
 
 /// Serializes ledger/manifest mutations across concurrent ingests.
 static MEDIA_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -797,103 +794,6 @@ fn backup_wireless() -> anyhow::Result<(usize, usize)> {
     Ok((archived, failed))
 }
 
-// ---------------------------------------------------------------------------
-// POST /api/media/ingest
-// ---------------------------------------------------------------------------
-
-/// One original per request: stream the `file` part to a staging temp while
-/// hashing, reject on digest mismatch, then stage + archive + ledger it.
-/// Idempotent at every step — a retry after any partial failure converges.
-pub(crate) async fn ingest_handler(
-    headers: axum::http::HeaderMap,
-    mut multipart: Multipart,
-) -> Response {
-    // The channel is the live upload path; this route survives for the USB-era
-    // flow and for curl. Attribute it the only way an HTTP caller can be known.
-    let by = crate::server::api::pair::actor_for_headers(&headers);
-    let mut local_id: Option<String> = None;
-    let mut declared_sha: Option<String> = None;
-    let mut created_ms: Option<i64> = None;
-    let mut filename: Option<String> = None;
-    let mut received: Option<(PathBuf, String, u64)> = None; // tmp, computed sha, size
-
-    let staging = staging_dir();
-    if let Err(e) = tokio::fs::create_dir_all(&staging).await {
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("staging dir: {e}"),
-        );
-    }
-    loop {
-        let field = match multipart.next_field().await {
-            Ok(Some(f)) => f,
-            Ok(None) => break,
-            Err(e) => {
-                discard(&received);
-                return err(StatusCode::BAD_REQUEST, format!("multipart: {e}"));
-            }
-        };
-        match field.name().unwrap_or_default() {
-            "localId" => local_id = field.text().await.ok(),
-            "sha256" => declared_sha = field.text().await.ok().map(|s| s.to_lowercase()),
-            "createdEpochMs" => created_ms = field.text().await.ok().and_then(|s| s.parse().ok()),
-            "file" => {
-                filename = field.file_name().map(sanitize_filename);
-                match stream_to_tmp(field, &staging).await {
-                    Ok(r) => received = Some(r),
-                    Err(e) => {
-                        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("receive: {e}"))
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let (Some(local_id), Some(declared_sha), Some((tmp, computed_sha, size))) =
-        (local_id, declared_sha, received)
-    else {
-        discard(&None);
-        return err(
-            StatusCode::BAD_REQUEST,
-            "need localId, sha256 and file parts",
-        );
-    };
-    if computed_sha != declared_sha {
-        let _ = std::fs::remove_file(&tmp);
-        return err(
-            StatusCode::BAD_REQUEST,
-            format!("sha256 mismatch: declared {declared_sha}, received {computed_sha}"),
-        );
-    }
-
-    let filename = filename.unwrap_or_else(|| format!("{}.bin", &computed_sha[..12]));
-    let _guard = MEDIA_LOCK.lock().await;
-    let finalized = tokio::task::spawn_blocking(move || {
-        finalize_ingest(
-            &local_id,
-            &computed_sha,
-            created_ms,
-            &filename,
-            &tmp,
-            size,
-            by,
-        )
-    })
-    .await;
-    match finalized {
-        Ok(Ok(())) => {
-            schedule_wireless_scan();
-            Json(json!({"ok": true})).into_response()
-        }
-        Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        Err(e) => err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("ingest task: {e}"),
-        ),
-    }
-}
-
 /// Wireless syncs analyze themselves: once ingests go quiet for
 /// [`SCAN_QUIESCE`], run the Media pipeline's `scan` (analyzers over staging —
 /// no phone involved) so synced photos get dupe/blurry/dark verdicts without
@@ -945,12 +845,6 @@ async fn run_media_scan() {
     }
 }
 
-fn discard(received: &Option<(PathBuf, String, u64)>) {
-    if let Some((tmp, _, _)) = received {
-        let _ = std::fs::remove_file(tmp);
-    }
-}
-
 pub(crate) fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -968,36 +862,6 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
     } else {
         trimmed
     }
-}
-
-async fn stream_to_tmp(
-    mut field: axum::extract::multipart::Field<'_>,
-    staging: &Path,
-) -> anyhow::Result<(PathBuf, String, u64)> {
-    let tmp = staging.join(format!(".ingest-{}.tmp", uuid::Uuid::new_v4()));
-    let mut file = tokio::fs::File::create(&tmp).await?;
-    let mut hasher = Sha256::new();
-    let mut size: u64 = 0;
-    loop {
-        let chunk = match field.chunk().await {
-            Ok(Some(c)) => c,
-            Ok(None) => break,
-            Err(e) => {
-                drop(file);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(e.into());
-            }
-        };
-        hasher.update(&chunk);
-        size += chunk.len() as u64;
-        if let Err(e) = file.write_all(&chunk).await {
-            drop(file);
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.into());
-        }
-    }
-    file.flush().await?;
-    Ok((tmp, hex(&hasher.finalize()), size))
 }
 
 /// Stage + manifest row, under MEDIA_LOCK. Each step no-ops if a previous
