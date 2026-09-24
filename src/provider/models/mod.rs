@@ -31,7 +31,6 @@ enum ProviderClient {
 
 pub struct ModelManager {
     models: HashMap<String, ModelInstance>,
-    pub health: Arc<ModelHealthTracker>,
 }
 
 struct ModelInstance {
@@ -206,7 +205,6 @@ impl ModelManager {
         }
         Self {
             models,
-            health: Arc::new(ModelHealthTracker::new()),
         }
     }
 

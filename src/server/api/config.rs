@@ -70,7 +70,7 @@ pub(crate) async fn get_models_health(State(state): State<Arc<ServerState>>) -> 
     use crate::provider::models::ModelHealthStatus;
 
     let models_guard = state.manager.models.read().await;
-    let health_records = models_guard.health.get_all().await;
+    let health_records = crate::provider::models::health_snapshot();
 
     // Build a map of model_id → health record for easy lookup
     let health_map: std::collections::HashMap<String, _> = health_records.into_iter().collect();
@@ -86,8 +86,10 @@ pub(crate) async fn get_models_health(State(state): State<Arc<ServerState>>) -> 
             serde_json::json!({
                 "id": m.id,
                 "health": rec.status,
+                "kind": rec.kind,
                 "last_error": rec.last_error,
                 "since_secs": rec.since_secs,
+                "retry_in_secs": rec.retry_in_secs,
             })
         } else {
             serde_json::json!({

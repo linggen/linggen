@@ -111,7 +111,7 @@ impl OllamaClient {
             } else {
                 text
             };
-            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
+            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
         }
 
         let payload: ChatResponse = resp.json().await?;
@@ -183,7 +183,7 @@ impl OllamaClient {
             } else {
                 text
             };
-            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
+            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
         }
 
         let stream = resp
@@ -305,7 +305,7 @@ impl OllamaClient {
             } else {
                 text
             };
-            anyhow::bail!("ollama error ({}): {}", status, truncated_err);
+            return Err(crate::provider::error::ProviderError::http(status, &truncated_err, format!("ollama error ({}): {}", status, truncated_err)).into());
         }
 
         let stream = resp
@@ -473,7 +473,7 @@ impl OllamaClient {
             } else {
                 text
             };
-            anyhow::bail!("ollama error ({}): {}", status, truncated);
+            return Err(crate::provider::error::ProviderError::http(status, &truncated, format!("ollama error ({}): {}", status, truncated)).into());
         }
 
         let payload: OllamaShowResponse = resp.json().await?;
@@ -548,7 +548,7 @@ impl OllamaClient {
             } else {
                 text
             };
-            anyhow::bail!("ollama error ({}): {}", status, truncated);
+            return Err(crate::provider::error::ProviderError::http(status, &truncated, format!("ollama error ({}): {}", status, truncated)).into());
         }
         let payload: OllamaShowResponse = resp.json().await?;
         Ok(payload.capabilities.iter().any(|c| c == "vision"))

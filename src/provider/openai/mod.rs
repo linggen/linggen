@@ -15,6 +15,11 @@ use anyhow::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 
+/// Reads one SSE `data:` payload of a text turn.
+type TextParser = fn(&str) -> Option<Result<StreamChunk>>;
+/// Reads one SSE `data:` payload of a tool turn.
+type ToolParser = fn(&str) -> Vec<Result<StreamChunk>>;
+
 /// The `data:` payload of one SSE line, or `None` for blank lines, `event:`
 /// lines, non-data lines and the `[DONE]` sentinel.
 fn sse_data(line: &str) -> Option<&str> {
@@ -170,22 +175,31 @@ impl OpenAiClient {
     /// verbatim — Linggen Cloud 402s get a `BILLING_REQUIRED:` prefix so the
     /// chat UI renders the subscribe card; live-auth 401s become sign-in CTAs.
     fn provider_error(&self, status: reqwest::StatusCode, text: String) -> anyhow::Error {
+        use crate::provider::error::{ProviderError, ProviderErrorKind};
         if self.codex_auth_live && status == reqwest::StatusCode::UNAUTHORIZED {
-            return anyhow::anyhow!(
+            return ProviderError::new(
+                ProviderErrorKind::Auth,
                 "AUTH_REQUIRED: ChatGPT session expired. Sign in with ChatGPT to continue."
-            );
+                    .to_string(),
+            )
+            .into();
         }
         if self.linggen_account_live && status == reqwest::StatusCode::UNAUTHORIZED {
-            return anyhow::anyhow!(
+            return ProviderError::new(
+                ProviderErrorKind::Auth,
                 "AUTH_REQUIRED: linggen.dev sign-in missing or expired. Run `ling account login`."
-            );
+                    .to_string(),
+            )
+            .into();
         }
         if status == reqwest::StatusCode::PAYMENT_REQUIRED {
             if let Some(msg) = extract_error_message(&text) {
-                if self.linggen_account_live {
-                    return anyhow::anyhow!("BILLING_REQUIRED: {msg}");
-                }
-                return anyhow::anyhow!("{msg}");
+                let msg = if self.linggen_account_live {
+                    format!("BILLING_REQUIRED: {msg}")
+                } else {
+                    msg
+                };
+                return ProviderError::new(ProviderErrorKind::QuotaExhausted, msg).into();
             }
         }
         let truncated = if text.len() > 500 {
@@ -195,9 +209,14 @@ impl OpenAiClient {
                 text.len()
             )
         } else {
-            text
+            text.clone()
         };
-        anyhow::anyhow!("openai error ({}): {}", status, truncated)
+        ProviderError::http(
+            status,
+            &text,
+            format!("openai error ({}): {}", status, truncated),
+        )
+        .into()
     }
 
     /// Send a request, applying auth fresh each attempt. In ChatGPT OAuth
@@ -287,10 +306,6 @@ impl OpenAiClient {
         None
     }
 
-    /// Apply reasoning effort to a request based on provider.
-    /// - OpenAI (GPT-5, o3, o4-mini): `reasoning_effort` field
-    /// - Gemini 2.5: `generationConfig.thinkingConfig.thinkingBudget`
-    /// - Others: no-op (unknown params are silently ignored by most providers)
     /// Check if a model supports reasoning effort control.
     pub(super) fn model_supports_reasoning(model: &str, is_gemini: bool) -> bool {
         let m = model.to_lowercase();
@@ -314,6 +329,10 @@ impl OpenAiClient {
         false
     }
 
+    /// Apply reasoning effort to a request based on provider.
+    /// - OpenAI (GPT-5, o3, o4-mini): `reasoning_effort` field
+    /// - Gemini 2.5: `generationConfig.thinkingConfig.thinkingBudget`
+    /// - Others: no-op (unknown params are silently ignored by most providers)
     pub(super) fn apply_reasoning_effort(
         req: &mut serde_json::Value,
         effort: Option<&str>,
@@ -385,8 +404,7 @@ impl OpenAiClient {
             tracing::debug!("Last msg ({}): {:.200}", last.role, last.content);
         }
 
-        let (rb, parse): (_, fn(&str) -> Option<Result<StreamChunk>>) = if self.uses_responses_api()
-        {
+        let (rb, parse): (_, TextParser) = if self.uses_responses_api() {
             (
                 responses_api::text_request(self, model, messages),
                 responses_api::parse_text_event,
@@ -427,7 +445,7 @@ impl OpenAiClient {
             tools.len()
         );
 
-        let (rb, parse): (_, fn(&str) -> Vec<Result<StreamChunk>>) = if self.uses_responses_api() {
+        let (rb, parse): (_, ToolParser) = if self.uses_responses_api() {
             (
                 responses_api::tool_request(self, model, messages, &tools, reasoning_effort),
                 responses_api::parse_tool_event,

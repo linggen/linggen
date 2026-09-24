@@ -120,15 +120,19 @@ impl AnthropicClient {
                      were found. Sign in with `claude` first.",
                 )?;
                 if !tokens.can_do_inference() {
-                    anyhow::bail!(
+                    return Err(crate::provider::error::ProviderError::new(
+                        crate::provider::error::ProviderErrorKind::Auth,
                         "Claude Code OAuth token is missing the `user:inference` scope. \
-                         Sign in with `claude` again to request inference access."
-                    );
+                         Sign in with `claude` again to request inference access.".to_string(),
+                    )
+                    .into());
                 }
                 if tokens.is_expired() {
-                    anyhow::bail!(
-                        "Claude Code OAuth token is expired. Run `claude` once to refresh."
-                    );
+                    return Err(crate::provider::error::ProviderError::new(
+                        crate::provider::error::ProviderErrorKind::Auth,
+                        "Claude Code OAuth token is expired. Run `claude` once to refresh.".to_string(),
+                    )
+                    .into());
                 }
                 Ok(rb
                     .header(
@@ -214,7 +218,8 @@ impl AnthropicClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("anthropic error ({}): {}", status, body);
+            let message = format!("anthropic error ({}): {}", status, body);
+            return Err(crate::provider::error::ProviderError::http(status, &body, message).into());
         }
 
         // Single unfold owns: (pinned byte stream, rolling byte buffer,
@@ -629,7 +634,7 @@ fn handle_event(event: SseEvent, state: &mut BlockState) -> Option<Result<Stream
                 .and_then(|e| e.get("message"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("anthropic returned an error event");
-            Some(Err(anyhow::anyhow!("{}", msg)))
+            Some(Err(crate::provider::error::ProviderError::stream_event(msg.to_string()).into()))
         }
         _ => None,
     }

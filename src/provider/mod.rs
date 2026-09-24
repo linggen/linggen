@@ -11,6 +11,7 @@
 pub mod anthropic;
 pub mod claude_auth;
 pub mod codex_auth;
+pub mod error;
 pub mod models;
 pub mod ollama;
 pub mod openai;
@@ -25,9 +26,10 @@ pub mod routing;
 /// a byte after headers).
 pub(crate) fn stream_read_error(e: impl std::fmt::Display) -> anyhow::Error {
     let msg = e.to_string();
-    if msg.contains("decoding response body") || msg.contains("timed out") {
-        anyhow::anyhow!("stream read timed out (backend went silent mid-stream): {msg}")
+    let msg = if msg.contains("decoding response body") || msg.contains("timed out") {
+        format!("stream read timed out (backend went silent mid-stream): {msg}")
     } else {
-        anyhow::anyhow!("stream error: {msg}")
-    }
+        format!("stream error: {msg}")
+    };
+    error::ProviderError::new(error::ProviderErrorKind::Network, msg).into()
 }

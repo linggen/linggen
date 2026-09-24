@@ -1,230 +1,159 @@
-//! Which models are refusing right now, and how a provider error is read.
+//! Which models are refusing right now — one board for the whole process.
+//!
+//! A refusal is read once, where the provider sent it
+//! ([`crate::provider::error`]); this board remembers it. The fallback chain
+//! steps around a benched model, and `/api/models/health` shows the same
+//! board, so what the chain avoids and what the settings page reports are
+//! one truth.
+//!
+//! Process-wide, because a quota belongs to the account and not to one
+//! session: a model that is out for the CFO is out for the dream too.
+//!
+//! Why it exists: until 2026-09-09 nothing read a usage limit's own
+//! `resets_at`, and a dream run whose model returned one 503 hopped straight
+//! onto a sibling that had been 429ing for hours, spent its last candidate on
+//! a guaranteed failure, and died four minutes of work in.
 
+use crate::provider::error::{kind_of, retry_after_of, ProviderErrorKind};
 use crate::util::LockExt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
-use tokio::sync::RwLock;
-use tokio::time::Instant;
 
-// ---------------------------------------------------------------------------
-// Model health tracking (in-memory, resets on restart)
-// ---------------------------------------------------------------------------
-
+/// How the settings page names a benched model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelHealthStatus {
     Healthy,
+    /// Out of its rate limit or quota — it comes back on its own.
     QuotaExhausted,
+    /// Failing for another reason (server errors, unreachable).
     Down,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelHealthRecord {
     pub status: ModelHealthStatus,
-    #[serde(skip)]
-    pub since: Instant,
+    /// The refusal behind it.
+    pub kind: ProviderErrorKind,
     pub last_error: Option<String>,
-    /// Seconds since the status changed — populated for API responses.
+    /// Seconds since the model was benched.
     pub since_secs: Option<u64>,
+    /// Seconds until it is tried again.
+    pub retry_in_secs: Option<u64>,
 }
 
-pub struct ModelHealthTracker {
-    records: RwLock<HashMap<String, ModelHealthRecord>>,
+struct Bench {
+    kind: ProviderErrorKind,
+    since: SystemTime,
+    until: SystemTime,
+    last_error: String,
 }
 
-impl ModelHealthTracker {
-    pub fn new() -> Self {
-        Self {
-            records: RwLock::new(HashMap::new()),
-        }
-    }
-
-    /// Check if a model is available for use.
-    /// QuotaExhausted models become available again after 1 hour.
-    /// Down models become available again after 5 minutes.
-    pub async fn is_available(&self, model_id: &str) -> bool {
-        let records = self.records.read().await;
-        let Some(record) = records.get(model_id) else {
-            return true; // No record = healthy
-        };
-        match record.status {
-            ModelHealthStatus::Healthy => true,
-            ModelHealthStatus::QuotaExhausted => record.since.elapsed().as_secs() > 3600,
-            ModelHealthStatus::Down => record.since.elapsed().as_secs() > 300,
-        }
-    }
-
-    pub async fn mark_error(&self, model_id: &str, error_msg: &str) {
-        let status = if is_rate_limit_error_str(error_msg) {
-            ModelHealthStatus::QuotaExhausted
-        } else {
-            ModelHealthStatus::Down
-        };
-        let mut records = self.records.write().await;
-        records.insert(
-            model_id.to_string(),
-            ModelHealthRecord {
-                status,
-                since: Instant::now(),
-                last_error: Some(error_msg.to_string()),
-                since_secs: None,
-            },
-        );
-    }
-
-    pub async fn mark_healthy(&self, model_id: &str) {
-        let mut records = self.records.write().await;
-        records.remove(model_id);
-    }
-
-    pub async fn get_all(&self) -> Vec<(String, ModelHealthRecord)> {
-        let records = self.records.read().await;
-        records
-            .iter()
-            .map(|(id, rec)| {
-                let mut rec = rec.clone();
-                rec.since_secs = Some(rec.since.elapsed().as_secs());
-                (id.clone(), rec)
-            })
-            .collect()
-    }
-}
-
-/// Check if an error message string indicates a rate limit (HTTP 429).
-fn is_rate_limit_error_str(msg: &str) -> bool {
-    msg.contains("(429)")
-        || msg.to_lowercase().contains("rate limit")
-        || msg.to_lowercase().contains("quota")
-}
-
-// ---------------------------------------------------------------------------
-// Error classification for fallback routing
-// ---------------------------------------------------------------------------
-
-pub fn is_rate_limit_error(err: &anyhow::Error) -> bool {
-    // NOTE: provider errors format the status as `({})` with reqwest's
-    // StatusCode, whose Display includes the canonical reason — the live
-    // string is "(429 Too Many Requests)", never "(429)". Match the prefix.
-    let msg = err.to_string().to_lowercase();
-    msg.contains("(429")
-        || msg.contains("rate limit")
-        || msg.contains("too many requests")
-        || msg.contains("usage_limit_reached")
-}
-
-/// Check if an error indicates a context/token limit exceeded (HTTP 400 + context keywords).
-pub fn is_context_limit_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string().to_lowercase();
-    (msg.contains("(400") || msg.contains("(413"))
-        && (msg.contains("context")
-            || msg.contains("token")
-            || msg.contains("too long")
-            || msg.contains("max_tokens")
-            || msg.contains("content_too_large"))
-}
-
-/// Returns true if the error indicates a transient connectivity or availability issue.
-fn is_transient_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string().to_lowercase();
-    msg.contains("timed out")
-        || msg.contains("timeout")
-        || msg.contains("(502")
-        || msg.contains("(503")
-        || msg.contains("connection refused")
-        || msg.contains("connection reset")
-        || msg.contains("dns error")
-        || msg.contains("connect error")
-}
-
-/// Returns true if the error is a rate limit, context limit, or transient failure
-/// that warrants trying another model.
-pub fn is_fallback_worthy_error(err: &anyhow::Error) -> bool {
-    is_rate_limit_error(err) || is_context_limit_error(err) || is_transient_error(err)
-}
-
-/// Models that told us they are unavailable, and when they said they'd be back.
-///
-/// A usage-limit error carries its own `resets_at`, and nothing read it until
-/// 2026-09-09: a dream run whose model returned one 503 hopped straight onto a
-/// sibling that had been 429ing for hours, spent its last candidate on a
-/// guaranteed failure, and died four minutes of work in — reporting the
-/// sibling's quota error, which had nothing to do with why it stopped.
-///
-/// Process-wide, because a quota belongs to the account and not to one
-/// session: a model that is out for the CFO is out for the dream too.
-static COOLDOWNS: LazyLock<Mutex<HashMap<String, SystemTime>>> =
+static BOARD: LazyLock<Mutex<HashMap<String, Bench>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// How long a model stays out when its error named no reset time. Long enough
 /// that the next hop of the same chain steps around it, short enough that a
 /// one-off blip costs almost nothing.
 const BLIND_COOLDOWN: Duration = Duration::from_secs(60);
+/// An empty wallet does not refill in a minute.
+const QUOTA_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+/// A provider that names a date far out should not bench a model for the
+/// life of the daemon, and the user can always pick it by hand.
+const MAX_COOLDOWN: Duration = Duration::from_secs(60 * 60);
 
-/// The reset time a provider named in its own error, as seconds from now.
-/// `resets_in_seconds` is preferred over `resets_at` — a relative figure
-/// cannot be wrong about our clock.
-fn named_reset(msg: &str) -> Option<Duration> {
-    fn number_after(msg: &str, key: &str) -> Option<u64> {
-        let at = msg.find(key)? + key.len();
-        let rest = msg[at..].trim_start_matches([':', ' ', '"']);
-        let end = rest
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(rest.len());
-        rest[..end].parse().ok()
-    }
-    if let Some(secs) = number_after(msg, "\"resets_in_seconds\"") {
-        return Some(Duration::from_secs(secs));
-    }
-    let at = number_after(msg, "\"resets_at\"")?;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    (at > now).then(|| Duration::from_secs(at - now))
+/// Worth trying the next model in the chain for this error.
+pub fn is_fallback_worthy_error(err: &anyhow::Error) -> bool {
+    kind_of(err).is_fallback_worthy()
 }
 
 /// Note that this model just refused, and for how long to leave it alone.
 ///
-/// Only for errors we would fall back on: a bad request or a missing key is
-/// the caller's problem and benching the model would hide it.
+/// Only for refusals about the model or its account: a bad request or a
+/// missing key is the caller's problem and benching the model would hide it,
+/// and a context overflow is about this one conversation, not the model.
 pub fn note_unavailable(model_id: &str, err: &anyhow::Error) {
-    if !is_fallback_worthy_error(err) {
+    let kind = kind_of(err);
+    if !kind.is_fallback_worthy() || kind == ProviderErrorKind::ContextTooLong {
         return;
     }
-    let wait = named_reset(&err.to_string()).unwrap_or(BLIND_COOLDOWN);
-    // Cap it: a provider that names a date far out should not bench a model
-    // for the life of the daemon, and the user can always pick it by hand.
-    let wait = wait.min(Duration::from_secs(60 * 60));
-    COOLDOWNS
-        .lock_ok()
-        .insert(model_id.to_string(), SystemTime::now() + wait);
+    let default = match kind {
+        ProviderErrorKind::QuotaExhausted => QUOTA_COOLDOWN,
+        _ => BLIND_COOLDOWN,
+    };
+    let wait = retry_after_of(err).unwrap_or(default).min(MAX_COOLDOWN);
+    let now = SystemTime::now();
+    BOARD.lock_ok().insert(
+        model_id.to_string(),
+        Bench {
+            kind,
+            since: now,
+            until: now + wait,
+            last_error: err.to_string(),
+        },
+    );
+}
+
+/// The model just answered: whatever benched it is over.
+pub fn note_healthy(model_id: &str) {
+    BOARD.lock_ok().remove(model_id);
 }
 
 /// Is this model still inside a refusal it told us about? Expired entries are
 /// dropped as they are read — nothing else sweeps this map.
 pub fn in_cooldown(model_id: &str) -> bool {
-    let mut map = COOLDOWNS.lock_ok();
-    match map.get(model_id) {
-        Some(until) if *until > SystemTime::now() => true,
+    let mut board = BOARD.lock_ok();
+    match board.get(model_id) {
+        Some(b) if b.until > SystemTime::now() => true,
         Some(_) => {
-            map.remove(model_id);
+            board.remove(model_id);
             false
         }
         None => false,
     }
 }
 
-/// Test seam — the map is process-wide and tests must not inherit each other.
+/// Every model benched right now, for `/api/models/health`.
+pub fn health_snapshot() -> Vec<(String, ModelHealthRecord)> {
+    let now = SystemTime::now();
+    BOARD
+        .lock_ok()
+        .iter()
+        .filter(|(_, b)| b.until > now)
+        .map(|(id, b)| {
+            let status = match b.kind {
+                ProviderErrorKind::RateLimit | ProviderErrorKind::QuotaExhausted => {
+                    ModelHealthStatus::QuotaExhausted
+                }
+                _ => ModelHealthStatus::Down,
+            };
+            let secs = |d: Result<Duration, _>| d.ok().map(|d: Duration| d.as_secs());
+            (
+                id.clone(),
+                ModelHealthRecord {
+                    status,
+                    kind: b.kind,
+                    last_error: Some(b.last_error.clone()),
+                    since_secs: secs(now.duration_since(b.since)),
+                    retry_in_secs: secs(b.until.duration_since(now)),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Test seam — the board is process-wide and tests must not inherit each other.
 #[cfg(test)]
 pub(crate) fn clear_cooldowns() {
-    COOLDOWNS.lock_ok().clear();
+    BOARD.lock_ok().clear();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::error::named_reset;
 
     fn err(msg: &str) -> anyhow::Error {
         anyhow::anyhow!("{}", msg)
@@ -314,12 +243,17 @@ mod tests {
     #[test]
     fn an_expired_bench_lets_the_model_back() {
         clear_cooldowns();
-        COOLDOWNS.lock_ok().insert(
+        BOARD.lock_ok().insert(
             "bench-e".to_string(),
-            SystemTime::now() - Duration::from_secs(1),
+            Bench {
+                kind: ProviderErrorKind::RateLimit,
+                since: SystemTime::now() - Duration::from_secs(61),
+                until: SystemTime::now() - Duration::from_secs(1),
+                last_error: String::new(),
+            },
         );
         assert!(!in_cooldown("bench-e"));
-        assert!(!COOLDOWNS.lock_ok().contains_key("bench-e"));
+        assert!(!BOARD.lock_ok().contains_key("bench-e"));
     }
 
     #[test]

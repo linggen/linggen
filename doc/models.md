@@ -126,7 +126,9 @@ Star a model in **Settings → Models** to set it as the default. All new sessio
 
 ## Auto-fallback
 
-When the active model returns a rate limit (HTTP 429) or context limit (HTTP 400) error, the engine automatically tries the next available model. On successful fallback, the engine switches to the fallback model for the rest of that run.
+When the active model refuses for a reason about itself — a rate limit or usage window, an empty wallet (402, `insufficient_quota`), a context overflow, a server error or overload, an unreachable backend, an empty answer — the engine tries the next available model. A bad request or a missing key is shown instead: another model would only hide it. On successful fallback, the engine switches to the fallback model for the rest of that run.
+
+Each client reads a refusal once, where it arrives, into a typed `ProviderError` (`provider/error.rs`). A refusing model is benched on one process-wide board (`provider/models/health.rs`) until the time the provider named, else 60 s (30 min for an empty wallet), capped at an hour; a success clears it. The chain steps around benched models and **Settings → Models** (`/api/models/health`) shows the same board.
 
 ## Per-agent model
 

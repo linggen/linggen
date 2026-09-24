@@ -170,7 +170,8 @@ fn error_event(val: &Value) -> anyhow::Error {
         .get("message")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown error");
-    anyhow::anyhow!("Responses API error: {}", msg)
+    crate::provider::error::ProviderError::stream_event(format!("Responses API error: {}", msg))
+        .into()
 }
 
 /// One SSE `data:` payload of a text turn → at most one chunk.

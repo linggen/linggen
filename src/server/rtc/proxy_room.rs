@@ -115,7 +115,7 @@ impl ProxyRoomConnections {
 // ---------------------------------------------------------------------------
 
 /// Rebuild the ModelManager from current local models + all tracked proxy rooms.
-/// This preserves the health tracker from the old manager.
+/// (Model health is process-wide, so a rebuild keeps it.)
 ///
 /// Public so callers that replace `state.manager.models` (e.g. config reload
 /// in `update_config`) can restore the dynamically-registered proxy entries
@@ -136,9 +136,6 @@ async fn rebuild_model_manager(state: &ServerState) {
         .map(|c| (*c).clone())
         .collect();
     let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
-
-    // Preserve health tracker state (rate-limit backoffs, etc.)
-    new_mm.health = Arc::clone(&old_mm.health);
 
     // Re-register proxy models for all connected rooms
     let rooms = state.proxy_connections.rooms.read().await;
@@ -236,7 +233,6 @@ pub async fn connect_proxy_room(
         .map(|c| (*c).clone())
         .collect();
     let mut new_mm = crate::provider::models::ModelManager::new(local_configs);
-    new_mm.health = Arc::clone(&old_mm.health);
 
     // Re-register existing proxy rooms
     {
@@ -318,15 +314,14 @@ pub async fn disconnect_all_proxy_rooms(state: Arc<ServerState>) {
     let mut model_lock = state.manager.models.write().await;
     let old_mm = Arc::clone(&model_lock);
 
-    // Rebuild ModelManager with only non-proxy models, preserving health tracker
+    // Rebuild ModelManager with only non-proxy models
     let configs: Vec<_> = old_mm
         .list_models()
         .iter()
         .filter(|c| c.provider != "proxy")
         .map(|c| (*c).clone())
         .collect();
-    let mut new_mm = crate::provider::models::ModelManager::new(configs);
-    new_mm.health = Arc::clone(&old_mm.health);
+    let new_mm = crate::provider::models::ModelManager::new(configs);
     *model_lock = Arc::new(new_mm);
 
     info!("All proxy room models removed");

@@ -30,6 +30,11 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
     if msg.contains("AUTH_REQUIRED") {
         return format!("Error: {}", msg);
     }
+    // A spent Linggen Cloud allowance: the UI turns this into the subscribe
+    // card, which only happens if the marker leads the line.
+    if let Some(at) = msg.find("BILLING_REQUIRED:") {
+        return format!("Error: {}", &msg[at..]);
+    }
     // "Error:" is the prefix every surface reads as the error banner.
     let line = match model_error_code(msg) {
         "quota" => "The model has hit its limit for now — try again in a minute, or switch models.",
@@ -43,29 +48,20 @@ pub(crate) fn format_turn_error(msg: &str) -> String {
 /// Coarse telemetry bucket for a failed model turn. Buckets only — the
 /// message text itself never leaves the machine (see telemetry/mod.rs).
 pub(crate) fn model_error_code(msg: &str) -> &'static str {
+    use crate::provider::error::{kind_of_message, ProviderErrorKind::*};
     let lower = msg.to_lowercase();
     if msg.contains("AUTH_REQUIRED") {
-        "auth_required"
-    } else if lower.contains("model") && lower.contains("not found") {
-        "model_not_found"
-    } else if lower.contains("(429")
-        || lower.contains("rate limit")
-        || lower.contains("too many requests")
-        || lower.contains("usage_limit_reached")
-    {
-        "quota"
-    } else if lower.contains("timed out")
-        || lower.contains("timeout")
-        || lower.contains("connection")
-        || lower.contains("dns")
-        || lower.contains("(502")
-        || lower.contains("(503")
-    {
-        "network"
-    } else if lower.contains("(4") || lower.contains("(5") || lower.contains("http") {
-        "provider_http"
-    } else {
-        "other"
+        return "auth_required";
+    }
+    if lower.contains("model") && lower.contains("not found") {
+        return "model_not_found";
+    }
+    match kind_of_message(msg) {
+        RateLimit | QuotaExhausted => "quota",
+        Network | Server5xx => "network",
+        Auth | BadRequest | ContextTooLong => "provider_http",
+        EmptyResponse | Other if lower.contains("http") => "provider_http",
+        EmptyResponse | Other => "other",
     }
 }
 
@@ -273,8 +269,14 @@ mod turn_error_tests {
     fn a_failed_turn_is_one_plain_line_never_the_providers_text() {
         let raw = "Gemini API error (429): RESOURCE_EXHAUSTED quota exceeded for metric …";
         let shown = format_turn_error(raw);
-        assert!(shown.starts_with("Error: "), "the prefix every surface reads as the banner");
-        assert!(!shown.contains("RESOURCE_EXHAUSTED"), "the raw text stays in the log");
+        assert!(
+            shown.starts_with("Error: "),
+            "the prefix every surface reads as the banner"
+        );
+        assert!(
+            !shown.contains("RESOURCE_EXHAUSTED"),
+            "the raw text stays in the log"
+        );
         assert!(shown.contains("limit"));
         assert!(format_turn_error("connection timed out").contains("reach the model"));
     }
@@ -284,6 +286,14 @@ mod turn_error_tests {
         assert_eq!(
             format_turn_error("AUTH_REQUIRED: chatgpt"),
             "Error: AUTH_REQUIRED: chatgpt"
+        );
+    }
+
+    #[test]
+    fn a_spent_allowance_keeps_its_marker_for_the_subscribe_card() {
+        assert_eq!(
+            format_turn_error("BILLING_REQUIRED: Your free tokens are used up"),
+            "Error: BILLING_REQUIRED: Your free tokens are used up"
         );
     }
 }
