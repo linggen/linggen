@@ -162,15 +162,18 @@ impl ToolResult {
 // ── AskUser types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AskUserQuestion {
     pub question: String,
     pub header: String,
     pub options: Vec<AskUserOption>,
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub multi_select: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, optional_fields = nullable))]
 pub struct AskUserOption {
     pub label: String,
     #[serde(default)]
@@ -185,6 +188,7 @@ struct AskUserArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export, optional_fields = nullable))]
 pub struct AskUserAnswer {
     pub question_index: usize,
     pub selected: Vec<String>,

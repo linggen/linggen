@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ProviderErrorKind {
     /// Too many requests, or a plan's usage window is used up — it lifts on
     /// its own (often at a time the provider names).

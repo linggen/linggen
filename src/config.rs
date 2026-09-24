@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct Config {
     #[serde(default)]
     pub models: Vec<ModelConfig>,
@@ -34,6 +35,7 @@ pub struct Config {
 /// companion does many small turns, so her recall stays tighter than a coding
 /// session's.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PetConfig {
     /// Master switch. When false the pet doesn't render and her event-reactive
     /// watch loop stays silent.
@@ -101,6 +103,7 @@ fn default_pet_recall_min_score() -> f32 {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ModelConfig {
     pub id: String,
     pub provider: String, // "ollama" | "openai"
@@ -145,6 +148,7 @@ pub struct ModelConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AgentSpecRef {
     pub id: String,
     pub spec_path: String,
@@ -173,6 +177,7 @@ pub const DEFAULT_PORT: u16 = 9527;
 /// present without `url` they are used, logged once as superseded, and replaced
 /// by `url` the next time the config is written.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ServerConfig {
     /// `host:port` — e.g. `127.0.0.1:9527`, or `0.0.0.0:9527` to accept the LAN.
     /// A `http://` prefix is accepted and ignored, since that is how the same
@@ -258,6 +263,7 @@ fn default_server_host() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AgentConfig {
     pub max_iters: usize,
     #[serde(default)]
@@ -357,6 +363,7 @@ fn default_max_delegation_depth() -> usize {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum WriteSafetyMode {
     Strict,
     #[default]
@@ -367,6 +374,7 @@ pub enum WriteSafetyMode {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ToolPermissionMode {
     #[default]
     Ask,
@@ -376,6 +384,7 @@ pub enum ToolPermissionMode {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct LoggingConfig {
     pub level: Option<String>,
     pub directory: Option<String>,
@@ -383,6 +392,7 @@ pub struct LoggingConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RoutingConfig {
     #[serde(default)]
     pub default_policy: Option<String>,
@@ -403,6 +413,7 @@ pub(crate) fn default_true() -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RoutingPolicy {
     pub name: String,
     #[serde(default)]
@@ -410,6 +421,7 @@ pub struct RoutingPolicy {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct RoutingRule {
     pub model: String,
     #[serde(default)]
@@ -422,6 +434,7 @@ pub struct RoutingRule {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ComplexityLevel {
     Low,
     Medium,

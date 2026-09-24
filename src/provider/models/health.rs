@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 /// How the settings page names a benched model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum ModelHealthStatus {
     Healthy,
     /// Out of its rate limit or quota — it comes back on its own.
@@ -33,6 +34,7 @@ pub enum ModelHealthStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ModelHealthRecord {
     pub status: ModelHealthStatus,
     /// The refusal behind it.

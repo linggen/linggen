@@ -3,14 +3,14 @@
 use super::Ui;
 use crate::engine::agent::COMPANION_AGENT_ID;
 use crate::engine::events::{ServerEvent, UiEvent};
-use serde_json::json;
+use super::data::{PetExpressData, PetSpeakData, PetVoiceData};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
     let pet = |id: String, kind: &str| ui.event(id, kind).agent(COMPANION_AGENT_ID);
     match event {
         ServerEvent::PetVoice { muted } => {
-            Some(pet(format!("pet-voice-{seq}"), "pet_voice").data(json!({ "muted": muted })))
+            Some(pet(format!("pet-voice-{seq}"), "pet_voice").data(PetVoiceData { muted }))
         }
         ServerEvent::PetSpeak {
             text,
@@ -19,11 +19,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         } => Some(
             pet(format!("pet-speak-{seq}"), "pet_speak")
                 .text(text.clone())
-                .data(json!({ "text": text, "emotion": emotion, "voice": voice })),
+                .data(PetSpeakData { text, emotion, voice }),
         ),
         ServerEvent::PetExpress { emotion, action } => Some(
             pet(format!("pet-express-{seq}"), "pet_express")
-                .data(json!({ "emotion": emotion, "action": action })),
+                .data(PetExpressData { emotion, action }),
         ),
         _ => None,
     }

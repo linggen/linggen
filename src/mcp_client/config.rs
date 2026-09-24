@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 /// asking the user to state a `type` they already implied is a knob with no
 /// decision behind it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct McpServerConfig {
     /// Executable for a stdio server.
     #[serde(default, skip_serializing_if = "Option::is_none")]

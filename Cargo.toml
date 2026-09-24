@@ -85,6 +85,11 @@ any-tts = { version = "0.1.2", optional = true, default-features = false, featur
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 any-tts = { version = "0.1.2", optional = true, default-features = false, features = ["kokoro", "download"] }
 
+[dev-dependencies]
+# TypeScript bindings for the wire types the UI reads — emitted by
+# `cargo test export_bindings` into ui/src/types/generated/ (scripts/gen-types.sh).
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+
 # Optimize dependencies even in dev builds. The engine crate itself stays at
 # opt-level 0 (fast incremental compiles), but numerical deps like candle
 # (Kokoro TTS) run 20-50x faster optimized — unoptimized candle makes synthesis

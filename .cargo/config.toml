@@ -1,0 +1,5 @@
+[env]
+# ts-rs: where `cargo test export_bindings` writes the UI's generated types,
+# and 64-bit integers as `number` (every one on the wire fits in 2^53).
+TS_RS_EXPORT_DIR = { value = "ui/src/types/generated", relative = true }
+TS_RS_LARGE_INT = "number"

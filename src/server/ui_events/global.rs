@@ -4,7 +4,10 @@
 
 use super::{Ui, UI_KIND_DEVICE_TOPIC, UI_KIND_SKILL_SAVE_CHANGED};
 use crate::engine::events::{NotificationPayload, ServerEvent, UiEvent};
-use serde_json::json;
+use super::data::{
+    AppLaunchedData, DeviceTopicData, RoomChatData, SessionCreatedData, SkillSaveChangedData,
+    WorkingFolderData,
+};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
@@ -25,16 +28,16 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .text(format!("Session created: {title}"))
             .global()
             .project_root(project.clone())
-            .data(json!({
-                "kind": "session_created",
-                "session_id": session_id,
-                "title": title,
-                "creator": creator,
-                "project": project,
-                "project_name": project_name,
-                "skill": skill,
-                "mission_id": mission_id,
-            })),
+            .data(SessionCreatedData {
+                kind: "session_created".to_string(),
+                session_id,
+                title,
+                creator,
+                project,
+                project_name,
+                skill,
+                mission_id,
+            }),
         ),
         ServerEvent::Notification(payload) => notification(payload, ui),
         ServerEvent::AppLaunched {
@@ -51,14 +54,14 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .session(Some(
                     session_id.unwrap_or_else(|| super::GLOBAL.to_string()),
                 ))
-                .data(json!({
-                    "skill": skill,
-                    "launcher": launcher,
-                    "url": url,
-                    "title": title,
-                    "width": width,
-                    "height": height,
-                })),
+                .data(AppLaunchedData {
+                    skill,
+                    launcher,
+                    url,
+                    title,
+                    width,
+                    height,
+                }),
         ),
         ServerEvent::WorkingFolderChanged {
             session_id,
@@ -68,11 +71,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         } => Some(
             ui.event(format!("wf-{seq}"), "working_folder")
                 .session(Some(session_id))
-                .data(json!({
-                    "cwd": cwd,
-                    "project": project,
-                    "project_name": project_name,
-                })),
+                .data(WorkingFolderData {
+                    cwd,
+                    project,
+                    project_name,
+                }),
         ),
         ServerEvent::RoomChat {
             sender_id,
@@ -83,12 +86,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             ui.event(format!("room-chat-{seq}"), "room_chat")
                 .text(text.clone())
                 .global()
-                .data(json!({
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "avatar_url": avatar_url,
-                    "text": text,
-                })),
+                .data(RoomChatData {
+                    sender_id,
+                    sender_name,
+                    avatar_url,
+                    text,
+                }),
         ),
         // Global → every surface, the skill's page among them.
         ServerEvent::SkillSaveChanged {
@@ -97,11 +100,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             conflicts,
         } => Some(
             ui.event(format!("skill-save-{seq}"), UI_KIND_SKILL_SAVE_CHANGED)
-                .data(json!({
-                    "skill": skill,
-                    "version": version,
-                    "conflicts": conflicts,
-                })),
+                .data(SkillSaveChangedData {
+                    skill,
+                    version,
+                    conflicts,
+                }),
         ),
         // User-level: reaches every surface over the control channel.
         ServerEvent::DeviceTopic {
@@ -112,12 +115,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
         } => Some(
             ui.event(format!("device-topic-{seq}"), UI_KIND_DEVICE_TOPIC)
                 .global()
-                .data(json!({
-                    "topic": topic,
-                    "op": op,
-                    "payload": payload,
-                    "from_device": from_device,
-                })),
+                .data(DeviceTopicData {
+                    topic,
+                    op,
+                    payload,
+                    from_device,
+                }),
         ),
         _ => None,
     }

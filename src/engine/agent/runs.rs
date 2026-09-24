@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum AgentRunStatus {
     Running,
     Completed,
@@ -13,12 +14,14 @@ pub enum AgentRunStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AgentRunRecord {
     pub run_id: String,
     pub repo_path: String,
     pub session_id: String,
     pub agent_id: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub agent_kind: Option<String>,
     pub parent_run_id: Option<String>,
     pub status: AgentRunStatus,

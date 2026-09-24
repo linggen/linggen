@@ -30,6 +30,8 @@ jobs:
         run: |
           mkdir -p ui/dist
           cargo test
+      - name: Generated TS types are current
+        run: ./scripts/gen-types.sh --check
       - name: clippy (reported, not enforced)
         continue-on-error: true
         run: |

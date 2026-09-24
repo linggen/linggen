@@ -7,7 +7,10 @@ use super::{
     UI_PHASE_SUBAGENT_RESULT, UI_PHASE_SUBAGENT_SPAWNED, UI_PHASE_SYNC,
 };
 use crate::engine::events::{AgentStatusKind, ServerEvent, UiEvent};
-use serde_json::json;
+use super::data::{
+    ActivityData, ContextUsageData, OutcomeData, PlanUpdateData, QueueData, ResyncData,
+    SubagentResultData, SubagentSpawnedData,
+};
 
 fn default_status_text(status: AgentStatusKind) -> String {
     match status {
@@ -33,13 +36,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             run_id,
             parent_run_id,
         } => {
-            let data = |status: &str| {
-                json!({
-                    "status": status,
-                    "parent_id": parent_agent_id,
-                    "run_id": run_id,
-                    "parent_run_id": parent_run_id,
-                })
+            let data = |status: &str| ActivityData {
+                status: status.to_string(),
+                parent_id: parent_agent_id.clone(),
+                run_id: run_id.clone(),
+                parent_run_id: parent_run_id.clone(),
             };
             let idle = status.eq_ignore_ascii_case("idle");
             if idle && lifecycle.is_none() {
@@ -86,7 +87,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .agent(agent_id)
             .session(Some(session_id))
             .project_root(Some(project_root))
-            .data(json!({ "items": items })),
+            .data(QueueData { items }),
         ),
         ServerEvent::StateUpdated => Some(
             ui.event(format!("run-sync-{seq}"), UI_KIND_RUN)
@@ -104,7 +105,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .text("Run outcome")
                 .agent(agent_id)
                 .session(session_id)
-                .data(json!({ "outcome": outcome })),
+                .data(OutcomeData { outcome }),
         ),
         ServerEvent::ContextUsage {
             agent_id,
@@ -123,18 +124,18 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .phase(UI_PHASE_CONTEXT_USAGE)
                 .agent(agent_id.clone())
                 .session(session_id)
-                .data(json!({
-                    "agent_id": agent_id,
-                    "stage": stage,
-                    "message_count": message_count,
-                    "char_count": char_count,
-                    "estimated_tokens": estimated_tokens,
-                    "token_limit": token_limit,
-                    "actual_prompt_tokens": actual_prompt_tokens,
-                    "actual_completion_tokens": actual_completion_tokens,
-                    "compressed": compressed,
-                    "summary_count": summary_count,
-                })),
+                .data(ContextUsageData {
+                    agent_id,
+                    stage,
+                    message_count,
+                    char_count,
+                    estimated_tokens,
+                    token_limit,
+                    actual_prompt_tokens,
+                    actual_completion_tokens,
+                    compressed,
+                    summary_count,
+                }),
         ),
         ServerEvent::SubagentSpawned {
             parent_id,
@@ -155,12 +156,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .text(format!("Spawned subagent {}", subagent_id))
             .agent(parent_id)
             .session(session_id)
-            .data(json!({
-                "subagent_id": subagent_id,
-                "task": task,
-                "subagent_run_id": subagent_run_id,
-                "parent_run_id": parent_run_id,
-            })),
+            .data(SubagentSpawnedData {
+                subagent_id,
+                task,
+                subagent_run_id,
+                parent_run_id,
+            }),
         ),
         ServerEvent::SubagentResult {
             parent_id,
@@ -181,12 +182,12 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
             .text(format!("Subagent {} returned", subagent_id))
             .agent(parent_id)
             .session(session_id)
-            .data(json!({
-                "subagent_id": subagent_id,
-                "outcome": outcome,
-                "subagent_run_id": subagent_run_id,
-                "parent_run_id": parent_run_id,
-            })),
+            .data(SubagentResultData {
+                subagent_id,
+                outcome,
+                subagent_run_id,
+                parent_run_id,
+            }),
         ),
         ServerEvent::PlanUpdate {
             agent_id,
@@ -198,7 +199,7 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .text("Plan updated")
                 .agent(agent_id)
                 .session(session_id)
-                .data(json!({ "plan": plan })),
+                .data(PlanUpdateData { plan }),
         ),
         ServerEvent::Resync {
             reason,
@@ -208,10 +209,10 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                 .phase(UI_PHASE_RESYNC)
                 .text("Resync required")
                 .global()
-                .data(json!({
-                    "reason": reason,
-                    "lagged_count": lagged_count,
-                })),
+                .data(ResyncData {
+                    reason,
+                    lagged_count,
+                }),
         ),
         _ => None,
     }

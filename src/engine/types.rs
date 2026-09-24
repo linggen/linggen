@@ -37,6 +37,7 @@ pub struct ActiveMission {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PlanItem {
     pub id: String,
     pub title: String,
@@ -44,6 +45,7 @@ pub struct PlanItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct Plan {
     pub summary: String,
     pub status: PlanStatus,
@@ -52,11 +54,13 @@ pub struct Plan {
     pub plan_text: String,
     /// Structured todo items from UpdatePlan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<PlanItem>>", optional))]
     pub items: Vec<PlanItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum PlanStatus {
     Planned,
     Approved,
@@ -376,6 +380,7 @@ pub struct AgentEngine {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum AgentOutcome {
     #[serde(rename = "plan")]
     Plan(Plan),

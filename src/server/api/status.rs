@@ -38,6 +38,7 @@ pub(crate) struct StatusQuery {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub(crate) struct StatusResponse {
     pub version: String,
     pub sessions: usize,
@@ -58,6 +59,7 @@ pub(crate) struct StatusResponse {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub(crate) struct StatusModelInfo {
     pub id: String,
     pub provider: String,

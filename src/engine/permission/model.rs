@@ -26,6 +26,7 @@ pub enum PermissionAction {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum PermissionMode {
     Chat,
     #[default]

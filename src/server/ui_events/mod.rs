@@ -6,6 +6,7 @@
 
 mod activity;
 mod chat;
+mod data;
 mod global;
 mod pet;
 
@@ -85,8 +86,8 @@ impl UiEvent {
         self.project_root = project_root;
         self
     }
-    fn data(mut self, data: serde_json::Value) -> Self {
-        self.data = Some(data);
+    fn data(mut self, data: impl serde::Serialize) -> Self {
+        self.data = serde_json::to_value(data).ok();
         self
     }
 }
@@ -140,3 +141,6 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
         RoomDisabled => None,
     }
 }
+
+#[cfg(test)]
+mod tests;
