@@ -20,6 +20,10 @@
 //! agent (Ling) — without waking him. A `converse` moment then gives him ONE
 //! hidden kickoff to answer her in a line, or SILENT; never back to her, and
 //! at most once per [`CONVERSE_GAP_SECS`] per session.
+//!
+//! Her moment turn itself reaches no one: it cannot `agent_chat` (the tool is
+//! withheld — a message from her would land in the app's chat and wake its
+//! agent on words meant for her). The `converse` kickoff is the only exchange.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -172,6 +176,13 @@ fn app_names(moments: &[Moment]) -> String {
     apps.join(", ")
 }
 
+/// Every moment kickoff ends here: her line is the whole of her answer. The
+/// turn cannot message another agent anyway (`resident::wake_for_moment`
+/// withholds `agent_chat`); this keeps her from reaching for it (2026-09-24:
+/// an idle moment's kickoff was relayed to Ling as a task).
+const YOURS_ALONE: &str = "This is yours alone: your line is all you give, and it reaches \
+     the user and the app's chat by itself. Never pass this on or message another agent about it.";
+
 /// The kickoff she is woken with. The app's facts, oldest first, and what she
 /// is there for — never an instruction to speak.
 pub(crate) fn kickoff(moments: &[Moment]) -> String {
@@ -182,9 +193,10 @@ pub(crate) fn kickoff(moments: &[Moment]) -> String {
          in the language these notes are written in: comfort after a loss or a wound, gladness \
          at something hard-won, a little courage before what's ahead, or just being there. \
          Never repeat what is already on their screen, never tell them what to do next, never \
-         mention these notes or that you were told. If nothing is worth a word, SILENT.",
+         mention these notes or that you were told. If nothing is worth a word, SILENT. {}",
         app_names(moments),
-        fact_lines(moments)
+        fact_lines(moments),
+        YOURS_ALONE
     )
 }
 
@@ -197,9 +209,10 @@ pub(crate) fn asked_kickoff(moments: &[Moment]) -> String {
          Answer them now, in your own voice, in the language of these notes — one short \
          paragraph of two or three sentences, plain prose, spoken aloud. Read it for them the \
          way you would: what it means, and one honest word for their day. Do not recite the \
-         notes, do not mention that you were told. They are waiting for this answer.",
+         notes, do not mention that you were told. They are waiting for this answer. {}",
         app_names(moments),
-        fact_lines(moments)
+        fact_lines(moments),
+        YOURS_ALONE
     )
 }
 
@@ -398,11 +411,13 @@ pub async fn yinyue_moment_loop(state: Arc<ServerState>) {
         *IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()) = taken.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            let line = if asked {
-                super::resident::wake_asked(state.clone(), asked_kickoff(&taken), &emotion).await
+            let words = if asked {
+                asked_kickoff(&taken)
             } else {
-                super::resident::wake_herald(state.clone(), kickoff(&taken), &emotion).await
+                kickoff(&taken)
             };
+            let line =
+                super::resident::wake_for_moment(state.clone(), words, &emotion, asked).await;
             IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).clear();
             land_in_chats(&state, &taken, line.as_deref()).await;
         });
@@ -535,6 +550,21 @@ mod tests {
         assert!(k.find("打赢了夔").unwrap() < k.find("气血只剩 6").unwrap());
         assert!(k.contains("SILENT"));
         assert_eq!(mood_of(&[m(1, false)]), "neutral");
+    }
+
+    /// Both kickoffs say her line is the whole answer — never something to
+    /// hand on (2026-09-24: the idle kickoff went to Ling as a task).
+    #[test]
+    fn every_moment_kickoff_says_her_line_is_hers_alone() {
+        let idle = m(1, false);
+        let asked = Moment {
+            asked: true,
+            ..m(1, false)
+        };
+        for k in [kickoff(&[idle]), asked_kickoff(&[asked])] {
+            assert!(k.contains(YOURS_ALONE), "{k}");
+        }
+        assert!(YOURS_ALONE.contains("message another agent"));
     }
 
     #[test]

@@ -104,10 +104,10 @@ const MILESTONES: &[Milestone] = &[
     Milestone {
         id: "linggen-mission",
         device: "mac",
-        zh: "定时 · 开一个定时任务",
-        en: "Keep the hours · enable a mission",
+        zh: "定时 · 开启一个定时任务",
+        en: "Keep the hours · turn on a mission",
         open: "/settings?tab=mission",
-        check: own_mission,
+        check: user_enabled_mission,
     },
     Milestone {
         id: "linggen-voice",
@@ -216,16 +216,49 @@ fn mcp_server(state: Arc<ServerState>) -> CheckFuture {
     })
 }
 
-/// An enabled mission of the user's own: not shipped by a skill, not an
-/// engine built-in.
-fn own_mission(state: Arc<ServerState>) -> CheckFuture {
+/// A mission the user turned on — theirs, a skill's, or a built-in: enabled
+/// now, where what shipped it had it off. A mission on by default (the
+/// built-in dream) is not the user's doing; their own ships nothing, so it
+/// counts once enabled.
+fn user_enabled_mission(state: Arc<ServerState>) -> CheckFuture {
     Box::pin(async move {
-        let builtin = crate::cli::init::builtin_mission_ids();
-        let missions = state.missions.list_all_missions()?;
+        let store = &state.missions;
+        let missions = store.list_all_missions()?;
         Ok(missions
             .iter()
-            .any(|m| m.enabled && m.skill.is_none() && !builtin.contains(&m.id)))
+            .any(|m| turned_on(m.enabled, shipped_md(store, m).as_deref())))
     })
+}
+
+/// Enabled, and not by what shipped it. Pure.
+fn turned_on(enabled: bool, shipped: Option<&str>) -> bool {
+    enabled && !shipped.is_some_and(enabled_in)
+}
+
+/// The `mission.md` a mission shipped with: the skill's file (the user's
+/// on/off lives beside it, in the mission's state), or the built-in's
+/// embedded one. `None` for the user's own.
+fn shipped_md(
+    store: &crate::extensions::missions::MissionLoader,
+    m: &crate::extensions::missions::Mission,
+) -> Option<String> {
+    if m.skill.is_some() {
+        return store.read_mission_raw(&m.id).ok().flatten();
+    }
+    crate::cli::init::builtin_mission_md(&m.id)
+}
+
+/// Whether a mission file's frontmatter turns it on (absent = off).
+fn enabled_in(md: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Defaults {
+        #[serde(default)]
+        enabled: bool,
+    }
+    let (Some(yaml), _) = crate::extensions::frontmatter::split(md) else {
+        return false;
+    };
+    serde_yml::from_str::<Defaults>(yaml).is_ok_and(|d| d.enabled)
 }
 
 /// Her voice is on and a surface holds her — she is being heard.
@@ -568,6 +601,33 @@ mod tests {
     #[test]
     fn builtin_missions_are_known() {
         assert!(crate::cli::init::builtin_mission_ids().contains(&"dream".to_string()));
+    }
+
+    /// The dream ships on, so it never counts; a skill mission shipped off
+    /// (cfo:watch) counts once the user turns it on; the user's own counts
+    /// once enabled.
+    #[test]
+    fn only_a_mission_the_user_turned_on_counts() {
+        let dream = crate::cli::init::builtin_mission_md("dream").unwrap();
+        assert!(enabled_in(&dream), "the dream is on by default");
+        assert!(!enabled_in(
+            "---\nschedule: \"0 * * * *\"\nenabled: false\n---\nbody"
+        ));
+        assert!(!enabled_in("---\nschedule: \"0 * * * *\"\n---\nbody"));
+        assert!(!enabled_in("no frontmatter"));
+
+        let watch = "---\nschedule: \"0 3 * * *\"\nenabled: false\n---\nWatch.";
+        assert!(
+            !turned_on(false, Some(watch)),
+            "shipped off, not yet turned on"
+        );
+        assert!(turned_on(true, Some(watch)), "the user turned cfo:watch on");
+        assert!(
+            !turned_on(true, Some(&dream)),
+            "on by default is not the user's doing"
+        );
+        assert!(turned_on(true, None), "the user's own mission, enabled");
+        assert!(!turned_on(false, None));
     }
 
     #[tokio::test]

@@ -330,6 +330,11 @@ pub struct AgentEngine {
     /// guest seat). When set, every loop runs under these instead of the
     /// session's `permission.json`, and never writes that file.
     pub seat_permissions: Option<permission::SessionPermissions>,
+    /// Tools the caller of this turn withholds: never offered to the model,
+    /// and refused if called anyway. Set per turn by whoever drives it (a
+    /// companion woken by an app moment speaks its own line and reaches no
+    /// other agent); empty for an ordinary turn.
+    pub withheld_tools: std::collections::HashSet<String>,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
@@ -563,6 +568,7 @@ impl AgentEngine {
             last_ask_answered: false,
             session_permissions: permission::SessionPermissions::default(),
             seat_permissions: None,
+            withheld_tools: Default::default(),
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),

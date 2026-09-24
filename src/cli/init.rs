@@ -110,6 +110,13 @@ pub fn builtin_mission_ids() -> Vec<String> {
     ids
 }
 
+/// The `mission.md` this build ships for built-in mission `id` — its
+/// defaults, before the user's edits to the installed copy.
+pub fn builtin_mission_md(id: &str) -> Option<String> {
+    let file = MissionAssets::get(&format!("{id}/mission.md"))?;
+    Some(String::from_utf8_lossy(file.data.as_ref()).into_owned())
+}
+
 /// Seed built-in missions (the memory `dream` consolidation pass) into
 /// `~/.linggen/missions/`. **Install-once, then user-owned:** a sentinel
 /// (`.builtin-missions-installed`) records that seeding has happened, so

@@ -1376,4 +1376,47 @@ mod seat_tests {
             .iter()
             .any(|m| m.content.contains("tool_not_allowed: tool=Skill")));
     }
+
+    /// A withheld tool is not offered on the turn — her moment wake must not
+    /// reach Ling through `agent_chat` (2026-09-24: an idle moment's turn
+    /// messaged him and started his autonomous loop in the app's chat).
+    #[test]
+    fn a_withheld_tool_is_not_offered() {
+        let mut engine = yinyue_engine(false);
+        let (_, offered, _) =
+            engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
+        assert!(offered.unwrap().contains("agent_chat"));
+        engine.withheld_tools = ["agent_chat".to_string()].into();
+        let (_, offered, _) =
+            engine.prepare_loop_messages("hi", true, crate::engine::prompt::PromptPurpose::Turn);
+        let offered = offered.unwrap();
+        assert!(!offered.contains("agent_chat"), "{offered:?}");
+        assert!(offered.contains("Express"));
+    }
+
+    /// And a withheld call the model makes anyway is refused, never run.
+    #[tokio::test]
+    async fn a_withheld_call_is_refused_at_execute_time() {
+        let mut engine = yinyue_engine(false);
+        engine.withheld_tools = ["agent_chat".to_string()].into();
+        let mut messages = Vec::new();
+        let outcome = engine
+            .pre_execute_tool(
+                "AgentChat".to_string(),
+                serde_json::json!({"to": "ling", "message": "SILENT"}),
+                &None,
+                &mut messages,
+                &mut std::collections::HashMap::new(),
+                &mut std::collections::HashSet::new(),
+                &mut String::new(),
+                &mut 0,
+                None,
+                Some("t1".to_string()),
+            )
+            .await;
+        assert!(matches!(outcome, super::types::PreExecOutcome::Blocked(_)));
+        assert!(messages
+            .iter()
+            .any(|m| m.content.contains("reason=withheld")));
+    }
 }

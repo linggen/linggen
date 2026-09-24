@@ -38,9 +38,10 @@ pub(crate) use guest::{answer_as_guest, is_own_session};
 use session_roll::*;
 use spoken::*;
 pub use triggers::yinyue_watch_loop;
-pub(crate) use triggers::{wake_asked, wake_herald};
+pub(crate) use triggers::{wake_for_moment, wake_herald};
 use turn::run_guest_turn;
 pub(crate) use turn::run_yinyue_turn;
+use turn::{run_moment_turn, Reach};
 
 const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;
 /// Yinyue's sessions roll daily (`sess-yinyue-YYYY-MM-DD`) with an extra

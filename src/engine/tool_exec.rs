@@ -289,6 +289,17 @@ impl AgentEngine {
             return PreExecOutcome::Blocked(LoopControl::Continue);
         }
 
+        // --- withheld gate (defense-in-depth) ---
+        // A tool this turn's caller withheld is refused even if the model
+        // names it (it was never offered).
+        if self.is_withheld(&canonical_tool) {
+            let msg = format!(
+                "tool_not_allowed: tool={canonical_tool} reason=withheld: not available on this turn"
+            );
+            messages.push(self.tool_result_msg_for(msg, &tool_call_id, &canonical_tool));
+            return PreExecOutcome::Blocked(LoopControl::Continue);
+        }
+
         // --- guest gate (defense-in-depth) ---
         // A guest takes up no skill at a table that isn't its own, even when
         // its list is `*` (no allowed set to check above) — the skill's

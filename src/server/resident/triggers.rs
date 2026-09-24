@@ -359,17 +359,20 @@ pub(crate) async fn wake_herald(
     kickoff: String,
     emotion: &str,
 ) -> Option<String> {
-    wake_and_speak(state, kickoff, emotion, "event").await
+    wake_and_speak(state, kickoff, emotion, "event", Reach::Open).await
 }
 
-/// Wake her to answer what the user asked her for: the same spoken final
-/// paragraph, under the contract that offers no SILENT.
-pub(crate) async fn wake_asked(
+/// Wake her for an app moment. `asked`: the user asked her for this — the
+/// same spoken final paragraph, under the contract that offers no SILENT.
+/// Sealed either way: her line is the whole of her answer (`Reach::Sealed`).
+pub(crate) async fn wake_for_moment(
     state: Arc<ServerState>,
     kickoff: String,
     emotion: &str,
+    asked: bool,
 ) -> Option<String> {
-    wake_and_speak(state, kickoff, emotion, "asked").await
+    let source = if asked { "asked" } else { "event" };
+    wake_and_speak(state, kickoff, emotion, source, Reach::Sealed).await
 }
 
 /// Wake her, and speak her line. Returns the line she said aloud — `None`
@@ -379,9 +382,13 @@ pub(super) async fn wake_and_speak(
     kickoff: String,
     emotion: &str,
     trigger_source: &str,
+    reach: Reach,
 ) -> Option<String> {
     // `None`: the run failed or she produced nothing.
-    let reply = run_yinyue_turn(&state, kickoff, trigger_source).await?;
+    let reply = match reach {
+        Reach::Open => run_yinyue_turn(&state, kickoff, trigger_source).await,
+        Reach::Sealed => run_moment_turn(&state, kickoff, trigger_source).await,
+    }?;
     let Some(line) = spoken_line(&reply) else {
         tracing::info!("[yinyue-watch] Yinyue chose silence");
         return None;

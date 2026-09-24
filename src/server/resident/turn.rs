@@ -18,6 +18,51 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
+    run_home(state, task, trigger_source, Reach::Open).await
+}
+
+/// Her turn on her own thread, woken by an app moment: her line is all she
+/// gives — spoken, and landed in the app's chat by the moment path — or
+/// SILENT. She reaches no other agent from it ([`Reach::Sealed`]).
+pub(crate) async fn run_moment_turn(
+    state: &Arc<ServerState>,
+    task: String,
+    trigger_source: &str,
+) -> Option<String> {
+    run_home(state, task, trigger_source, Reach::Sealed).await
+}
+
+/// What a turn of hers may reach past her own line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Reach {
+    /// Her ordinary turns: she may message another agent (`agent_chat`).
+    Open,
+    /// An app moment or a guest seat: she speaks, or is SILENT. The one
+    /// exchange with an app's agent is the moment's `converse` path, never
+    /// hers to start — a message from her lands in the app's chat and wakes
+    /// that agent (2026-09-24: an idle moment's turn relayed its kickoff to
+    /// Ling, which started his loop in the Lingjing chat).
+    Sealed,
+}
+
+/// The tools a sealed turn withholds: the ones that reach another agent.
+const SEALED_WITHHOLDS: &[&str] = &["agent_chat"];
+
+/// The tools withheld from a turn with this reach.
+pub(super) fn withheld_for(reach: Reach) -> std::collections::HashSet<String> {
+    match reach {
+        Reach::Open => Default::default(),
+        Reach::Sealed => SEALED_WITHHOLDS.iter().map(|t| t.to_string()).collect(),
+    }
+}
+
+/// Her turn on her own rolling thread, with the given reach.
+async fn run_home(
+    state: &Arc<ServerState>,
+    task: String,
+    trigger_source: &str,
+    reach: Reach,
+) -> Option<String> {
     let root = her_root();
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
@@ -37,6 +82,7 @@ pub(crate) async fn run_yinyue_turn(
         session_id,
         root,
         guest: false,
+        reach,
     };
     run_at(state, &seat, &pet, task, trigger_source).await
 }
@@ -60,6 +106,7 @@ pub(crate) async fn run_guest_turn(
         session_id,
         root: her_root(),
         guest: true,
+        reach: Reach::Sealed,
     };
     run_at(state, &seat, &pet, message, "user").await
 }
@@ -75,6 +122,7 @@ struct Seat {
     session_id: String,
     root: std::path::PathBuf,
     guest: bool,
+    reach: Reach,
 }
 
 /// Her engine for a seat. Her own thread is her session's engine. A guest
@@ -173,6 +221,8 @@ async fn run_at(
             state.manager.mark_agent_chat_session(session_id);
         }
         engine.set_parent_agent(None);
+        // Set every turn: her rolling engine outlives this one.
+        engine.withheld_tools = withheld_for(seat.reach);
         // Clear so we read THIS turn's final line — the engine is reused across
         // turns and would otherwise hold the prior one.
         engine.last_assistant_text = None;
@@ -259,5 +309,17 @@ pub(super) fn resolve_pet_model(setting: &str) -> Option<String> {
         Some(CLOUD_DEFAULT_MODEL.to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A moment or guest turn cannot reach another agent; her own turns can.
+    #[test]
+    fn a_sealed_turn_withholds_agent_chat_and_an_open_one_nothing() {
+        assert!(withheld_for(Reach::Sealed).contains("agent_chat"));
+        assert!(withheld_for(Reach::Open).is_empty());
     }
 }

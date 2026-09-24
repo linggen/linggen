@@ -524,6 +524,7 @@ impl AgentEngine {
                 None => restrictions,
             });
         }
+        self.drop_withheld(&mut allowed_tools);
 
         // A conversational companion (e.g. Yinyue) declares none of the "doing"
         // tools — no files, code, shell, delegation, or planning. It gets the
@@ -968,6 +969,21 @@ impl AgentEngine {
             self.add_owner_extras(&mut allowed);
         }
         Some(allowed)
+    }
+
+    /// Take this turn's withheld tools out of an explicit list. An
+    /// unrestricted (`None`) list stays as it is — the execute gate
+    /// (`tool_exec`) still refuses a withheld call.
+    pub(crate) fn drop_withheld(&self, allowed: &mut Option<HashSet<String>>) {
+        if let Some(set) = allowed.as_mut() {
+            set.retain(|t| !self.withheld_tools.contains(t));
+        }
+    }
+
+    /// Whether `tool` — under any of its names — is withheld from this turn.
+    pub(crate) fn is_withheld(&self, tool: &str) -> bool {
+        let name = crate::engine::tools::canonical_tool_name(tool).unwrap_or(tool);
+        self.withheld_tools.contains(name)
     }
 
     /// Whether this engine sits as a guest in a session that isn't its own —

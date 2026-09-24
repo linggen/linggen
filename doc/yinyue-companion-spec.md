@@ -152,6 +152,10 @@ in-world, or `SILENT` (nothing shown, nothing kept). It waits behind a running
 turn, never interrupts, never wakes her back, and a session gets at most one
 exchange per **2 min**.
 
+**Her line is all she gives.** A moment turn and a guest turn are *sealed*:
+`agent_chat` is withheld (not offered, refused if called — `engine.withheld_tools`),
+so she can't message Ling into the app's chat; `converse` is the only exchange.
+
 **Addressed in an app's chat.** A message opening `@Yinyue` / `@银月` (id or a
 spec `aliases:` name) goes to her, in the same session, as a **guest**: her own
 engine and tools (never the session's skill, its tools or prompt), the thread
