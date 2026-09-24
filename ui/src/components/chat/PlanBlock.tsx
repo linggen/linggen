@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
+import type { Plan } from '../../types';
 
 
 /** Renders a plan block with markdown rendering, inline editing, and approval buttons. */
 export const PlanBlock: React.FC<{
-  plan: any;
+  plan: Plan;
   statusColor: Record<string, string>;
   pendingPlanAgentId?: string | null;
   agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
@@ -73,7 +74,7 @@ export const PlanBlock: React.FC<{
       {Array.isArray(plan.items) && plan.items.length > 0 && !editing && (
         <div className="space-y-1">
           <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">Task List</div>
-          {plan.items.map((item: any) => (
+          {plan.items.map((item) => (
             <div key={item.id} className="flex items-start gap-2 text-sm">
               <span className={`mt-0.5 shrink-0 ${item.status === 'done' ? 'text-emerald-500' : item.status === 'in_progress' ? 'text-blue-500' : 'text-slate-400'}`}>
                 {item.status === 'done' ? '\u2611' : '\u2610'}

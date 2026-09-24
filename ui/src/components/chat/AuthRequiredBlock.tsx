@@ -60,7 +60,7 @@ export const AuthRequiredBlock: React.FC<{
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
-        const data = await providerAuth.status<any>(flow.statusUrl);
+        const data = await providerAuth.status<{ authenticated?: boolean; signed_in?: boolean }>(flow.statusUrl);
         if (flow.isDone(data)) {
           if (pollRef.current) clearInterval(pollRef.current);
           setState('done');

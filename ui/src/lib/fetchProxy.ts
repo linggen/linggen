@@ -38,7 +38,7 @@ async function rtcFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
       ? init.headers.find(([k]) => k.toLowerCase() === 'content-type')?.[1]
       : (init?.headers as Record<string, string>)?.['Content-Type'];
 
-  let body: any = undefined;
+  let body: unknown = undefined;
   if (init?.body) {
     if (typeof init.body === 'string') {
       // Try to parse as JSON for structured transport

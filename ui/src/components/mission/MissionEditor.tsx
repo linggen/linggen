@@ -50,8 +50,8 @@ export const MissionEditor: React.FC<{
       const data = await getMissionFile(id);
       setContent(data.content);
       setSavedContent(data.content);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load mission file.');
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'Failed to load mission file.');
     } finally {
       setLoading(false);
     }
@@ -96,8 +96,8 @@ export const MissionEditor: React.FC<{
       const mission = await saveMissionFile(missionId, content);
       setSavedContent(content);
       onSave(mission);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to save mission.');
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'Failed to save mission.');
     } finally {
       setSaving(false);
     }
@@ -109,8 +109,8 @@ export const MissionEditor: React.FC<{
     try {
       await deleteMission(editing.id);
       onCancel();
-    } catch (e: any) {
-      setError(e?.message || 'Failed to delete mission.');
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'Failed to delete mission.');
     }
   };
 

@@ -45,6 +45,13 @@ interface UserState {
   setProxyRoom: (roomName: string | null) => void;
 }
 
+type Permission = UserState['userPermission'];
+const PERMISSIONS: readonly Permission[] = ['admin', 'edit', 'read', 'chat', 'pending'];
+/** The server's word for this peer's rights; anything unknown reads as the
+ *  narrowest, `chat`. */
+const asPermission = (p: string): Permission =>
+  (PERMISSIONS as readonly string[]).includes(p) ? (p as Permission) : 'chat';
+
 const isRemote = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
 export const useUserStore = create<UserState>((set) => ({
@@ -52,7 +59,7 @@ export const useUserStore = create<UserState>((set) => ({
   userId: null,
   userName: null,
   avatarUrl: null,
-  userPermission: isRemote ? 'pending' as any : 'admin',
+  userPermission: isRemote ? 'pending' : 'admin',
   userRoomName: null,
   userTokenBudget: null,
   roomEnabled: true,
@@ -72,7 +79,7 @@ export const useUserStore = create<UserState>((set) => ({
     } catch { /* daemon unreachable — bubbles stay unlabeled */ }
   },
   setUserInfo: (permission, roomName, tokenBudget) => set({
-    userPermission: permission as any,
+    userPermission: asPermission(permission),
     userRoomName: roomName ?? null,
     userTokenBudget: tokenBudget ?? null,
   }),

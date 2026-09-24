@@ -10,13 +10,19 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LogIn } from 'lucide-react';
-import { account as accountApi } from '../lib/endpoints';
+import { account as accountApi, type Account } from '../lib/endpoints';
 
 interface AccountInfo {
   signed_in: boolean;
-  user_name?: string;
-  avatar_url?: string;
+  user_name?: string | null;
+  avatar_url?: string | null;
 }
+
+const toAccountInfo = (a: Account): AccountInfo => ({
+  signed_in: !!a.signed_in,
+  user_name: a.user_name,
+  avatar_url: a.avatar_url,
+});
 
 export const AccountAvatar: React.FC<{
   /** Extra dropdown row (e.g. the launcher opens its Settings overlay). */
@@ -29,7 +35,7 @@ export const AccountAvatar: React.FC<{
 
   const refresh = useCallback(() => {
     accountApi.get()
-      .then((data) => setAccount(data as any))
+      .then((data) => setAccount(toAccountInfo(data)))
       .catch(() => setAccount(null));
   }, []);
 
@@ -55,7 +61,7 @@ export const AccountAvatar: React.FC<{
     setSigningIn(true);
     try {
       const acc = await accountApi.signIn();
-      if (acc) setAccount(acc as any);
+      if (acc) setAccount(toAccountInfo(acc));
     } finally {
       setSigningIn(false);
     }

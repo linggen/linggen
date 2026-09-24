@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-export function useAutoScroll(messages: { length: number }, lastMsg: { isGenerating?: boolean; content?: any[]; text?: string; liveText?: string; segments?: any[] } | undefined) {
+export function useAutoScroll(messages: { length: number }, lastMsg: { isGenerating?: boolean; content?: readonly unknown[]; text?: string; liveText?: string; segments?: readonly unknown[] } | undefined) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lastChatCountRef = useRef(0);
   const lastContentLenRef = useRef(0);

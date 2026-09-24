@@ -18,6 +18,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { useUserStore } from '../stores/userStore';
 import { useSuggestionStore } from '../stores/suggestionStore';
+import type { SessionInfo } from '../types';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
 import { postToParent, fromParent } from '../lib/parentFrame';
@@ -99,7 +100,7 @@ export const EmbedApp: React.FC = () => {
         const resp = await fetch(`/api/sessions?project_root=${encodeURIComponent(vscProject)}`);
         const data = await resp.json();
         const sessionList = data.sessions ?? data ?? [];
-        const existing = sessionList.find((s: any) => s.title?.startsWith('VS Code'));
+        const existing = (sessionList as SessionInfo[]).find((s) => s.title?.startsWith('VS Code'));
         if (existing) {
           useSessionStore.getState().setActiveSessionId(existing.id);
         } else {

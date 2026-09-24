@@ -4,7 +4,7 @@
  * Events flow bidirectionally between the linggen server and the browser over
  * WebRTC data channels. The UI sends requests and receives events through this interface.
  */
-import type { UiEvent } from '../types';
+import type { AskUserAnswer, UiEvent } from '../types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,7 +41,7 @@ export interface ChatRequest {
 /** A request to respond to an AskUser prompt. */
 export interface AskUserResponse {
   question_id: string;
-  answers: any[];
+  answers: AskUserAnswer[];
   session_id?: string | null;
 }
 
@@ -104,7 +104,7 @@ export interface Transport {
 
   /** Proxy an HTTP request through the transport (for remote mode).
    *  Returns { status, body } where body is the raw response text. */
-  httpProxy(method: string, url: string, body?: any): Promise<{ status: number; body: string }>;
+  httpProxy(method: string, url: string, body?: unknown): Promise<{ status: number; body: string }>;
 
   /** Tell the server which session/project the frontend has active.
    *  The server uses this to scope its page_state push. */

@@ -26,8 +26,12 @@ export const TOKEN_RATE_WINDOW_MS = 8_000;
 // Tool parsing helpers
 // ---------------------------------------------------------------------------
 
+/** A tool-call payload as a model writes it: `{type:"tool", tool, args}` or
+ *  the legacy `{type:<tool name>, args}`. */
+type ToolPayload = { type?: unknown; tool?: unknown; args?: unknown };
 
-export const parseToolNameFromParsedPayload = (parsed: any): string | null => {
+
+export const parseToolNameFromParsedPayload = (parsed: ToolPayload | null | undefined): string | null => {
   if (!parsed || typeof parsed !== 'object') return null;
   if (parsed?.type === 'tool' && typeof parsed?.tool === 'string') {
     return parsed.tool;

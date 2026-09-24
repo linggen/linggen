@@ -25,7 +25,7 @@ export async function fetchMissions(): Promise<CronMission[]> {
   }
 }
 
-export function updateMission(id: string, updates: Record<string, any>): Promise<CronMission | null> {
+export function updateMission(id: string, updates: Partial<CronMission>): Promise<CronMission | null> {
   return apiPut<CronMission | null>(`/api/missions/${encodeURIComponent(id)}`, updates);
 }
 

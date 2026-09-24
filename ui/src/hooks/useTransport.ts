@@ -26,7 +26,7 @@ export function sendViewContext() {
     const { activeSessionId, selectedProjectRoot } = useSessionStore.getState();
     // View is baked in by the entry file (main.tsx / embed.tsx / consumer.tsx)
     // via window.__LINGGEN_VIEW__. Defaults to 'main' for safety.
-    const view = ((window as any).__LINGGEN_VIEW__ || 'main') as 'main' | 'embed' | 'consumer';
+    const view = ((window as { __LINGGEN_VIEW__?: string }).__LINGGEN_VIEW__ || 'main') as 'main' | 'embed' | 'consumer';
     transport.sendViewContext({
       sessionId: activeSessionId,
       projectRoot: selectedProjectRoot,
