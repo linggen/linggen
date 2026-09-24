@@ -948,8 +948,10 @@ impl AgentManager {
             let Some(patch_agent_id) = patch_agent_id else {
                 return Ok(());
             };
-            let agents = ctx.agents.lock().await;
-            if let Some(worker) = agents.get(&patch_agent_id) {
+            // Drop the agents-map guard before waiting on the engine (held
+            // for a whole turn).
+            let worker = ctx.agents.lock().await.get(&patch_agent_id).cloned();
+            if let Some(worker) = worker {
                 let mut engine = worker.lock().await;
                 let current_task = engine.get_task();
                 if current_task.as_deref() != Some(body) {

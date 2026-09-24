@@ -31,13 +31,17 @@ pub(crate) async fn clear_chat_history_api(
     {
         Ok(removed) => {
             // Clear in-memory chat history for this session's engine.
-            {
+            // Clone the engine out and drop the map guard before waiting on
+            // it: the engine lock is held for a whole turn, and holding the
+            // map meanwhile would stall every other session's lookup.
+            let engine_arc = {
                 let engines = state.manager.session_engines.lock().await;
-                if let Some(engine_mutex) = engines.get(&session_id) {
-                    let mut engine = engine_mutex.lock().await;
-                    engine.chat_history.clear();
-                    engine.observations.clear();
-                }
+                engines.get(&session_id).cloned()
+            };
+            if let Some(engine_mutex) = engine_arc {
+                let mut engine = engine_mutex.lock().await;
+                engine.chat_history.clear();
+                engine.observations.clear();
             }
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(serde_json::json!({ "removed": removed })).into_response()
