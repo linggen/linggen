@@ -513,22 +513,30 @@ async fn run_peer(
 
                     Event::ChannelData(data) => {
                         if Some(data.id) == media_channel_id {
+                            // Uploads write into the owner's library, so only a
+                            // fully paired admin peer may start one; gets follow
+                            // the control channel's endpoint rules.
+                            let pairing = user_ctx.pairing_only();
+                            let may_put = !pairing && user_ctx.permission.is_admin();
                             let reply = if data.binary {
                                 media_channel::handle_binary(&data.data, &mut media_transfer).await
                             } else {
                                 let text = String::from_utf8_lossy(&data.data).to_string();
+                                let perm = user_ctx.permission.clone();
                                 if media_channel::spawn_get(
                                     &text,
                                     state.port,
                                     data.id,
                                     media_out_tx.clone(),
+                                    move |url| !pairing && perm.can_access_endpoint("GET", url),
                                 ) {
                                     continue;
                                 }
                                 // Copy the actor out before awaiting — the
                                 // guard is not Send and would poison the task.
                                 let who = peer_actor.lock_ok().clone();
-                                media_channel::handle_text(&text, &mut media_transfer, who).await
+                                media_channel::handle_text(&text, &mut media_transfer, who, may_put)
+                                    .await
                             };
                             if let Some(msg) = reply {
                                 if pending_dc_writes.len() < MAX_DC_WRITE_QUEUE {

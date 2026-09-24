@@ -60,9 +60,18 @@ pub(super) async fn handle_text(
     text: &str,
     current: &mut Option<MediaTransfer>,
     by: Option<crate::server::api::pair::Actor>,
+    may_put: bool,
 ) -> Option<String> {
     let msg: Value = serde_json::from_str(text).ok()?;
     match msg.get("type").and_then(Value::as_str)? {
+        "put_begin" if !may_put => Some(
+            json!({
+                "type": "put_err",
+                "id": msg.get("id").cloned().unwrap_or(Value::Null),
+                "error": "not allowed",
+            })
+            .to_string(),
+        ),
         "put_begin" => {
             // A new transfer supersedes anything half-received: the phone only
             // starts one after the previous ack, so this means it gave up.
@@ -104,6 +113,7 @@ pub(super) fn spawn_get(
     port: u16,
     channel: str0m::channel::ChannelId,
     out: tokio::sync::mpsc::Sender<super::response::DcWrite>,
+    may_get: impl Fn(&str) -> bool,
 ) -> bool {
     let Ok(msg) = serde_json::from_str::<Value>(text) else {
         return false;
@@ -121,6 +131,15 @@ pub(super) fn spawn_get(
         let _ = out.try_send(super::response::DcWrite::text(
             channel,
             json!({"type": "get_err", "id": id, "error": "invalid url"}).to_string(),
+        ));
+        return true;
+    }
+    // The same gate the control channel applies: a get is re-issued to
+    // loopback, which the LAN gate trusts, so the peer's own rights decide.
+    if !may_get(&url) {
+        let _ = out.try_send(super::response::DcWrite::text(
+            channel,
+            json!({"type": "get_err", "id": id, "error": "not allowed"}).to_string(),
         ));
         return true;
     }
@@ -339,6 +358,18 @@ mod get_allowlist_tests {
         assert!(get_allowed("/api/media/thumb?id=1"));
         assert!(get_allowed("/apps/dj/scripts/.thumbs/a%20b.jpg"));
         assert!(get_allowed("/shared/chat-bridge.js"));
+    }
+
+    #[tokio::test]
+    async fn a_peer_without_rights_cannot_start_an_upload() {
+        let mut current = None;
+        let begin =
+            r#"{"type":"put_begin","id":"x","local_id":"l","name":"a.jpg","size":3,"sha256":"00"}"#;
+        let reply = super::handle_text(begin, &mut current, None, false)
+            .await
+            .unwrap();
+        assert!(reply.contains("put_err") && reply.contains("not allowed"));
+        assert!(current.is_none());
     }
 
     #[test]
