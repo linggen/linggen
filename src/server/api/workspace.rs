@@ -20,8 +20,75 @@ fn expand_project_root(raw: &str) -> PathBuf {
     }
 }
 use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use crate::util::LockExt;
+
+/// How long the known-roots set is reused before sessions are re-listed —
+/// the @-mention picker searches on every keystroke.
+const KNOWN_ROOTS_TTL: Duration = Duration::from_secs(5);
+
+static KNOWN_ROOTS: Mutex<Option<(Instant, HashSet<PathBuf>)>> = Mutex::new(None);
+
+/// Resolve a caller-supplied `project_root` to a root the engine already
+/// knows — a session's cwd or project, or a project it has opened. The
+/// endpoints below read files under the root they are given, so an
+/// arbitrary root (`/`, `/etc`) would make them "read any file on disk".
+async fn known_root(state: &ServerState, raw: &str) -> Result<PathBuf, StatusCode> {
+    let canonical = expand_project_root(raw)
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    // A cached miss re-lists once: a session created a moment ago is known.
+    for fresh in [false, true] {
+        if is_known_root(&canonical, &known_roots(state, fresh).await) {
+            return Ok(canonical);
+        }
+    }
+    tracing::warn!(
+        "[workspace] refused unknown project_root {}",
+        canonical.display()
+    );
+    Err(StatusCode::FORBIDDEN)
+}
+
+fn is_known_root(canonical: &Path, roots: &HashSet<PathBuf>) -> bool {
+    canonical.parent().is_some() && roots.contains(canonical)
+}
+
+async fn known_roots(state: &ServerState, fresh: bool) -> HashSet<PathBuf> {
+    if !fresh {
+        if let Some((at, roots)) = KNOWN_ROOTS.lock_ok().as_ref() {
+            if at.elapsed() < KNOWN_ROOTS_TTL {
+                return roots.clone();
+            }
+        }
+    }
+    let mut raw: Vec<String> = state
+        .manager
+        .projects
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect();
+    for meta in state
+        .manager
+        .global_sessions
+        .list_sessions()
+        .unwrap_or_default()
+    {
+        raw.extend(meta.cwd);
+        raw.extend(meta.project);
+    }
+    let roots: HashSet<PathBuf> = raw
+        .iter()
+        .filter_map(|r| expand_project_root(r).canonicalize().ok())
+        .collect();
+    *KNOWN_ROOTS.lock_ok() = Some((Instant::now(), roots.clone()));
+    roots
+}
 
 #[derive(Deserialize)]
 pub(crate) struct FileQuery {
@@ -30,13 +97,12 @@ pub(crate) struct FileQuery {
 }
 
 pub(crate) async fn list_files(
-    State(_state): State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Query(query): Query<FileQuery>,
 ) -> impl IntoResponse {
-    let project_root = expand_project_root(&query.project_root);
-    let canonical_root = match project_root.canonicalize() {
+    let canonical_root = match known_root(&state, &query.project_root).await {
         Ok(r) => r,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(code) => return code.into_response(),
     };
     let rel_path = query.path.unwrap_or_default();
     if rel_path.contains("..") {
@@ -77,13 +143,12 @@ pub(crate) struct FileSearchQuery {
 }
 
 pub(crate) async fn search_files(
-    State(_state): State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Query(query): Query<FileSearchQuery>,
 ) -> impl IntoResponse {
-    let project_root = expand_project_root(&query.project_root);
-    let canonical_root = match project_root.canonicalize() {
+    let canonical_root = match known_root(&state, &query.project_root).await {
         Ok(r) => r,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(code) => return code.into_response(),
     };
 
     let limit = query.limit.unwrap_or(50);
@@ -146,7 +211,7 @@ pub(crate) async fn search_files(
 }
 
 pub(crate) async fn read_file_api(
-    State(_state): State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Query(query): Query<FileQuery>,
 ) -> impl IntoResponse {
     let rel_path = match query.path {
@@ -156,10 +221,9 @@ pub(crate) async fn read_file_api(
     if rel_path.contains("..") {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let project_root = expand_project_root(&query.project_root);
-    let canonical_root = match project_root.canonicalize() {
+    let canonical_root = match known_root(&state, &query.project_root).await {
         Ok(r) => r,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(code) => return code.into_response(),
     };
     let full_path = canonical_root.join(&rel_path);
     let full_path = full_path.canonicalize().unwrap_or(full_path);
@@ -191,19 +255,24 @@ pub(crate) async fn get_workspace_state(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<ProjectQuery>,
 ) -> impl IntoResponse {
-    let root = expand_project_root(&query.project_root);
     // Project context is optional — session messages are stored globally and
-    // should still load even when the project directory no longer exists.
-    let (active_task, user_stories, tasks) =
-        if let Ok(ctx) = state.manager.get_or_create_project(root).await {
-            (
-                ctx.state_fs.read_file("active.md").ok(),
-                ctx.state_fs.read_file("user-stories.md").ok(),
-                ctx.state_fs.list_tasks().unwrap_or_default(),
-            )
-        } else {
-            (None, None, Vec::new())
-        };
+    // should still load even when the project directory no longer exists, or
+    // isn't one the engine knows (never open a project for an arbitrary path:
+    // that would make it a known root for the file endpoints).
+    let known = known_root(&state, &query.project_root).await.ok();
+    let project = match known {
+        Some(root) => state.manager.get_or_create_project(root).await.ok(),
+        None => None,
+    };
+    let (active_task, user_stories, tasks) = if let Some(ctx) = project {
+        (
+            ctx.state_fs.read_file("active.md").ok(),
+            ctx.state_fs.read_file("user-stories.md").ok(),
+            ctx.state_fs.list_tasks().unwrap_or_default(),
+        )
+    } else {
+        (None, None, Vec::new())
+    };
 
     let messages = match query.session_id.as_deref() {
         Some(sid) if !sid.is_empty() => state
@@ -471,4 +540,26 @@ pub(crate) async fn run_bash_api(
         "stderr": stderr,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod known_root_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_known_root_itself_is_served_never_the_filesystem_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().canonicalize().unwrap();
+        let roots: HashSet<PathBuf> = [project.clone(), PathBuf::from("/")].into();
+        assert!(is_known_root(&project, &roots));
+        assert!(
+            !is_known_root(Path::new("/"), &roots),
+            "`/` is never a root"
+        );
+        assert!(!is_known_root(Path::new("/etc"), &roots));
+        assert!(
+            !is_known_root(&project.join("sub"), &roots),
+            "exact roots only"
+        );
+    }
 }
