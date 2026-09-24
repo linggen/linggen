@@ -2,9 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, ArrowDown, Copy, FileText, Eraser, Plus } from 'lucide-react';
 import 'highlight.js/styles/github.css';
 import { cn } from '../../lib/cn';
-import { UNSPOKEN_SENDERS } from '../../lib/messageUtils';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useServerStore, isSessionBusy } from '../../stores/serverStore';
+import { useServerStore } from '../../stores/serverStore';
 import { useUserStore } from '../../stores/userStore';
 import { AskUserCard } from '../AskUserCard';
 import { ToolPermissionCard } from '../ToolPermissionCard';
@@ -15,22 +14,22 @@ import type {
   SkillInfo,
   SubagentInfo,
 } from '../../types';
-import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from './utils/message';
-import { getMessagePhase } from './MessagePhase';
-import { AgentMessage } from './AgentMessage';
-import { MemoryRecallMessage } from './MemoryRecallMessage';
-import { CompactionMessage } from './CompactionMessage';
+import { normalizeAgentKey } from './utils/message';
+import { ChatMessageList, ChatMessageRow } from './ChatMessageList';
+import { RunStatusLine } from './RunStatusLine';
+import { useChatFilters } from './useChatFilters';
+import { useFloatingUserMessage } from './useFloatingUserMessage';
+import { useRunSpinner } from './useRunSpinner';
+import { useSubagentPane } from './useSubagentPane';
 import { ChatInput } from './ChatInput';
 import { SubagentDrawer } from './SubagentDrawer';
 import { SubagentPane } from './SubagentPane';
 import { statusBadgeClass } from './MessageHelpers';
 import { SessionModelSelector, SessionModeSelector, SessionStats } from './SessionSelectors';
 import { useChatActions } from '../../hooks/useChatActions';
-import { useStableArray } from '../../hooks/useStableArray';
 import { useChatStore } from '../../stores/chatStore';
 import { sessions as sessionsApi } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
-import { postToParent } from '../../lib/parentFrame';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -112,7 +111,9 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
       const cs = useChatStore.getState();
       cs.setActiveSession(data.id);
       cs.fetchSessionState();
-      postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } });
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } }, '*');
+      }
       setNewStatus('copied');
     } catch (err) {
       console.error('[new-chat] failed:', err);
@@ -145,181 +146,6 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
   );
 };
 
-/** Plumbing rows — context, not a speaker, so never labelled. */
-const UNSPOKEN = UNSPOKEN_SENDERS;
-
-/**
- * The bracket label for an agent's message. Every speaking turn carries its
- * name: the panel's own agent as well as anyone relayed in from the phone or
- * via agent_chat. Derived from the message's from_id (one fact, every
- * surface); null only for rows nobody spoke.
- */
-function agentLabel(msg: ChatMessage, panelAgent: string): string | null {
-  const from = (msg.from || '').toLowerCase();
-  if (from === 'user' || UNSPOKEN.has(from) || from.startsWith('run-')) return null;
-  // Empty or 'assistant' from_id is this panel's agent speaking — the rows
-  // that predate the metadata, and the ones the UI itself synthesizes.
-  const speaker = !from || from === 'assistant' ? panelAgent.toLowerCase() : from;
-  const label = speaker.charAt(0).toUpperCase() + speaker.slice(1);
-  // Rows persisted before the metadata cutover carry the label in the text.
-  if (msg.text.startsWith(`[${label}]`)) return null;
-  return label;
-}
-
-const noopToggle = () => {};
-
-/** Render a single message row. */
-const ChatMessageRow = React.memo<{
-  msg: ChatMessage;
-  msgKey: string;
-  isUser: boolean;
-  senderTag?: string | null;
-  isExpanded: boolean;
-  onToggle: (msgKey: string) => void;
-  userMsgIndex?: number;
-  userMsgRefs?: React.RefObject<Map<number, HTMLDivElement>>;
-  planProps: {
-    pendingPlanAgentId?: string | null;
-    agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
-    onApprovePlan?: () => void;
-    onRejectPlan?: () => void;
-    onEditPlan?: (text: string) => void;
-    inputRef: React.RefObject<HTMLTextAreaElement | null>;
-  };
-}>(({ msg, msgKey, isUser, senderTag, isExpanded, onToggle, userMsgIndex, userMsgRefs, planProps }) => {
-  const toggle = useCallback(() => onToggle(msgKey), [onToggle, msgKey]);
-  const registerRef = useCallback((el: HTMLDivElement | null) => {
-    if (userMsgIndex == null || !userMsgRefs?.current) return;
-    if (el) userMsgRefs.current.set(userMsgIndex, el);
-    else userMsgRefs.current.delete(userMsgIndex);
-  }, [userMsgIndex, userMsgRefs]);
-  // Auto-recall messages get their own collapsible chip. Backend
-  // persists them with from_id="memory-recall" (runtime.rs::
-  // push_user_turn_with_recall). Legacy sessions used from_id="memory",
-  // which collides with the memory *agent's* id (its dream-mission
-  // replies rendered as recall chips) — so the legacy match also
-  // requires the recall text shape.
-  if (msg.from === 'memory-recall' || (msg.from === 'memory' && msg.text.startsWith('From memory'))) {
-    return <MemoryRecallMessage text={msg.text} />;
-  }
-  // Auto-compaction notice, injected by handleContextUsage on `compressed`.
-  if (msg.from === 'compaction') {
-    return <CompactionMessage text={msg.text} />;
-  }
-  const phase = isUser ? undefined : getMessagePhase(msg);
-  const messageClass = isUser
-    ? 'bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-slate-100 rounded-md px-2.5 py-1.5'
-    : phase === 'thinking'
-      ? ''
-      : msg.isThinking && !msg.isGenerating
-        ? 'text-slate-500 dark:text-slate-400 italic opacity-60'
-        : 'text-slate-800 dark:text-slate-200';
-  return (
-    <div
-      key={msgKey}
-      ref={userMsgIndex != null ? registerRef : undefined}
-      className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
-    >
-      {/* A typed message keeps the shape it was typed in: line breaks and
-          indentation are how a list, an address block or a pasted email
-          reads. Rendering it raw collapsed all of it into one paragraph. */}
-      <div className={cn(isUser ? 'max-w-[96%] whitespace-pre-wrap break-words' : 'max-w-full', 'text-[14px] leading-relaxed', messageClass)}>
-        {senderTag && (
-          <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
-            [{senderTag}]
-          </span>
-        )}
-        {isUser ? (
-          <>
-            {msg.text}
-            {(msg.imageCount ?? msg.images?.length ?? 0) > 0 && (
-              <span className="text-slate-400 dark:text-slate-500 ml-1">
-                {(() => {
-                  const count = msg.imageCount ?? msg.images?.length ?? 0;
-                  return Array.from({ length: count }, (_, i) => `[image${count > 1 ? `#${i + 1}` : ''}]`).join(' ');
-                })()}
-              </span>
-            )}
-          </>
-        ) : (
-          <AgentMessage msg={msg} isExpanded={isExpanded} onToggle={toggle} planProps={planProps} />
-        )}
-      </div>
-    </div>
-  );
-});
-
-/** Memoized historical message list — skips re-render during streaming & typing. */
-const ChatMessageList = React.memo<{
-  messages: ChatMessage[];
-  expandedMessages: Set<string>;
-  setExpandedMessages: React.Dispatch<React.SetStateAction<Set<string>>>;
-  verboseMode?: boolean;
-  userMsgRefs: React.RefObject<Map<number, HTMLDivElement>>;
-  selectedAgent: string;
-  pendingPlanAgentId?: string | null;
-  agentContext?: Record<string, { tokens: number; messages: number; tokenLimit?: number }>;
-  onApprovePlan?: () => void;
-  onRejectPlan?: () => void;
-  onEditPlan?: (text: string) => void;
-  inputRef: React.RefObject<HTMLTextAreaElement | null>;
-}>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }) => {
-  const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef]);
-  // The user's name, as core memory states it — labels their bubbles. Until
-  // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
-  // persona explains it and asks for the real one).
-  const coreName = useUserStore((s) => s.coreName);
-  // One toggle for every row (keyed by the row's key), so a row's props
-  // stay equal across renders and its memo holds.
-  const toggleExpanded = useCallback((key: string) => {
-    setExpandedMessages((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, [setExpandedMessages]);
-  return (
-    <>
-      {messages.length === 0 && (
-        <div className="self-center mt-12 max-w-md text-center">
-          <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            No messages for {selectedAgent}
-          </div>
-          <div className="mt-2 text-xs text-slate-500">
-            Send a message to this main agent or switch tabs.
-          </div>
-        </div>
-      )}
-      {messages.map((msg, i) => {
-        // Skip hidden system messages (used by app skills for internal prompts)
-        if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
-        const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;
-        const isUser = msg.role === 'user';
-        const isExpanded = verboseMode || expandedMessages.has(key);
-        const userMsgIndex = isUser ? i : undefined;
-        return (
-          <ChatMessageRow
-            key={key}
-            msg={msg}
-            msgKey={key}
-            isUser={isUser}
-            senderTag={
-              isUser && (!msg.from || msg.from === 'user')
-                ? (coreName ?? 'Hanli')
-                : agentLabel(msg, selectedAgent)
-            }
-            isExpanded={isExpanded}
-            onToggle={toggleExpanded}
-            userMsgIndex={userMsgIndex}
-            userMsgRefs={userMsgRefs}
-            planProps={planProps}
-          />
-        );
-      })}
-    </>
-  );
-});
 export const ChatPanel: React.FC<{
   chatMessages: ChatMessage[];
   queuedMessages: QueuedChatItem[];
@@ -418,288 +244,54 @@ export const ChatPanel: React.FC<{
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const userMsgRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const [floatingUserMsg, setFloatingUserMsg] = useState<{ index: number; text: string } | null>(null);
-  const thinkingStartRef = useRef<number | null>(null);
-  const [thinkingElapsed, setThinkingElapsed] = useState(0);
 
   // Focus chat input when session changes (e.g. new session created)
   useEffect(() => {
-    if (sessionId) {
-      // Small delay to let the DOM settle after session switch
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
+    if (!sessionId) return;
+    // Small delay to let the DOM settle after session switch
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
   }, [sessionId]);
 
   useEffect(() => {
-    if (pendingAskUser) {
-      chatEndRef?.current?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
-    }
+    if (pendingAskUser) chatEndRef?.current?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
   }, [pendingAskUser, chatEndRef]);
 
-  // Auto-scroll is handled by useAutoScroll hook in ChatWidget.
-  // We just receive scrollToBottom and showScrollButton as props.
+  // Auto-scroll is handled by useAutoScroll in ChatWidget; it hands down
+  // scrollToBottom and showScrollButton.
   const showScrollButton = showScrollButtonProp ?? false;
   const scrollToBottom = scrollToBottomProp ?? (() => {
     chatEndRef?.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   });
 
-  // Track agent active state and elapsed time — keyed by session ID
   const agentStatusText = useServerStore((s) => s.agentStatusText);
-  // While the link to the engine is down nothing about the run is known —
-  // it may have died with the engine. A counting "Thinking… (2m 26s)" then
-  // claims work that may not exist, so the line says what is actually true.
   const reconnecting = useUserStore((s) => s.connectionStatus === 'reconnecting');
-  // One definition of busy for every surface (serverStore.isSessionBusy):
-  // the optimistic send flag, then the session's top-level run records,
-  // with TurnComplete's "Idle" winning over a stale push.
-  const isAgentActive = useServerStore((s) => isSessionBusy(s, sessionId));
-  const [spinnerVerb, setSpinnerVerb] = useState('');
-  const [lastRunSummary, setLastRunSummary] = useState<{ verb: string; elapsed: number; interrupted?: boolean } | null>(null);
-  // A run that died server-side without a terminal event (daemon killed or
-  // restarted mid-turn) is detected asynchronously by page_state
-  // reconciliation, after the spinner has already stopped and summarized.
-  // Consume the stamp and re-label the summary — "Musing for 3m 5s" reads
-  // as still working when in truth nothing answered.
-  const runInterrupted = useServerStore((s) => s.runInterruptedAt[sessionId || '']);
-  useEffect(() => {
-    if (!runInterrupted || !sessionId) return;
-    useServerStore.getState().consumeRunInterrupted(sessionId);
-    setLastRunSummary((prev) => (prev ? { ...prev, interrupted: true } : prev));
-  }, [runInterrupted, sessionId]);
-  useEffect(() => {
-    if (isAgentActive) {
-      if (!thinkingStartRef.current) {
-        thinkingStartRef.current = Date.now();
-        const verbs = [
-          'Thinking', 'Pondering', 'Brewing', 'Cogitating', 'Reticulating',
-          'Noodling', 'Musing', 'Simmering', 'Percolating', 'Ruminating',
-          'Contemplating', 'Marinating', 'Conjuring', 'Scheming', 'Tinkering',
-          'Crafting', 'Hatching', 'Computing', 'Deliberating',
-        ];
-        setSpinnerVerb(verbs[Math.floor(Math.random() * verbs.length)]);
-        setLastRunSummary(null);
-      }
-      const interval = setInterval(() => {
-        setThinkingElapsed(Math.floor((Date.now() - (thinkingStartRef.current || Date.now())) / 1000));
-      }, 500);
-      return () => clearInterval(interval);
-    } else {
-      if (thinkingStartRef.current) {
-        const elapsed = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
-        // A send that failed after the spinner started never ran a turn —
-        // nothing happened, so there's nothing to summarize.
-        const failedAt = useServerStore.getState().sendFailedAt[sessionId || ''] || 0;
-        if (elapsed > 0 && failedAt < thinkingStartRef.current) {
-          setLastRunSummary({ verb: spinnerVerb || 'Worked', elapsed });
-        }
-      }
-      thinkingStartRef.current = null;
-      setThinkingElapsed(0);
-    }
-  }, [isAgentActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { isAgentActive, spinnerVerb, thinkingElapsed, lastRunSummary } = useRunSpinner(sessionId);
 
-  const mainAgentIds = useMemo(
-    () => mainAgents.map((agent) => normalizeAgentKey(agent.name)),
-    [mainAgents]
-  );
+  const mainAgentIds = useMemo(() => mainAgents.map((agent) => normalizeAgentKey(agent.name)), [mainAgents]);
 
-  const isMissionSession = useSessionStore((s) => s.isMissionSession);
+  const {
+    filteredMainMessages, historicalMessages, streamingMessage, visibleQueued, selectedSubagent, filteredSubagentMessages,
+  } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, subagents, openSubagentId, subagentMessageFilter });
+  const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
+  const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent);
 
-  const visibleMessages = useMemo(() => {
-    // Mission sessions show all messages — no agent filtering needed.
-    if (isMissionSession) return chatMessages;
-
-    const selected = normalizeAgentKey(selectedAgent);
-    return chatMessages.filter((msg) => {
-      const from = normalizeAgentKey(msg.from || msg.role);
-      const to = normalizeAgentKey(msg.to || '');
-      // Always show system + compaction notices and skill-page-injected
-      // assistant messages (add_message bridge) — none carry per-agent `to` routing.
-      if (from === 'system' || from === 'compaction' || from === 'assistant') return true;
-      if (msg.role === 'user') {
-        return !to || to === selected;
-      }
-      if (from === selected || to === selected) return true;
-      if (from === 'user') return to === selected;
-      return false;
-    });
-  }, [chatMessages, selectedAgent, isMissionSession]);
-
-  const visibleQueued = useMemo(
-    () => queuedMessages.filter((item) => normalizeAgentKey(item.agent_id) === normalizeAgentKey(selectedAgent)),
-    [queuedMessages, selectedAgent]
-  );
-
-  const selectedSubagent = useMemo(
-    () => subagents.find((sub) => sub.id === openSubagentId) || null,
-    [subagents, openSubagentId]
-  );
-  const selectedAgentKey = normalizeAgentKey(selectedAgent);
   // What "stop" acts on. The selected agent's run when there is one, else
   // whatever is running in this session: the two disagree whenever the run
   // belongs to an agent the surface never selected, and a stop button that
   // vanishes exactly while something is running is worse than none.
   const selectedMainRunningRunId =
-    runningMainRunIds?.[selectedAgentKey] ||
+    runningMainRunIds?.[normalizeAgentKey(selectedAgent)] ||
     (sessionId ? runningRunIdBySession?.[sessionId] : undefined);
-  const subagentMessages = useMemo(() => {
-    if (!selectedSubagent) return [];
-    const id = normalizeAgentKey(selectedSubagent.id);
-    const filtered = chatMessages.filter((msg) => {
-      const from = normalizeAgentKey(msg.from || msg.role);
-      const to = normalizeAgentKey(msg.to || '');
-      return from === id || to === id;
-    });
-    return sortMessagesByTime(filtered);
-  }, [chatMessages, selectedSubagent]);
-  const filteredMainMessages = useMemo(
-    () => collapseProgressMessages(sortMessagesByTime(visibleMessages)),
-    [visibleMessages]
-  );
 
-  // Show floating banner with nearest user message scrolled above viewport.
-  // Clear when the session changes — the previous session's banner would
-  // otherwise linger until the next scroll event in the new session.
-  useEffect(() => {
-    setFloatingUserMsg(null);
-    userMsgRefs.current.clear();
-  }, [sessionId]);
-  const filteredMainMessagesRef = useRef(filteredMainMessages);
-  useEffect(() => {
-    filteredMainMessagesRef.current = filteredMainMessages;
-  }, [filteredMainMessages]);
-  useEffect(() => {
-    const container = chatScrollRef.current;
-    if (!container) return;
-    let rafId = 0;
-    const update = () => {
-      const containerTop = container.getBoundingClientRect().top;
-      const threshold = containerTop + 48; // account for floating bar height
-      let bestIdx = -1;
-      let bestTop = -Infinity;
-      for (const [idx, el] of userMsgRefs.current.entries()) {
-        const top = el.getBoundingClientRect().top;
-        if (top < threshold && top > bestTop) {
-          bestTop = top;
-          bestIdx = idx;
-        }
-      }
-      if (bestIdx >= 0) {
-        const msg = filteredMainMessagesRef.current[bestIdx];
-        setFloatingUserMsg((prev) => {
-          if (prev?.index === bestIdx && prev?.text === msg?.text) return prev;
-          return msg ? { index: bestIdx, text: msg.text } : null;
-        });
-      } else {
-        setFloatingUserMsg((prev) => prev === null ? prev : null);
-      }
-    };
-    const onScroll = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(update);
-    };
-    container.addEventListener('scroll', onScroll, { passive: true });
-    update(); // initial check
-    return () => {
-      container.removeEventListener('scroll', onScroll);
-      cancelAnimationFrame(rafId);
-    };
-  }, []);
-
-  // Split messages: historical (stable, memoized) vs streaming (re-renders per token).
-  // The historical slice keeps its previous identity while its rows are the
-  // same objects, so ChatMessageList's memo holds for the whole stream.
-  const { rawHistorical, streamingMessage } = useMemo(() => {
-    const len = filteredMainMessages.length;
-    const streaming = len > 0 && filteredMainMessages[len - 1].isGenerating;
-    return {
-      rawHistorical: streaming ? filteredMainMessages.slice(0, len - 1) : filteredMainMessages,
-      streamingMessage: streaming ? filteredMainMessages[len - 1] : null,
-    };
-  }, [filteredMainMessages]);
-  const historicalMessages = useStableArray(rawHistorical);
   const streamingPlanProps = useMemo(
     () => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef }),
     [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, inputRef],
   );
 
-  // Subagent pane visibility. Show whenever any message in this session
-  // has a subagent tree; auto-collapse 5s after the LAST subagent goes
-  // done (status !== 'running') and there are no widgets needing the
-  // user. Reopens immediately on the next spawn.
-  const subagentEntries = useMemo(() => {
-    const out: import('../../types').SubagentTreeEntry[] = [];
-    for (const m of filteredMainMessages) {
-      if (m.subagentTree && m.subagentTree.length > 0) {
-        out.push(...m.subagentTree);
-      }
-    }
-    return out;
-  }, [filteredMainMessages]);
-  const anyRunning = subagentEntries.some((e) => e.status === 'running');
-  // Predicate: is the pending AskUser destined for a subagent tab? If
-  // yes, the pane owns the widget (and we suppress the inline render);
-  // if no, the main chat keeps it (current behaviour).
-  const askUserBelongsToSubagent = useMemo(() => {
-    if (!pendingAskUser) return false;
-    const id = normalizeAgentKey(pendingAskUser.agentId);
-    if (!id) return false;
-    // First: tree-match (existing behavior). Works once SubagentSpawned has
-    // populated the parent message's subagentTree.
-    const matched = subagentEntries.some(
-      (e) =>
-        normalizeAgentKey(e.subagentId) === id ||
-        normalizeAgentKey(e.agentName) === id,
-    );
-    if (matched) return true;
-    // Fallback: if the prompt comes from any agent other than the session's
-    // main agent (`selectedAgent`, e.g. "ling"), it must be from a subagent
-    // (the per-turn encoder is "ling-mem"). Without this fallback, the
-    // widget falls through to the main-chat renderer when the SubagentSpawned
-    // event hasn't reached the store yet, or when filters drop the parent
-    // message from `subagentEntries`.
-    return id !== normalizeAgentKey(selectedAgent);
-  }, [pendingAskUser, subagentEntries, selectedAgent]);
-  const [paneVisible, setPaneVisible] = useState(false);
+  // A drawer for a subagent that no longer exists closes.
   useEffect(() => {
-    if (subagentEntries.length === 0) {
-      setPaneVisible(false);
-      return;
-    }
-    if (anyRunning || askUserBelongsToSubagent) {
-      // Force-open the pane whenever a subagent is running or needs a
-      // user answer — cancels any auto-collapse in flight.
-      setPaneVisible(true);
-      return;
-    }
-    // All done, no pending widget — schedule auto-collapse. 10 min
-    // gives ample time to read the subagent's full chat without the
-    // pane vanishing mid-scroll. Cancelled if a new subagent spawns.
-    setPaneVisible(true);
-    const t = setTimeout(() => setPaneVisible(false), 600_000);
-    return () => clearTimeout(t);
-  }, [anyRunning, subagentEntries.length, askUserBelongsToSubagent]);
-
-
-  const filteredSubagentMessages = useMemo(() => {
-    const q = subagentMessageFilter.trim().toLowerCase();
-    if (!q) return subagentMessages;
-    return subagentMessages.filter((msg) => {
-      const from = normalizeAgentKey(msg.from || msg.role);
-      const to = normalizeAgentKey(msg.to || '');
-      return (
-        msg.text.toLowerCase().includes(q) ||
-        from.includes(q) ||
-        to.includes(q)
-      );
-    });
-  }, [subagentMessages, subagentMessageFilter]);
-
-  useEffect(() => {
-    if (!openSubagentId) return;
-    if (!subagents.some((sub) => sub.id === openSubagentId)) {
-      setOpenSubagentId(null);
-    }
+    if (openSubagentId && !subagents.some((sub) => sub.id === openSubagentId)) setOpenSubagentId(null);
   }, [openSubagentId, subagents]);
 
   return (
@@ -843,7 +435,6 @@ export const ChatPanel: React.FC<{
             msgKey={`${streamingMessage.timestamp}-${filteredMainMessages.length - 1}-${streamingMessage.from || streamingMessage.role}-${streamingMessage.text.slice(0, 24)}`}
             isUser={false}
             isExpanded={verboseMode || false}
-            onToggle={noopToggle}
             planProps={streamingPlanProps}
           />
         )}
@@ -874,62 +465,21 @@ export const ChatPanel: React.FC<{
             pendingAskUser={askUserBelongsToSubagent ? pendingAskUser : null}
             onRespondToAskUser={onRespondToAskUser}
             onCancelAgentRun={onCancelAgentRun}
-            onClose={() => setPaneVisible(false)}
+            onClose={closePane}
           />
         </div>
       )}
       </div>
 
-      {/* Status spinner — always visible when active or just completed */}
-      {isAgentActive && reconnecting ? (
-        <div className="px-3 py-1.5">
-          <div className="flex items-center gap-1.5 text-[13px] text-amber-600 dark:text-amber-400 font-medium">
-            <span>⚠</span>
-            <span>Lost the connection to Linggen — reconnecting. This turn may have stopped.</span>
-          </div>
-        </div>
-      ) : isAgentActive ? (
-        <div className="px-3 py-1.5">
-          <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 font-medium animate-pulse">
-            <span className="text-blue-500">✶</span>
-            <span>
-              {agentStatusText?.[sessionId || ''] || spinnerVerb || 'Thinking'}…
-              {(thinkingElapsed > 0 || (agentContext?.[sessionId || '']?.tokens ?? 0) > 0) && (
-                <span className="font-normal text-slate-400 dark:text-slate-500 ml-1">
-                  ({[
-                    thinkingElapsed >= 60
-                      ? `${Math.floor(thinkingElapsed / 60)}m ${thinkingElapsed % 60}s`
-                      : thinkingElapsed > 0 ? `${thinkingElapsed}s` : '',
-                    (tokensPerSec ?? 0) > 0
-                      ? `${tokensPerSec!.toFixed(1)} tok/s`
-                      : '',
-                    (agentContext?.[sessionId || '']?.tokens ?? 0) > 0
-                      ? (() => {
-                          const t = agentContext?.[sessionId || '']?.tokens ?? 0;
-                          const lim = agentContext?.[sessionId || '']?.tokenLimit;
-                          const tk = `${(t / 1000).toFixed(1)}k`;
-                          return lim ? `${tk}/${lim >= 1_000_000 ? `${(lim / 1_000_000).toFixed(lim % 1_000_000 === 0 ? 0 : 1)}M` : `${Math.round(lim / 1000)}K`} ctx (${Math.round(t / lim * 100)}%)` : `${tk} ctx`;
-                        })()
-                      : '',
-                  ].filter(Boolean).join(' · ')})
-                </span>
-              )}
-            </span>
-          </div>
-        </div>
-      ) : lastRunSummary && (
-        <div className="px-3 py-1.5">
-          <div className={`flex items-center gap-1.5 text-[13px] italic ${lastRunSummary.interrupted ? 'text-red-400 dark:text-red-400/80' : 'text-slate-400 dark:text-slate-500'}`}>
-            <span>✻</span>
-            <span>
-              {lastRunSummary.interrupted ? 'Interrupted after' : `${lastRunSummary.verb} for`}{' '}
-              {lastRunSummary.elapsed >= 60
-                ? `${Math.floor(lastRunSummary.elapsed / 60)}m ${lastRunSummary.elapsed % 60}s`
-                : `${lastRunSummary.elapsed}s`}
-            </span>
-          </div>
-        </div>
-      )}
+      <RunStatusLine
+        active={isAgentActive}
+        reconnecting={reconnecting}
+        label={agentStatusText?.[sessionId || ''] || spinnerVerb || 'Thinking'}
+        elapsed={thinkingElapsed}
+        tokensPerSec={tokensPerSec}
+        context={agentContext?.[sessionId || '']}
+        summary={lastRunSummary}
+      />
       <ChatInput
         projectRoot={projectRoot}
         selectedAgent={selectedAgent}
