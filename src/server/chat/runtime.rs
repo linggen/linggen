@@ -48,7 +48,7 @@ pub(super) async fn run_loop_with_tracking(
                     // presence-gates: fires on every reply, only worth a word
                     // when away).
                     let _ = events_tx.send(ServerEvent::Notification(
-                        crate::server::events::NotificationPayload::RunCompleted {
+                        crate::engine::events::NotificationPayload::RunCompleted {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
                         },
@@ -100,7 +100,7 @@ pub(super) async fn run_loop_with_tracking(
                         crate::server::chat::helpers::model_error_code(&msg),
                     );
                     let _ = events_tx.send(ServerEvent::Notification(
-                        crate::server::events::NotificationPayload::RunFailed {
+                        crate::engine::events::NotificationPayload::RunFailed {
                             agent_id: agent_id.to_string(),
                             session_id: session_id.map(|s| s.to_string()),
                             auth_required: msg.contains("AUTH_REQUIRED"),

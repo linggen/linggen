@@ -59,12 +59,14 @@ impl AgentEngine {
 
         info!("Permission: awaiting user approval for '{}'", tool);
         let questions = vec![question];
-        let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
-            agent_id: agent_id.clone(),
-            question_id: question_id.clone(),
-            questions: questions.clone(),
-            session_id: bridge.session_id.clone(),
-        });
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::AskUser {
+                agent_id: agent_id.clone(),
+                question_id: question_id.clone(),
+                questions: questions.clone(),
+                session_id: bridge.session_id.clone(),
+            });
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         bridge.pending.lock().await.insert(

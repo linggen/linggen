@@ -998,7 +998,14 @@ pub(crate) async fn chat_handler(
 
         promote_mission_session_to_user(&mut engine, &state_clone, session_id.as_deref()).await;
 
-        let policy = crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type);
+        let policy =
+            crate::engine::session_policy::SessionPolicy::from_user_type(&req_user_type, || {
+                let room = crate::server::rtc::room_config::load_room_config();
+                crate::engine::session_policy::ConsumerCeiling {
+                    tools: room.allowed_tools,
+                    skills: room.allowed_skills,
+                }
+            });
         policy.apply(&mut engine);
         engine.suggest_followups = req_followups
             && !is_consumer

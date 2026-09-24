@@ -4,7 +4,6 @@
 //! ([`from_agent_event`](ServerEvent::from_agent_event)) or to a transport-layer
 //! signal (queue updates, app launches, room control).
 
-use crate::engine::tools::AskUserQuestion;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

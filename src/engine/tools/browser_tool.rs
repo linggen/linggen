@@ -1,7 +1,7 @@
 //! `Browser_*` engine tools — the engine side of `doc/browser-control-spec.md`.
 //!
 //! Each tool brokers one `control`-module op over the browser bridge
-//! (`server::bridge::BridgeHub`) to the `linggen-browser` extension, which
+//! (a [`BrowserBridge`], served by the daemon's `BridgeHub`) to the `linggen-browser` extension, which
 //! drives ONE visible controlled tab through CDP. Targeting is
 //! reference-first: `Browser_readPage` returns a node tree with per-node
 //! `ref`s; click/type resolve by ref. Mutating actions are gated by the
@@ -15,6 +15,25 @@ use crate::engine::permission::PermissionMode;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
+
+/// A line of progress an op reports while it waits (e.g. "waiting for your OK").
+pub type BridgeProgress = Box<dyn Fn(String) + Send + Sync>;
+
+/// The transport the `Browser_*` tools broker their ops over. The daemon
+/// implements it (its extension bridge); the engine only needs this seam.
+/// The reply is the bridge envelope: `{ok:true, data}` or
+/// `{ok:false, code, message}`.
+#[async_trait]
+pub trait BrowserBridge: Send + Sync {
+    async fn call(
+        &self,
+        module: &str,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+        on_progress: Option<BridgeProgress>,
+    ) -> Value;
+}
 
 /// Default broker timeout. Navigation gets longer — a cold page load plus
 /// the extension's settle delay can exceed the 20s default. Mutating ops get
@@ -39,16 +58,15 @@ impl Tools {
         // The extension says when an op waits — on the user's OK in its
         // approval popup, or behind another browser action — and that line
         // rides the running tool, so a two-minute wait reads as one.
-        let res = match self.progress_tx.clone() {
-            Some(tx) => {
-                let tool = format!("Browser_{op}");
-                hub.call_value_reporting("control", op, params, timeout_ms, move |line| {
-                    let _ = tx.send((tool.clone(), "status".to_string(), line));
-                })
-                .await
-            }
-            None => hub.call_value("control", op, params, timeout_ms).await,
-        };
+        let on_progress = self.progress_tx.clone().map(|tx| {
+            let tool = format!("Browser_{op}");
+            Box::new(move |line: String| {
+                let _ = tx.send((tool.clone(), "status".to_string(), line));
+            }) as BridgeProgress
+        });
+        let res = hub
+            .call("control", op, params, timeout_ms, on_progress)
+            .await;
         if res.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             return Ok(res.get("data").cloned().unwrap_or(Value::Null));
         }

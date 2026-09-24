@@ -193,7 +193,10 @@ impl ToolRegistry {
         self.builtins.set_ask_user_bridge(bridge);
     }
 
-    pub fn set_browser_bridge(&mut self, hub: Arc<crate::server::bridge::BridgeHub>) {
+    pub fn set_browser_bridge(
+        &mut self,
+        hub: Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>,
+    ) {
         self.builtins.set_browser_bridge(hub);
     }
 

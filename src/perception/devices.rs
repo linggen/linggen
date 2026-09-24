@@ -88,7 +88,7 @@ pub fn present_ids() -> Vec<String> {
 /// The user's name for a device, falling back to its id — an unnamed device is
 /// still worth saying, and an id is at least true.
 fn label(id: &str) -> String {
-    crate::server::api::pair::device_name(id).unwrap_or_else(|| id.to_string())
+    crate::state_fs::devices::device_name(id).unwrap_or_else(|| id.to_string())
 }
 
 // --- surviving a restart ----------------------------------------------------

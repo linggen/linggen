@@ -1,7 +1,6 @@
 pub(crate) mod api;
 pub(crate) mod bridge;
 mod chat;
-mod events;
 mod loopback_guard;
 mod mcp;
 mod mcp_agent;
@@ -11,11 +10,13 @@ mod state;
 mod yinyue_moments;
 mod yinyue_watch;
 
-pub use events::{AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent};
+pub use crate::engine::events::{
+    AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent, UiEvent,
+};
 pub(crate) use state::ActiveStatusRecord;
 pub use state::ServerState;
 
-use events::*;
+use crate::engine::events::*;
 
 use crate::engine::agent::AgentManager;
 use crate::mcp_client::McpServerConfig;
@@ -1390,7 +1391,7 @@ async fn prepare_server(
 
     // Spawn the cron mission scheduler.
     {
-        let scheduler_state = state.clone();
+        let scheduler_state = state.scheduler_host();
         tokio::spawn(
             crate::extensions::missions::scheduler::mission_scheduler_loop(scheduler_state),
         );
@@ -1422,8 +1423,16 @@ async fn prepare_server(
         // could not write that device's departure, and an unexplained gap in
         // the log is worse than the restart it hides.
         crate::perception::devices::note_restart();
-        tokio::spawn(crate::perception::publish::publish_loop(state.clone()));
-        tokio::spawn(crate::perception::rotation::rotation_loop(state.clone()));
+        let topic_state = state.clone();
+        tokio::spawn(crate::perception::publish::publish_loop(
+            move |topic, op, payload| {
+                api::topic::retain(topic, op, &payload);
+                api::topic::publish_topic(&topic_state, topic, op, payload);
+            },
+        ));
+        tokio::spawn(crate::perception::rotation::rotation_loop(
+            state.manager.clone(),
+        ));
     }
 
     // Spawn the agent_run sweeper. Reaps `Running` rows older than the
@@ -1577,7 +1586,11 @@ async fn lan_gate(
         return match loopback_rejection(req.headers(), authority.as_deref()) {
             None => next.run(req).await,
             Some(why) => {
-                tracing::warn!("[gate] rejected loopback {} {}: {why}", req.method(), req.uri().path());
+                tracing::warn!(
+                    "[gate] rejected loopback {} {}: {why}",
+                    req.method(),
+                    req.uri().path()
+                );
                 (
                     axum::http::StatusCode::FORBIDDEN,
                     axum::Json(serde_json::json!({ "error": why })),

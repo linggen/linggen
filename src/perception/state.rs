@@ -158,7 +158,7 @@ fn device_lines() -> Vec<String> {
     // One read of the paired list, then every name comes out of it. This runs
     // on every turn, and the shape it replaces re-read and re-parsed the file
     // once per connected device plus once more for the count.
-    let paired = crate::server::api::pair::load_devices();
+    let paired = crate::state_fs::devices::load_devices();
     let here: Vec<String> = super::devices::present_ids()
         .into_iter()
         .map(|id| {

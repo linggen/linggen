@@ -106,7 +106,7 @@ pub struct PageState {
 /// contain one. Agents with an empty queue are omitted: absent means nothing
 /// queued, which is what lets the snapshot express a drained queue.
 fn queued_entries(
-    all: &std::collections::HashMap<String, Vec<crate::server::events::QueuedChatItem>>,
+    all: &std::collections::HashMap<String, Vec<crate::engine::events::QueuedChatItem>>,
     session_id: &str,
 ) -> Vec<serde_json::Value> {
     let marker = format!("|{session_id}|");
@@ -455,7 +455,7 @@ pub async fn build_page_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::events::QueuedChatItem;
+    use crate::engine::events::QueuedChatItem;
     use std::collections::HashMap;
 
     fn item(session: &str, agent: &str) -> QueuedChatItem {

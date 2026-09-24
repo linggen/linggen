@@ -78,7 +78,7 @@ struct HubInner {
 }
 
 /// Where a request's `progress` lines go — the caller's live status.
-type ProgressFn = Box<dyn Fn(String) + Send + Sync>;
+type ProgressFn = crate::engine::tools::browser_tool::BridgeProgress;
 
 /// Shared bridge state: the single connected extension plus in-flight requests.
 pub struct BridgeHub {
@@ -352,22 +352,6 @@ impl BridgeHub {
             .into_value()
     }
 
-    /// [call_value], with the op's `progress` lines handed to [on_progress]
-    /// as they arrive — so a caller can show "waiting for your OK" instead of
-    /// a bare spinner.
-    pub async fn call_value_reporting(
-        &self,
-        module: &str,
-        op: &str,
-        params: Value,
-        timeout_ms: u64,
-        on_progress: impl Fn(String) + Send + Sync + 'static,
-    ) -> Value {
-        self.call(module, op, params, timeout_ms, Some(Box::new(on_progress)))
-            .await
-            .into_value()
-    }
-
     async fn status(&self) -> Value {
         let inner = self.inner.lock().await;
         json!({
@@ -375,6 +359,22 @@ impl BridgeHub {
             "ext_version": inner.ext_version,
             "modules": inner.modules,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::engine::tools::browser_tool::BrowserBridge for BridgeHub {
+    async fn call(
+        &self,
+        module: &str,
+        op: &str,
+        params: Value,
+        timeout_ms: u64,
+        on_progress: Option<crate::engine::tools::browser_tool::BridgeProgress>,
+    ) -> Value {
+        BridgeHub::call(self, module, op, params, timeout_ms, on_progress)
+            .await
+            .into_value()
     }
 }
 

@@ -1503,7 +1503,7 @@ impl Tool for AnswerPromptTool {
         // Dismiss the widget on every surface, like the normal answer path.
         let _ = bridge
             .events_tx
-            .send(crate::server::ServerEvent::WidgetResolved {
+            .send(crate::engine::events::ServerEvent::WidgetResolved {
                 widget_id: qid,
                 session_id,
             });

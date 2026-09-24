@@ -1,3 +1,4 @@
+pub mod devices;
 pub mod sessions;
 
 use anyhow::Result;

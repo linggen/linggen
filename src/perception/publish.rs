@@ -7,10 +7,7 @@
 //! renders it with its age, so a stale account can never pass for a fresh one,
 //! and a host that cannot be reached simply contributes nothing.
 
-use std::sync::Arc;
 use std::time::Duration;
-
-use crate::server::ServerState;
 
 /// The topic both hosts publish their own state on.
 pub const TOPIC: &str = "perception";
@@ -28,7 +25,9 @@ const TICK: Duration = Duration::from_secs(60);
 ///
 /// Silent when no device is connected — there is nobody to tell, and a
 /// retained payload nobody reads is just a file aging on disk.
-pub async fn publish_loop(state: Arc<ServerState>) {
+/// `publish` hands one retained payload (`topic`, `op`, payload) to the
+/// daemon's topic bus — the only thing this loop needs from it.
+pub async fn publish_loop(publish: impl Fn(&str, &str, serde_json::Value) + Send + 'static) {
     tracing::info!("[perception] publishing this Mac's state to connected devices");
     let mut last: Option<String> = None;
     let mut known: Vec<String> = Vec::new();
@@ -70,7 +69,6 @@ pub async fn publish_loop(state: Arc<ServerState>) {
             "lines": lines,
             "recent": recent,
         });
-        crate::server::api::topic::retain(TOPIC, FROM_MAC, &payload);
-        crate::server::api::topic::publish_topic(&state, TOPIC, FROM_MAC, payload);
+        publish(TOPIC, FROM_MAC, payload);
     }
 }

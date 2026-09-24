@@ -500,7 +500,7 @@ pub(crate) async fn trigger_mission_core(
 
     tokio::spawn(async move {
         crate::extensions::missions::scheduler::dispatch_mission_prompt_public(
-            state_clone,
+            state_clone.scheduler_host(),
             root,
             &project_path,
             &mission,

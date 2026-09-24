@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::events::{NotificationPayload, ServerEvent};
 use super::state::ServerState;
+use crate::engine::events::{NotificationPayload, ServerEvent};
 
 const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;
 /// Yinyue's sessions roll daily (`sess-yinyue-YYYY-MM-DD`) with an extra

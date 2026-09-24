@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use super::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
 use super::{UI_PHASE_DOING, UI_PHASE_DONE};
+use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
 
 pub struct ServerState {
     pub manager: Arc<AgentManager>,
@@ -207,9 +207,30 @@ impl ServerState {
         .await
     }
 
-    /// Full variant that carries the emitting agent's run_id and its
-    /// parent's run_id so the UI can route status to the right subagent
-    /// even when multiple subagents share the same `agent_id`.
+    /// The narrow handle the mission scheduler runs on.
+    pub fn scheduler_host(
+        self: &Arc<Self>,
+    ) -> Arc<crate::extensions::missions::scheduler::SchedulerHost> {
+        let me = self.clone();
+        Arc::new(crate::extensions::missions::scheduler::SchedulerHost {
+            manager: self.manager.clone(),
+            events_tx: self.events_tx.clone(),
+            skills: self.skills.clone(),
+            pending_ask_user: self.pending_ask_user.clone(),
+            quiet: {
+                let me = me.clone();
+                Box::new(move |window| me.quiet_for_background(window))
+            },
+            status: Box::new(move |agent_id, status, detail, session_id| {
+                let me = me.clone();
+                Box::pin(async move {
+                    me.send_agent_status(agent_id, status, detail, None, session_id)
+                        .await
+                })
+            }),
+        })
+    }
+
     /// True when no user chat turn landed within `window_secs` and no
     /// top-level agent run is executing — the moment background model work
     /// (mission catch-up) can run without competing with the user for the
@@ -222,6 +243,9 @@ impl ServerState {
         now.saturating_sub(last) >= window_secs && !self.manager.has_active_top_level_runs()
     }
 
+    /// Full variant that carries the emitting agent's run_id and its
+    /// parent's run_id so the UI can route status to the right subagent
+    /// even when multiple subagents share the same `agent_id`.
     pub async fn send_agent_status_with_ids(
         &self,
         agent_id: String,

@@ -210,7 +210,7 @@ pub(crate) fn lane_supported_for(name: &str) -> bool {
 /// Bridge between the synchronous tool executor and the async server state,
 /// allowing the AskUser tool to emit events and block on user responses.
 pub struct AskUserBridge {
-    pub events_tx: broadcast::Sender<crate::server::ServerEvent>,
+    pub events_tx: broadcast::Sender<crate::engine::events::ServerEvent>,
     pub pending: Arc<Mutex<HashMap<String, PendingAskUser>>>,
     pub session_id: Option<String>,
 }
@@ -272,7 +272,7 @@ pub struct Tools {
     pub(crate) last_ask_user: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
     /// Browser bridge hub for the `Browser_*` tools. Wired by the server;
     /// `None` in CLI/eval contexts, where browser control is unavailable.
-    pub(crate) browser_bridge: Option<Arc<crate::server::bridge::BridgeHub>>,
+    pub(crate) browser_bridge: Option<Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>>,
     /// The active skill's name and folder, set on activation. Tools that
     /// write a skill's own files (pictures) resolve the folder here and
     /// build the `/apps/<name>/...` URL the web UI and phone can load.
@@ -342,7 +342,10 @@ impl Tools {
         self.ask_user_bridge = Some(bridge);
     }
 
-    pub fn set_browser_bridge(&mut self, hub: Arc<crate::server::bridge::BridgeHub>) {
+    pub fn set_browser_bridge(
+        &mut self,
+        hub: Arc<dyn crate::engine::tools::browser_tool::BrowserBridge>,
+    ) {
         self.browser_bridge = Some(hub);
     }
 
@@ -581,12 +584,14 @@ impl Tools {
         let questions_clone = args.questions.clone();
 
         // Emit event to push the question to the UI.
-        let _ = bridge.events_tx.send(crate::server::ServerEvent::AskUser {
-            agent_id: agent_id.clone(),
-            question_id: question_id.clone(),
-            questions: args.questions,
-            session_id: bridge.session_id.clone(),
-        });
+        let _ = bridge
+            .events_tx
+            .send(crate::engine::events::ServerEvent::AskUser {
+                agent_id: agent_id.clone(),
+                question_id: question_id.clone(),
+                questions: args.questions,
+                session_id: bridge.session_id.clone(),
+            });
 
         // Register a oneshot channel for the response endpoint to deliver into.
         let (tx, rx) = tokio::sync::oneshot::channel();

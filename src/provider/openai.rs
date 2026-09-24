@@ -45,7 +45,7 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
     // model omit the fields it isn't using. Strict stays on only for
     // genuinely all-required tools, where it adds `additionalProperties:
     // false` without touching `required`.
-    if !crate::engine::tools::json_schema::is_fully_required(&params) {
+    if !super::openai_schema::is_fully_required(&params) {
         return Some(serde_json::json!({
             "type": "function",
             "name": func.get("name")?,
@@ -55,7 +55,7 @@ pub fn wire_tool_def(canonical: &serde_json::Value) -> Option<serde_json::Value>
         }));
     }
 
-    let strict_params = crate::engine::tools::json_schema::strictify_for_openai(params);
+    let strict_params = super::openai_schema::strictify_for_openai(params);
     Some(serde_json::json!({
         "type": "function",
         "name": func.get("name")?,

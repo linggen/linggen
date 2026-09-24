@@ -13,6 +13,14 @@
 
 use std::collections::HashSet;
 
+/// What the owner lets a consumer use — the daemon reads it from its room
+/// config; the engine only applies it.
+#[derive(Debug, Clone, Default)]
+pub struct ConsumerCeiling {
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+}
+
 /// Encapsulates all permission decisions for a session run.
 ///
 /// Built from user type via `from_user_type()`, applied to the engine
@@ -41,12 +49,11 @@ impl SessionPolicy {
         }
     }
 
-    /// Consumer policy — room_config ceiling, locked session, restricted prompt.
-    pub fn consumer() -> Self {
-        let room_cfg = crate::server::rtc::room_config::load_room_config();
+    /// Consumer policy — the owner's ceiling, locked session, restricted prompt.
+    pub fn consumer(ceiling: ConsumerCeiling) -> Self {
         Self {
-            allowed_tools: Some(room_cfg.allowed_tools.into_iter().collect()),
-            allowed_skills: Some(room_cfg.allowed_skills.into_iter().collect()),
+            allowed_tools: Some(ceiling.tools.into_iter().collect()),
+            allowed_skills: Some(ceiling.skills.into_iter().collect()),
             locked: true,
             prompt_profile: super::prompt::profile::PromptProfile::consumer(),
         }
@@ -54,10 +61,10 @@ impl SessionPolicy {
 
     /// Build policy from the user type string injected by peer.rs.
     /// - `"owner"` → no restrictions.
-    /// - `"consumer"` → room_config ceiling, locked.
-    pub fn from_user_type(user_type: &str) -> Self {
+    /// - `"consumer"` → the ceiling `load_ceiling` returns (read only then), locked.
+    pub fn from_user_type(user_type: &str, load_ceiling: impl FnOnce() -> ConsumerCeiling) -> Self {
         match user_type {
-            "consumer" => Self::consumer(),
+            "consumer" => Self::consumer(load_ceiling()),
             _ => Self::owner(),
         }
     }

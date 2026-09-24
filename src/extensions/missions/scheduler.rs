@@ -1,6 +1,6 @@
+use crate::engine::events::{AgentStatusKind, NotificationPayload, ServerEvent};
 use crate::engine::mission::record::{Mission, MissionRunEntry};
 use crate::provider::models::RunUsage;
-use crate::server::{ServerEvent, ServerState};
 use crate::util::LockExt;
 use chrono::Local;
 use std::collections::HashMap;
@@ -8,6 +8,48 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tracing::{debug, info, warn};
+
+/// What the scheduler needs from the daemon — and nothing else of it. The
+/// daemon builds one per spawn (`ServerState::scheduler_host`).
+pub struct SchedulerHost {
+    pub manager: Arc<crate::engine::agent::AgentManager>,
+    pub events_tx: tokio::sync::broadcast::Sender<ServerEvent>,
+    pub skills: Arc<crate::extensions::skills::SkillLoader>,
+    pub pending_ask_user:
+        Arc<tokio::sync::Mutex<HashMap<String, crate::engine::tools::PendingAskUser>>>,
+    /// True when no one has spoken for `window_secs` and no top-level run is
+    /// in flight — the only time background work may start.
+    pub quiet: Box<dyn Fn(u64) -> bool + Send + Sync>,
+    /// Publish an agent's status (agent id, status, detail, session id).
+    #[allow(clippy::type_complexity)]
+    pub status: Box<
+        dyn Fn(
+                String,
+                AgentStatusKind,
+                Option<String>,
+                Option<String>,
+            ) -> futures_util::future::BoxFuture<'static, ()>
+            + Send
+            + Sync,
+    >,
+}
+
+impl SchedulerHost {
+    fn quiet_for_background(&self, window_secs: u64) -> bool {
+        (self.quiet)(window_secs)
+    }
+
+    async fn send_agent_status(
+        &self,
+        agent_id: String,
+        status: AgentStatusKind,
+        detail: Option<String>,
+        _parent_agent_id: Option<String>,
+        session_id: Option<String>,
+    ) {
+        (self.status)(agent_id, status, detail, session_id).await
+    }
+}
 
 /// How often the scheduler checks missions (seconds).
 const CHECK_INTERVAL_SECS: u64 = 10;
@@ -100,7 +142,7 @@ impl MissionState {
 }
 
 /// Background loop that evaluates cron missions and triggers agent runs.
-pub async fn mission_scheduler_loop(state: Arc<ServerState>) {
+pub async fn mission_scheduler_loop(state: Arc<SchedulerHost>) {
     // A fresh process has no live runs — heal rows left `running` by a
     // dead daemon (hang, crash, restart) so history shows the truth and
     // catch-up sees the slot as unfilled.
@@ -369,7 +411,7 @@ pub fn create_mission_session(mission: &Mission) -> Option<String> {
 /// it immediately, and an optional target `day` (YYYY-MM-DD) that swaps
 /// in the mission's day-scoped kickoff (`kickoff-day` frontmatter).
 pub async fn dispatch_mission_prompt_public(
-    state: Arc<ServerState>,
+    state: Arc<SchedulerHost>,
     root: std::path::PathBuf,
     project_path: &str,
     mission: &Mission,
@@ -423,7 +465,7 @@ fn mission_root(mission: &Mission) -> (std::path::PathBuf, String) {
 /// `dispatch_mission_prompt_public` for each overdue one. Overlap with the
 /// regular cron fire is prevented by the generic mission busy-skip in the
 /// scheduler tick.
-pub(crate) fn maybe_fire_catchup_missions(state: Arc<ServerState>) {
+pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
     if !state.quiet_for_background(QUIET_WINDOW_SECS) {
         return;
     }
@@ -533,7 +575,7 @@ fn missed_slot(
 
 /// Dispatch a mission prompt to the mission agent.
 async fn dispatch_mission_prompt(
-    state: Arc<ServerState>,
+    state: Arc<SchedulerHost>,
     root: std::path::PathBuf,
     project_path: &str,
     mission: &Mission,
@@ -541,8 +583,6 @@ async fn dispatch_mission_prompt(
     day: Option<String>,
     attended: bool,
 ) {
-    use crate::server::AgentStatusKind;
-
     // Refresh from disk so in-flight `mission.md` edits land on the next
     // run without needing a daemon restart. Falls back to the cached
     // copy if the file is gone or unparseable — better to run stale than
@@ -633,7 +673,7 @@ async fn dispatch_mission_prompt(
                 .clone()
                 .or_else(|| mission.project.clone())
                 .unwrap_or_default();
-            let _ = events_tx.send(crate::server::ServerEvent::SessionCreated {
+            let _ = events_tx.send(ServerEvent::SessionCreated {
                 session_id: sid.clone(),
                 title: mission_session_title(mission),
                 creator: "mission".into(),
@@ -944,7 +984,7 @@ async fn dispatch_mission_prompt(
 
     // Notify UI that the mission finished.
     let _ = state.events_tx.send(ServerEvent::Notification(
-        crate::server::NotificationPayload::MissionCompleted {
+        NotificationPayload::MissionCompleted {
             mission_id: mission.id.clone(),
             mission_name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
             status: status.to_string(),
@@ -956,7 +996,7 @@ async fn dispatch_mission_prompt(
 
 /// Append the engine-composed run report (see `super::report`) to the
 /// run's session as an agent message, then ping the UI to reload.
-async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id: Option<&str>) {
+async fn append_run_report(state: &Arc<SchedulerHost>, agent_id: &str, session_id: Option<&str>) {
     let Some(sid) = session_id else { return };
     let Ok(messages) = state.manager.global_sessions.get_chat_history(sid) else {
         return;
@@ -1002,7 +1042,7 @@ async fn append_run_report(state: &Arc<ServerState>, agent_id: &str, session_id:
 /// run spent. The entry keeps its original `triggered_at` (the actual start
 /// time).
 fn finalize_mission_run(
-    state: &Arc<ServerState>,
+    state: &Arc<SchedulerHost>,
     mission: &Mission,
     run_id: &str,
     status: &str,
@@ -1021,7 +1061,7 @@ fn finalize_mission_run(
 }
 
 fn record_mission_run(
-    state: &Arc<ServerState>,
+    state: &Arc<SchedulerHost>,
     mission: &Mission,
     run_id: &str,
     session_id: Option<&str>,

@@ -4,6 +4,7 @@ mod closing_ask;
 pub(crate) mod cloud_meter;
 mod context;
 mod dispatch;
+pub mod events;
 pub mod mission;
 pub mod permission;
 mod plan;

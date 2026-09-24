@@ -112,18 +112,17 @@ impl Tools {
                         let url = format!("/apps/{}/{}", skill.name, app.entry);
                         // Emit AppLaunched event if we have the bridge.
                         if let Some(bridge) = &self.ask_user_bridge {
-                            let _ =
-                                bridge
-                                    .events_tx
-                                    .send(crate::server::ServerEvent::AppLaunched {
-                                        skill: skill.name.clone(),
-                                        launcher: "web".to_string(),
-                                        url: url.clone(),
-                                        title: skill.description.clone(),
-                                        width: app.width,
-                                        height: app.height,
-                                        session_id: bridge.session_id.clone(),
-                                    });
+                            let _ = bridge.events_tx.send(
+                                crate::engine::events::ServerEvent::AppLaunched {
+                                    skill: skill.name.clone(),
+                                    launcher: "web".to_string(),
+                                    url: url.clone(),
+                                    title: skill.description.clone(),
+                                    width: app.width,
+                                    height: app.height,
+                                    session_id: bridge.session_id.clone(),
+                                },
+                            );
                         }
                         Ok(ToolResult::Success(format!(
                             "Launched web app '{}' at {}",
@@ -133,18 +132,17 @@ impl Tools {
                     "url" => {
                         let url = app.entry.clone();
                         if let Some(bridge) = &self.ask_user_bridge {
-                            let _ =
-                                bridge
-                                    .events_tx
-                                    .send(crate::server::ServerEvent::AppLaunched {
-                                        skill: skill.name.clone(),
-                                        launcher: "url".to_string(),
-                                        url: url.clone(),
-                                        title: skill.description.clone(),
-                                        width: app.width,
-                                        height: app.height,
-                                        session_id: bridge.session_id.clone(),
-                                    });
+                            let _ = bridge.events_tx.send(
+                                crate::engine::events::ServerEvent::AppLaunched {
+                                    skill: skill.name.clone(),
+                                    launcher: "url".to_string(),
+                                    url: url.clone(),
+                                    title: skill.description.clone(),
+                                    width: app.width,
+                                    height: app.height,
+                                    session_id: bridge.session_id.clone(),
+                                },
+                            );
                         }
                         Ok(ToolResult::Success(format!(
                             "Launched URL app '{}': {}",

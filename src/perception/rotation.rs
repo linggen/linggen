@@ -21,10 +21,10 @@ const TICK: Duration = Duration::from_secs(3600);
 /// and a machine that is up for thirty seconds has no day to rotate.
 const STARTUP: Duration = Duration::from_secs(120);
 
-pub async fn rotation_loop(state: std::sync::Arc<crate::server::ServerState>) {
+pub async fn rotation_loop(manager: std::sync::Arc<crate::engine::agent::AgentManager>) {
     tokio::time::sleep(STARTUP).await;
     loop {
-        let url = state.manager.get_config_snapshot().await.agent.ling_mem_url;
+        let url = manager.get_config_snapshot().await.agent.ling_mem_url;
         rotate(&url).await;
         tokio::time::sleep(TICK).await;
     }
