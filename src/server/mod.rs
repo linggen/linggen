@@ -14,9 +14,7 @@ mod ui_events;
 mod yinyue_moments;
 mod yinyue_watch;
 
-pub use crate::engine::events::{
-    AgentStatusKind, NotificationPayload, QueuedChatItem, ServerEvent,
-};
+pub use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
 pub use state::ServerState;
 pub(crate) use ui_events::{map_server_event_to_ui_message, UI_PHASE_DOING, UI_PHASE_DONE};
 
