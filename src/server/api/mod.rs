@@ -26,6 +26,7 @@ pub(super) mod storage;
 /// reaches the user's other devices, and perception publishes this Mac's own
 /// state on one.
 pub(crate) mod topic;
+pub(crate) mod utils;
 pub(super) mod tts;
 pub(super) mod tts_mlx;
 pub(super) mod workspace;
