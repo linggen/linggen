@@ -432,18 +432,9 @@ pub(super) async fn deliver_to_chat_agent(
             return;
         }
     };
-    let run_id = state
-        .manager
-        .begin_agent_run(
-            &root,
-            Some(session_id.as_str()),
-            &to,
-            None,
-            Some(format!("from {from}")),
-        )
-        .await
-        .unwrap_or_else(|_| format!("run-{to}-agentchat"));
-
+    // No run is begun here: the turn core tracks its own; one around it was
+    // a second "running" row per message, and the stop button's pick could
+    // be the one the engine never checks.
     // Show the incoming message in the chat, attributed to the sender. The
     // attribution is the message's from_id — the chat surfaces render the
     // "[Yinyue]" label from that one fact, and the model gets the same label
@@ -469,7 +460,6 @@ pub(super) async fn deliver_to_chat_agent(
         // session can't observe or clear another turn's mark.
         state.manager.mark_agent_chat_session(&session_id);
         engine.set_parent_agent(None);
-        engine.set_run_id(Some(run_id.clone()));
         engine.last_assistant_text = None;
         let ctx = crate::server::chat::ChatRunCtx {
             state: state.clone(),
@@ -486,18 +476,9 @@ pub(super) async fn deliver_to_chat_agent(
             silence_ok: false,
         };
         crate::server::chat::run_session_turn(&ctx, &mut engine, &state.manager, None).await;
-        engine.set_run_id(None);
         state.manager.clear_agent_chat_session(&session_id);
     }
 
-    let _ = state
-        .manager
-        .finish_agent_run(
-            &run_id,
-            crate::engine::agent::AgentRunStatus::Completed,
-            None,
-        )
-        .await;
     tracing::info!("[agent-chat] delivered '{from}'→'{to}' in {session_id}");
 }
 

@@ -7,16 +7,18 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useStableArray } from '../../hooks/useStableArray';
 import { normalizeAgentKey, sortMessagesByTime, collapseProgressMessages } from './utils/message';
 
-/** A main-chat row for `selected`: its own traffic, the user's to it, and
- *  unrouted notices (system, compaction, skill-page `assistant` rows). */
-function isForAgent(msg: ChatMessage, selected: string): boolean {
+/** A main-chat row for `selected`: its own traffic, the user's to it,
+ *  unrouted notices (system, compaction, skill-page `assistant` rows), and a
+ *  guest's exchange with the user — another main agent addressed in this
+ *  chat (`@银月 …`) answers here, so the user's line to it and its reply to
+ *  the user belong to the chat too. */
+export function isForAgent(msg: ChatMessage, selected: string, mainAgentIds: readonly string[] = []): boolean {
   const from = normalizeAgentKey(msg.from || msg.role);
   const to = normalizeAgentKey(msg.to || '');
   if (from === 'system' || from === 'compaction' || from === 'assistant') return true;
-  if (msg.role === 'user') return !to || to === selected;
   if (from === selected || to === selected) return true;
-  if (from === 'user') return to === selected;
-  return false;
+  if (msg.role === 'user' || from === 'user') return !to || mainAgentIds.includes(to);
+  return to === 'user' && mainAgentIds.includes(from);
 }
 
 const involves = (msg: ChatMessage, id: string) =>
@@ -34,19 +36,20 @@ export function useChatFilters(opts: {
   chatMessages: ChatMessage[];
   queuedMessages: QueuedChatItem[];
   selectedAgent: string;
+  mainAgentIds: readonly string[];
   subagents: SubagentInfo[];
   openSubagentId: string | null;
   subagentMessageFilter: string;
 }) {
-  const { chatMessages, queuedMessages, selectedAgent, subagents, openSubagentId, subagentMessageFilter } = opts;
+  const { chatMessages, queuedMessages, selectedAgent, mainAgentIds, subagents, openSubagentId, subagentMessageFilter } = opts;
   const isMissionSession = useSessionStore((s) => s.isMissionSession);
   const selected = normalizeAgentKey(selectedAgent);
 
   // Mission sessions show all messages — no agent filtering.
   const filteredMainMessages = useMemo(() => {
-    const visible = isMissionSession ? chatMessages : chatMessages.filter((m) => isForAgent(m, selected));
+    const visible = isMissionSession ? chatMessages : chatMessages.filter((m) => isForAgent(m, selected, mainAgentIds));
     return collapseProgressMessages(sortMessagesByTime(visible));
-  }, [chatMessages, selected, isMissionSession]);
+  }, [chatMessages, selected, mainAgentIds, isMissionSession]);
 
   // The finished part keeps its identity while its rows do, so the list's
   // memo holds for the whole stream.

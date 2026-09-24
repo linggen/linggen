@@ -274,7 +274,7 @@ export const ChatPanel: React.FC<{
 
   const {
     filteredMainMessages, historicalMessages, streamingMessage, visibleQueued, selectedSubagent, filteredSubagentMessages,
-  } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, subagents, openSubagentId, subagentMessageFilter });
+  } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, mainAgentIds, subagents, openSubagentId, subagentMessageFilter });
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
   const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
   const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent);

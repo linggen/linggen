@@ -18,7 +18,7 @@ pub(crate) async fn run_yinyue_turn(
     task: String,
     trigger_source: &str,
 ) -> Option<String> {
-    let root = crate::util::resolve_path(std::path::Path::new("~/.linggen"));
+    let root = her_root();
 
     // Pet settings (Settings → General → Pet). Disabled → she doesn't run at all.
     let pet = state.manager.get_config_snapshot().await.pet;
@@ -48,19 +48,25 @@ pub(crate) async fn run_yinyue_turn(
 pub(crate) async fn run_guest_turn(
     state: &Arc<ServerState>,
     session_id: String,
-    root: std::path::PathBuf,
     message: String,
 ) -> Option<String> {
     let pet = state.manager.get_config_snapshot().await.pet;
     if !pet.enabled {
         return None;
     }
+    // She works from her own folder at any table — the session's cwd and its
+    // grants are its agent's, not hers (`seat_permissions`).
     let seat = Seat {
         session_id,
-        root,
+        root: her_root(),
         guest: true,
     };
     run_at(state, &seat, &pet, message, "user").await
+}
+
+/// Her own folder: where her turns run, and what her permissions cover.
+fn her_root() -> std::path::PathBuf {
+    crate::util::resolve_path(std::path::Path::new("~/.linggen"))
 }
 
 /// Where one of her turns runs: her own rolling thread, or a guest seat at
@@ -98,7 +104,20 @@ async fn engine_for(
         .agent
         .max_delegation_depth;
     engine.set_delegation_depth(0, max_depth);
+    engine.seat_permissions = Some(guest_permissions(&engine));
     Ok(Arc::new(tokio::sync::Mutex::new(engine)))
+}
+
+/// What she may do as a guest: exactly what her own sessions start with — the
+/// configured default mode on her own folder — and never a prompt, since the
+/// table's surface is not hers to ask on.
+fn guest_permissions(
+    engine: &crate::engine::AgentEngine,
+) -> crate::engine::permission::SessionPermissions {
+    crate::engine::permission::SessionPermissions::seat(
+        &engine.tools.builtins.cwd().to_string_lossy(),
+        engine.cfg.permission_mode,
+    )
 }
 
 /// One turn of hers at `seat`, through the shared turn-core, on her model.
@@ -121,18 +140,10 @@ async fn run_at(
         }
     };
 
-    let run_id = state
-        .manager
-        .begin_agent_run(
-            root,
-            Some(session_id.as_str()),
-            YINYUE_AGENT,
-            None,
-            Some(YINYUE_AGENT.to_string()),
-        )
-        .await
-        .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
-
+    // No run is begun here: the turn core tracks its own
+    // (`run_loop_with_tracking`), and a second one around it was a second
+    // "running" row per message — the stop button could pick the outer one,
+    // which the engine never checks (seen 2026-09-24: yinyue01 + yinyue02).
     let spoken = {
         let mut engine = agent.lock().await;
         // Her own thread: persist the incoming message to the session store so
@@ -162,7 +173,6 @@ async fn run_at(
             state.manager.mark_agent_chat_session(session_id);
         }
         engine.set_parent_agent(None);
-        engine.set_run_id(Some(run_id.clone()));
         // Clear so we read THIS turn's final line — the engine is reused across
         // turns and would otherwise hold the prior one.
         engine.last_assistant_text = None;
@@ -223,24 +233,14 @@ async fn run_at(
         )
         .await;
 
-        engine.set_run_id(None);
         if trigger_source == "agent_chat" {
             state.manager.clear_agent_chat_session(session_id);
         }
         engine.last_assistant_text.clone()
     };
 
-    // The turn core handles + persists its own errors; record the run as
-    // completed and let an empty reply mean "nothing to say".
-    let _ = state
-        .manager
-        .finish_agent_run(
-            &run_id,
-            crate::engine::agent::AgentRunStatus::Completed,
-            None,
-        )
-        .await;
-
+    // The turn core handles + persists its own errors and its run; an empty
+    // reply means "nothing to say".
     spoken
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

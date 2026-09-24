@@ -14,12 +14,7 @@ pub(crate) fn is_own_session(session_id: &str) -> bool {
 }
 
 /// Put the user's message on the table and answer it in the background.
-pub(crate) async fn answer_as_guest(
-    state: Arc<ServerState>,
-    session_id: String,
-    root: std::path::PathBuf,
-    message: String,
-) {
+pub(crate) async fn answer_as_guest(state: Arc<ServerState>, session_id: String, message: String) {
     crate::server::chat::helpers::persist_and_emit_to_store(
         &state.manager.global_sessions,
         &state.events_tx,
@@ -43,7 +38,7 @@ pub(crate) async fn answer_as_guest(
                 sid.clone(),
             )
             .await;
-        let reply = run_guest_turn(&state, session_id.clone(), root, message).await;
+        let reply = run_guest_turn(&state, session_id.clone(), message).await;
         if let Some(reply) = reply {
             crate::server::chat::side_lines::note(
                 &session_id,
@@ -99,6 +94,23 @@ mod tests {
                 !spec.tools.iter().any(|t| t == forbidden),
                 "{forbidden} is not hers to bring to a table"
             );
+        }
+    }
+
+    /// One message, one run. The turn core begins and finishes the run it
+    /// executes (`run_loop_with_tracking`); a caller that also began one
+    /// wrapped it in a second "running" row (yinyue01 + yinyue02 for one
+    /// `@银月 你好`, 2026-09-24), and the chat's stop could cancel the outer
+    /// one, which the engine never checks.
+    #[test]
+    fn her_turns_leave_the_run_to_the_turn_core() {
+        for (file, src) in [
+            ("turn.rs", include_str!("turn.rs")),
+            ("triggers.rs", include_str!("triggers.rs")),
+            ("guest.rs", include_str!("guest.rs")),
+        ] {
+            let calls = src.matches(concat!(".begin_agent_run", "(")).count();
+            assert_eq!(calls, 0, "{file} begins a run around the turn core");
         }
     }
 

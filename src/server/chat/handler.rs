@@ -972,7 +972,6 @@ pub(crate) async fn start_turn(
         crate::server::resident::answer_as_guest(
             state.clone(),
             effective_session_id.clone(),
-            root.clone(),
             req.message.clone(),
         )
         .await;

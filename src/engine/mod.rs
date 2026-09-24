@@ -169,6 +169,50 @@ impl AgentEngine {
         }
     }
 
+    /// The permissions this loop runs under. A guest seat brings its own
+    /// (`seat_permissions`); everyone else reads the session's
+    /// permission.json, initializing it with the configured default mode on
+    /// the starting cwd for a new user session.
+    fn load_session_permissions(&mut self, sid: &str) {
+        let sdir = crate::paths::global_sessions_dir().join(sid);
+        if let Some(seat) = &self.seat_permissions {
+            self.session_permissions = seat.clone();
+            self.session_dir = Some(sdir);
+            return;
+        }
+        self.session_permissions = permission::SessionPermissions::load(&sdir);
+
+        // Mission and proxy-consumer sessions are non-interactive — they
+        // pause/fail instead of prompting. Re-apply after load, since
+        // permission.json may have been written before this flag was set.
+        if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some() {
+            self.session_permissions.interactive = false;
+        }
+
+        // Initialize default path_modes if empty (new user session →
+        // configured default mode on starting cwd). Mission/consumer
+        // sessions get their grants from frontmatter; skip the default.
+        if self.session_permissions.path_modes.is_empty() && self.session_permissions.interactive {
+            let actual_cwd = self.tools.builtins.cwd();
+            let cwd_str = if let Some(home) = dirs::home_dir() {
+                let ws = actual_cwd.to_string_lossy();
+                let hs = home.to_string_lossy();
+                if ws.starts_with(hs.as_ref()) {
+                    format!("~{}", &ws[hs.len()..])
+                } else {
+                    ws.to_string()
+                }
+            } else {
+                actual_cwd.to_string_lossy().to_string()
+            };
+            self.session_permissions
+                .set_path_mode(&cwd_str, self.cfg.permission_mode);
+            self.session_permissions.save(&sdir);
+        }
+
+        self.session_dir = Some(sdir);
+    }
+
     /// Pre-loop setup: load session permissions, emit "working" status,
     /// sync world state, validate the task, push the start-of-loop
     /// context record, prime context-window/token estimates, and
@@ -182,43 +226,8 @@ impl AgentEngine {
     async fn initialize_loop(&mut self, session_id: Option<&str>) -> Result<LoopState> {
         self.session_id = session_id.map(|s| s.to_string());
 
-        // Load session permissions from permission.json (or initialize defaults).
         if let Some(sid) = session_id {
-            let sdir = crate::paths::global_sessions_dir().join(sid);
-            self.session_permissions = permission::SessionPermissions::load(&sdir);
-
-            // Mission and proxy-consumer sessions are non-interactive — they
-            // pause/fail instead of prompting. Re-apply after load, since
-            // permission.json may have been written before this flag was set.
-            if self.cfg.consumer_allowed_tools.is_some() || self.cfg.mission_allowed_tools.is_some()
-            {
-                self.session_permissions.interactive = false;
-            }
-
-            // Initialize default path_modes if empty (new user session →
-            // configured default mode on starting cwd). Mission/consumer
-            // sessions get their grants from frontmatter; skip the default.
-            if self.session_permissions.path_modes.is_empty()
-                && self.session_permissions.interactive
-            {
-                let actual_cwd = self.tools.builtins.cwd();
-                let cwd_str = if let Some(home) = dirs::home_dir() {
-                    let ws = actual_cwd.to_string_lossy();
-                    let hs = home.to_string_lossy();
-                    if ws.starts_with(hs.as_ref()) {
-                        format!("~{}", &ws[hs.len()..])
-                    } else {
-                        ws.to_string()
-                    }
-                } else {
-                    actual_cwd.to_string_lossy().to_string()
-                };
-                self.session_permissions
-                    .set_path_mode(&cwd_str, self.cfg.permission_mode);
-                self.session_permissions.save(&sdir);
-            }
-
-            self.session_dir = Some(sdir);
+            self.load_session_permissions(sid);
         }
 
         if self.is_cancelled().await {
@@ -1233,5 +1242,82 @@ mod tests {
     #[test]
     fn kickoff_stop_empty_list_never_hits() {
         assert!(!kickoff_stop_hit(&[], "DONE"));
+    }
+}
+
+#[cfg(test)]
+mod seat_tests {
+    use super::permission::{
+        check_permission, PermissionCheckResult, PermissionMode, SessionPermissions,
+    };
+    use super::{AgentEngine, AgentRole, EngineConfig, InterfaceMode};
+
+    fn engine_at(root: &std::path::Path) -> AgentEngine {
+        let cfg = EngineConfig::from_app_config(
+            &crate::config::Config::default(),
+            root.to_path_buf(),
+            InterfaceMode::Web,
+        );
+        let models =
+            std::sync::Arc::new(crate::provider::models::ModelManager::new_with_credentials(
+                Vec::new(),
+                &crate::credentials::Credentials::default(),
+            ));
+        AgentEngine::new(cfg, models, "m".to_string(), AgentRole::Lead).unwrap()
+    }
+
+    /// A guest seat runs under the permissions it brought, never the table's
+    /// permission.json — and leaves that file alone. On 2026-09-24 the
+    /// companion's guest turn read the app session's grants (edit on the
+    /// app's folder), found her own folder uncovered, and waited forever on a
+    /// prompt for `Express` that no surface showed.
+    #[test]
+    fn a_seat_brings_its_own_permissions_and_writes_none() {
+        // Her folder outside the OS temp dir, which is always-allowed scratch.
+        let her = dirs::home_dir().unwrap().join(".linggen");
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = engine_at(root.path());
+        let folder = her.to_string_lossy().to_string();
+        engine.seat_permissions = Some(SessionPermissions::seat(&folder, PermissionMode::Read));
+        let sid = format!("sess-seat-test-{}", uuid::Uuid::new_v4());
+
+        engine.load_session_permissions(&sid);
+
+        assert!(
+            !engine.session_permissions.interactive,
+            "a guest never prompts"
+        );
+        assert_eq!(engine.session_permissions.path_modes.len(), 1);
+        assert!(
+            !crate::paths::global_sessions_dir().join(&sid).exists(),
+            "the table's permission.json is not the guest's to write"
+        );
+        assert!(
+            matches!(
+                check_permission(
+                    "Express",
+                    None,
+                    None,
+                    &her,
+                    &engine.session_permissions,
+                    None,
+                ),
+                PermissionCheckResult::Allowed
+            ),
+            "her own read tools run as they do in her own sessions"
+        );
+        // Past her grant: tool_exec refuses a non-interactive session with a
+        // tool error instead of asking.
+        assert!(matches!(
+            check_permission(
+                "Write",
+                None,
+                Some(&format!("{folder}/x.txt")),
+                &her,
+                &engine.session_permissions,
+                None,
+            ),
+            PermissionCheckResult::NeedsPrompt(_)
+        ));
     }
 }

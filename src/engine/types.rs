@@ -326,6 +326,10 @@ pub struct AgentEngine {
     pub(crate) last_ask_answered: bool,
     /// Session-scoped permissions (path modes, allows, denied sigs). See permission-spec.md.
     pub session_permissions: permission::SessionPermissions,
+    /// The permissions this engine brings to a session that isn't its own (a
+    /// guest seat). When set, every loop runs under these instead of the
+    /// session's `permission.json`, and never writes that file.
+    pub seat_permissions: Option<permission::SessionPermissions>,
     /// Prompt profile — which system prompt sections to include (owner vs consumer).
     pub prompt_profile: super::prompt::profile::PromptProfile,
     /// Directory for the current session (for persisting permission.json).
@@ -558,6 +562,7 @@ impl AgentEngine {
             closing_ask: None,
             last_ask_answered: false,
             session_permissions: permission::SessionPermissions::default(),
+            seat_permissions: None,
             prompt_profile: super::prompt::profile::PromptProfile::default(),
             session_dir: None,
             default_models: Vec::new(),
