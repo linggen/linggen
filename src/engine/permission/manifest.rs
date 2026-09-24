@@ -45,15 +45,6 @@ impl Grants {
             .iter()
             .map(|g| (g.path.as_str(), parse_mode_str(&g.mode)))
     }
-
-    /// Human-readable summary for approval prompts: `~/foo (write), /tmp (read)`.
-    pub fn display_paths(&self) -> String {
-        self.paths
-            .iter()
-            .map(|g| format!("{} ({})", g.path, g.mode))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 /// Parse a frontmatter mode string into the engine enum. Accepts `"write"`

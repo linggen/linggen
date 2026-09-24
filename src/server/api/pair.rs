@@ -311,9 +311,7 @@ pub struct Identified {
 /// after pairing, so the connect-time claim wins over the pair-time one —
 /// including `None`, which is how a sign-out is recorded.
 pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Identified> {
-    if device_by_token(token).is_none() {
-        return None;
-    }
+    device_by_token(token)?;
     let result = modify_devices(|devices| {
         let d = devices.iter_mut().find(|d| token_matches(d, token))?;
         Some(refresh_account(d, account))

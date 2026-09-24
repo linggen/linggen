@@ -210,6 +210,7 @@ impl UserContext {
     }
 
     /// User type string for the chat API.
+    #[cfg(test)]
     pub fn user_type(&self) -> &'static str {
         self.kind.as_str()
     }

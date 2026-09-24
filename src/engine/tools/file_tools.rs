@@ -143,7 +143,7 @@ impl Tools {
             if !walk_root.is_dir() {
                 continue;
             }
-            let gs = build_globset(Some(&[abs_glob.clone()]))?;
+            let gs = build_globset(Some(std::slice::from_ref(abs_glob)))?;
             let Some(gs) = gs else { continue };
             let walker = WalkBuilder::new(walk_root)
                 .standard_filters(false)

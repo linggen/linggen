@@ -66,7 +66,7 @@ impl SessionPolicy {
     pub fn is_skill_allowed(&self, name: &str) -> bool {
         self.allowed_skills
             .as_ref()
-            .map_or(true, |s| s.contains(name))
+            .is_none_or(|s| s.contains(name))
     }
 
     /// Apply this policy to an engine — the ONLY place engine mutation happens.

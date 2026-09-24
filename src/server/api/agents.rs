@@ -14,12 +14,6 @@ use std::sync::Arc;
 
 use super::{canonical_project_root, ProjectQuery};
 
-async fn first_patch_agent(state: &Arc<ServerState>, root: &PathBuf) -> Option<String> {
-    // All agents are patch-capable; pick the first.
-    let entries = state.manager.list_agent_specs(root).await.ok()?;
-    entries.into_iter().next().map(|entry| entry.agent_id)
-}
-
 #[derive(Deserialize)]
 pub(crate) struct TaskRequest {
     project_root: String,
@@ -64,13 +58,6 @@ pub(crate) async fn set_task(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct RunRequest {
-    project_root: String,
-    agent_id: String,
-    session_id: Option<String>,
-}
-
-#[derive(Deserialize)]
 pub(crate) struct CancelRunRequest {
     run_id: String,
 }
@@ -78,115 +65,6 @@ pub(crate) struct CancelRunRequest {
 #[derive(Serialize)]
 struct CancelRunResponse {
     status: String,
-}
-
-pub(crate) async fn run_agent(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<RunRequest>,
-) -> impl IntoResponse {
-    let root = PathBuf::from(&req.project_root);
-    let agent_id = req.agent_id.clone();
-    let session_id = req.session_id.clone();
-    let events_tx = state.events_tx.clone();
-    let manager = state.manager.clone();
-    let state_clone = state.clone();
-
-    match state
-        .manager
-        .get_or_create_session_agent(
-            req.session_id.as_deref().unwrap_or("default"),
-            &root,
-            &req.agent_id,
-        )
-        .await
-    {
-        Ok(agent) => {
-            tokio::spawn(async move {
-                let run_id = match manager
-                    .begin_agent_run(
-                        &root,
-                        session_id.as_deref(),
-                        &agent_id,
-                        None,
-                        Some("api/run".to_string()),
-                    )
-                    .await
-                {
-                    Ok(id) => id,
-                    Err(_) => format!("run-{}-fallback", agent_id),
-                };
-                state_clone
-                    .send_agent_status(
-                        agent_id.clone(),
-                        AgentStatusKind::Working,
-                        Some("Running".to_string()),
-                        None,
-                        None,
-                    )
-                    .await;
-                let mut engine = agent.lock().await;
-                engine.set_parent_agent(None);
-                engine.set_run_id(Some(run_id.clone()));
-                let run_result = engine.run_agent_loop(session_id.as_deref()).await;
-                engine.set_run_id(None);
-                let outcome = match run_result {
-                    Ok(outcome) => {
-                        let _ = manager
-                            .finish_agent_run(
-                                &run_id,
-                                crate::engine::agent::AgentRunStatus::Completed,
-                                None,
-                            )
-                            .await;
-                        outcome
-                    }
-                    Err(err) => {
-                        let msg = err.to_string();
-                        let status = if msg.to_lowercase().contains("cancel") {
-                            crate::engine::agent::AgentRunStatus::Cancelled
-                        } else {
-                            crate::engine::agent::AgentRunStatus::Failed
-                        };
-                        let _ = manager.finish_agent_run(&run_id, status, Some(msg)).await;
-                        crate::engine::AgentOutcome::None
-                    }
-                };
-
-                let _ = events_tx.send(ServerEvent::Outcome {
-                    agent_id: agent_id.clone(),
-                    outcome,
-                    session_id: session_id.clone(),
-                });
-                state_clone
-                    .send_agent_status(
-                        agent_id.clone(),
-                        AgentStatusKind::Idle,
-                        Some("Idle".to_string()),
-                        None,
-                        None,
-                    )
-                    .await;
-            });
-
-            Json(serde_json::json!({ "status": "started" })).into_response()
-        }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CancelToolRequest {
-    block_id: String,
-}
-
-pub(crate) async fn cancel_tool_execution(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<CancelToolRequest>,
-) -> impl IntoResponse {
-    let triggered = state.manager.trigger_tool_cancel(&req.block_id);
-    Json(serde_json::json!({
-        "status": if triggered { "cancelled" } else { "not_found" }
-    }))
 }
 
 pub(crate) async fn cancel_agent_run(
@@ -298,11 +176,6 @@ pub(crate) async fn clear_queued_messages(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub(crate) struct AgentsQuery {
-    project_root: Option<String>,
-}
-
-#[derive(Deserialize)]
 pub(crate) struct AgentFileQuery {
     project_root: String,
     path: String,
@@ -391,21 +264,6 @@ fn resolve_agent_path(root: &std::path::Path, rel: &str) -> PathBuf {
         home.join(&rel[2..])
     } else {
         root.join(rel)
-    }
-}
-
-pub(crate) async fn list_agents_api(
-    State(state): State<Arc<ServerState>>,
-    Query(query): Query<AgentsQuery>,
-) -> impl IntoResponse {
-    let root = query
-        .project_root
-        .as_deref()
-        .map(canonical_project_root)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    match state.manager.list_agents(&root).await {
-        Ok(agents) => Json(agents).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -530,27 +388,6 @@ pub(crate) async fn delete_agent_file_api(
     }
     let _ = state.events_tx.send(ServerEvent::StateUpdated);
     StatusCode::OK.into_response()
-}
-
-#[derive(Deserialize)]
-pub(crate) struct AgentRunsQuery {
-    project_root: String,
-    session_id: Option<String>,
-}
-
-pub(crate) async fn list_agent_runs_api(
-    State(state): State<Arc<ServerState>>,
-    Query(query): Query<AgentRunsQuery>,
-) -> impl IntoResponse {
-    let root = PathBuf::from(&query.project_root);
-    match state
-        .manager
-        .list_agent_runs(&root, query.session_id.as_deref())
-        .await
-    {
-        Ok(runs) => Json(runs).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
 }
 
 /// Reload agents from disk by invalidating the agent cache.

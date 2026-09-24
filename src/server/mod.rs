@@ -41,9 +41,8 @@ use api::account::{
     post_account_logout,
 };
 use api::agents::{
-    cancel_agent_run, cancel_tool_execution, clear_queued_messages, delete_agent_file_api,
-    get_agent_file_api, list_agent_files_api, list_agent_runs_api, list_agents_api, reload_agents,
-    run_agent, set_task, upsert_agent_file_api,
+    cancel_agent_run, clear_queued_messages, delete_agent_file_api, get_agent_file_api,
+    list_agent_files_api, reload_agents, set_task, upsert_agent_file_api,
 };
 use api::config::{
     codex_auth_logout, get_claude_auth_status, get_codex_auth_status, get_config_api,
@@ -51,8 +50,8 @@ use api::config::{
     update_credentials_api,
 };
 use api::marketplace::{
-    builtin_skills_install, builtin_skills_list, clawhub_scan, community_search,
-    marketplace_install, marketplace_move_to_global, marketplace_uninstall,
+    builtin_skills_install, builtin_skills_list, community_search, marketplace_install,
+    marketplace_move_to_global, marketplace_uninstall,
 };
 use api::missions::{
     create_mission, delete_mission, get_mission_file, get_mission_session_state, list_mission_runs,
@@ -64,9 +63,8 @@ use api::rooms::{
     proxy_status_api, token_usage_api, update_room_config,
 };
 use api::sessions::{
-    create_session, delete_unified_session, get_skill_session_state, list_all_sessions,
-    list_sessions, list_skill_sessions, remove_session_api, remove_skill_session_api,
-    rename_session_api, resolve_session_api,
+    create_session, delete_unified_session, get_skill_session_state, list_skill_sessions,
+    remove_session_api, remove_skill_session_api, rename_session_api,
 };
 use api::skills::{
     delete_skill_file_api, get_skill_file_api, list_skill_files_api, list_skills, reload_skills,

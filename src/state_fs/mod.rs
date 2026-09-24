@@ -118,7 +118,7 @@ impl StateFs {
         let mut tasks = Vec::new();
         for entry in fs::read_dir(tasks_dir)? {
             let entry = entry?;
-            if entry.path().extension().map_or(false, |ext| ext == "md") {
+            if entry.path().extension().is_some_and(|ext| ext == "md") {
                 let content = fs::read_to_string(entry.path())?;
                 if let Ok(parsed) = self.parse_markdown(&content) {
                     tasks.push(parsed);

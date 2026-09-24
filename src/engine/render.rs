@@ -296,17 +296,6 @@ pub fn tool_call_signature(tool: &str, args: &serde_json::Value) -> String {
     format!("{}|{}", tool, args)
 }
 
-/// Truncate a string for log output, collapsing newlines and adding "…" if truncated.
-pub fn truncate_for_log(s: &str, max_chars: usize) -> String {
-    let collapsed: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    if collapsed.len() <= max_chars {
-        collapsed
-    } else {
-        let truncated: String = collapsed.chars().take(max_chars).collect();
-        format!("{}… ({} chars total)", truncated, collapsed.len())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

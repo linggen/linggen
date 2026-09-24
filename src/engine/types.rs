@@ -651,9 +651,7 @@ impl AgentEngine {
     /// Kept as a public method until callers stop invoking it.
     pub async fn load_skill_tools(&mut self, skills: &dyn SkillRegistry) {
         let _ = skills;
-        if self.spec.is_none() {
-            return;
-        };
+        if self.spec.is_none() {}
         // Reserved for future per-session tool wiring (e.g. dynamically
         // installed skill-declared tools); currently nothing to do.
     }

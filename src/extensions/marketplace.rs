@@ -38,15 +38,11 @@ pub struct MarketplaceSkill {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SkillScope {
     Project,
+    #[default]
     Global,
-}
-
-impl Default for SkillScope {
-    fn default() -> Self {
-        Self::Global
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -72,48 +68,6 @@ pub struct ClawHubSearchResult {
     pub version: Option<String>,
     #[serde(default, alias = "updatedAt")]
     pub updated_at: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClawHubScanResult {
-    #[serde(default)]
-    pub skill: Option<ClawHubScanSkill>,
-    #[serde(default)]
-    pub moderation: Option<ClawHubModeration>,
-    #[serde(default)]
-    pub security: Option<ClawHubSecurity>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClawHubScanSkill {
-    #[serde(default)]
-    pub slug: Option<String>,
-    #[serde(default, alias = "displayName")]
-    pub display_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClawHubModeration {
-    #[serde(default, alias = "isPendingScan")]
-    pub is_pending_scan: bool,
-    #[serde(default, alias = "isMalwareBlocked")]
-    pub is_malware_blocked: bool,
-    #[serde(default, alias = "isSuspicious")]
-    pub is_suspicious: bool,
-    #[serde(default, alias = "isHiddenByMod")]
-    pub is_hidden_by_mod: bool,
-    #[serde(default, alias = "isRemoved")]
-    pub is_removed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClawHubSecurity {
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default, alias = "hasWarnings")]
-    pub has_warnings: bool,
-    #[serde(default, alias = "hasScanResult")]
-    pub has_scan_result: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -258,20 +212,6 @@ fn validate_slug(slug: &str) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Fetch security scan info from ClawHub for a skill.
-pub async fn fetch_clawhub_scan(slug: &str) -> Result<ClawHubScanResult> {
-    validate_slug(slug)?;
-    let client = http_client()?;
-    let encoded_slug = url::form_urlencoded::byte_serialize(slug.as_bytes()).collect::<String>();
-    let url = format!("{}/skills/{}/scan", CLAWHUB_API, encoded_slug);
-    let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("ClawHub scan request failed: HTTP {}", resp.status());
-    }
-    let scan: ClawHubScanResult = resp.json().await?;
-    Ok(scan)
 }
 
 // ---------------------------------------------------------------------------

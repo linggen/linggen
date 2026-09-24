@@ -1,5 +1,4 @@
 use crate::util::LockExt;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -170,7 +169,7 @@ impl RunStore {
             .iter()
             .filter_map(|id| runs.get(id).cloned())
             .collect();
-        result.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+        result.sort_by_key(|a| a.started_at);
         result
     }
 }

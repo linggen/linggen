@@ -210,7 +210,7 @@ impl AgentEngine {
                     actual_cwd.to_string_lossy().to_string()
                 };
                 self.session_permissions
-                    .set_path_mode(&cwd_str, self.cfg.permission_mode.clone());
+                    .set_path_mode(&cwd_str, self.cfg.permission_mode);
                 self.session_permissions.save(&sdir);
             }
 

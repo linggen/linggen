@@ -26,7 +26,7 @@ pub use crate::engine::mission::runs::MissionRunStore;
 
 pub use cron::{parse_cron, validate_cron};
 pub use draft::MissionDraft;
-use parser::{id_to_display_name, mission_to_md, name_to_filename, parse_mission_md};
+use parser::{mission_to_md, name_to_filename, parse_mission_md};
 use skill_missions::UserChoice;
 
 /// A change refused because the mission ships with a skill: its file is the
@@ -214,7 +214,7 @@ impl MissionLoader {
             description: draft.description.clone().unwrap_or_default(),
             schedule: schedule.to_string(),
             enabled: draft.enabled.unwrap_or(true),
-            catchup_hours: draft.catchup_hours.clone().flatten(),
+            catchup_hours: draft.catchup_hours.flatten(),
             cwd: draft.cwd.clone().flatten(),
             model: draft.model.clone().flatten(),
             kickoff: draft.kickoff.clone().unwrap_or_default(),

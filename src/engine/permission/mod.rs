@@ -18,7 +18,7 @@ mod model;
 mod prompt;
 mod store;
 
-pub use manifest::{apply_grants, parse_mode_str, Grants, PathGrant};
+pub use manifest::{apply_grants, Grants, PathGrant};
 pub use model::{
     check_permission, effective_mode_for_path, parse_skill_tier, PathMode, PermissionAction,
     PermissionCheckResult, PermissionMode, PromptKind,

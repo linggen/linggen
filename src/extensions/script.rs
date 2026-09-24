@@ -38,26 +38,3 @@ pub fn sync_command(
     }
     cmd
 }
-
-/// Build an async `tokio::process::Command` configured to invoke bash.
-/// Mirrors [`sync_command`] for the async caller (mission scheduler).
-pub fn async_command(
-    inv: Invocation<'_>,
-    cwd: &Path,
-    env: &[(&str, &OsStr)],
-) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("bash");
-    cmd.current_dir(cwd);
-    for (k, v) in env {
-        cmd.env(*k, *v);
-    }
-    match inv {
-        Invocation::File(p) => {
-            cmd.arg(p);
-        }
-        Invocation::Inline(s) => {
-            cmd.arg("-c").arg(s);
-        }
-    }
-    cmd
-}

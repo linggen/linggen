@@ -6,12 +6,12 @@ pub fn print_summary(ws_root: &Path, summary: &EvalSummary) {
     eprintln!("=== Eval Results ===");
     eprintln!();
     eprintln!(
-        "  {:<24} {:<10} {:<8} {:<7} {}",
-        "Task", "Agent", "Result", "Iters", "Duration"
+        "  {:<24} {:<10} {:<8} {:<7} Duration",
+        "Task", "Agent", "Result", "Iters"
     );
     eprintln!(
-        "  {:<24} {:<10} {:<8} {:<7} {}",
-        "---", "---", "---", "---", "---"
+        "  {:<24} {:<10} {:<8} {:<7} ---",
+        "---", "---", "---", "---"
     );
 
     for r in &summary.results {

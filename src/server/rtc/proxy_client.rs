@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::info;
 
 use str0m::change::SdpAnswer;
 use str0m::net::{Protocol, Receive};
@@ -267,11 +267,9 @@ async fn run_proxy_client_loop(
                             let _ = response_tx.send(text.to_string()).await;
                         }
                     }
-                    Event::ChannelClose(id) => {
-                        if inference_channel == Some(id) {
-                            info!("Proxy client: inference channel closed");
-                            return;
-                        }
+                    Event::ChannelClose(id) if inference_channel == Some(id) => {
+                        info!("Proxy client: inference channel closed");
+                        return;
                     }
                     _ => {}
                 }

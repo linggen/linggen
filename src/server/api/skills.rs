@@ -158,7 +158,7 @@ pub(crate) async fn list_skill_files_api(Query(query): Query<ProjectQuery>) -> i
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "md") {
+            if path.extension().is_some_and(|ext| ext == "md") {
                 let rel = path
                     .strip_prefix(&root)
                     .unwrap_or(path.as_path())
@@ -195,7 +195,7 @@ pub(crate) async fn get_skill_file_api(Query(query): Query<SkillFileQuery>) -> i
     };
     let valid = content.starts_with("---")
         && content.splitn(3, "---").count() >= 3
-        && serde_yml::from_str::<serde_yml::Value>(content.splitn(3, "---").nth(1).unwrap_or(""))
+        && serde_yml::from_str::<serde_yml::Value>(content.split("---").nth(1).unwrap_or(""))
             .is_ok();
     Json(SkillFileResponse {
         path: rel,

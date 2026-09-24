@@ -470,7 +470,7 @@ impl OpenAiClient {
         // Stream SSE lines
         let byte_stream = resp
             .bytes_stream()
-            .map(|item| item.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+            .map(|item| item.map_err(std::io::Error::other));
         let reader = tokio_util::io::StreamReader::new(byte_stream);
         let lines =
             tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new());
@@ -645,7 +645,7 @@ impl OpenAiClient {
                     let call_id = msg
                         .tool_call_id
                         .as_deref()
-                        .map(|id| ensure_fc_prefix(id))
+                        .map(&ensure_fc_prefix)
                         .unwrap_or_default();
                     input_items.push(serde_json::json!({
                         "type": "function_call_output",
@@ -684,7 +684,7 @@ impl OpenAiClient {
             // same helper so what the user sees in the export matches what
             // the wire receives.
             let resp_tools: Vec<serde_json::Value> =
-                tools.iter().filter_map(|t| wire_tool_def(t)).collect();
+                tools.iter().filter_map(wire_tool_def).collect();
 
             let mut req = serde_json::json!({
                 "model": model,
@@ -758,7 +758,7 @@ impl OpenAiClient {
 
         let byte_stream = resp
             .bytes_stream()
-            .map(|item| item.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+            .map(|item| item.map_err(std::io::Error::other));
         let reader = tokio_util::io::StreamReader::new(byte_stream);
         let lines =
             tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LinesCodec::new());
@@ -1245,11 +1245,6 @@ impl OaiMessageWithTools {
             extra_content: None,
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-struct OaiStreamOptions {
-    include_usage: bool,
 }
 
 #[derive(Debug, Deserialize)]

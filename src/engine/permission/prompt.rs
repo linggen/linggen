@@ -102,6 +102,7 @@ pub fn build_exceeds_ceiling_question(
 }
 
 /// Parse user response to an ExceedsCeiling prompt.
+#[cfg(test)]
 pub fn parse_exceeds_ceiling_answer(
     selected: &str,
     target_mode: &PermissionMode,

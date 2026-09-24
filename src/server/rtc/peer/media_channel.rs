@@ -52,12 +52,7 @@ pub(super) struct MediaTransfer {
     received: u64,
 }
 
-impl MediaTransfer {
-    /// Bytes written so far — the phone's progress is our progress.
-    pub(super) fn received(&self) -> u64 {
-        self.received
-    }
-}
+impl MediaTransfer {}
 
 /// Handle a text control frame. Returns a reply to send back, and possibly a
 /// new in-flight transfer to hold.

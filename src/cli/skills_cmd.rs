@@ -116,7 +116,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                     let is_skill = if path.is_dir() {
                         path.join("SKILL.md").exists()
                     } else {
-                        path.extension().map_or(false, |e| e == "md")
+                        path.extension().is_some_and(|e| e == "md")
                     };
 
                     if is_skill {
@@ -137,7 +137,7 @@ pub async fn run(action: SkillsAction, config: &Config) -> Result<()> {
                 println!("  No results found.");
                 return Ok(());
             }
-            println!("  {:<30} {:<50} {}", "NAME", "URL", "DESCRIPTION");
+            println!("  {:<30} {:<50} DESCRIPTION", "NAME", "URL");
             println!("  {}", "-".repeat(100));
             for skill in &results {
                 let desc = skill

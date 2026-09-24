@@ -81,7 +81,7 @@ pub(crate) async fn update_session_permission(
     // Persist to disk so the grant survives session restart.
     let session_dir = crate::paths::global_sessions_dir().join(&req.session_id);
     let mut perms = SessionPermissions::load(&session_dir);
-    perms.set_path_mode(&req.path, mode.clone());
+    perms.set_path_mode(&req.path, mode);
     perms.save(&session_dir);
 
     // Propagate into the live engine, if one is running for this session.

@@ -112,7 +112,7 @@ pub fn load() -> Result<ClaudeAuthTokens> {
 
     #[cfg(target_os = "macos")]
     {
-        return load_from_macos_keychain();
+        load_from_macos_keychain()
     }
     #[cfg(not(target_os = "macos"))]
     {

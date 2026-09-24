@@ -118,43 +118,6 @@ pub fn yinyue_holder_of(reg: &[YinyuePresenter]) -> Option<u64> {
         .map(|p| p.peer_id)
 }
 
-#[cfg(test)]
-mod yinyue_presenter_tests {
-    use super::*;
-    fn p(peer_id: u64, stage: bool) -> YinyuePresenter {
-        YinyuePresenter { peer_id, stage }
-    }
-    #[test]
-    fn first_arrival_holds_without_a_stage() {
-        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, false)]), Some(1));
-        assert_eq!(yinyue_holder_of(&[]), None);
-    }
-    #[test]
-    fn a_stage_outranks_earlier_corners() {
-        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, true)]), Some(2));
-    }
-    #[test]
-    fn among_stages_the_latest_holds() {
-        // A reloaded page's new stage must not wait behind its own ghost.
-        assert_eq!(
-            yinyue_holder_of(&[p(1, false), p(2, true), p(3, true)]),
-            Some(3)
-        );
-    }
-    #[test]
-    fn the_latest_stage_leaving_hands_her_back_to_the_one_before() {
-        let mut reg = vec![p(1, false), p(2, true), p(3, true)];
-        reg.retain(|q| q.peer_id != 3);
-        assert_eq!(yinyue_holder_of(&reg), Some(2));
-    }
-    #[test]
-    fn the_stage_leaving_returns_her_to_the_corner() {
-        let mut reg = vec![p(1, false), p(2, true)];
-        reg.retain(|q| q.peer_id != 2);
-        assert_eq!(yinyue_holder_of(&reg), Some(1));
-    }
-}
-
 impl ServerState {
     /// Mint a unique id for a new WebRTC peer (presenter-registry key).
     pub fn mint_peer_id(&self) -> u64 {
@@ -356,5 +319,42 @@ impl ServerState {
             run_id,
             parent_run_id,
         });
+    }
+}
+
+#[cfg(test)]
+mod yinyue_presenter_tests {
+    use super::*;
+    fn p(peer_id: u64, stage: bool) -> YinyuePresenter {
+        YinyuePresenter { peer_id, stage }
+    }
+    #[test]
+    fn first_arrival_holds_without_a_stage() {
+        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, false)]), Some(1));
+        assert_eq!(yinyue_holder_of(&[]), None);
+    }
+    #[test]
+    fn a_stage_outranks_earlier_corners() {
+        assert_eq!(yinyue_holder_of(&[p(1, false), p(2, true)]), Some(2));
+    }
+    #[test]
+    fn among_stages_the_latest_holds() {
+        // A reloaded page's new stage must not wait behind its own ghost.
+        assert_eq!(
+            yinyue_holder_of(&[p(1, false), p(2, true), p(3, true)]),
+            Some(3)
+        );
+    }
+    #[test]
+    fn the_latest_stage_leaving_hands_her_back_to_the_one_before() {
+        let mut reg = vec![p(1, false), p(2, true), p(3, true)];
+        reg.retain(|q| q.peer_id != 3);
+        assert_eq!(yinyue_holder_of(&reg), Some(2));
+    }
+    #[test]
+    fn the_stage_leaving_returns_her_to_the_corner() {
+        let mut reg = vec![p(1, false), p(2, true)];
+        reg.retain(|q| q.peer_id != 2);
+        assert_eq!(yinyue_holder_of(&reg), Some(1));
     }
 }

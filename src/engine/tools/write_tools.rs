@@ -60,11 +60,7 @@ impl Tools {
             }
 
             // 2. Check locks
-            let locked_by_other = manager
-                .locks
-                .lock()
-                .await
-                .is_locked_by_other(agent_id, &rel);
+            let locked_by_other = manager.locks.lock().await.is_locked_by_other(agent_id, rel);
             if locked_by_other {
                 anyhow::bail!("Path {} is locked by another agent", rel);
             }

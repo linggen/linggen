@@ -217,26 +217,6 @@ impl SessionStore {
             .unwrap_or(0)
     }
 
-    /// Check whether a session has any chat messages (without loading them all).
-    pub fn session_has_messages(&self, session_id: &str) -> bool {
-        let msgs_path = self.session_dir(session_id).join("messages.jsonl");
-        if !msgs_path.exists() {
-            return false;
-        }
-        // Check if file has any non-empty lines
-        if let Ok(file) = fs::File::open(&msgs_path) {
-            let reader = BufReader::new(file);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    if !l.trim().is_empty() {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
     pub fn rename_session(&self, session_id: &str, new_title: &str) -> Result<()> {
         Self::validate_id(session_id)?;
         let yaml_path = self.session_dir(session_id).join("session.yaml");

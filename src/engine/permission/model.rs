@@ -25,17 +25,13 @@ pub enum PermissionAction {
 /// Session permission mode — defines the ceiling of what the agent can do.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PermissionMode {
     Chat,
+    #[default]
     Read,
     Edit,
     Admin,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        PermissionMode::Read
-    }
 }
 
 impl std::fmt::Display for PermissionMode {
@@ -599,7 +595,7 @@ fn classify_single_command(program: &str, subcommand: &str) -> BashClass {
 fn classify_compound_command(cmd: &str) -> BashClass {
     let mut highest = BashClass::Read;
     let segments: Vec<&str> = cmd
-        .split(|c: char| c == ';' || c == '|' || c == '&')
+        .split([';', '|', '&'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
@@ -874,7 +870,7 @@ pub fn check_permission(
                         continue;
                     }
                     let mode = effective_mode_for_path(&session_perms.path_modes, &arg_path);
-                    if mode.map_or(true, |m| action_tier > m) {
+                    if mode.is_none_or(|m| action_tier > m) {
                         let grant_path = grant_path_for_prompt(tool, &arg_path, session_cwd);
                         let path_str = display_path(&grant_path);
                         return PermissionCheckResult::NeedsPrompt(PromptKind::ExceedsCeiling {

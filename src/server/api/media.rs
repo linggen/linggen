@@ -928,7 +928,7 @@ fn ensure_archived(
         return Ok(());
     }
     let created = created_ms
-        .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+        .and_then(chrono::DateTime::from_timestamp_millis)
         .map(|dt| dt.with_timezone(&chrono::Local))
         .unwrap_or_else(chrono::Local::now);
     let dest_dir = backup_root()

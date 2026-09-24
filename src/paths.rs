@@ -78,18 +78,6 @@ pub fn topics_dir() -> PathBuf {
     linggen_home().join("topics")
 }
 
-/// `~/.linggen/memory/` — root of the memory tree.
-///
-/// Holds the LanceDB store (`memory.lancedb/`, owned by the `ling-mem`
-/// binary) plus per-skill data subdirs under
-/// `~/.linggen/memory/<skill-name>/` for installed memory providers.
-/// Core identity / working-style facts live as `tier=core` rows inside
-/// the store — there are no built-in markdown files anymore.
-/// See `doc/memory-spec.md`.
-pub fn memory_dir() -> PathBuf {
-    linggen_home().join("memory")
-}
-
 /// Resolve the workspace root: the explicit `--root` argument when given,
 /// otherwise the cwd canonicalized to the nearest enclosing git root (or
 /// cwd itself when not in a repo).

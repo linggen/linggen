@@ -4,7 +4,6 @@ use crate::engine::agent::AgentManager;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -56,7 +55,9 @@ impl ToolRegistry {
                     self.dispatch_via_skill_http(&skill_tool.name, &call.args)
                         .await
                 }
-                _ => skill_tool.execute(&call.args, &self.builtins.cwd(), &self.builtins.tool_env()),
+                _ => {
+                    skill_tool.execute(&call.args, &self.builtins.cwd(), &self.builtins.tool_env())
+                }
             };
         }
 

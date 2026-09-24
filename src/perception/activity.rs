@@ -165,7 +165,7 @@ pub fn activity_dir() -> PathBuf {
     {
         // Per process: cargo runs test binaries in parallel and a fixed path
         // would let one run's leftovers decide another run's outcome.
-        return std::env::temp_dir().join(format!("ling-activity-test-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ling-activity-test-{}", std::process::id()))
     }
     #[cfg(not(test))]
     crate::paths::linggen_home().join("activity")

@@ -85,7 +85,7 @@ fn local_timezone() -> String {
         if let Ok(target) = std::fs::read_link("/etc/localtime") {
             let s = target.to_string_lossy();
             if let Some(idx) = s.find("zoneinfo/") {
-                let tz = (&s[idx + "zoneinfo/".len()..]).trim_matches('/');
+                let tz = s[idx + "zoneinfo/".len()..].trim_matches('/');
                 if !tz.is_empty() {
                     return tz.to_string();
                 }
@@ -151,7 +151,7 @@ fn workspace_listing(ws_root: &std::path::Path) -> String {
         {
             continue;
         }
-        let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+        let is_dir = entry.file_type().is_ok_and(|ft| ft.is_dir());
         items.push(format!("  {}{}", name, if is_dir { "/" } else { "" }));
         if items.len() >= 50 {
             items.push("  ... (truncated)".to_string());
@@ -484,7 +484,7 @@ impl AgentEngine {
         let cache_hit = self
             .cached_system_prompt
             .as_ref()
-            .map_or(false, |c| c.input_hash == hash);
+            .is_some_and(|c| c.input_hash == hash);
         if !cache_hit {
             self.cached_system_prompt = Some(CachedSystemPrompt {
                 input_hash: hash,
@@ -547,12 +547,12 @@ impl AgentEngine {
                 "UpdatePlan",
             ]
             .iter()
-            .any(|t| allowed_tools.as_ref().map_or(true, |s| s.contains(*t)));
+            .any(|t| allowed_tools.as_ref().is_none_or(|s| s.contains(*t)));
 
         // Dynamic content appended after cached stable prefix.
 
         // Check if tools are available — skip all tool-related prompt sections when empty.
-        let has_tools = allowed_tools.as_ref().map_or(true, |s| !s.is_empty());
+        let has_tools = allowed_tools.as_ref().is_none_or(|s| !s.is_empty());
 
         // --- Response Format ---
         if has_tools {
@@ -564,7 +564,7 @@ impl AgentEngine {
                 // are actually in `allowed_tools`. Advertising a tool the session can't
                 // call wastes tokens and invites failed calls.
                 let tool_allowed = |name: &str| -> bool {
-                    allowed_tools.as_ref().map_or(true, |s| s.contains(name))
+                    allowed_tools.as_ref().is_none_or(|s| s.contains(name))
                 };
                 if conversational {
                     if let Some(lean) = self
@@ -649,7 +649,7 @@ impl AgentEngine {
                 let prefix = format!("mcp__{server}__");
                 let advertised = allowed_tools
                     .as_ref()
-                    .map_or(true, |s| s.iter().any(|t| t.starts_with(&prefix)));
+                    .is_none_or(|s| s.iter().any(|t| t.starts_with(&prefix)));
                 if advertised && !text.trim().is_empty() {
                     system.push_str(&format!(
                         "\n\n# MCP server `{server}` — its own usage instructions\n\n{}",
@@ -672,7 +672,7 @@ impl AgentEngine {
             && self.prompt_profile.include_delegation
             && !self.available_agents_metadata.is_empty()
         {
-            let task_available = allowed_tools.as_ref().map_or(true, |s| s.contains("Task"));
+            let task_available = allowed_tools.as_ref().is_none_or(|s| s.contains("Task"));
             if task_available {
                 system.push_str(
                     &self

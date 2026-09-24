@@ -28,7 +28,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
@@ -439,10 +439,6 @@ impl Tools {
     /// The calling agent's id (the sender, for `agent_chat`).
     pub fn agent_id(&self) -> Option<&str> {
         self.agent_id.as_deref()
-    }
-
-    pub(crate) fn workspace_root(&self) -> &Path {
-        &self.root
     }
 
     /// Update the workspace root (e.g. when the agent enters a new git project).

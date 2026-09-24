@@ -147,14 +147,6 @@ impl AgentManager {
         Ok(self.run_store.list_runs(session_id))
     }
 
-    pub async fn get_agent_run(
-        &self,
-        run_id: &str,
-        _project_root: Option<&str>,
-    ) -> Result<Option<AgentRunRecord>> {
-        Ok(self.run_store.get_run(run_id))
-    }
-
     pub async fn is_run_cancelled(&self, run_id: &str) -> bool {
         self.cancelled_runs.lock().await.contains(run_id)
     }

@@ -339,7 +339,7 @@ impl AgentConfig {
     pub fn effective_permission_mode(&self) -> crate::engine::permission::PermissionMode {
         use crate::engine::permission::PermissionMode;
         if let Some(ref mode) = self.default_permission_mode {
-            return mode.clone();
+            return *mode;
         }
         // Convert legacy mode
         match self.tool_permission_mode {
@@ -356,32 +356,23 @@ fn default_max_delegation_depth() -> usize {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum WriteSafetyMode {
     Strict,
+    #[default]
     Warn,
     Off,
 }
 
-impl Default for WriteSafetyMode {
-    fn default() -> Self {
-        // User-selected default for this repo: warn (allow write, but emit warnings).
-        WriteSafetyMode::Warn
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolPermissionMode {
+    #[default]
     Ask,
     Auto,
     /// Auto-approve Write/Edit but still prompt for Bash and web tools.
     AcceptEdits,
-}
-
-impl Default for ToolPermissionMode {
-    fn default() -> Self {
-        ToolPermissionMode::Ask
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -438,24 +429,6 @@ pub enum ComplexityLevel {
 }
 
 impl Config {
-    /// Resolve home_path to an absolute PathBuf. Defaults to `~`.
-    pub fn resolved_home_path(&self) -> PathBuf {
-        if let Some(ref p) = self.home_path {
-            if p.starts_with("~/") || p == "~" {
-                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-                if p == "~" {
-                    home
-                } else {
-                    home.join(&p[2..])
-                }
-            } else {
-                PathBuf::from(p)
-            }
-        } else {
-            dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
-        }
-    }
-
     pub fn load_with_path() -> Result<(Self, Option<PathBuf>)> {
         let mut candidates = Vec::new();
 

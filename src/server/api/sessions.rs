@@ -10,62 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use super::{canonical_project_root, ProjectQuery};
-
-pub(crate) async fn list_sessions(
-    State(state): State<Arc<ServerState>>,
-    Query(query): Query<ProjectQuery>,
-) -> impl IntoResponse {
-    match state.manager.global_sessions.list_sessions() {
-        Ok(all_sessions) => {
-            // Filter by project_root: match sessions whose cwd or project starts with the query path.
-            let canonical = canonical_project_root(&query.project_root);
-            let canonical_str = canonical.to_string_lossy();
-            let filtered: Vec<_> = all_sessions
-                .into_iter()
-                .filter(|s| {
-                    s.cwd
-                        .as_deref()
-                        .map(|c| c.starts_with(canonical_str.as_ref()))
-                        .unwrap_or(false)
-                        || s.project
-                            .as_deref()
-                            .map(|p| p.starts_with(canonical_str.as_ref()))
-                            .unwrap_or(false)
-                })
-                .collect();
-            let total = filtered.len();
-            let offset = query.offset.unwrap_or(0);
-            let limit = query.limit.unwrap_or(50);
-            let paginated: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
-            let api_sessions: Vec<serde_json::Value> = paginated
-                .into_iter()
-                .map(|s| {
-                    serde_json::json!({
-                        "id": s.id,
-                        "repo_path": s.cwd.as_deref().unwrap_or(&query.project_root),
-                        "title": s.title,
-                        "created_at": s.created_at,
-                        "updated_at": s.updated_at,
-                        "skill": s.skill,
-                        "creator": s.creator,
-                        "project": s.project,
-                        "project_name": s.project_name,
-                        "cwd": s.cwd,
-                        "mission_id": s.mission_id,
-                        "model_id": s.model_id,
-                    })
-                })
-                .collect();
-            Json(serde_json::json!({
-                "sessions": api_sessions,
-                "total": total,
-            }))
-            .into_response()
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
+use super::canonical_project_root;
 
 #[derive(Deserialize)]
 pub(crate) struct CreateSessionRequest {
@@ -137,61 +82,6 @@ pub(crate) async fn create_session(
         Ok(_) => Json(serde_json::json!({ "id": id })).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
-}
-
-/// Resolve a session for a client to use.
-/// Returns the most recent empty session, or creates a new one.
-#[derive(Deserialize)]
-pub(crate) struct ResolveSessionRequest {
-    project_root: String,
-}
-
-pub(crate) async fn resolve_session_api(
-    State(state): State<Arc<ServerState>>,
-    Json(req): Json<ResolveSessionRequest>,
-) -> impl IntoResponse {
-    let store = &state.manager.global_sessions;
-    if let Ok(sessions) = store.list_sessions_paginated(Some(10), None) {
-        for s in &sessions {
-            if !store.session_has_messages(&s.id) {
-                return Json(serde_json::json!({
-                    "id": s.id,
-                    "title": s.title,
-                    "reused": true,
-                }))
-                .into_response();
-            }
-        }
-    }
-    let now = crate::util::now_ts_secs();
-    let new_id = format!("sess-{}-{}", now, &uuid::Uuid::new_v4().to_string()[..8]);
-    let meta = crate::state_fs::sessions::SessionMeta {
-        id: new_id.clone(),
-        title: "New Chat".to_string(),
-        created_at: now,
-        updated_at: 0,
-        skill: None,
-        creator: "user".into(),
-        cwd: Some(req.project_root.clone()),
-        project: None,
-        project_name: None,
-        mission_id: None,
-        agent_id: None,
-        model_id: None,
-        user_id: None,
-        compact_threshold: None,
-        compact_focus: None,
-        // "New Chat" is a placeholder — the auto-rename hook will replace
-        // it from the user's first message.
-        title_locked: false,
-    };
-    let _ = store.add_session(&meta);
-    Json(serde_json::json!({
-        "id": new_id,
-        "title": "New Chat",
-        "reused": false,
-    }))
-    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -439,33 +329,5 @@ pub(crate) async fn delete_unified_session(
             StatusCode::OK.into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-/// GET /api/sessions/all — return all sessions from the global flat store.
-pub(crate) async fn list_all_sessions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    match state.manager.global_sessions.list_sessions() {
-        Ok(sessions) => {
-            let all: Vec<serde_json::Value> = sessions
-                .into_iter()
-                .map(|s| {
-                    serde_json::json!({
-                        "id": s.id,
-                        "title": s.title,
-                        "created_at": s.created_at,
-                        "updated_at": s.updated_at,
-                        "creator": s.creator,
-                        "project": s.project,
-                        "project_name": s.project_name,
-                        "skill": s.skill,
-                        "mission_id": s.mission_id,
-                        "cwd": s.cwd,
-                        "model_id": s.model_id,
-                    })
-                })
-                .collect();
-            Json(serde_json::json!({ "sessions": all })).into_response()
-        }
-        Err(_) => Json(serde_json::json!({ "sessions": [] })).into_response(),
     }
 }

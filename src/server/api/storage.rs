@@ -272,7 +272,7 @@ pub(crate) async fn storage_write_file(
         Err(status) => return status.into_response(),
     };
     if let Some(parent) = full.parent() {
-        if let Err(_) = std::fs::create_dir_all(parent) {
+        if std::fs::create_dir_all(parent).is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }

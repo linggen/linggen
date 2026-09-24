@@ -125,14 +125,14 @@ impl AgentEngine {
 
     /// Try to extract a step title from text like "1. Foo", "Step 2: Foo", etc.
     fn extract_step_title(text: &str) -> Option<String> {
-        let s = text.strip_prefix("Step").or(Some(text)).unwrap().trim();
+        let s = text.strip_prefix("Step").unwrap_or(text).trim();
         // Match leading number followed by . or :
         let mut chars = s.chars().peekable();
-        if !chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+        if !chars.peek().is_some_and(|c| c.is_ascii_digit()) {
             return None;
         }
         // Skip digits
-        while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
             chars.next();
         }
         // Expect . or :

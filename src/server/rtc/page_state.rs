@@ -181,7 +181,6 @@ pub async fn build_page_state(
                     (Some(sid), uid) => sid == uid,
                     (None, "__local__") => true, // legacy sessions belong to local owner
                     (None, _) => is_admin,       // admin sees legacy sessions
-                    _ => false,
                 })
                 .map(|s| s.id.clone())
                 .collect()
@@ -334,7 +333,7 @@ pub async fn build_page_state(
                 entry
                     .session_id
                     .as_deref()
-                    .map_or(is_admin && pinned.is_none(), |sid| scope_check(sid))
+                    .map_or(is_admin && pinned.is_none(), &scope_check)
             })
             .map(|(qid, entry)| {
                 serde_json::json!({

@@ -234,7 +234,7 @@ impl AgentEngine {
         if chars == 0 {
             0
         } else {
-            (chars + 3) / 4
+            chars.div_ceil(4)
         }
     }
 
@@ -387,7 +387,7 @@ impl AgentEngine {
         let Some(manager) = self.tools.get_manager() else {
             return;
         };
-        let token_limit = self.context_window_tokens.or_else(|| {
+        let token_limit = self.context_window_tokens.or({
             // Fallback: not cached yet (shouldn't happen after loop start).
             None
         });

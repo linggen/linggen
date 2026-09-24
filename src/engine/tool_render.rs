@@ -56,8 +56,7 @@ fn basename(value: &str) -> String {
     let normalized = value.trim().replace('\\', "/");
     normalized
         .split('/')
-        .filter(|part| !part.is_empty())
-        .last()
+        .rfind(|part| !part.is_empty())
         .map(|v| v.to_string())
         .unwrap_or_else(|| normalized.to_string())
 }

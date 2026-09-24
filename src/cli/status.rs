@@ -448,51 +448,6 @@ async fn check_models(config: &Config) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::server_verdict;
-
-    #[test]
-    fn live_pidfile_is_printed() {
-        let (icon, s) = server_verdict(9527, true, Some((4724, true)), Some(4724));
-        assert_eq!(icon, "\u{2705}");
-        assert_eq!(s, "port 9527 running (PID 4724)");
-    }
-
-    #[test]
-    fn dead_pidfile_never_shown_as_the_server() {
-        // The 2026-09-01 case: ling.pid from July, real listener elsewhere.
-        let (_, s) = server_verdict(9527, true, Some((45747, false)), Some(71972));
-        assert_eq!(
-            s,
-            "port 9527 running (PID 71972) \u{b7} ling.pid is stale (45747)"
-        );
-    }
-
-    #[test]
-    fn listening_without_any_pid_is_still_running() {
-        let (icon, s) = server_verdict(9527, true, None, None);
-        assert_eq!(icon, "\u{2705}");
-        assert_eq!(s, "port 9527 running (PID unknown)");
-    }
-
-    #[test]
-    fn not_listening_verdicts() {
-        assert_eq!(
-            server_verdict(9527, false, Some((7, true)), None).1,
-            "port 9527 process alive (PID 7) but port not listening"
-        );
-        assert_eq!(
-            server_verdict(9527, false, Some((7, false)), None).1,
-            "port 9527 not running (stale PID 7)"
-        );
-        assert_eq!(
-            server_verdict(9527, false, None, None).1,
-            "port 9527 not running"
-        );
-    }
-}
-
 fn check_skills_dirs() {
     println!("  Skills:");
     let dirs: Vec<(PathBuf, &str)> = vec![
@@ -528,7 +483,7 @@ fn check_agents_dir() {
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
-                    .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                     .count()
             })
             .unwrap_or(0)
@@ -581,5 +536,50 @@ fn check_log_dir(config: &Config) {
         }
         Some(dir) => println!("  Logs:        {} {CYAN}(not found){RESET}", dir.display()),
         None => println!("  Logs:        {CYAN}(unknown){RESET}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_verdict;
+
+    #[test]
+    fn live_pidfile_is_printed() {
+        let (icon, s) = server_verdict(9527, true, Some((4724, true)), Some(4724));
+        assert_eq!(icon, "\u{2705}");
+        assert_eq!(s, "port 9527 running (PID 4724)");
+    }
+
+    #[test]
+    fn dead_pidfile_never_shown_as_the_server() {
+        // The 2026-09-01 case: ling.pid from July, real listener elsewhere.
+        let (_, s) = server_verdict(9527, true, Some((45747, false)), Some(71972));
+        assert_eq!(
+            s,
+            "port 9527 running (PID 71972) \u{b7} ling.pid is stale (45747)"
+        );
+    }
+
+    #[test]
+    fn listening_without_any_pid_is_still_running() {
+        let (icon, s) = server_verdict(9527, true, None, None);
+        assert_eq!(icon, "\u{2705}");
+        assert_eq!(s, "port 9527 running (PID unknown)");
+    }
+
+    #[test]
+    fn not_listening_verdicts() {
+        assert_eq!(
+            server_verdict(9527, false, Some((7, true)), None).1,
+            "port 9527 process alive (PID 7) but port not listening"
+        );
+        assert_eq!(
+            server_verdict(9527, false, Some((7, false)), None).1,
+            "port 9527 not running (stale PID 7)"
+        );
+        assert_eq!(
+            server_verdict(9527, false, None, None).1,
+            "port 9527 not running"
+        );
     }
 }

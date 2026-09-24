@@ -165,12 +165,6 @@ impl AnthropicClient {
         self.stream_messages(model, messages, anthro_tools).await
     }
 
-    /// Anthropic doesn't expose per-model `/models/{id}` context windows, so
-    /// we let the agent fall back to its guessed default.
-    pub async fn get_context_window(&self, _model: &str) -> Option<usize> {
-        None
-    }
-
     // -----------------------------------------------------------------
     // Shared streaming implementation
     // -----------------------------------------------------------------

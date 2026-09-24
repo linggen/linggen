@@ -6,37 +6,7 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use tokio_stream::StreamExt as TokioStreamExt;
-use tracing::{debug, info, warn};
-
-/// Unescape common JSON string escape sequences so streamed plan text
-/// renders as readable markdown in the UI.
-/// Unescape JSON string escape sequences in a streaming delta.
-/// Processes character by character to handle `\\n` (literal backslash + n)
-/// vs `\n` (newline) correctly, unlike chained `.replace()`.
-fn unescape_json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('r') => out.push('\r'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some('/') => out.push('/'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'), // trailing backslash
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
+use tracing::warn;
 
 // ---------------------------------------------------------------------------
 // Think-tag stripping
@@ -296,10 +266,6 @@ impl AgentEngine {
         let mut tc_names: Vec<Option<String>> = Vec::new();
         let mut tc_args: Vec<String> = Vec::new();
         let mut tc_thought_sigs: Vec<Option<String>> = Vec::new();
-        // Track whether any regular content tokens were streamed. If so, skip
-        // streaming ExitPlanMode tool args to avoid showing plan text twice
-        // (models like DeepSeek/Gemini output plan as text AND tool arg).
-        let mut had_content_tokens = false;
 
         'stream: loop {
             // Same cancel-poll as stream_with_thinking_model: a stop must not
@@ -339,7 +305,6 @@ impl AgentEngine {
                         if let Some(tx) = &self.thinking_tx {
                             let _ = tx.send(ThinkingEvent::ContentToken(token));
                         }
-                        had_content_tokens = true;
                     }
                 }
                 StreamChunk::Usage(usage) => {
@@ -490,7 +455,9 @@ impl AgentEngine {
                     if let Some(u) = result.token_usage.as_ref() {
                         tracing::debug!(
                             "model call {model_id}: prompt {:?}, cached {:?}, output {:?}",
-                            u.prompt_tokens, u.cached_tokens, u.completion_tokens
+                            u.prompt_tokens,
+                            u.cached_tokens,
+                            u.completion_tokens
                         );
                     }
                     self.remember_call(&model_id, messages, tools.as_ref(), &result);

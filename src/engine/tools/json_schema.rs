@@ -205,10 +205,10 @@ pub fn strictify_for_openai(schema: Value) -> Value {
                             let kept = s.clone();
                             prop_obj.insert("type".to_string(), json!([kept, "null"]));
                         }
-                        Some(Value::Array(arr)) => {
-                            if !arr.iter().any(|v| v.as_str() == Some("null")) {
-                                arr.push(json!("null"));
-                            }
+                        Some(Value::Array(arr))
+                            if !arr.iter().any(|v| v.as_str() == Some("null")) =>
+                        {
+                            arr.push(json!("null"));
                         }
                         _ => {}
                     }

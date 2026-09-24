@@ -131,6 +131,48 @@ pub async fn panic_as_error<T>(
         })
 }
 
+/// Poison-tolerant locking for std `Mutex`.
+///
+/// A panic while a std lock is held marks it poisoned, and `lock().unwrap()`
+/// then panics in every later caller — one bad request would take a registry
+/// or cache down for the rest of the daemon's life. The data is whatever the
+/// panicking thread left, which for these caches and registries is still
+/// usable, so recover the guard instead.
+pub trait LockExt<T: ?Sized> {
+    fn lock_ok(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T: ?Sized> LockExt<T> for std::sync::Mutex<T> {
+    fn lock_ok(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The `RwLock` side of [`LockExt`].
+pub trait RwLockExt<T: ?Sized> {
+    fn read_ok(&self) -> std::sync::RwLockReadGuard<'_, T>;
+    fn write_ok(&self) -> std::sync::RwLockWriteGuard<'_, T>;
+}
+
+impl<T: ?Sized> RwLockExt<T> for std::sync::RwLock<T> {
+    fn read_ok(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.read().unwrap_or_else(|e| e.into_inner())
+    }
+    fn write_ok(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.write().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Constant-time equality for secrets (device tokens), so a caller cannot
+/// learn a token byte by byte from response timing.
+pub fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 #[cfg(test)]
 mod panic_tests {
     use super::*;
@@ -195,46 +237,4 @@ mod panic_tests {
             assert!(out.contains(CWD_SENTINEL), "{command:?} lost the sentinel");
         }
     }
-}
-
-/// Poison-tolerant locking for std `Mutex`.
-///
-/// A panic while a std lock is held marks it poisoned, and `lock().unwrap()`
-/// then panics in every later caller — one bad request would take a registry
-/// or cache down for the rest of the daemon's life. The data is whatever the
-/// panicking thread left, which for these caches and registries is still
-/// usable, so recover the guard instead.
-pub trait LockExt<T: ?Sized> {
-    fn lock_ok(&self) -> std::sync::MutexGuard<'_, T>;
-}
-
-impl<T: ?Sized> LockExt<T> for std::sync::Mutex<T> {
-    fn lock_ok(&self) -> std::sync::MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
-
-/// The `RwLock` side of [`LockExt`].
-pub trait RwLockExt<T: ?Sized> {
-    fn read_ok(&self) -> std::sync::RwLockReadGuard<'_, T>;
-    fn write_ok(&self) -> std::sync::RwLockWriteGuard<'_, T>;
-}
-
-impl<T: ?Sized> RwLockExt<T> for std::sync::RwLock<T> {
-    fn read_ok(&self) -> std::sync::RwLockReadGuard<'_, T> {
-        self.read().unwrap_or_else(|e| e.into_inner())
-    }
-    fn write_ok(&self) -> std::sync::RwLockWriteGuard<'_, T> {
-        self.write().unwrap_or_else(|e| e.into_inner())
-    }
-}
-
-/// Constant-time equality for secrets (device tokens), so a caller cannot
-/// learn a token byte by byte from response timing.
-pub fn ct_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

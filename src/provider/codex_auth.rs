@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::{Rng, RngExt};
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::sync::RwLock;
@@ -102,7 +102,6 @@ fn generate_code_verifier() -> String {
 }
 
 fn generate_code_challenge(verifier: &str) -> String {
-    use std::io::Write;
     // SHA-256 of the verifier
     let digest = {
         // Use a simple SHA-256 implementation via ring-like approach
@@ -378,10 +377,7 @@ pub async fn browser_login() -> Result<CodexAuthTokens> {
             .args(["/C", "start", &auth_url])
             .spawn()
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "unsupported platform",
-        ))
+        Err(std::io::Error::other("unsupported platform"))
     };
     if let Err(e) = open_result {
         warn!(

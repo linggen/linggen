@@ -1,4 +1,4 @@
-use crate::message::{ChatMessage, ToolCallFunction, ToolCallMessage};
+use crate::message::ChatMessage;
 use crate::provider::models::{StreamChunk, TokenUsage};
 use anyhow::Result;
 use futures_util::Stream;
@@ -188,7 +188,7 @@ impl OllamaClient {
 
         let stream = resp
             .bytes_stream()
-            .map(|item| item.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+            .map(|item| item.map_err(std::io::Error::other));
         let reader = tokio_util::io::StreamReader::new(stream);
         let lines = FramedRead::new(reader, LinesCodec::new());
 
@@ -310,7 +310,7 @@ impl OllamaClient {
 
         let stream = resp
             .bytes_stream()
-            .map(|item| item.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+            .map(|item| item.map_err(std::io::Error::other));
         let reader = tokio_util::io::StreamReader::new(stream);
         let lines = FramedRead::new(reader, LinesCodec::new());
 
@@ -387,7 +387,7 @@ impl OllamaClient {
                         let arguments = func.get("arguments").map(|v| v.to_string());
                         let id = format!(
                             "call_{}",
-                            uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+                            &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
                         );
                         chunks.push(Ok(StreamChunk::ToolCall(ToolCallChunk {
                             index: idx,

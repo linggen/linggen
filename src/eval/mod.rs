@@ -5,7 +5,6 @@ pub mod runner;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Parsed from task.toml

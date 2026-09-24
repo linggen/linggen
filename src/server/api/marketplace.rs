@@ -220,23 +220,3 @@ pub(crate) async fn builtin_skills_install(
 // ---------------------------------------------------------------------------
 // ClawHub scan
 // ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-pub(crate) struct ClawHubScanQuery {
-    slug: Option<String>,
-}
-
-pub(crate) async fn clawhub_scan(Query(query): Query<ClawHubScanQuery>) -> impl IntoResponse {
-    let slug = match query.slug {
-        Some(s) if !s.is_empty() => s,
-        _ => return (StatusCode::BAD_REQUEST, "Missing query parameter 'slug'").into_response(),
-    };
-
-    match marketplace::fetch_clawhub_scan(&slug).await {
-        Ok(scan) => axum::Json(scan).into_response(),
-        Err(e) => {
-            tracing::error!(err = %e, slug = %slug, "ClawHub scan fetch failed");
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-        }
-    }
-}

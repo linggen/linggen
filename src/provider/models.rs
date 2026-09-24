@@ -515,10 +515,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -536,10 +533,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -552,10 +546,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -566,10 +557,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -647,10 +635,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -669,10 +654,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -685,10 +667,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (boxed_stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
@@ -699,10 +678,7 @@ impl ModelManager {
                 Ok(Box::pin(futures_util::stream::unfold(
                     (stream, _permit),
                     |(mut stream, permit)| async move {
-                        match stream.next().await {
-                            Some(item) => Some((item, (stream, permit))),
-                            None => None,
-                        }
+                        stream.next().await.map(|item| (item, (stream, permit)))
                     },
                 )))
             }
