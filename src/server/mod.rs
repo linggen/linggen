@@ -101,6 +101,7 @@ const UI_KIND_TEXT_SEGMENT: &str = "text_segment";
 const UI_KIND_CONTENT_BLOCK: &str = "content_block";
 const UI_KIND_TURN_COMPLETE: &str = "turn_complete";
 const UI_KIND_DEVICE_TOPIC: &str = "device_topic";
+const UI_KIND_SKILL_SAVE_CHANGED: &str = "skill_save_changed";
 
 const UI_PHASE_SYNC: &str = "sync";
 const UI_PHASE_OUTCOME: &str = "outcome";
@@ -846,6 +847,27 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
                 "text": text,
             })),
         }),
+        ServerEvent::SkillSaveChanged {
+            skill,
+            version,
+            conflicts,
+        } => Some(UiEvent {
+            id: format!("skill-save-{seq}"),
+            seq,
+            rev: seq,
+            ts_ms,
+            kind: UI_KIND_SKILL_SAVE_CHANGED.to_string(),
+            phase: None,
+            text: None,
+            agent_id: None,
+            session_id: None, // global → every surface, the skill's page among them
+            project_root: None,
+            data: Some(json!({
+                "skill": skill,
+                "version": version,
+                "conflicts": conflicts,
+            })),
+        }),
         // RoomDisabled is handled directly in peer.rs — no UI event needed.
         ServerEvent::RoomDisabled => None,
         ServerEvent::DeviceTopic {
@@ -1323,6 +1345,10 @@ async fn prepare_server(
         .route(
             "/api/skill-sync/{skill}/have",
             post(api::skill_sync::post_have),
+        )
+        .route(
+            "/api/skills/{skill}/tools/{tool}",
+            post(api::skill_tools::run_tool),
         )
         .route("/api/skill-cloud/{skill}", get(api::skill_cloud::get_cloud))
         .route(
@@ -1818,8 +1844,8 @@ async fn serve_app_file(
             let mut res = res.map(axum::body::Body::new);
             let headers = res.headers_mut();
             headers.insert(
-                "X-Frame-Options",
-                "ALLOWALL".parse().expect("static header"),
+                "Content-Security-Policy",
+                FRAME_ANCESTORS.parse().expect("static header"),
             );
             // No-store on skill assets: skills are user-iterated, often
             // edited mid-session, and ES-module URL caching makes a stale
@@ -1832,6 +1858,12 @@ async fn serve_app_file(
         Err(_) => build_err(500, &format!("File not readable: {}", file_path_clean)),
     }
 }
+
+/// Who may frame the engine's pages: its own origin (the launcher, a skill
+/// page framing its chat) and a VS Code webview. Through the linggen.dev
+/// tunnel, pages run as blobs of the site's own origin and never meet this
+/// header. Anything else — any site in the browser — may not.
+const FRAME_ANCESTORS: &str = "frame-ancestors 'self' vscode-webview:";
 
 async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
@@ -1862,9 +1894,10 @@ async fn static_handler(State(state): State<Arc<ServerState>>, uri: Uri) -> Resp
     // through the linggen.dev tunnel (shared chunks with relative imports fail).
     let path = if path.is_empty() { "index.html" } else { path };
 
-    // Allow embedding in iframes (e.g. VS Code webview, skill app iframes).
-    let xfo = "X-Frame-Options";
-    let xfo_val = "ALLOWALL";
+    // Framed only by its own pages (skill iframes, the launcher) and a VS Code
+    // webview — never by another site, which could drive the chat.
+    let xfo = "Content-Security-Policy";
+    let xfo_val = FRAME_ANCESTORS;
 
     match Assets::get(path) {
         Some(content) => {

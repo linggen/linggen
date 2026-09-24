@@ -2,6 +2,7 @@ import React, { useMemo, useEffect } from 'react';
 import { SessionList } from '../../components/SessionList';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
+import { postToParent, fromParent } from '../../lib/parentFrame';
 import { sessions } from '../../lib/api';
 
 /** Bare /sessions route — for skill apps to iframe the session list alone.
@@ -41,9 +42,7 @@ export const BareSessions: React.FC = () => {
 
   // Post bridge events to host page when running in a skill iframe.
   const postToHost = (event: string, payload: unknown) => {
-    if (window.parent !== window) {
-      window.parent.postMessage({ type: 'linggen-skill-event', event, payload }, '*');
-    }
+    postToParent({ type: 'linggen-skill-event', event, payload });
   };
 
   const handleSelect = (session: { id: string }) => {
@@ -75,7 +74,7 @@ export const BareSessions: React.FC = () => {
   useEffect(() => {
     if (!skillParam) return;
     const onMessage = (e: MessageEvent) => {
-      if (e.data?.type !== 'linggen-skill') return;
+      if (!fromParent(e) || e.data?.type !== 'linggen-skill') return;
       if (e.data.action === 'set_active' && e.data.payload?.sessionId) {
         const sid = e.data.payload.sessionId;
         // Reflect in URL so the active highlight survives reload.

@@ -140,3 +140,7 @@ export function handleRoomChat(item: UiEvent): void {
 // ---------------------------------------------------------------------------
 
 export function handleDeviceTopic(_item: UiEvent): void {}
+
+/** A skill's cloud save was pulled — only its page redraws (the embed relays
+ *  it there before this handler runs); the console holds nothing of it. */
+export function handleSkillSaveChanged(_item: UiEvent): void {}

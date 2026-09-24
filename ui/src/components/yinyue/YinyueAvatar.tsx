@@ -19,6 +19,7 @@ import { loadIntents, pickClip } from './petActions';
 import { getMouthOpening } from '../../lib/eventHandlers/yinyue';
 import { _originalFetch } from '../../lib/fetchProxy';
 import { useUiStore } from '../../stores/uiStore';
+import { postToParent } from '../../lib/parentFrame';
 
 // Validate the wire strings against the renderer's vocabularies.
 const EMOTION_NAMES: EmotionName[] = ['neutral', 'happy', 'angry', 'sad', 'relaxed'];
@@ -47,7 +48,7 @@ export const YinyueAvatar: React.FC = () => {
     // until she is DRAWN — the iframe's own load fires long before: the peer
     // connects, the presenter lock arrives, then the model loads. Tell it.
     const tellHost = (event: 'ready' | 'gone') => {
-      if (window.parent !== window) window.parent.postMessage({ type: 'linggen-pet', event }, '*');
+      postToParent({ type: 'linggen-pet', event });
     };
     stage
       .load('/yinyue.vrm')

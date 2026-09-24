@@ -17,6 +17,7 @@ import { asEventKind } from './eventKinds';
 import { eventHandlers } from './eventHandlers';
 import { normalizeAgentStatus } from './messageUtils';
 import { agentTracker } from './agentTracker';
+import { postToParent } from './parentFrame';
 
 export { suppressPermissionSync } from './eventHandlers/_shared';
 export { handleAskUser } from './eventHandlers';
@@ -73,11 +74,11 @@ export function relayConnectionToSkillIframe(
   status: 'connected' | 'reconnecting' | 'disconnected',
 ): void {
   if (window.parent === window) return;
-  window.parent.postMessage({
+  postToParent({
     type: 'linggen-skill-event',
     event: 'connection',
     payload: { status },
-  }, '*');
+  });
 }
 
 /** A sign of life for the parent page: the agent is working even when no
@@ -123,39 +124,58 @@ function relayActivity(item: UiEvent): void {
   const last = _lastActivityRelay.get(sessionId) ?? 0;
   if (kind !== 'turn_start' && now - last < ACTIVITY_RELAY_MS) return;
   _lastActivityRelay.set(sessionId, now);
-  window.parent.postMessage({
+  postToParent({
     type: 'linggen-skill-event',
     event: 'activity',
     payload: { sessionId, kind },
-  }, '*');
+  });
+}
+
+/** Global events a skill page acts on: its cloud save was pulled
+ *  (`save_changed` — read the files again), and device topics (e.g.
+ *  yinyue/unanswered: an ask nobody will answer). Returns true when handled. */
+function relayGlobal(item: UiEvent): boolean {
+  if (item.kind === 'skill_save_changed') {
+    const skill = useSessionStore.getState().activeSkillName;
+    if (!skill || item.data?.skill === skill) {
+      postToParent({ type: 'linggen-skill-event', event: 'save_changed', payload: item.data ?? {} });
+    }
+    return true;
+  }
+  if (item.kind === 'device_topic') {
+    postToParent({ type: 'linggen-skill-event', event: 'device_topic', payload: item.data ?? {} });
+    return true;
+  }
+  return false;
 }
 
 function relayToSkillIframe(item: UiEvent): void {
   if (window.parent === window) return;
+  if (relayGlobal(item)) return;
   relayActivity(item);
 
   if (item.kind === 'token' && item.text) {
-    window.parent.postMessage({
+    postToParent({
       type: 'linggen-skill-event',
       event: 'stream_token',
       payload: { text: item.text, done: item.phase === 'done' },
-    }, '*');
+    });
     return;
   }
 
   if (item.kind === 'turn_complete') {
     const msgs = useChatStore.getState().messages;
     const lastMsg = [...msgs].reverse().find((m) => m.role === 'agent');
-    window.parent.postMessage({
+    postToParent({
       type: 'linggen-skill-event',
       event: 'stream_end',
       payload: { text: lastMsg?.text || '' },
-    }, '*');
+    });
     return;
   }
 
   if (item.kind === 'content_block') {
-    window.parent.postMessage({
+    postToParent({
       type: 'linggen-skill-event',
       event: 'content_block',
       payload: {
@@ -165,7 +185,7 @@ function relayToSkillIframe(item: UiEvent): void {
         blockId: item.data?.block_id,
         output: item.data?.output,
       },
-    }, '*');
+    });
   }
 }
 

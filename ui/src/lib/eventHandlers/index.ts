@@ -36,6 +36,7 @@ import {
   handleUserInfo,
   handleRoomChat,
   handleDeviceTopic,
+  handleSkillSaveChanged,
 } from './misc';
 import { handlePetSpeak, handlePetVoice, handlePetExpress, handleYinyuePresent } from './yinyue';
 
@@ -71,6 +72,7 @@ export const eventHandlers: Record<EventKind, EventHandler> = {
   user_info: handleUserInfo,
   room_chat: handleRoomChat,
   device_topic: handleDeviceTopic,
+  skill_save_changed: handleSkillSaveChanged,
 
   // Pet (Yinyue today)
   pet_speak: handlePetSpeak,

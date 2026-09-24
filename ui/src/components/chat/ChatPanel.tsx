@@ -30,6 +30,7 @@ import { useStableArray } from '../../hooks/useStableArray';
 import { useChatStore } from '../../stores/chatStore';
 import { sessions as sessionsApi } from '../../lib/api';
 import { sessionApi } from '../../lib/endpoints';
+import { postToParent } from '../../lib/parentFrame';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -111,9 +112,7 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
       const cs = useChatStore.getState();
       cs.setActiveSession(data.id);
       cs.fetchSessionState();
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } }, '*');
-      }
+      postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.id } });
       setNewStatus('copied');
     } catch (err) {
       console.error('[new-chat] failed:', err);

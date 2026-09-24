@@ -20,6 +20,7 @@ import { useUserStore } from '../stores/userStore';
 import { useSuggestionStore } from '../stores/suggestionStore';
 import { useChatActions } from '../hooks/useChatActions';
 import { useRunInfo } from '../hooks/useRunInfo';
+import { postToParent, fromParent } from '../lib/parentFrame';
 
 const params = new URLSearchParams(window.location.search);
 const pinnedSession = params.get('session') || '';
@@ -124,7 +125,9 @@ export const EmbedApp: React.FC = () => {
       document.documentElement.setAttribute('data-compact', '');
     }
     const handleMessage = (e: MessageEvent) => {
-      if (e.data?.type !== 'linggen-clipboard') return;
+      // A VS Code webview frames us from its own scheme; nobody else may.
+      const trusted = fromParent(e) || e.origin.startsWith('vscode-webview:');
+      if (!trusted || e.data?.type !== 'linggen-clipboard') return;
       const sel = window.getSelection();
       const text = sel?.toString();
       switch (e.data.action) {
@@ -141,7 +144,8 @@ export const EmbedApp: React.FC = () => {
       }
     };
     const handleSkillCommand = (e: MessageEvent) => {
-      if (e.data?.type !== 'linggen-skill') return;
+      // Only the skill page that frames us, on our own origin, may make the chat send.
+      if (!fromParent(e) || e.data?.type !== 'linggen-skill') return;
       const { action, payload } = e.data;
       switch (action) {
         case 'send': {
@@ -180,7 +184,7 @@ export const EmbedApp: React.FC = () => {
     document.addEventListener('keydown', handleCopy);
     // Tell the parent skill page we can now receive posted messages — its
     // chat-bridge queues sends until it sees life from this iframe.
-    try { window.parent.postMessage({ type: 'linggen-skill-event', event: 'ready', payload: {} }, '*'); } catch { /* not embedded */ }
+    postToParent({ type: 'linggen-skill-event', event: 'ready', payload: {} });
     return () => {
       window.removeEventListener('message', handleSkillCommand);
       window.removeEventListener('message', handleMessage);

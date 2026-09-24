@@ -14,6 +14,7 @@ import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { ContentBlock } from '../types';
 import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
 import { ApiError, apiErrorMessage } from '../lib/api';
+import { postToParent } from '../lib/parentFrame';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -249,9 +250,7 @@ export function useChatActions(
         if (data.status !== 'queued') useServerStore.getState().setPendingSend(data.session_id, true);
         useSessionStore.getState().setActiveSessionId(data.session_id);
         useSessionStore.getState().fetchSessions();
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } }, '*');
-        }
+        postToParent({ type: 'linggen-skill-event', event: 'session_created', payload: { sessionId: data.session_id } });
       }
       if (data?.status === 'queued') {
         useChatStore.getState().removeLastUserMessage(userMessage, agentToUse);
@@ -273,9 +272,7 @@ export function useChatActions(
       // Tell an embedding skill page the send was lost so it can retry
       // its own protocol messages (e.g. a boot prompt that raced a
       // daemon restart). Mirrors the session_created bridge event.
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: 'linggen-skill-event', event: 'send_failed', payload: { text: userMessage } }, '*');
-      }
+      postToParent({ type: 'linggen-skill-event', event: 'send_failed', payload: { text: userMessage } });
       // Hidden boot prompts fail silently; user-typed messages get told.
       if (!trimmed.startsWith('[HIDDEN]')) {
         const ts = new Date();

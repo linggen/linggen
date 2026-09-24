@@ -53,6 +53,9 @@ export const EVENT_KINDS = [
   // Device-to-device control topics (dj, media, …) relayed by the daemon.
   // The console doesn't act on them today — the phone and Mac apps do.
   'device_topic',
+  // A skill's cloud save was pulled (global). The console has nothing to
+  // redraw; an embed chat relays it to its skill page as `save_changed`.
+  'skill_save_changed',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
