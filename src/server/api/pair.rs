@@ -102,26 +102,35 @@ fn devices_path() -> PathBuf {
     crate::paths::linggen_home().join("paired-devices.json")
 }
 
+mod store;
+
+static STORE: std::sync::LazyLock<store::DeviceStore> =
+    std::sync::LazyLock::new(|| store::DeviceStore::new(devices_path()));
+
+/// The paired devices — served from memory; see [`store`].
 pub fn load_devices() -> Vec<PairedDevice> {
-    let Ok(text) = std::fs::read_to_string(devices_path()) else {
-        return Vec::new();
-    };
-    let mut devices: Vec<PairedDevice> = serde_json::from_str(&text).unwrap_or_default();
-    // Rows written before the models default existed carry no "models" key at
-    // all, and re-pairs preserve that forever — seed those once. An explicit
-    // list (even an emptied one) is the owner's curation and stays untouched.
+    STORE.load(migrate_rows)
+}
+
+/// Read-modify-write the device list under the store's writer lock, persisted
+/// atomically.
+fn modify_devices<R>(f: impl FnOnce(&mut Vec<PairedDevice>) -> R) -> std::io::Result<R> {
+    STORE.modify(migrate_rows, f)
+}
+
+/// Rows written before the models default existed carry no "models" key at
+/// all, and re-pairs preserve that forever — seed those once. An explicit
+/// list (even an emptied one) is the owner's curation and stays untouched.
+fn migrate_rows(devices: &mut [PairedDevice]) -> bool {
     let mut seeded = false;
-    for d in &mut devices {
+    for d in devices {
         if !d.settings.contains_key("models") {
             d.settings.append(&mut default_device_settings());
             seeded = true;
         }
         seeded |= migrate_retired_models(&mut d.settings);
     }
-    if seeded {
-        let _ = save_devices(&devices);
-    }
-    devices
+    seeded
 }
 
 /// A GPT generation bump moves each retired ChatGPT id in a phone's
@@ -148,10 +157,6 @@ fn migrate_retired_models(settings: &mut serde_json::Map<String, serde_json::Val
         .filter(|x| seen.insert(x.to_string()))
         .collect();
     true
-}
-
-fn save_devices(devices: &[PairedDevice]) -> std::io::Result<()> {
-    std::fs::write(devices_path(), serde_json::to_string_pretty(devices)?)
 }
 
 /// What a brand-new phone's allow-list starts with: the zero-setup Linggen
@@ -181,31 +186,32 @@ fn commit_device(
     device_id: Option<String>,
     account: Option<AccountRef>,
 ) -> std::io::Result<PairedDevice> {
-    let mut devices = load_devices();
-    // Carry the Mac-owned settings across a re-pair so pulling from the Mac
-    // doesn't reset to defaults when a phone re-scans.
-    let prior = device_id
-        .as_deref()
-        .and_then(|did| devices.iter().find(|d| d.device_id.as_deref() == Some(did)));
-    let carried = prior.map(|d| d.settings.clone());
-    let superseded_grant = prior.and_then(|d| d.relay_grant.clone());
-    let device = PairedDevice {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        account: account.map(stamp_account),
-        secret: random_hex(24),
-        created_at: chrono::Utc::now().timestamp(),
-        device_id: device_id.clone(),
-        settings: carried.unwrap_or_else(default_device_settings),
-        // Filled in by the caller once the relay has issued one.
-        relay_grant: None,
-        superseded_grant,
-    };
-    if let Some(did) = device_id {
-        devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
-    }
-    devices.push(device.clone());
-    save_devices(&devices)?;
+    let device = modify_devices(|devices| {
+        // Carry the Mac-owned settings across a re-pair so pulling from the Mac
+        // doesn't reset to defaults when a phone re-scans.
+        let prior = device_id
+            .as_deref()
+            .and_then(|did| devices.iter().find(|d| d.device_id.as_deref() == Some(did)));
+        let carried = prior.map(|d| d.settings.clone());
+        let superseded_grant = prior.and_then(|d| d.relay_grant.clone());
+        let device = PairedDevice {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            account: account.map(stamp_account),
+            secret: random_hex(24),
+            created_at: chrono::Utc::now().timestamp(),
+            device_id: device_id.clone(),
+            settings: carried.unwrap_or_else(default_device_settings),
+            // Filled in by the caller once the relay has issued one.
+            relay_grant: None,
+            superseded_grant,
+        };
+        if let Some(did) = &device_id {
+            devices.retain(|d| d.device_id.as_deref() != Some(did.as_str()));
+        }
+        devices.push(device.clone());
+        device
+    })?;
     // A new device on this Mac is a change to the world, and the kind a user
     // asks about later ("when did I pair this?").
     crate::perception::activity::record("user", "system", "pair", Some(device.name.clone()));
@@ -304,8 +310,23 @@ pub struct Identified {
 /// after pairing, so the connect-time claim wins over the pair-time one —
 /// including `None`, which is how a sign-out is recorded.
 pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Identified> {
-    let mut devices = load_devices();
-    let d = devices.iter_mut().find(|d| d.secret == token)?;
+    if device_by_token(token).is_none() {
+        return None;
+    }
+    let result = modify_devices(|devices| {
+        let d = devices.iter_mut().find(|d| token_matches(d, token))?;
+        Some(refresh_account(d, account))
+    });
+    match result {
+        Ok(found) => found,
+        Err(e) => {
+            tracing::warn!("[pair] could not persist device account: {e}");
+            None
+        }
+    }
+}
+
+fn refresh_account(d: &mut PairedDevice, account: Option<AccountRef>) -> Identified {
     let next = account.map(stamp_account);
     let changed = d.account.as_ref().map(|a| a.id.clone()) != next.as_ref().map(|a| a.id.clone());
     let signed_in = match (&d.account, &next) {
@@ -324,14 +345,18 @@ pub fn set_device_account(token: &str, account: Option<AccountRef>) -> Option<Id
             person_label(&d.account)
         );
     }
-    let _ = save_devices(&devices);
-    Some(Identified { actor, signed_in })
+    Identified { actor, signed_in }
+}
+
+/// Constant-time: a token compare must not leak how many bytes matched.
+fn token_matches(d: &PairedDevice, token: &str) -> bool {
+    !token.is_empty() && crate::util::ct_eq(&d.secret, token)
 }
 
 /// The device that owns a token, if any — lets `/api/pair/me` identify the caller.
 fn device_by_token(token: &str) -> Option<PairedDevice> {
     (!token.is_empty())
-        .then(|| load_devices().into_iter().find(|d| d.secret == token))
+        .then(|| load_devices().into_iter().find(|d| token_matches(d, token)))
         .flatten()
 }
 
@@ -349,7 +374,7 @@ pub fn device_name(id: &str) -> Option<String> {
 
 /// The LAN gate's check: does any paired device own this token?
 pub fn is_valid_device_token(token: &str) -> bool {
-    !token.is_empty() && load_devices().iter().any(|d| d.secret == token)
+    load_devices().iter().any(|d| token_matches(d, token))
 }
 
 fn random_hex(bytes: usize) -> String {
@@ -696,22 +721,29 @@ pub(crate) async fn rename_pair_device(
     if req.name.is_none() && req.settings.is_none() {
         return err(StatusCode::BAD_REQUEST, "nothing to update");
     }
-    let mut devices = load_devices();
-    let Some(device) = devices.iter_mut().find(|d| d.id == id) else {
-        return err(StatusCode::NOT_FOUND, "no such device");
+    let name = match req
+        .name
+        .map(|n| n.trim().chars().take(64).collect::<String>())
+    {
+        Some(n) if n.is_empty() => return err(StatusCode::BAD_REQUEST, "name cannot be empty"),
+        other => other,
     };
-    if let Some(name) = req.name {
-        let name: String = name.trim().chars().take(64).collect();
-        if name.is_empty() {
-            return err(StatusCode::BAD_REQUEST, "name cannot be empty");
+    let found = modify_devices(|devices| {
+        let Some(device) = devices.iter_mut().find(|d| d.id == id) else {
+            return false;
+        };
+        if let Some(name) = name {
+            device.name = name;
         }
-        device.name = name;
-    }
-    if let Some(settings) = req.settings {
-        device.settings = settings;
-    }
-    if let Err(e) = save_devices(&devices) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
+        if let Some(settings) = req.settings {
+            device.settings = settings;
+        }
+        true
+    });
+    match found {
+        Ok(true) => {}
+        Ok(false) => return err(StatusCode::NOT_FOUND, "no such device"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
     }
     tracing::info!("[pair] device {id} updated");
     Json(serde_json::json!({ "status": "ok" })).into_response()
@@ -720,22 +752,18 @@ pub(crate) async fn rename_pair_device(
 /// DELETE /api/pair/devices/{id} — revoke one device. Its token stops working
 /// on the next request; the phone re-pairs with eyes on this Mac.
 pub(crate) async fn delete_pair_device(Path(id): Path<String>) -> impl IntoResponse {
-    let mut devices = load_devices();
-    let before = devices.len();
     // Take the relay credential with us: dropping the row here only closes the
     // LAN door, and a revoked phone that kept reaching us from anywhere would
     // make Revoke a lie.
-    let grant = devices
-        .iter()
-        .find(|d| d.id == id)
-        .and_then(|d| d.relay_grant.clone());
-    devices.retain(|d| d.id != id);
-    if devices.len() == before {
-        return err(StatusCode::NOT_FOUND, "no such device");
-    }
-    if let Err(e) = save_devices(&devices) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}"));
-    }
+    let removed = modify_devices(|devices| {
+        let pos = devices.iter().position(|d| d.id == id)?;
+        Some(devices.remove(pos).relay_grant)
+    });
+    let grant = match removed {
+        Ok(Some(grant)) => grant,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "no such device"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("persist: {e}")),
+    };
     if let Some(g) = grant {
         revoke_relay_grant(&g).await;
     }
@@ -910,10 +938,16 @@ async fn grant_for(device: &PairedDevice) -> Option<String> {
         revoke_relay_grant(&stale).await;
     }
     let grant = mint_relay_grant(&device.name).await?;
-    let mut devices = load_devices();
-    if let Some(d) = devices.iter_mut().find(|d| d.id == device.id) {
-        d.relay_grant = Some(grant.clone());
-        let _ = save_devices(&devices);
+    let stored = modify_devices(|devices| {
+        if let Some(d) = devices.iter_mut().find(|d| d.id == device.id) {
+            d.relay_grant = Some(grant.clone());
+        }
+    });
+    if let Err(e) = stored {
+        tracing::warn!(
+            "[pair] could not remember relay grant for {}: {e}",
+            device.id
+        );
     }
     Some(grant)
 }
