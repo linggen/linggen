@@ -39,7 +39,10 @@ impl UserPermission {
             return true;
         }
         // Static assets (tunnel loading) and skill app files
-        if (url == "/index.html" || url.starts_with("/assets/") || url.starts_with("/apps/"))
+        if (url == "/index.html"
+            || url.starts_with("/assets/")
+            || url.starts_with("/apps/")
+            || url.starts_with("/shared/"))
             && method == "GET"
         {
             return true;
@@ -341,6 +344,17 @@ mod tests {
         // The web UI and the app shell never identify — they have no device
         // token and are not devices. They must keep owner.
         assert_eq!(UserContext::owner(None).user_type_for(false), "owner");
+    }
+
+    #[test]
+    fn a_room_member_can_load_the_shared_page_helpers() {
+        // A skill app opened through a room imports /shared/*.js; without it
+        // the page is blank for everyone but the owner.
+        let read = UserPermission::Read;
+        assert!(read.can_access_endpoint("GET", "/shared/chat-bridge.js"));
+        assert!(read.can_access_endpoint("GET", "/apps/cfo/scripts/cfo.html"));
+        assert!(!read.can_access_endpoint("POST", "/shared/chat-bridge.js"));
+        assert!(!read.can_access_endpoint("GET", "/api/config"));
     }
 
     #[test]

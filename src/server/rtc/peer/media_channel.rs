@@ -117,8 +117,7 @@ pub(super) fn spawn_get(
     ) else {
         return false;
     };
-    // Same allowlist as the control channel's http_request: our own API only.
-    if !url.starts_with("/api/") || url.contains("..") || url.contains("://") {
+    if !get_allowed(&url) {
         let _ = out.try_send(super::response::DcWrite::text(
             channel,
             json!({"type": "get_err", "id": id, "error": "invalid url"}).to_string(),
@@ -187,6 +186,18 @@ pub(super) fn spawn_get(
             .await;
     });
     true
+}
+
+/// What a media `get` may fetch: our own API, plus the skill-app and
+/// shared-helper files a remotely opened app loads as bytes (images, audio,
+/// fonts) — the control channel's text RPC would mangle them.
+fn get_allowed(url: &str) -> bool {
+    let served =
+        url.starts_with("/api/") || url.starts_with("/apps/") || url.starts_with("/shared/");
+    served
+        && !url.contains("..")
+        && !url.contains("://")
+        && !url.to_ascii_lowercase().contains("%2e")
 }
 
 /// Handle one binary chunk. Returns an error reply if the transfer must abort.
@@ -316,5 +327,26 @@ async fn finish(mut t: MediaTransfer) -> String {
         }
         Ok(Err(e)) => reply_err(&t.id, e.to_string()),
         Err(e) => reply_err(&t.id, format!("ingest task: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod get_allowlist_tests {
+    use super::get_allowed;
+
+    #[test]
+    fn app_and_shared_files_ride_as_bytes() {
+        assert!(get_allowed("/api/media/thumb?id=1"));
+        assert!(get_allowed("/apps/dj/scripts/.thumbs/a%20b.jpg"));
+        assert!(get_allowed("/shared/chat-bridge.js"));
+    }
+
+    #[test]
+    fn nothing_else_and_no_escapes() {
+        assert!(!get_allowed("/etc/passwd"));
+        assert!(!get_allowed("/apps/../config.toml"));
+        assert!(!get_allowed("/apps/%2E%2E/config.toml"));
+        assert!(!get_allowed("/api/x?u=http://evil"));
+        assert!(!get_allowed("/embed"));
     }
 }

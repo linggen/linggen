@@ -277,7 +277,8 @@ window.LinggenUI = { mount };
 (function () {
   const BEAT_MS = 4000;
   const TYPING_WINDOW_MS = 1500;
-  const APP = (location.pathname.match(/^\/apps\/([a-z0-9-]+)\//) || [])[1] || null;
+  // Remotely the page lives at /tunnel/<instance>/apps/<skill>/… (linggen.dev).
+  const APP = (location.pathname.match(/^(?:\/tunnel\/[^/]+)?\/apps\/([a-z0-9-]+)\//) || [])[1] || null;
   let lastInputAt = Date.now();
   let lastKeyAt = 0;
 
