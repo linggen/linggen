@@ -48,6 +48,10 @@ pub(super) struct Milestone {
     check: Check,
 }
 
+/// Milestones taken out of the table: their entries leave the file, done or
+/// not, so no app keeps offering them (linggen-skill, Hanli 2026-09-24).
+const RETIRED: &[&str] = &["linggen-skill"];
+
 const MILESTONES: &[Milestone] = &[
     Milestone {
         id: "linggen-pair",
@@ -96,14 +100,6 @@ const MILESTONES: &[Milestone] = &[
         en: "Weave the net · add an MCP server",
         open: "/settings?tab=mcp",
         check: mcp_server,
-    },
-    Milestone {
-        id: "linggen-skill",
-        device: "mac",
-        zh: "收徒 · 装一个新技能",
-        en: "Take a disciple · install a skill",
-        open: "/settings?tab=skills",
-        check: installed_skill,
     },
     Milestone {
         id: "linggen-mission",
@@ -217,22 +213,6 @@ fn mcp_server(state: Arc<ServerState>) -> CheckFuture {
     Box::pin(async move {
         let cfg = state.manager.get_config_snapshot().await;
         Ok(!cfg.mcp_servers.is_empty())
-    })
-}
-
-/// A global skill that isn't one of Linggen's own (the linggen/skills repo,
-/// which `ling init` installs whole). Installs leave no record, so this is
-/// the difference. No first-party list (GitHub unreachable, no cache) is an
-/// error: everything would look installed.
-fn installed_skill(state: Arc<ServerState>) -> CheckFuture {
-    Box::pin(async move {
-        let own = crate::extensions::skills::fetch_builtin_skills().await;
-        anyhow::ensure!(!own.is_empty(), "first-party skill list unavailable");
-        let skills = state.skills.list_skills().await;
-        Ok(skills.iter().any(|s| {
-            matches!(s.source, crate::engine::skill::SkillSource::Global)
-                && !own.iter().any(|o| o.name == s.name)
-        }))
     })
 }
 
@@ -364,11 +344,12 @@ fn is_done(doc: &Value, id: &str) -> bool {
     entry(doc, id).is_some_and(|q| q["done_at"].is_string())
 }
 
-/// Bring the file up to the table: add each missing milestone (done now if
-/// just seen), and stamp `done_at` on an open one just seen. An entry with a
-/// `done_at` is never touched; nothing is removed. True when anything changed.
+/// Bring the file up to the table: drop retired milestones, add each missing
+/// one (done now if just seen), and stamp `done_at` on an open one just seen.
+/// An entry with a `done_at` is never otherwise touched, and entries the
+/// table doesn't know are kept. True when anything changed.
 fn record(doc: &mut Value, table: &[Milestone], done: &[&str], now: &str) -> bool {
-    let mut changed = false;
+    let mut changed = drop_retired(doc);
     for m in table {
         let stamp = done.contains(&m.id).then_some(now);
         let Some(quests) = doc["quests"].as_array_mut() else {
@@ -387,6 +368,15 @@ fn record(doc: &mut Value, table: &[Milestone], done: &[&str], now: &str) -> boo
         }
     }
     changed
+}
+
+fn drop_retired(doc: &mut Value) -> bool {
+    let Some(quests) = doc["quests"].as_array_mut() else {
+        return false;
+    };
+    let before = quests.len();
+    quests.retain(|q| !RETIRED.iter().any(|id| q["id"] == *id));
+    quests.len() != before
 }
 
 fn new_entry(m: &Milestone, done_at: Option<&str>) -> Value {
@@ -447,6 +437,18 @@ mod tests {
         assert_eq!(pair["stamina"], STAMINA);
         assert_eq!(pair["title"]["zh"], "结缘 · 与手机结契");
         assert!(entry(&doc, "linggen-model").unwrap()["done_at"].is_null());
+    }
+
+    #[test]
+    fn a_retired_milestone_leaves_the_file() {
+        let mut doc = json!({ "app": "linggen", "quests": [
+            { "id": "linggen-skill", "done_at": null },
+            { "id": "somebody-else", "done_at": null }
+        ]});
+        assert!(record(&mut doc, &[], &[], "now"));
+        assert!(entry(&doc, "linggen-skill").is_none());
+        assert!(entry(&doc, "somebody-else").is_some());
+        assert!(!MILESTONES.iter().any(|m| RETIRED.contains(&m.id)));
     }
 
     #[tokio::test]
