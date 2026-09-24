@@ -346,20 +346,28 @@ fn read_install_source(
 /// install-source marker that installers already write — file existence is
 /// the install signal, `installer_version` is the version field.
 pub fn read_system_state(data_dir: &Path) -> serde_json::Value {
-    // Two renames deep (sys-doctor → mac-shifu → apple-shifu), and an install
-    // that has not been migrated yet still carries whichever marker it was
-    // installed with — try newest first.
-    let sys_doctor = read_install_source_full(data_dir, "apple-shifu")
-        .or_else(|| read_install_source_full(data_dir, "mac-shifu"))
-        .or_else(|| read_install_source_full(data_dir, "sys-doctor"));
-    let ling_mem = read_install_source_full(data_dir, "ling-mem");
-    serde_json::json!({
-        "sys_doctor_installed": sys_doctor.is_some(),
-        "sys_doctor_version": sys_doctor.as_ref().and_then(|m| m.get("installer_version").cloned()),
-        "ling_mem_installed": ling_mem.is_some(),
-        "ling_mem_version": ling_mem.as_ref().and_then(|m| m.get("installer_version").cloned()),
-    })
+    let mut state = serde_json::Map::new();
+    for (key, markers) in SIBLING_PRODUCTS {
+        let found = markers
+            .iter()
+            .find_map(|m| read_install_source_full(data_dir, m));
+        let version = found
+            .as_ref()
+            .and_then(|m| m.get("installer_version").cloned());
+        state.insert(format!("{key}_installed"), found.is_some().into());
+        state.insert(format!("{key}_version"), version.into());
+    }
+    serde_json::Value::Object(state)
 }
+
+/// Sibling products reported in `engine.start`: payload key prefix, then the
+/// install-source marker names to try, newest first — a product renamed
+/// twice (sys-doctor → mac-shifu → apple-shifu) may still carry an old
+/// marker until it migrates. Data, so a rename or a new product is a row here.
+const SIBLING_PRODUCTS: &[(&str, &[&str])] = &[
+    ("sys_doctor", &["apple-shifu", "mac-shifu", "sys-doctor"]),
+    ("ling_mem", &["ling-mem"]),
+];
 
 /// Like `read_install_source` but returns `None` when the file is absent
 /// (vs an empty map). Use this when file presence itself is the signal.
