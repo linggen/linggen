@@ -1,7 +1,7 @@
 import React from 'react';
 import { Brain, Star } from 'lucide-react';
 import { cn } from '../lib/cn';
-import type { AgentInfo, ChatMessage, ModelInfo, OllamaPsResponse } from '../types';
+import type { AgentInfo, ModelInfo, OllamaPsResponse } from '../types';
 
 /** Check if a model supports reasoning effort control. */
 function supportsReasoningEffort(model: ModelInfo): boolean {
@@ -24,7 +24,6 @@ export const ModelsCard: React.FC<{
   models: ModelInfo[];
   agents: AgentInfo[];
   ollamaStatus: OllamaPsResponse | null;
-  chatMessages: ChatMessage[];
   activeModelId?: string;
   defaultModels?: string[];
   onToggleDefault?: (modelId: string) => void;

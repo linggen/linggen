@@ -84,7 +84,7 @@ export const ChatMessageRow = React.memo<{
     <div
       key={msgKey}
       ref={userMsgIndex != null ? registerRef : undefined}
-      className={cn('w-full flex', isUser ? 'justify-end' : 'justify-start')}
+      className={cn('chat-row w-full flex', isUser ? 'justify-end' : 'justify-start')}
     >
       {/* A typed message keeps the shape it was typed in: line breaks and
           indentation are how a list, an address block or a pasted email
@@ -118,6 +118,9 @@ export const ChatMessageRow = React.memo<{
 /** Memoized historical message list — skips re-render during streaming & typing. */
 export const ChatMessageList = React.memo<{
   messages: ChatMessage[];
+  /** Index of the first message rendered; earlier ones wait behind "Load earlier". */
+  from: number;
+  onLoadEarlier: () => void;
   expandedMessages: Set<string>;
   setExpandedMessages: React.Dispatch<React.SetStateAction<Set<string>>>;
   verboseMode?: boolean;
@@ -130,7 +133,7 @@ export const ChatMessageList = React.memo<{
   onEditPlan?: (text: string) => void;
   onResend?: (failed: ChatMessage) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
-}>(({ messages, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }) => {
+}>(({ messages, from, onLoadEarlier, expandedMessages, setExpandedMessages, verboseMode, userMsgRefs, selectedAgent, pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }) => {
   const planProps = useMemo(() => ({ pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef }), [pendingPlanAgentId, agentContext, onApprovePlan, onRejectPlan, onEditPlan, onResend, inputRef]);
   // The user's name, as core memory states it — labels their bubbles. Until
   // the real name is learned, the placeholder "Hanli" stands in (Yinyue's
@@ -158,7 +161,19 @@ export const ChatMessageList = React.memo<{
           </div>
         </div>
       )}
-      {messages.map((msg, i) => {
+      {from > 0 && (
+        <button
+          type="button"
+          onClick={onLoadEarlier}
+          className="self-center my-1 px-3 py-1 rounded-full text-[12px] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5"
+        >
+          ↑ {from} earlier message{from === 1 ? '' : 's'}
+        </button>
+      )}
+      {messages.slice(from).map((msg, j) => {
+        // Keys and the floating banner's indexes are positions in the whole
+        // history, so they hold as the window grows.
+        const i = from + j;
         // Skip hidden system messages (used by app skills for internal prompts)
         if (msg.role === 'user' && msg.text.startsWith('[HIDDEN]')) return null;
         const key = `${msg.timestamp}-${i}-${msg.from || msg.role}-${msg.text.slice(0, 24)}`;

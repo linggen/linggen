@@ -29,6 +29,7 @@ import { useChatActions } from '../hooks/useChatActions';
 import { sendViewContext, useYinyuePresenter } from '../hooks/useTransport';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import { useLocation } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 
 const urlParams = new URLSearchParams(window.location.search);
 const isMobileParam = urlParams.get('mode') === 'mobile';
@@ -56,10 +57,38 @@ const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector
 
 export const MainApp: React.FC = () => {
   // --- Stores ---
-  const projectStore = useSessionStore();
-  const agentStore = useServerStore();
-  const chatStore = useChatStore();
-  const uiStore = useUiStore();
+  // Only the fields this shell renders from. A whole-store subscription made
+  // every streamed token (chat store) and token-rate tick (server store)
+  // re-render the shell and everything under it — sidebar, session list,
+  // info panel — not just the streaming row.
+  const { selectedProjectRoot, sessions, allSessions, activeSessionId, isMissionSession, isSkillSession } = useSessionStore(useShallow((s) => ({
+    selectedProjectRoot: s.selectedProjectRoot,
+    sessions: s.sessions,
+    allSessions: s.allSessions,
+    activeSessionId: s.activeSessionId,
+    isMissionSession: s.isMissionSession,
+    isSkillSession: s.isSkillSession,
+  })));
+  const { agents, models, skills, selectedAgent, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = useServerStore(useShallow((s) => ({
+    agents: s.agents,
+    models: s.models,
+    skills: s.skills,
+    selectedAgent: s.selectedAgent,
+    agentStatusText: s.agentStatusText,
+    defaultModels: s.defaultModels,
+    ollamaStatus: s.ollamaStatus,
+    reloadingSkills: s.reloadingSkills,
+    agentTreesByProject: s.agentTreesByProject,
+  })));
+  const { showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath } = useUiStore(useShallow((s) => ({
+    showAgentSpecEditor: s.showAgentSpecEditor,
+    openApp: s.openApp,
+    selectedFileContent: s.selectedFileContent,
+    selectedFilePath: s.selectedFilePath,
+  })));
+  const projectStore = useSessionStore.getState();
+  const agentStore = useServerStore.getState();
+  const uiStore = useUiStore.getState();
 
   // Yinyue singleton: subscribe this surface (the in-page dock) to the server's
   // FCFS presenter lock and render her only when this surface holds it. In an
@@ -83,12 +112,6 @@ export const MainApp: React.FC = () => {
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
-
-  // Shortcuts
-  const { selectedProjectRoot, sessions, allSessions, activeSessionId, isMissionSession, isSkillSession } = projectStore;
-  const { agents, models, skills, selectedAgent, agentStatusText, defaultModels, ollamaStatus, reloadingSkills, agentTreesByProject } = agentStore;
-  const { messages: chatMessages } = chatStore;
-  const { showAgentSpecEditor, openApp, selectedFileContent, selectedFilePath } = uiStore;
 
   const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
   const mainAgents = agents;
@@ -226,7 +249,7 @@ export const MainApp: React.FC = () => {
   }, [sendChatMessage]);
 
   const infoPanelProps = {
-    models, skills, agents: mainAgents, chatMessages, activeModelId,
+    models, skills, agents: mainAgents, activeModelId,
     defaultModels, ollamaStatus, reloadingSkills,
     projectRoot: selectedProjectRoot,
     onToggleDefault: agentStore.toggleDefaultModel,
@@ -365,7 +388,7 @@ export const MainApp: React.FC = () => {
         <FilePreview selectedFilePath={selectedFilePath} selectedFileContent={selectedFileContent} onClose={() => uiStore.closeFilePreview()} />
         <AgentSpecEditorModal open={showAgentSpecEditor} projectRoot={selectedProjectRoot}
           onClose={() => uiStore.setShowAgentSpecEditor(false)}
-          onChanged={() => { agentStore.fetchAgents(selectedProjectRoot); chatStore.fetchSessionState(); }} />
+          onChanged={() => { agentStore.fetchAgents(selectedProjectRoot); useChatStore.getState().fetchSessionState(); }} />
 
         {openApp && <AppPanel app={openApp} onClose={() => uiStore.setOpenApp(null)} />}
 

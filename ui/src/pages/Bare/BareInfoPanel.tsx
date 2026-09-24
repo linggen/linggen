@@ -2,7 +2,6 @@ import React from 'react';
 import { InfoPanel } from '../../components/InfoPanel';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
-import { useChatStore } from '../../stores/chatStore';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
 import { recordSkillUsage } from '../../lib/skillUsage';
 import type { SkillInfo } from '../../types';
@@ -17,7 +16,6 @@ export const BareInfoPanel: React.FC = () => {
   const defaultModels = useServerStore((s) => s.defaultModels);
   const ollamaStatus = useServerStore((s) => s.ollamaStatus);
   const reloadingSkills = useServerStore((s) => s.reloadingSkills);
-  const chatMessages = useChatStore((s) => s.messages);
   const openSettings = useOpenSettings();
   const server = useServerStore.getState();
 
@@ -31,7 +29,6 @@ export const BareInfoPanel: React.FC = () => {
         models={models}
         skills={skills}
         agents={agents}
-        chatMessages={chatMessages}
         defaultModels={defaultModels}
         ollamaStatus={ollamaStatus}
         reloadingSkills={reloadingSkills}

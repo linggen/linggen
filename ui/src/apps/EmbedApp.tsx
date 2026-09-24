@@ -33,11 +33,15 @@ const hideToolbar = params.get('hide_toolbar') === '1';
 const isRemoteMode = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
 
 export const EmbedApp: React.FC = () => {
-  const projectStore = useSessionStore();
-  const agentStore = useServerStore();
+  // Narrow reads: a whole-store subscription re-rendered the embed on every
+  // token-rate tick while a reply streamed.
+  const sessions = useSessionStore((s) => s.sessions);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const agents = useServerStore((s) => s.agents);
+  const selectedAgent = useServerStore((s) => s.selectedAgent);
+  const projectStore = useSessionStore.getState();
+  const agentStore = useServerStore.getState();
 
-  const { sessions, activeSessionId } = projectStore;
-  const { agents, selectedAgent } = agentStore;
   const isRunning = useServerStore((s) => isSessionBusy(s, activeSessionId));
 
   // --- Run info + chat actions (for clipboard bridge) ---

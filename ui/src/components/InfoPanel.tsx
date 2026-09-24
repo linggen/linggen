@@ -6,13 +6,12 @@ import { RefreshCw, Settings, Sparkles, Zap } from 'lucide-react';
 import { CollapsibleCard } from './CollapsibleCard';
 import { ModelsCard } from './ModelsCard';
 import { SkillsCard } from './SkillsCard';
-import type { AgentInfo, ModelInfo, OllamaPsResponse, SkillInfo, ChatMessage } from '../types';
+import type { AgentInfo, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
 
 export interface InfoPanelProps {
   models: ModelInfo[];
   skills: SkillInfo[];
   agents: AgentInfo[];
-  chatMessages: ChatMessage[];
   activeModelId?: string;
   defaultModels: string[];
   ollamaStatus: OllamaPsResponse | null;
@@ -26,7 +25,7 @@ export interface InfoPanelProps {
 }
 
 export const InfoPanel: React.FC<InfoPanelProps> = ({
-  models, skills, agents, chatMessages, activeModelId,
+  models, skills, agents, activeModelId,
   defaultModels, ollamaStatus, reloadingSkills,
   projectRoot, onToggleDefault, onChangeReasoningEffort, onReloadSkills,
   onOpenSettings, onClickSkill,
@@ -39,7 +38,7 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({
           <Settings size={12} />
         </button>
       }>
-      <ModelsCard models={models} agents={agents} ollamaStatus={ollamaStatus} chatMessages={chatMessages}
+      <ModelsCard models={models} agents={agents} ollamaStatus={ollamaStatus}
         activeModelId={activeModelId}
         defaultModels={defaultModels} onToggleDefault={onToggleDefault} onChangeReasoningEffort={onChangeReasoningEffort} />
     </CollapsibleCard>

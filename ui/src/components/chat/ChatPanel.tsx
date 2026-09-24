@@ -19,6 +19,7 @@ import { ChatMessageList, ChatMessageRow } from './ChatMessageList';
 import { RunStatusLine } from './RunStatusLine';
 import { useChatFilters } from './useChatFilters';
 import { useFloatingUserMessage } from './useFloatingUserMessage';
+import { useMessageWindow } from './useMessageWindow';
 import { useRunSpinner } from './useRunSpinner';
 import { useSubagentPane } from './useSubagentPane';
 import { ChatInput } from './ChatInput';
@@ -275,6 +276,7 @@ export const ChatPanel: React.FC<{
     filteredMainMessages, historicalMessages, streamingMessage, visibleQueued, selectedSubagent, filteredSubagentMessages,
   } = useChatFilters({ chatMessages, queuedMessages, selectedAgent, subagents, openSubagentId, subagentMessageFilter });
   const floatingUserMsg = useFloatingUserMessage(chatScrollRef, userMsgRefs, filteredMainMessages, sessionId);
+  const { from: windowFrom, loadEarlier } = useMessageWindow(historicalMessages.length, sessionId, chatScrollRef);
   const { askUserBelongsToSubagent, paneVisible, closePane } = useSubagentPane(filteredMainMessages, pendingAskUser, selectedAgent);
 
   // What "stop" acts on. The selected agent's run when there is one, else
@@ -418,6 +420,8 @@ export const ChatPanel: React.FC<{
         )}
         <ChatMessageList
           messages={historicalMessages}
+          from={windowFrom}
+          onLoadEarlier={loadEarlier}
           expandedMessages={expandedMessages}
           setExpandedMessages={setExpandedMessages}
           verboseMode={verboseMode}

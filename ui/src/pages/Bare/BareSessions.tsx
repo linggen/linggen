@@ -22,7 +22,7 @@ import { sessions } from '../../lib/api';
 export const BareSessions: React.FC = () => {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const allSessions = useSessionStore((s) => s.allSessions);
-  const sessionStore = useSessionStore();
+  const sessionStore = useSessionStore.getState();
   const openSettings = useOpenSettings();
 
   const params = new URLSearchParams(window.location.search);

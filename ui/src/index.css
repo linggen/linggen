@@ -274,3 +274,17 @@ body {
     padding-right: env(safe-area-inset-right);
   }
 }
+
+/* Chat rows off screen skip layout and paint. Only where the browser also
+   anchors scrolling: a row that renders at its real height while scrolling
+   up would otherwise shift everything below it. `auto` remembers each row's
+   last rendered size. */
+@supports (overflow-anchor: auto) {
+  .chat-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 160px;
+    /* The list is a flex column: a skipped row's minimum size is zero, so
+       without this the column squeezes every off-screen row to nothing. */
+    flex-shrink: 0;
+  }
+}
