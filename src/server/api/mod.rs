@@ -18,6 +18,7 @@ pub(super) mod rooms;
 pub(super) mod sessions;
 pub(super) mod skill_cloud;
 pub(super) mod skill_sync;
+pub(super) mod skill_tools;
 pub(super) mod skills;
 pub(super) mod status;
 pub(super) mod storage;

@@ -2,12 +2,14 @@
 //! one long turn — narration, an AskUser answer, more narration — so a check
 //! at the turn's start would never stop it, and a report at its end would
 //! come too late. Before a call: a spent meter refuses it (`BUDGET_EMPTY:`).
-//! After it: the call's tokens are reported and the save is kept in step, in
-//! the background. linggen.dev unreachable → the call goes ahead: the meter
-//! is a pace, not a lock.
+//! After it: the call's tokens are reported and a change to the save is
+//! pushed, in the background — never pulled: the tool call that follows may be
+//! writing the save right now, and a pull would land under it. Pulls belong to
+//! the turn's edges (`server/chat/cloud_gate.rs`). linggen.dev unreachable →
+//! the call goes ahead: the meter is a pace, not a lock.
 
 use crate::account::cloud::{meter_reading, meter_report};
-use crate::account::cloud_save::{sync, target};
+use crate::account::cloud_save::{push, target};
 use crate::engine::AgentEngine;
 use crate::provider::models::TokenUsage;
 
@@ -43,7 +45,9 @@ pub(crate) fn after_call(engine: &AgentEngine, usage: Option<&TokenUsage>) {
     match usage {
         Some(u) => tracing::debug!(
             "meter: {tokens} tokens this call (prompt {:?}, cached {:?}, output {:?})",
-            u.prompt_tokens, u.cached_tokens, u.completion_tokens
+            u.prompt_tokens,
+            u.cached_tokens,
+            u.completion_tokens
         ),
         None => tracing::debug!("meter: the provider reported no usage for this call"),
     }
@@ -55,8 +59,8 @@ pub(crate) fn after_call(engine: &AgentEngine, usage: Option<&TokenUsage>) {
             }
         }
         if let Some(save) = save {
-            if let Err(e) = sync(&save).await {
-                tracing::warn!("save '{}' not synced: {e:#}", save.skill);
+            if let Err(e) = push(&save).await {
+                tracing::warn!("save '{}' not pushed: {e:#}", save.skill);
             }
         }
     });

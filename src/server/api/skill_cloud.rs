@@ -14,9 +14,34 @@ use axum::{
 use std::sync::Arc;
 
 use crate::account::cloud::{last_reading, meter_reading};
-use crate::account::cloud_save::{sync, target};
+use crate::account::cloud_save::{sync, target, Synced};
 use crate::engine::skill::Skill;
-use crate::server::ServerState;
+use crate::server::{ServerEvent, ServerState};
+
+/// What a skill turn — or a page's tool call — answers when the skill keeps
+/// a cloud and nobody is signed in.
+pub(crate) const AUTH_REQUIRED: &str = "AUTH_REQUIRED: Sign in to linggen.dev to play.";
+
+/// Tell every surface a pull replaced a skill's save (`SkillSaveChanged`):
+/// its page reads again instead of showing the files it had.
+pub(crate) fn announce(
+    events_tx: &tokio::sync::broadcast::Sender<ServerEvent>,
+    skill: &str,
+    done: &Synced,
+) {
+    if !done.pulled() {
+        return;
+    }
+    let _ = events_tx.send(ServerEvent::SkillSaveChanged {
+        skill: skill.to_string(),
+        version: done.version,
+        conflicts: done
+            .conflicts
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect(),
+    });
+}
 
 async fn cloud_skill(state: &Arc<ServerState>, name: &str) -> Result<Skill, Response> {
     let not_found = || (StatusCode::NOT_FOUND, "no cloud for that skill").into_response();
@@ -59,8 +84,14 @@ pub async fn post_sync(
         return (StatusCode::NOT_FOUND, "that skill keeps no save").into_response();
     };
     match sync(&save).await {
-        Ok((action, version)) => {
-            Json(serde_json::json!({ "done": action, "version": version })).into_response()
+        Ok(done) => {
+            announce(&state.events_tx, &save.skill, &done);
+            Json(serde_json::json!({
+                "done": done.action,
+                "version": done.version,
+                "conflicts": done.conflicts,
+            }))
+            .into_response()
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
     }

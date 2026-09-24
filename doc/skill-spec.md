@@ -192,6 +192,19 @@ tools:
     returns: "Sectioned text output."       # Optional, hint for the model
 ```
 
+### Page door
+
+A skill's page runs the skill's declared shell tools through `POST /api/skills/{skill}/tools/{tool}` (body: the args object) → `{exit_code, stdout, stderr}` — the same command, PATH and timeout as the model's call, in the skill's `cwd`, one call per skill at a time. The tool's `tier` must be within the skill's own `permission.paths` grant on that folder (403 otherwise); a tool that may write pushes a cloud save afterwards. `page_only: true` keeps a tool off the model's list. An argument of `type: argv` takes a list of words, each passed as its own shell word — a page's generic verb door:
+
+```yaml
+  - name: Verb
+    page_only: true
+    cmd: "bash $SKILL_DIR/scripts/run.sh {{verb}} {{flags}}"
+    args:
+      verb: { type: string, required: true }
+      flags: { type: argv }
+```
+
 ### Output budget
 
 `max_output_bytes` caps each of stdout and stderr at 64 KB by default. Past
@@ -253,11 +266,13 @@ A skill that wants the account behind it — a game played on the Mac and the ph
 ```yaml
 cloud:
   save: data/state.json   # a file in the skill dir, kept in step across devices
-  meter: lingjing         # a rolling token window, sized by linggen.dev
+  meter: my-game          # a rolling token window, sized by linggen.dev
 ```
 
-- **Declaring `cloud` makes the skill need an account.** A turn in a session bound to it is refused with `AUTH_REQUIRED:` when signed out.
-- **`save`** — pulled before a turn, synced after every model call and at the turn's end. The site versions it; a stale write is refused and the account's copy replaces the file. Ledger: `~/.linggen/sync/cloud-{skill}.json`. The path must stay inside the skill directory.
+- **Declaring `cloud` makes the skill need an account.** A turn in a session bound to it — and a page's tool call (below) — is refused with `AUTH_REQUIRED:` when signed out. Only an installed (`~/.linggen/skills/`) skill named `[a-z][a-z0-9-]*` keeps a cloud; a project copy of the same name keeps none.
+- **`save`** — one path, or a list (`save: [data/state.json, data/worlds]`, files and folders) kept as one bundle. Pulled at a turn's edges and when the page syncs; after each model call a change made here is only **pushed**, never pulled. The site versions it; the account's copy wins a disagreement, but a pull never destroys a change made here: each file it replaces is first copied to `<file>.conflict-<unix secs>`. Ledger: `~/.linggen/sync/cloud-{skill}.json`. Every path must stay inside the skill directory. The site keeps at most 64 KB per save.
+- **Save lock** — every writer of the save (the engine's pull, the skill's own scripts) holds `<first save path>.lock`: created exclusively (O_CREAT|O_EXCL) holding the writer's pid, retried every 25 ms for up to 5 s, and removed and retaken when older than 10 s. Files named `*.lock`, `*.tmp`, `*.conflict-*` are never part of a save.
+- **Page event** — when a pull replaces the save, the skill's page hears `{type: 'linggen-skill-event', event: 'save_changed', payload: {skill, version, conflicts}}` from its embedded chat, and reads again.
 - **`meter`** — checked before every model call and fed each call's tokens after it, whatever model answered — the prompt not served from the provider's cache, plus the output (`TokenUsage::metered`): a pace counts what the user did, not the cached world. A spent window refuses the call with `BUDGET_EMPTY: refill_at=<unix secs>`, and the chat says when it frees up. Around each call rather than each turn, because an AskUser-driven sitting is one long turn. linggen.dev unreachable → the call goes ahead: a meter is a pace, not a lock.
 - The page reads `GET /api/skill-cloud/{skill}` (signed in, the meter's reading) and calls `POST /api/skill-cloud/{skill}/sync` on open and after a change it made itself.
 

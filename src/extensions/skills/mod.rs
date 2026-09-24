@@ -91,6 +91,7 @@ fn page_update_tool_def() -> SkillToolDef {
         returns: Some("ok".to_string()),
         timeout_ms: 1000,
         max_output_bytes: crate::engine::tools::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+        page_only: false,
         skill_name: None,
         skill_dir: None,
     }
@@ -620,6 +621,7 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
     if frontmatter.app.is_some() {
         tool_defs.push(page_update_tool_def());
     }
+    let cloud = cloud_if_allowed(frontmatter.cloud, &frontmatter.name, &source);
 
     Ok(Skill {
         name: frontmatter.name,
@@ -644,13 +646,35 @@ pub fn parse_skill_text(text: &str, source: SkillSource) -> Result<Skill> {
         cwd: frontmatter.cwd,
         install: frontmatter.install,
         sync: frontmatter.sync,
-        cloud: frontmatter.cloud,
+        cloud,
         product: frontmatter.product,
         suggestions: frontmatter.suggestions,
         closing_ask: frontmatter.closing_ask,
         queue: frontmatter.queue,
         skill_dir: None,
     })
+}
+
+/// A skill's `cloud:` speaks for the account on linggen.dev under the
+/// skill's name, so only an installed (Global) skill with a site-shaped name
+/// may declare one. A project or compat copy of the same name — which wins
+/// the name over the installed one — keeps no cloud: it could otherwise read
+/// and overwrite the installed skill's save.
+fn cloud_if_allowed(
+    cloud: Option<CloudConfig>,
+    name: &str,
+    source: &SkillSource,
+) -> Option<CloudConfig> {
+    let cloud = cloud?;
+    if !matches!(source, SkillSource::Global) {
+        tracing::warn!("skill '{name}': cloud is for installed skills only; ignored here");
+        return None;
+    }
+    if !crate::account::cloud::valid_cloud_name(name) {
+        tracing::warn!("skill '{name}': a cloud needs a name of [a-z0-9-]; ignored");
+        return None;
+    }
+    Some(cloud)
 }
 
 /// Read a SKILL.md from `path` and parse it into a [`Skill`].
@@ -899,9 +923,16 @@ Help commit."#;
         let text = "---\nname: cfo\ndescription: Money\nproduct: cfo\n---\nBody.";
         let skill = parse_skill_text(text, SkillSource::Global).unwrap();
         assert_eq!(skill.product.as_deref(), Some("cfo"));
-        assert!(skill.cloud.is_none(), "a product needs no cloud, so no sign-in gate");
+        assert!(
+            skill.cloud.is_none(),
+            "a product needs no cloud, so no sign-in gate"
+        );
 
-        let plain = parse_skill_text("---\nname: dj\ndescription: Music\n---\nBody.", SkillSource::Global).unwrap();
+        let plain = parse_skill_text(
+            "---\nname: dj\ndescription: Music\n---\nBody.",
+            SkillSource::Global,
+        )
+        .unwrap();
         assert!(plain.product.is_none());
     }
 

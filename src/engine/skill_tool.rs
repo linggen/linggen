@@ -100,6 +100,11 @@ pub struct SkillToolDef {
     /// head and tail survive with a marker naming what was dropped.
     #[serde(default = "default_max_output_bytes")]
     pub max_output_bytes: usize,
+    /// `page_only: true` — the skill's page calls it through
+    /// `POST /api/skills/{skill}/tools/{tool}`; it is never offered to the
+    /// model. A page's door to the same scripts the model's tools run.
+    #[serde(default)]
+    pub page_only: bool,
     /// Name of the skill that declared this tool. Set at skill-load time so
     /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
@@ -213,12 +218,7 @@ impl SkillToolDef {
             let value = obj.and_then(|o| o.get(name)).or(param.default.as_ref());
 
             if let Some(val) = value {
-                let str_val = match val {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                let escaped = shell_escape_arg(&str_val);
-                rendered = rendered.replace(&placeholder, &escaped);
+                rendered = rendered.replace(&placeholder, &render_arg(param, val)?);
             } else {
                 rendered = rendered.replace(&placeholder, "");
             }
@@ -294,7 +294,13 @@ impl SkillToolDef {
         let mut required = Vec::new();
         for (name, param) in &self.args {
             let mut prop = serde_json::Map::new();
-            prop.insert("type".to_string(), Value::String(param.param_type.clone()));
+            let argv = param.param_type == "argv";
+            let json_type = if argv {
+                "array"
+            } else {
+                param.param_type.as_str()
+            };
+            prop.insert("type".to_string(), Value::String(json_type.to_string()));
             if !param.description.is_empty() {
                 prop.insert(
                     "description".to_string(),
@@ -302,7 +308,9 @@ impl SkillToolDef {
                 );
             }
             // OpenAI requires "items" for array types.
-            if param.param_type == "array" {
+            if argv {
+                prop.insert("items".to_string(), serde_json::json!({"type": "string"}));
+            } else if param.param_type == "array" {
                 let items = param
                     .items
                     .clone()
@@ -365,6 +373,34 @@ fn drain<R: std::io::Read + Send + 'static>(stream: Option<R>) -> impl FnOnce() 
     }
 }
 
+/// One argument as it stands in the command. An `argv` parameter is a list
+/// of words, each its own shell word (`--id=x --n=2`); anything else is one.
+fn render_arg(param: &SkillParamDef, val: &Value) -> Result<String> {
+    if param.param_type != "argv" {
+        return Ok(shell_escape_arg(&scalar_text(val)));
+    }
+    let words = match val {
+        Value::Array(items) => items,
+        Value::Null => return Ok(String::new()),
+        _ => anyhow::bail!("an argv argument is a list of words"),
+    };
+    if words.iter().any(|w| w.is_array() || w.is_object()) {
+        anyhow::bail!("an argv argument holds only words");
+    }
+    Ok(words
+        .iter()
+        .map(|w| shell_escape_arg(&scalar_text(w)))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+fn scalar_text(val: &Value) -> String {
+    match val {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 fn shell_escape_arg(s: &str) -> String {
     if s.contains('\'') {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -424,6 +460,7 @@ mod tests {
             returns: None,
             timeout_ms: 30000,
             max_output_bytes,
+            page_only: false,
             skill_name: None,
             skill_dir: None,
         }
@@ -487,6 +524,33 @@ mod tests {
     }
 
     #[test]
+    fn an_argv_argument_is_one_shell_word_per_item() {
+        let mut tool = shell_tool("printf '%s|' {{verb}} {{flags}}", 64 * 1024);
+        for (name, kind) in [("verb", "string"), ("flags", "argv")] {
+            tool.args.insert(
+                name.to_string(),
+                SkillParamDef {
+                    param_type: kind.to_string(),
+                    required: false,
+                    default: None,
+                    description: String::new(),
+                    items: None,
+                },
+            );
+        }
+        let args =
+            serde_json::json!({ "verb": "look", "flags": ["--said=it's; rm -rf /", "--n=2", 3] });
+        let ToolResult::CommandOutput { stdout, .. } =
+            tool.execute(&args, Path::new("."), &[]).expect("tool runs")
+        else {
+            panic!("expected CommandOutput");
+        };
+        assert_eq!(stdout, "look|--said=it's; rm -rf /|--n=2|3|");
+        let nested = serde_json::json!({ "verb": "look", "flags": [["x"]] });
+        assert!(tool.execute(&nested, Path::new("."), &[]).is_err());
+    }
+
+    #[test]
     fn to_schema_json_includes_all_fields() {
         let tool = SkillToolDef {
             name: "test_tool".to_string(),
@@ -507,6 +571,7 @@ mod tests {
             returns: Some("stdout text".to_string()),
             timeout_ms: 30000,
             max_output_bytes: default_max_output_bytes(),
+            page_only: false,
             skill_name: None,
             skill_dir: None,
         };

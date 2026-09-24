@@ -50,8 +50,25 @@ pub fn last_reading(meter: &str) -> Option<MeterReading> {
     cached(meter).map(|(r, _)| r)
 }
 
-fn meter_url(meter: &str) -> String {
-    format!("{}/api/meters/{}", site_url(), meter)
+/// A name the site takes for a save or a meter — and the only kind the engine
+/// puts into a URL or a ledger file name: `[a-z][a-z0-9-]{0,39}`, as
+/// linggensite's `saves.ts` checks it.
+pub fn valid_cloud_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && name.len() <= 40
+        && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
+}
+
+fn named(name: &str) -> Result<&str> {
+    if !valid_cloud_name(name) {
+        bail!("'{name}' is not a cloud name ([a-z0-9-])");
+    }
+    Ok(name)
+}
+
+fn meter_url(meter: &str) -> Result<String> {
+    Ok(format!("{}/api/meters/{}", site_url(), named(meter)?))
 }
 
 /// The window's state, from the cache while it is fresh.
@@ -62,7 +79,7 @@ pub async fn meter_reading(meter: &str) -> Result<MeterReading> {
         }
     }
     let resp = http()
-        .get(meter_url(meter))
+        .get(meter_url(meter)?)
         .bearer_auth(token()?)
         .send()
         .await
@@ -73,7 +90,7 @@ pub async fn meter_reading(meter: &str) -> Result<MeterReading> {
 /// Report a turn's tokens; the answer is the window after it.
 pub async fn meter_report(meter: &str, tokens: u64) -> Result<MeterReading> {
     let resp = http()
-        .post(meter_url(meter))
+        .post(meter_url(meter)?)
         .bearer_auth(token()?)
         .json(&serde_json::json!({ "tokens": tokens }))
         .send()
@@ -91,23 +108,14 @@ async fn parse_reading(resp: reqwest::Response) -> Result<MeterReading> {
     Ok(reading)
 }
 
-/// The account's copy of a save. Version 0 with no body: never saved.
+/// The account's copy of a save. Version 0 with no body: never saved. The
+/// body is what the engine wrote: a file's text as a JSON string, or a bundle
+/// of files (`cloud_save.rs`).
 #[derive(Debug, Deserialize)]
 pub struct CloudSave {
     pub version: u64,
     #[serde(default)]
     pub body: Option<serde_json::Value>,
-}
-
-impl CloudSave {
-    /// The saved file's text — the engine stores files as JSON strings.
-    pub fn text(&self) -> Option<String> {
-        match self.body.as_ref()? {
-            serde_json::Value::Null => None,
-            serde_json::Value::String(s) => Some(s.clone()),
-            other => Some(other.to_string()),
-        }
-    }
 }
 
 pub enum PutOutcome {
@@ -116,13 +124,13 @@ pub enum PutOutcome {
     Stale,
 }
 
-fn save_url(name: &str) -> String {
-    format!("{}/api/saves/{}", site_url(), name)
+fn save_url(name: &str) -> Result<String> {
+    Ok(format!("{}/api/saves/{}", site_url(), named(name)?))
 }
 
 pub async fn save_get(name: &str) -> Result<CloudSave> {
     let resp = http()
-        .get(save_url(name))
+        .get(save_url(name)?)
         .bearer_auth(token()?)
         .send()
         .await
@@ -133,12 +141,16 @@ pub async fn save_get(name: &str) -> Result<CloudSave> {
     resp.json().await.context("cloud save")
 }
 
-/// Write the file's text as the version after `read_version`.
-pub async fn save_put(name: &str, read_version: u64, text: &str) -> Result<PutOutcome> {
+/// Write `body` as the version after `read_version`.
+pub async fn save_put(
+    name: &str,
+    read_version: u64,
+    body: &serde_json::Value,
+) -> Result<PutOutcome> {
     let resp = http()
-        .put(save_url(name))
+        .put(save_url(name)?)
         .bearer_auth(token()?)
-        .json(&serde_json::json!({ "version": read_version, "body": text }))
+        .json(&serde_json::json!({ "version": read_version, "body": body }))
         .send()
         .await
         .context("connect to linggen.dev")?;
@@ -152,4 +164,19 @@ pub async fn save_put(name: &str, read_version: u64, text: &str) -> Result<PutOu
         return Ok(PutOutcome::Stale);
     }
     bail!("save: {status}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_cloud_name;
+
+    #[test]
+    fn only_site_shaped_names_reach_a_url() {
+        for ok in ["game", "a", "my-game-2"] {
+            assert!(valid_cloud_name(ok), "{ok}");
+        }
+        for bad in ["", "Game", "../x", "a/b", "2game", "a_b", &"a".repeat(41)] {
+            assert!(!valid_cloud_name(bad), "{bad}");
+        }
+    }
 }

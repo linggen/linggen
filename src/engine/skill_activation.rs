@@ -158,7 +158,8 @@ fn register_skill_tools(engine: &mut AgentEngine, skill: &Skill) {
     if skill.disable_model_invocation {
         return;
     }
-    for tool_def in &skill.tool_defs {
+    // A page-only tool is the skill page's door, never the model's.
+    for tool_def in skill.tool_defs.iter().filter(|t| !t.page_only) {
         if let Some(existing) = engine.tools.skill_tools.get(&tool_def.name) {
             let prev_owner = existing.skill_name.as_deref().unwrap_or("<unknown>");
             if prev_owner != skill.name {

@@ -79,14 +79,44 @@ pub struct SyncConfig {
 /// See `doc/skill-spec.md` § Cloud.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CloudConfig {
-    /// A file under the skill directory kept in step across the account's
-    /// devices: pulled before a turn, pushed after one that changed it.
+    /// What under the skill directory is kept in step across the account's
+    /// devices: pulled at a turn's edges, pushed after a call that changed
+    /// it. One file (`save: data/state.json`, stored as its text), or a list
+    /// of files and folders stored together as one bundle.
     #[serde(default)]
-    pub save: Option<String>,
+    pub save: Option<SavePaths>,
     /// A rolling token window on linggen.dev, named by the site. Each turn's
     /// tokens are reported to it; a spent window refuses the next turn.
     #[serde(default)]
     pub meter: Option<String>,
+}
+
+/// `cloud.save`: one path, or several kept as one bundle.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SavePaths {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl SavePaths {
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            SavePaths::One(p) => vec![p.as_str()],
+            SavePaths::Many(ps) => ps.iter().map(String::as_str).collect(),
+        }
+    }
+
+    /// The single-file form, whose cloud copy is the file's own text.
+    pub fn is_one(&self) -> bool {
+        matches!(self, SavePaths::One(_))
+    }
+}
+
+impl From<&str> for SavePaths {
+    fn from(p: &str) -> Self {
+        SavePaths::One(p.to_string())
+    }
 }
 
 /// How a message sent while the skill's session is mid-turn meets that turn.

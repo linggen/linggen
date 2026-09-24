@@ -342,6 +342,15 @@ pub enum ServerEvent {
     },
     /// Owner disabled the room — all consumer peers should disconnect.
     RoomDisabled,
+    /// A skill's cloud save was pulled: the account's copy replaced the files
+    /// here, so a page showing them must read again. Global — every surface;
+    /// the embed chat relays it to its skill page as `save_changed`.
+    /// `conflicts`: copies kept of changes made here that the pull replaced.
+    SkillSaveChanged {
+        skill: String,
+        version: u64,
+        conflicts: Vec<String>,
+    },
     /// A device-to-device control message on a named topic (`dj`, `media`, …).
     /// The daemon is the hub: any peer publishes, every other surface of the
     /// same user receives. `from_device` lets a publisher ignore its own echo.
