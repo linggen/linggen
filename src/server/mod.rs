@@ -34,6 +34,7 @@ struct ServerHandle {
 async fn prepare_server(
     manager: Arc<AgentManager>,
     skills: Arc<crate::extensions::skills::SkillLoader>,
+    missions: Arc<crate::extensions::missions::MissionLoader>,
     host: &str,
     port: u16,
     dev_mode: bool,
@@ -62,6 +63,7 @@ async fn prepare_server(
         last_user_turn_at: Arc::new(AtomicU64::new(unix_secs_now())),
         events_tx,
         skills,
+        missions,
         prompt_store,
         queued_chats: Arc::new(Mutex::new(HashMap::new())),
         interrupt_tx: Arc::new(Mutex::new(HashMap::new())),
@@ -218,6 +220,7 @@ async fn lan_gate(
 pub async fn start_server(
     manager: Arc<AgentManager>,
     skills: Arc<crate::extensions::skills::SkillLoader>,
+    missions: Arc<crate::extensions::missions::MissionLoader>,
     host: &str,
     port: u16,
     dev_mode: bool,
@@ -227,6 +230,7 @@ pub async fn start_server(
     let handle = prepare_server(
         manager,
         skills,
+        missions,
         host,
         port,
         dev_mode,

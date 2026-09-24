@@ -18,6 +18,9 @@ mod streaming;
 pub mod suggestion;
 mod tool_exec;
 pub mod tool_registry;
+pub mod tool_scope;
+#[cfg(test)]
+pub(crate) mod test_registries;
 pub(crate) mod tool_render;
 pub mod tools;
 mod types;

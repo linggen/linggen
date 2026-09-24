@@ -1,4 +1,5 @@
-//! Tool-scope helper shared by skills and missions.
+//! Tool-scope helper shared by skills and missions — the engine's own
+//! restriction set, so it lives in the engine.
 //!
 //! `allowed-tools` in extension frontmatter restricts which engine tools
 //! the agent may invoke during this extension's run. An empty list means

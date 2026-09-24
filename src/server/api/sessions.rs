@@ -281,7 +281,7 @@ pub(crate) async fn rename_session_api(
                     model: Some(new_val),
                     ..Default::default()
                 };
-                if let Err(e) = state.manager.missions.update_mission(&mission_id, draft) {
+                if let Err(e) = state.missions.update_mission(&mission_id, draft) {
                     tracing::warn!("mission '{mission_id}' model not updated: {e}");
                 }
             }

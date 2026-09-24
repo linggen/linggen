@@ -608,7 +608,6 @@ async fn compose_dream_status(
 
     let in_flight = crate::extensions::missions::scheduler::mission_in_flight("dream");
     let last_run = state
-        .manager
         .missions
         .list_mission_runs_paginated("dream", Some(1), None)
         .ok()

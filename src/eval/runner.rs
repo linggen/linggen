@@ -124,6 +124,7 @@ pub async fn run_single_task(
         None,
         skills.clone(),
         agent_loader,
+        Arc::new(crate::extensions::missions::MissionLoader::new()),
         crate::engine::InterfaceMode::Web,
     );
 

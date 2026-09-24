@@ -13,6 +13,5 @@ pub mod frontmatter;
 pub mod includes;
 pub mod marketplace;
 pub mod missions;
-pub mod scope;
 pub mod script;
 pub mod skills;

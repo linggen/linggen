@@ -15,6 +15,7 @@ pub struct SchedulerHost {
     pub manager: Arc<crate::engine::agent::AgentManager>,
     pub events_tx: tokio::sync::broadcast::Sender<ServerEvent>,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
+    pub missions: Arc<super::MissionLoader>,
     pub pending_ask_user:
         Arc<tokio::sync::Mutex<HashMap<String, crate::engine::tools::PendingAskUser>>>,
     /// True when no one has spoken for `window_secs` and no top-level run is
@@ -146,7 +147,7 @@ pub async fn mission_scheduler_loop(state: Arc<SchedulerHost>) {
     // A fresh process has no live runs — heal rows left `running` by a
     // dead daemon (hang, crash, restart) so history shows the truth and
     // catch-up sees the slot as unfilled.
-    state.manager.missions.mark_running_runs_interrupted();
+    state.missions.mark_running_runs_interrupted();
 
     let mut interval = time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     let mut mission_states: HashMap<String, MissionState> = HashMap::new();
@@ -168,7 +169,7 @@ pub async fn mission_scheduler_loop(state: Arc<SchedulerHost>) {
             maybe_fire_catchup_missions(state.clone());
         }
 
-        let enabled_missions = match state.manager.missions.list_enabled_missions() {
+        let enabled_missions = match state.missions.list_enabled_missions() {
             Ok(m) => m,
             Err(e) => {
                 debug!("Mission scheduler: failed to list missions: {}", e);
@@ -470,7 +471,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
         return;
     }
     tokio::spawn(async move {
-        let missions = match state.manager.missions.list_enabled_missions() {
+        let missions = match state.missions.list_enabled_missions() {
             Ok(m) => m,
             Err(e) => {
                 debug!("catchup: list_enabled_missions failed: {e}");
@@ -489,7 +490,7 @@ pub(crate) fn maybe_fire_catchup_missions(state: Arc<SchedulerHost>) {
                 continue;
             }
 
-            let runs = match state.manager.missions.list_mission_runs(&mission.id) {
+            let runs = match state.missions.list_mission_runs(&mission.id) {
                 Ok(runs) => runs,
                 Err(e) => {
                     debug!(
@@ -587,7 +588,7 @@ async fn dispatch_mission_prompt(
     // run without needing a daemon restart. Falls back to the cached
     // copy if the file is gone or unparseable — better to run stale than
     // to silently no-op a scheduled mission.
-    let refreshed = state.manager.missions.reload_one(&mission.id);
+    let refreshed = state.missions.reload_one(&mission.id);
     let mission = refreshed.as_ref().unwrap_or(mission);
     let agent_id = mission.agent_id.as_str();
 
@@ -787,8 +788,7 @@ async fn dispatch_mission_prompt(
     // turn), `allowed-tools` the tool scope, and a skill mission borrows
     // its own skill's tools.
     let owning_skill =
-        super::enter::enter_mission(&mut engine, mission, &state.manager.missions, &state.skills)
-            .await;
+        super::enter::enter_mission(&mut engine, mission, &state.missions, &state.skills).await;
     engine.cfg.bash_allow_prefixes = None; // frontmatter controls bash, not tier
     info!(
         "mission '{}' entered (skill: {:?}, tool scope: {:?})",
@@ -1049,7 +1049,6 @@ fn finalize_mission_run(
     usage: Option<RunUsage>,
 ) {
     if let Err(e) = state
-        .manager
         .missions
         .finish_mission_run(&mission.id, run_id, status, usage)
     {
@@ -1076,10 +1075,7 @@ fn record_mission_run(
         skipped,
         usage: None,
     };
-    let _ = state
-        .manager
-        .missions
-        .append_mission_run(&mission.id, &entry);
+    let _ = state.missions.append_mission_run(&mission.id, &entry);
 }
 
 #[cfg(test)]

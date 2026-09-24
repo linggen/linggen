@@ -3,11 +3,11 @@
 //! up the same way — here.
 
 use crate::engine::mission::record::Mission;
+use crate::engine::mission::MissionRegistry;
 use crate::engine::skill::Skill;
+use crate::engine::skill::SkillRegistry;
+use crate::engine::tool_scope::compute_tool_scope;
 use crate::engine::AgentEngine;
-use crate::extensions::missions::MissionLoader;
-use crate::extensions::scope::compute_tool_scope;
-use crate::extensions::skills::SkillLoader;
 use std::collections::HashSet;
 
 /// Put `mission` in charge of `engine`: its body as the runbook, its tool
@@ -17,8 +17,8 @@ use std::collections::HashSet;
 pub async fn enter_mission(
     engine: &mut AgentEngine,
     mission: &Mission,
-    missions: &MissionLoader,
-    skills: &SkillLoader,
+    missions: &dyn MissionRegistry,
+    skills: &dyn SkillRegistry,
 ) -> Option<Skill> {
     engine.active_mission = Some(crate::engine::ActiveMission {
         name: mission.name.clone().unwrap_or_else(|| mission.id.clone()),
@@ -39,7 +39,7 @@ pub async fn enter_mission(
     skill
 }
 
-async fn owning_skill(mission: &Mission, skills: &SkillLoader) -> Option<Skill> {
+async fn owning_skill(mission: &Mission, skills: &dyn SkillRegistry) -> Option<Skill> {
     let name = mission.skill.as_deref()?;
     let skill = match skills.reload_one(name).await {
         Some(s) => Some(s),

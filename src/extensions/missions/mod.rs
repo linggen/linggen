@@ -8,7 +8,6 @@ mod skill_missions;
 
 use crate::util::LockExt;
 use anyhow::{bail, Result};
-use async_trait::async_trait;
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -22,7 +21,6 @@ pub use crate::engine::mission::record::{
     Mission, MissionPermission, MissionRunEntry, MISSION_AGENT_ID,
 };
 pub use crate::engine::mission::registry::MissionRegistry;
-pub use crate::engine::mission::runs::MissionRunStore;
 
 pub use cron::{parse_cron, validate_cron};
 pub use draft::MissionDraft;
@@ -482,22 +480,6 @@ impl MissionLoader {
         Ok(entries)
     }
 
-    /// Remove the run entry whose `session_id` matches, rewriting `runs.jsonl`.
-    pub fn remove_run_by_session(&self, mission_id: &str, session_id: &str) -> Result<()> {
-        let entries = self.list_mission_runs(mission_id)?;
-        let filtered: Vec<&MissionRunEntry> = entries
-            .iter()
-            .filter(|e| e.session_id.as_deref() != Some(session_id))
-            .collect();
-        let path = self.runs_path(mission_id);
-        let mut file = fs::File::create(&path)?;
-        for entry in filtered {
-            serde_json::to_writer(&mut file, entry)?;
-            std::io::Write::write_all(&mut file, b"\n")?;
-        }
-        Ok(())
-    }
-
     pub fn update_mission_run_status(
         &self,
         mission_id: &str,
@@ -585,57 +567,19 @@ impl MissionLoader {
             }
         }
     }
-
-    /// Look up the most recent completed (non-skipped) run for a mission.
-    /// Used by the scheduler to set `MISSION_LAST_RUN_AT` env for the entry script.
-    pub fn last_successful_run_at(&self, mission_id: &str) -> Option<u64> {
-        self.list_mission_runs(mission_id)
-            .ok()?
-            .into_iter()
-            .find(|e| !e.skipped && e.status == "completed")
-            .map(|e| e.triggered_at)
-    }
 }
 
-#[async_trait]
 impl MissionRegistry for MissionLoader {
-    async fn list(&self) -> Result<Vec<Mission>> {
-        self.list_all_missions()
+    fn get_mission(&self, mission_id: &str) -> Result<Option<Mission>> {
+        MissionLoader::get_mission(self, mission_id)
     }
 
-    async fn get(&self, mission_id: &str) -> Result<Option<Mission>> {
-        self.get_mission(mission_id)
-    }
-}
-
-impl MissionRunStore for MissionLoader {
-    fn append(&self, mission_id: &str, entry: &MissionRunEntry) -> Result<()> {
-        self.append_mission_run(mission_id, entry)
+    fn reload_one(&self, mission_id: &str) -> Option<Mission> {
+        MissionLoader::reload_one(self, mission_id)
     }
 
-    fn list(&self, mission_id: &str) -> Result<Vec<MissionRunEntry>> {
-        self.list_mission_runs(mission_id)
-    }
-
-    fn list_paginated(
-        &self,
-        mission_id: &str,
-        limit: Option<usize>,
-        offset: Option<usize>,
-    ) -> Result<Vec<MissionRunEntry>> {
-        self.list_mission_runs_paginated(mission_id, limit, offset)
-    }
-
-    fn remove_by_session(&self, mission_id: &str, session_id: &str) -> Result<()> {
-        self.remove_run_by_session(mission_id, session_id)
-    }
-
-    fn update_status(&self, mission_id: &str, run_id: &str, status: &str) -> Result<()> {
-        self.update_mission_run_status(mission_id, run_id, status)
-    }
-
-    fn last_successful_run_at(&self, mission_id: &str) -> Option<u64> {
-        Self::last_successful_run_at(self, mission_id)
+    fn mission_dir(&self, mission_id: &str) -> PathBuf {
+        MissionLoader::mission_dir(self, mission_id)
     }
 }
 

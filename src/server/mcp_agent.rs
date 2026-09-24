@@ -219,7 +219,7 @@ pub async fn run(
     // initialize_loop, so this sticks. (It also flips the session
     // non-interactive on load, matching the permission.json.)
     let declared: Vec<String> = AGENT_RUN_TOOLS.iter().map(|s| s.to_string()).collect();
-    engine.cfg.mission_allowed_tools = crate::extensions::scope::compute_tool_scope(&declared);
+    engine.cfg.mission_allowed_tools = crate::engine::tool_scope::compute_tool_scope(&declared);
 
     // Permissions come from the permission.json written above — initialize_loop
     // reloads them at the top of the run.

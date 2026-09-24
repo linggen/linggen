@@ -2,9 +2,9 @@ use crate::config::Config;
 use crate::engine::agent::locks::LockManager;
 use crate::engine::agent::record::{AgentSpec, AgentSpecFile};
 use crate::engine::agent::registry::AgentRegistry;
+use crate::engine::mission::MissionRegistry;
+use crate::engine::skill::SkillRegistry;
 use crate::engine::{AgentEngine, AgentRole, EngineConfig, InterfaceMode, Plan};
-use crate::extensions::agents::AgentLoader;
-use crate::extensions::skills::SkillLoader;
 use crate::provider::models::ModelManager;
 use crate::state_fs::{SessionStore, StateFile, StateFs};
 use crate::util::LockExt;
@@ -44,11 +44,13 @@ pub struct AgentManager {
     pub projects: Mutex<HashMap<String, Arc<ProjectContext>>>,
     pub locks: Mutex<LockManager>,
     pub models: RwLock<Arc<ModelManager>>,
-    pub missions: Arc<crate::extensions::missions::MissionLoader>,
-    pub skills: Arc<SkillLoader>,
-    /// Disk loader for agent specs. Implements `AgentRegistry`; the
+    /// Mission lookup. The daemon's loader implements it; editing and
+    /// scheduling go through the loader the server holds, not through here.
+    pub missions: Arc<dyn MissionRegistry>,
+    pub skills: Arc<dyn SkillRegistry>,
+    /// Agent specs by id. The daemon's disk loader implements it; the
     /// engine consults it whenever an agent needs to be resolved by id.
-    pub agents: Arc<AgentLoader>,
+    pub agents: Arc<dyn AgentRegistry>,
     /// Global flat session store at `~/.linggen/sessions/`.
     pub global_sessions: SessionStore,
     /// Per-session agent engines. Each session gets its own engine — no lock contention.
@@ -338,8 +340,9 @@ impl AgentManager {
     pub fn new(
         config: Config,
         config_dir: Option<PathBuf>,
-        skills: Arc<SkillLoader>,
-        agents: Arc<AgentLoader>,
+        skills: Arc<dyn SkillRegistry>,
+        agents: Arc<dyn AgentRegistry>,
+        missions: Arc<dyn MissionRegistry>,
         interface_mode: InterfaceMode,
     ) -> (
         Arc<Self>,
@@ -355,7 +358,7 @@ impl AgentManager {
                 projects: Mutex::new(HashMap::new()),
                 locks: Mutex::new(LockManager::new()),
                 models: RwLock::new(models),
-                missions: Arc::new(crate::extensions::missions::MissionLoader::new()),
+                missions,
                 skills,
                 agents,
                 working_places: Mutex::new(HashMap::new()),
@@ -1066,8 +1069,9 @@ mod pet_voice_tests {
         let (manager, mut rx) = AgentManager::new(
             Config::default(),
             Some(dir.path().to_path_buf()),
-            Arc::new(SkillLoader::new()),
-            Arc::new(crate::extensions::agents::AgentLoader::new()),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
+            Arc::new(crate::engine::test_registries::Empty),
             InterfaceMode::Web,
         );
         assert!(!manager.pet_muted());

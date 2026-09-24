@@ -575,12 +575,24 @@ impl SkillLoader {
 /// this trait so it never imports an extension type.
 #[async_trait::async_trait]
 impl crate::engine::skill::registry::SkillRegistry for SkillLoader {
-    async fn get(&self, name: &str) -> Option<Skill> {
-        self.get_skill(name).await
+    async fn get_skill(&self, name: &str) -> Option<Skill> {
+        SkillLoader::get_skill(self, name).await
+    }
+
+    async fn reload_one(&self, name: &str) -> Option<Skill> {
+        SkillLoader::reload_one(self, name).await
+    }
+
+    async fn list_skills(&self) -> Vec<Skill> {
+        SkillLoader::list_skills(self).await
+    }
+
+    async fn match_trigger(&self, input: &str) -> Option<(String, String)> {
+        SkillLoader::match_trigger(self, input).await
     }
 
     async fn list_metadata(&self) -> Vec<(String, String, bool)> {
-        self.list_skills()
+        SkillLoader::list_skills(self)
             .await
             .into_iter()
             .filter(|s| !s.disable_model_invocation)

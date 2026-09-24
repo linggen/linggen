@@ -375,6 +375,7 @@ async fn main() -> Result<()> {
 
             let skills = Arc::new(extensions::skills::SkillLoader::new());
             let agent_loader = Arc::new(extensions::agents::AgentLoader::new());
+            let missions = Arc::new(extensions::missions::MissionLoader::new());
             let config_dir = config_path
                 .as_ref()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -385,6 +386,7 @@ async fn main() -> Result<()> {
                 config_dir,
                 skills.clone(),
                 agent_loader,
+                missions.clone(),
                 interface_mode,
             );
 
@@ -394,7 +396,7 @@ async fn main() -> Result<()> {
             if skills.list_skills().await.is_empty() {
                 let sm = skills.clone();
                 let ws = ws_root.clone();
-                let missions = manager.missions.clone();
+                let missions = missions.clone();
                 tokio::spawn(async move {
                     tracing::info!("No skills found, auto-installing built-in skills...");
                     if let Err(e) = auto_install_builtin_skills().await {
@@ -465,6 +467,7 @@ async fn main() -> Result<()> {
                 server::start_server(
                     manager,
                     skills,
+                    missions,
                     &host,
                     port,
                     cli.dev,

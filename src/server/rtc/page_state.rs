@@ -220,7 +220,7 @@ pub async fn build_page_state(
 
         // Missions — admin only
         if is_admin {
-            if let Ok(missions) = state.manager.missions.list_all_missions() {
+            if let Ok(missions) = state.missions.list_all_missions() {
                 ps.missions = Some(
                     missions
                         .into_iter()

@@ -989,7 +989,7 @@ impl AgentEngine {
             return vec![tool.to_string()];
         }
         if crate::mcp_client::is_mcp_tool(tool) {
-            return crate::extensions::scope::expand_declaration(tool);
+            return crate::engine::tool_scope::expand_declaration(tool);
         }
         Vec::new()
     }

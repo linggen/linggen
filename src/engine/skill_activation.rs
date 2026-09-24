@@ -253,8 +253,9 @@ fn apply_skill_app_scope(engine: &mut AgentEngine, skill: &Skill) {
 /// available, so they're unioned into the scope. (Without this an app
 /// skill that declares `allowed-tools` could never render its dashboard.)
 fn apply_skill_tool_scope(engine: &mut AgentEngine, skill: &Skill) {
-    let mut scope =
-        crate::extensions::scope::compute_tool_scope(skill.allowed_tools.as_deref().unwrap_or(&[]));
+    let mut scope = crate::engine::tool_scope::compute_tool_scope(
+        skill.allowed_tools.as_deref().unwrap_or(&[]),
+    );
     if let Some(set) = scope.as_mut() {
         for td in &skill.tool_defs {
             set.insert(td.name.clone());

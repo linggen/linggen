@@ -37,6 +37,9 @@ pub struct ServerState {
     pub last_user_turn_at: Arc<AtomicU64>,
     pub events_tx: broadcast::Sender<ServerEvent>,
     pub skills: Arc<crate::extensions::skills::SkillLoader>,
+    /// The mission loader — the same one `manager.missions` looks through,
+    /// held concretely for editing, reloads and the scheduler's run history.
+    pub missions: Arc<crate::extensions::missions::MissionLoader>,
     pub prompt_store: Arc<crate::prompts::PromptStore>,
     pub queued_chats: Arc<Mutex<HashMap<String, Vec<QueuedChatItem>>>>,
     /// Senders for interrupt messages keyed by queue_key. Used to inject user
@@ -216,6 +219,7 @@ impl ServerState {
             manager: self.manager.clone(),
             events_tx: self.events_tx.clone(),
             skills: self.skills.clone(),
+            missions: self.missions.clone(),
             pending_ask_user: self.pending_ask_user.clone(),
             quiet: {
                 let me = me.clone();

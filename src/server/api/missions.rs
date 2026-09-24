@@ -36,7 +36,7 @@ fn validate_mode(mode: &str) -> Result<(), String> {
 
 /// GET /api/missions — list all global missions.
 pub(crate) async fn list_missions(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    match state.manager.missions.list_all_missions() {
+    match state.missions.list_all_missions() {
         Ok(missions) => Json(serde_json::json!({ "missions": missions })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -140,7 +140,7 @@ pub(crate) async fn create_mission(
         ..Default::default()
     };
 
-    match state.manager.missions.create_mission(draft) {
+    match state.missions.create_mission(draft) {
         Ok(mission) => {
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(mission).into_response()
@@ -271,7 +271,7 @@ pub(crate) async fn update_mission(
         ..Default::default()
     };
 
-    match state.manager.missions.update_mission(&id, draft) {
+    match state.missions.update_mission(&id, draft) {
         Ok(mission) => {
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(mission).into_response()
@@ -293,7 +293,7 @@ pub(crate) async fn delete_mission(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.manager.missions.delete_mission(&id) {
+    match state.missions.delete_mission(&id) {
         Ok(()) => {
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(serde_json::json!({ "ok": true })).into_response()
@@ -323,7 +323,7 @@ pub(crate) async fn get_mission_file(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<MissionFileQuery>,
 ) -> impl IntoResponse {
-    match state.manager.missions.read_mission_raw(&query.id) {
+    match state.missions.read_mission_raw(&query.id) {
         Ok(Some(content)) => Json(serde_json::json!({
             "id": query.id,
             "content": content,
@@ -353,7 +353,7 @@ pub(crate) async fn upsert_mission_file(
     if id.contains('/') || id.contains('\\') || id == "." || id == ".." {
         return (StatusCode::BAD_REQUEST, "invalid mission id".to_string()).into_response();
     }
-    match state.manager.missions.write_mission_raw(id, &req.content) {
+    match state.missions.write_mission_raw(id, &req.content) {
         Ok(mission) => {
             let _ = state.events_tx.send(ServerEvent::StateUpdated);
             Json(mission).into_response()
@@ -403,9 +403,9 @@ pub(crate) async fn trigger_mission_core(
     // Refresh from disk so a manual trigger picks up in-flight edits to
     // mission.md (kickoff, body, allowed-tools, etc.) without a daemon
     // restart. Falls back to the cached copy if the file is gone.
-    let mission = match state.manager.missions.reload_one(id) {
+    let mission = match state.missions.reload_one(id) {
         Some(m) => m,
-        None => match state.manager.missions.get_mission(id) {
+        None => match state.missions.get_mission(id) {
             Ok(Some(m)) => m,
             Ok(None) => return TriggerOutcome::NotFound,
             Err(e) => return TriggerOutcome::Internal(e.to_string()),
@@ -615,7 +615,6 @@ pub(crate) async fn list_mission_runs(
     Query(page): Query<PaginationQuery>,
 ) -> impl IntoResponse {
     match state
-        .manager
         .missions
         .list_mission_runs_paginated(&id, page.limit, page.offset)
     {

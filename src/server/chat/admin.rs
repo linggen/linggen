@@ -124,21 +124,17 @@ pub(crate) async fn get_system_prompt_api(
             }
         }
         if let Some(ref mission_id) = meta.mission_id {
-            let mission = state.manager.missions.reload_one(mission_id).or_else(|| {
-                state
-                    .manager
-                    .missions
-                    .get_mission(mission_id)
-                    .ok()
-                    .flatten()
-            });
+            let mission = state
+                .missions
+                .reload_one(mission_id)
+                .or_else(|| state.missions.get_mission(mission_id).ok().flatten());
             if let Some(mission) = mission {
                 // The same entry the scheduler's dispatch uses, so the export
                 // shows the prompt and tools the real run has.
                 crate::extensions::missions::enter::enter_mission(
                     &mut engine,
                     &mission,
-                    &state.manager.missions,
+                    &state.missions,
                     &state.manager.skills,
                 )
                 .await;
