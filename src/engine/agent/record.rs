@@ -31,14 +31,21 @@ pub struct AgentSpec {
     /// message (`@银月 …`), beside its id. Matched case-insensitively.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// Not addressable by a person: kept out of the chat's `@` / `@@` lists
+    /// and never the target of a leading `@name`. The engine still runs it
+    /// (missions, delegation).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
 }
 
 impl AgentSpecFile {
     /// Whether `name` (an `@name` at a message's start) addresses this agent:
     /// its id or one of its declared aliases, case-insensitively.
+    /// An internal agent answers to no one.
     pub fn answers_to(&self, name: &str) -> bool {
         let name = name.trim();
-        !name.is_empty()
+        !self.spec.internal
+            && !name.is_empty()
             && (self.agent_id.eq_ignore_ascii_case(name)
                 || self.spec.name.eq_ignore_ascii_case(name)
                 || self
@@ -77,6 +84,7 @@ mod tests {
                 personality: None,
                 reasoning_effort: None,
                 aliases: aliases.iter().map(|a| a.to_string()).collect(),
+                internal: false,
             },
             spec_path: PathBuf::new(),
             system_prompt: String::new(),
@@ -91,5 +99,24 @@ mod tests {
         assert!(!yinyue.answers_to("ling"));
         assert!(!yinyue.answers_to(""));
         assert!(!spec("ling", &[]).answers_to("银月"));
+    }
+
+    #[test]
+    fn an_internal_agent_answers_to_no_one() {
+        let mut memory = spec("memory", &["记忆"]);
+        memory.spec.internal = true;
+        assert!(!memory.answers_to("memory"));
+        assert!(!memory.answers_to("记忆"));
+    }
+
+    #[test]
+    fn internal_is_read_from_frontmatter_and_defaults_off() {
+        let on: AgentSpec =
+            serde_yml::from_str("name: memory\ndescription: d\ntools: []\ninternal: true\n")
+                .unwrap();
+        assert!(on.internal);
+        let off: AgentSpec =
+            serde_yml::from_str("name: ling\ndescription: d\ntools: []\n").unwrap();
+        assert!(!off.internal);
     }
 }

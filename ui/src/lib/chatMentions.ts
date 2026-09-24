@@ -75,11 +75,28 @@ export function agentMatches(agent: MentionableAgent, filter: string): boolean {
 
 const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
 
-/** The name to write after `@` for this agent in the UI's language: a CJK
- *  alias when the language is CJK and the agent has one, else its id,
- *  capitalized. */
+/** The language the page speaks: the framing page's `<html lang>` (a skill
+ *  page such as a zh game, served from our own origin), else the browser's.
+ *  Our own `<html lang>` is fixed in index.html, so it says nothing. Empty
+ *  when neither is known. */
+export function mentionLanguage(): string {
+  try {
+    if (window.parent !== window) {
+      const lang = window.parent.document.documentElement.lang;
+      if (lang) return lang;
+    }
+  } catch {
+    /* a parent on another origin keeps its language to itself */
+  }
+  return typeof navigator !== 'undefined' ? navigator.language || '' : '';
+}
+
+/** The name to write after `@` for this agent in the page's language: a CJK
+ *  alias when the language is CJK — or unknown — and the agent has one, else
+ *  its id, capitalized. (The dropdown shows the other names beside it, so an
+ *  unknown language reads `@银月 · Yinyue`.) */
 export function agentMentionLabel(agent: MentionableAgent, lang: string): string {
-  const cjkLang = /^(zh|ja|ko)/i.test(lang);
+  const cjkLang = !lang.trim() || /^(zh|ja|ko)/i.test(lang);
   const alias = cjkLang ? (agent.aliases ?? []).find((a) => CJK.test(a)) : undefined;
   return alias?.trim() || agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
 }

@@ -34,6 +34,7 @@ Agents are discovered dynamically from `agents/*.md` markdown files. No hardcode
 | `tools` | yes | Tool declarations (used for prompt assembly). The session's effective path mode controls actual access — see `permission-spec.md`. |
 | `personality` | no | Response style guide — concise directive for HOW the agent communicates |
 | `aliases` | no | Other names a message may address it by at its start (`@银月 …`), beside its id |
+| `internal` | no | `true` = not addressable by a person: left out of the chat's `@` / `@@` lists and never the target of a leading `@name`. The engine still runs it (missions, delegation). |
 
 Runtime configuration (model, effective tools, bound skill) is set at the session level. See `session-spec.md`.
 

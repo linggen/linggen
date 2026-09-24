@@ -25,6 +25,7 @@ import {
   completeFileMention,
   completeLeadingAgentMention,
   leadingAgentMention,
+  mentionLanguage,
   mentionInProgress,
 } from '../../lib/chatMentions';
 
@@ -112,6 +113,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [activeSkillHint, setActiveSkillHint] = useState<string | null>(null);
 
+  // The agents a person may address — main agents, less any the spec marks
+  // `internal` (run by the engine only).
+  const mainAgents = useMemo(
+    () => agents.filter((a) => !a.internal && mainAgentIds.includes(normalizeAgentKey(a.name))),
+    [agents, mainAgentIds],
+  );
+  const mentionLang = useMemo(() => mentionLanguage(), []);
+
   const resizeInput = () => {
     if (!inputRef.current) return;
     inputRef.current.style.height = '0px';
@@ -147,10 +156,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     // `@@agent` moves the chat to that agent; `@agent` / `@银月` addresses it
     // for this message only — the chat stays with whom it was with.
-    const mention = leadingAgentMention(
-      userMessage,
-      agents.filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name))),
-    );
+    const mention = leadingAgentMention(userMessage, mainAgents);
     const mentionAgent = mention?.agent;
     if (mention?.sticky) setSelectedAgent(mention.agent);
 
@@ -241,11 +247,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return entries;
   }, [fileEntries, fileFilter, fileSearchMode]);
 
-  const mainAgents = useMemo(
-    () => agents.filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name))),
-    [agents, mainAgentIds],
-  );
-
   // Agents a leading `@partial` could address (only in search mode — a path
   // with `/` is never an agent's name).
   const leadAgents = useMemo(
@@ -266,7 +267,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const applyLeadAgent = (agent: AgentInfo) => {
-    setChatInput(completeLeadingAgentMention(chatInput, agentMentionLabel(agent, navigator.language)));
+    setChatInput(completeLeadingAgentMention(chatInput, agentMentionLabel(agent, mentionLang)));
     closeFileDropdown();
     inputRef.current?.focus();
   };
@@ -498,8 +499,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           )}
           {showAgentDropdown && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-48 overflow-y-auto z-[70]">
-              {agents
-                .filter((agent) => mainAgentIds.includes(normalizeAgentKey(agent.name)))
+              {mainAgents
                 .filter((agent) => agent.name.toLowerCase().includes(agentFilter))
                 .map((agent) => (
                   <button
@@ -520,8 +520,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           {fileDropdownVisible && (
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-[#141414] border border-slate-200 dark:border-white/10 rounded-lg shadow-xl max-h-56 overflow-y-auto z-[70]">
               {leadAgents.map((agent, idx) => {
-                const label = agentMentionLabel(agent, navigator.language);
-                const others = [agent.name, ...(agent.aliases ?? [])].filter((n) => n.toLowerCase() !== label.toLowerCase());
+                const label = agentMentionLabel(agent, mentionLang);
+                const others = [agent.name.charAt(0).toUpperCase() + agent.name.slice(1), ...(agent.aliases ?? [])].filter((n) => n.toLowerCase() !== label.toLowerCase());
                 return (
                   <button
                     key={`agent-${agent.name}`}
@@ -741,9 +741,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
               // Agent dropdown keyboard nav
               if (showAgentDropdown) {
-                const filteredAgents = agents
-                  .filter((a) => mainAgentIds.includes(normalizeAgentKey(a.name)))
-                  .filter((a) => a.name.toLowerCase().includes(agentFilter));
+                const filteredAgents = mainAgents.filter((a) => a.name.toLowerCase().includes(agentFilter));
                 if (filteredAgents.length > 0) {
                   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                     e.preventDefault();

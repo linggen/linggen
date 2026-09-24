@@ -160,6 +160,8 @@ export interface AgentInfo {
   model?: string | null;
   /** Other names a message may address it by (`@银月`). */
   aliases?: string[];
+  /** Not addressable by a person — kept out of the `@` / `@@` lists. */
+  internal?: boolean;
 }
 
 export interface AgentFileInfo {
