@@ -2,7 +2,7 @@
  * Single UI entry. Two layers of dispatch:
  *
  * 1. View (top-level user-type discriminator):
- *      URL path /embed | ?mode=compact → EmbedApp
+ *      URL path /embed | ?mode=compact | ?entry=embed → EmbedApp
  *      currentPage === 'consumer' (from user_info) → ConsumerApp
  *      otherwise → main view (MainApp + react-router routes)
  *
@@ -41,8 +41,11 @@ installFetchProxy();
 
 const path = window.location.pathname;
 const urlParams = new URLSearchParams(window.location.search);
+// Remotely the chat is booted by the relay's connect page, at
+// /app/connect/<id>; the skill page's chat bridge marks it `entry=embed`.
 const isEmbedPath = path === '/embed' || path.startsWith('/embed/')
-  || urlParams.get('mode') === 'compact';
+  || urlParams.get('mode') === 'compact'
+  || urlParams.get('entry') === 'embed';
 // The desktop shell's transparent pet window loads `?pet=1` — render only the
 // avatar (PetApp), but still let Root mount the transport so her events flow.
 const isPetView = urlParams.get('pet') === '1';
