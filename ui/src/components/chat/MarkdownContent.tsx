@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import rehypeHighlight from 'rehype-highlight';
 import { hashText, normalizeMarkdownish } from './utils/markdown';
 import { getMermaid } from '../../lib/mermaid';
@@ -50,7 +52,10 @@ const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
 
 // Module-level so every render hands ReactMarkdown the same plugins and
 // renderers; fresh ones each render would defeat the memo below.
-const REMARK_PLUGINS = [remarkGfm];
+// CJK-friendly emphasis: CommonMark's flanking rules leave `**银月：**青鼎`
+// as literal asterisks (full-width punctuation beside a CJK letter). The
+// strikethrough twin must come after remark-gfm.
+const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough];
 const REHYPE_PLUGINS = [rehypeHighlight];
 const MD_COMPONENTS: Components = {
   a: ({ href, children, node: _node, ...props }) => (
