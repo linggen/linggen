@@ -105,6 +105,11 @@ pub struct SkillToolDef {
     /// model. A page's door to the same scripts the model's tools run.
     #[serde(default)]
     pub page_only: bool,
+    /// `pet: true` — the companion may call it through `AppTool` to read the
+    /// skill's state. Only a read-tier shell tool qualifies; the engine
+    /// refuses anything else whatever the flag says.
+    #[serde(default)]
+    pub pet: bool,
     /// Name of the skill that declared this tool. Set at skill-load time so
     /// dispatch can resolve the daemon (via `SkillLoader`) without another
     /// lookup. Not serialized — populated from the containing skill's name.
@@ -461,6 +466,7 @@ mod tests {
             timeout_ms: 30000,
             max_output_bytes,
             page_only: false,
+            pet: false,
             skill_name: None,
             skill_dir: None,
         }
@@ -572,6 +578,7 @@ mod tests {
             timeout_ms: 30000,
             max_output_bytes: default_max_output_bytes(),
             page_only: false,
+            pet: false,
             skill_name: None,
             skill_dir: None,
         };

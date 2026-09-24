@@ -205,6 +205,10 @@ A skill's page runs the skill's declared shell tools through `POST /api/skills/{
       flags: { type: argv }
 ```
 
+### Pet tools
+
+`pet: true` offers a tool to the companion (Yinyue), who calls it through her `AppTool` — `AppTool` with no `tool` lists what the installed apps offer her. The engine runs it through the same door as a page (lock, grant, cloud gate) and refuses any tool not marked `pet: true` or whose `tier` is above `read`: she reads an app's state, never changes it.
+
 ### Output budget
 
 `max_output_bytes` caps each of stdout and stderr at 64 KB by default. Past

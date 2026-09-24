@@ -12,6 +12,7 @@
 
 mod agent_chat;
 mod answer_prompt;
+mod app_tool;
 mod ask_user;
 mod delegate;
 mod exec;
@@ -24,6 +25,7 @@ mod write;
 
 pub use agent_chat::*;
 pub use answer_prompt::*;
+pub use app_tool::*;
 pub use ask_user::*;
 pub use delegate::*;
 pub use exec::*;
@@ -140,6 +142,7 @@ pub(super) fn registry() -> &'static [Arc<dyn Tool>] {
             Arc::new(RecentActivityTool),
             Arc::new(AnswerPromptTool),
             Arc::new(AgentChatTool),
+            Arc::new(AppTool),
             Arc::new(AskUserTool),
             // Memory is NOT here. ling-mem is an MCP server and the model
             // uses its tools directly (`mcp__memory__memory_*`), discovered

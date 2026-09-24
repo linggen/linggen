@@ -2,6 +2,8 @@
 //!
 //! - `record` — the `Skill` runtime record (frontmatter + manifest +
 //!   permission + tool defs). Pure data type the engine reads.
+//! - `tools` — running a declared shell tool outside a turn (the page
+//!   door and the companion's `AppTool`).
 //! - `registry` — `SkillRegistry` trait, the engine's spec lookup
 //!   contract for skills.
 //!
@@ -13,6 +15,7 @@
 
 pub mod record;
 pub mod registry;
+pub mod tools;
 
 pub use record::{AppConfig, CloudConfig, QueueMode, SavePaths, Skill, SkillSource, SyncConfig};
 pub use registry::SkillRegistry;

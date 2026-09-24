@@ -92,6 +92,7 @@ fn page_update_tool_def() -> SkillToolDef {
         timeout_ms: 1000,
         max_output_bytes: crate::engine::tools::DEFAULT_MAX_TOOL_OUTPUT_BYTES,
         page_only: false,
+        pet: false,
         skill_name: None,
         skill_dir: None,
     }

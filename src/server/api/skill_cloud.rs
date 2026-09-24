@@ -20,7 +20,7 @@ use crate::server::{ServerEvent, ServerState};
 
 /// What a skill turn — or a page's tool call — answers when the skill keeps
 /// a cloud and nobody is signed in.
-pub(crate) const AUTH_REQUIRED: &str = "AUTH_REQUIRED: Sign in to linggen.dev to play.";
+pub(crate) use crate::engine::skill::tools::AUTH_REQUIRED;
 
 /// Tell every surface a pull replaced a skill's save (`SkillSaveChanged`):
 /// its page reads again instead of showing the files it had.
