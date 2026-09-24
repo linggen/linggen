@@ -133,7 +133,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             kind: "pet_voice".to_string(),
             phase: None,
             text: None,
-            agent_id: Some("yinyue".to_string()),
+            agent_id: Some(crate::engine::agent::COMPANION_AGENT_ID.to_string()),
             session_id: None, // global → every surface
             project_root: None,
             data: Some(json!({ "muted": muted })),
@@ -150,7 +150,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             kind: "pet_speak".to_string(),
             phase: None,
             text: Some(text.clone()),
-            agent_id: Some("yinyue".to_string()),
+            agent_id: Some(crate::engine::agent::COMPANION_AGENT_ID.to_string()),
             session_id: None, // global → control channel of every surface
             project_root: None,
             data: Some(json!({ "text": text, "emotion": emotion, "voice": voice })),
@@ -163,7 +163,7 @@ pub(crate) fn map_server_event_to_ui_message(event: ServerEvent, seq: u64) -> Op
             kind: "pet_express".to_string(),
             phase: None,
             text: None,
-            agent_id: Some("yinyue".to_string()),
+            agent_id: Some(crate::engine::agent::COMPANION_AGENT_ID.to_string()),
             session_id: None, // global → every surface
             project_root: None,
             data: Some(json!({ "emotion": emotion, "action": action })),

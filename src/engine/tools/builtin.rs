@@ -1440,7 +1440,7 @@ impl Tool for AnswerPromptTool {
                 None => {
                     let mut others: Vec<String> = pending
                         .iter()
-                        .filter(|(_, p)| p.agent_id != "yinyue")
+                        .filter(|(_, p)| p.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
                         .map(|(k, _)| k.clone())
                         .collect();
                     if others.len() == 1 {

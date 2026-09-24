@@ -171,7 +171,10 @@ pub(crate) async fn chat_handler(
 /// `answer_prompt`. Plain message through when nothing is waiting.
 async fn frame_with_pending_prompt(state: &Arc<ServerState>, text: &str) -> String {
     let pending = state.pending_ask_user.lock().await;
-    let Some((qid, p)) = pending.iter().find(|(_, p)| p.agent_id != "yinyue") else {
+    let Some((qid, p)) = pending
+        .iter()
+        .find(|(_, p)| p.agent_id != crate::engine::agent::COMPANION_AGENT_ID)
+    else {
         return text.to_string();
     };
     let q0 = p.questions.first();

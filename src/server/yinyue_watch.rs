@@ -26,12 +26,14 @@ use tokio::sync::broadcast::error::RecvError;
 use super::events::{NotificationPayload, ServerEvent};
 use super::state::ServerState;
 
-const YINYUE_AGENT: &str = "yinyue";
+const YINYUE_AGENT: &str = crate::engine::agent::COMPANION_AGENT_ID;
 /// Yinyue's sessions roll daily (`sess-yinyue-YYYY-MM-DD`) with an extra
 /// segment (`…-2`, `…-3`) when a day's thread nears its context limit. One
 /// session is active at a time, so turns still serialize through a single
 /// engine lock and read as a continuing thread.
-const YINYUE_SESSION_PREFIX: &str = "sess-yinyue";
+fn yinyue_session_prefix() -> String {
+    format!("sess-{YINYUE_AGENT}")
+}
 /// Roll to a fresh segment once the live engine crosses this fraction of its
 /// soft context limit — she starts clean and leans on memory rather than
 /// compacting a long companion transcript.
@@ -778,7 +780,7 @@ pub(crate) async fn run_yinyue_turn(
             Some(session_id.as_str()),
             YINYUE_AGENT,
             None,
-            Some("yinyue".to_string()),
+            Some(YINYUE_AGENT.to_string()),
         )
         .await
         .unwrap_or_else(|_| format!("run-{YINYUE_AGENT}-fallback"));
@@ -911,7 +913,7 @@ fn resolve_pet_model(setting: &str) -> Option<String> {
 /// rolls rides shared memory, not the transcript.
 async fn resolve_current_session(state: &Arc<ServerState>) -> String {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let base = format!("{YINYUE_SESSION_PREFIX}-{today}");
+    let base = format!("{}-{today}", yinyue_session_prefix());
     let mut seg = 1usize;
     loop {
         let sid = if seg == 1 {
@@ -945,7 +947,7 @@ fn ensure_session_exists(state: &Arc<ServerState>, sid: &str, root: &std::path::
         return;
     }
     let label = sid
-        .strip_prefix(&format!("{YINYUE_SESSION_PREFIX}-"))
+        .strip_prefix(&format!("{}-", yinyue_session_prefix()))
         .unwrap_or(sid);
     let meta = crate::state_fs::sessions::SessionMeta {
         id: sid.to_string(),
@@ -996,7 +998,7 @@ fn seed_previously_if_fresh(
 fn last_spoken_line(state: &Arc<ServerState>, current_sid: &str) -> Option<String> {
     let store = &state.manager.global_sessions;
     let mut sessions = store.list_sessions().ok()?;
-    sessions.retain(|m| m.id.starts_with(YINYUE_SESSION_PREFIX) && m.id != current_sid);
+    sessions.retain(|m| m.id.starts_with(&yinyue_session_prefix()) && m.id != current_sid);
     sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     for meta in sessions {
         let Ok(history) = store.get_chat_history(&meta.id) else {

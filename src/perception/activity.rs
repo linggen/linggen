@@ -21,7 +21,12 @@ pub const KEEP_DAYS: i64 = 3;
 /// Who a record may name. Closed, because `by` is rendered as the subject of a
 /// sentence inside the agent's system prompt (§4), and a subject nobody defined
 /// is a stranger's words in the resident's head.
-pub const ACTORS: [&str; 4] = ["user", "yinyue", "ling", "system"];
+pub const ACTORS: [&str; 4] = [
+    "user",
+    crate::engine::agent::COMPANION_AGENT_ID,
+    "ling",
+    "system",
+];
 
 /// Is this an actor a record may name?
 pub fn is_actor(by: &str) -> bool {
