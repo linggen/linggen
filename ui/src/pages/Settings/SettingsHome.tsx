@@ -40,7 +40,11 @@ export const SettingsHome: React.FC = () => {
   // Tab to pre-select. Comes from route state set by useOpenSettings(tab).
   // Reads on every render so a navigate() to the same URL with a new tab
   // still updates the active tab.
-  const requestedTab = (location.state as SettingsLocationState | null)?.tab;
+  // `/settings?tab=models` works too — a link from outside the app (a quest's
+  // `open`) has no route state to carry.
+  const queryTab = new URLSearchParams(location.search).get('tab');
+  const requestedTab = (location.state as SettingsLocationState | null)?.tab
+    ?? tabs.find((t) => t.key === queryTab)?.key;
   const [activeTab, setActiveTab] = useState<ManagementTab>(requestedTab || 'general');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null);

@@ -156,7 +156,9 @@ fn read_file(path: &Path) -> std::io::Result<Vec<PairedDevice>> {
     serde_json::from_str(&text).map_err(std::io::Error::other)
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Temp file in the same directory, synced, then renamed over `path` — a
+/// reader sees the old file or the new one, never half of either.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;

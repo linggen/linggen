@@ -1,7 +1,7 @@
 //! Everything the daemon runs beside the HTTP server: the loops, watchers
 //! and pre-warms `prepare_server` starts once the state exists.
 
-use super::{api, resident, rtc, yinyue_moments, ServerState};
+use super::{api, milestones, resident, rtc, yinyue_moments, ServerState};
 use crate::engine::agent::AgentEvent;
 use crate::engine::events::{AgentStatusKind, ServerEvent};
 use crate::mcp_client::McpServerConfig;
@@ -43,6 +43,8 @@ pub(super) fn spawn_background_tasks(
     // A pairing QR is only good while someone is looking at it.
     api::pair::pair_window_watch();
     auto_connect_rooms(state);
+    // Setup milestones → ~/.linggen/quests/linggen.json. See server/milestones.rs.
+    tokio::spawn(milestones::milestone_loop(state.clone()));
 }
 
 /// Flush token usage to disk every 30 seconds.

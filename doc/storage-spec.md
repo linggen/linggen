@@ -73,6 +73,8 @@ Project path encoding: `/Users/foo/project` → `-Users-foo-project` (same conve
 │   └── {skill}:{name}/               # A skill mission's user side (its mission.md is in skills/{skill}/missions/{name}/)
 │       ├── user.json                 # The user's on/off + schedule over the file's defaults
 │       └── runs.jsonl                # Mission run history (JSONL)
+├── quests/
+│   └── {app}.json                    # Real-life quests an app publishes; linggen.json = setup milestones
 ├── ling.pid                          # Daemon PID
 └── ling.log                          # Daemon stdout
 ```
@@ -191,6 +193,20 @@ A run is appended as `running` and rewritten once when it ends: its status, and 
 ```
 
 `cached` is a part of `prompt`. `unreported` (omitted when 0) counts calls whose provider sent no usage — the sums miss those. More than one model means a fallback answered. Skipped triggers (agent busy / daily cap) are logged with `"skipped": true`, no `session_id` and no `usage`.
+
+### Real-life quests (`quests/{app}.json`)
+
+Any app may publish quests the user does in real life; readers (the Lingjing game) list every file:
+
+```json
+{ "app": "health", "quests": [ { "id": "health-workout", "period": "day", "due": true,
+  "done_at": "2026-09-23T14:04:43.540Z", "reward": 20, "stamina": 30, "open": "/apps/…",
+  "title": { "zh": "…", "en": "…" }, "device": "phone" } ] }
+```
+
+`period` is `day`, `week` or `once`; `done_at` is when the app saw it done (null = still to do); `open` is the page where it is done; `device` is `mac`, `phone` or `both`.
+
+**`linggen.json` — setup milestones.** The daemon keeps this one (`src/server/milestones.rs`): one static table of `once` quests — pair a phone, add a model, sign in with ChatGPT, sign in to linggen.dev, connect the browser extension, add an MCP server, install a non-first-party skill, enable a mission of your own, hear Yinyue's voice, chat from the phone, reach home over the relay, hold ≥5 memories. A minute tick checks the open ones and writes atomically (temp + rename). Every milestone has an entry; `done_at` is stamped once, the first time the fact is seen, and never changed or removed — a fact true once stays done. Entries it doesn't know are kept. Reward 50 / stamina 20 each; the reader decides the real pay.
 
 ### Plan messages (in `messages.jsonl`)
 

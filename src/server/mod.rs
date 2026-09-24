@@ -6,13 +6,14 @@ mod chat;
 mod loopback_guard;
 mod mcp;
 mod mcp_agent;
+pub(crate) mod milestones;
+mod resident;
 mod routes;
 pub(crate) mod rtc;
 mod shared_pages;
 mod state;
 mod ui_events;
 mod yinyue_moments;
-mod resident;
 
 pub use crate::engine::events::{AgentStatusKind, QueuedChatItem, ServerEvent};
 pub use state::ServerState;

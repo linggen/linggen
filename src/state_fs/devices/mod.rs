@@ -75,6 +75,7 @@ fn devices_path() -> PathBuf {
 }
 
 mod store;
+pub(crate) use store::write_atomic;
 
 static STORE: std::sync::LazyLock<store::DeviceStore> =
     std::sync::LazyLock::new(|| store::DeviceStore::new(devices_path()));

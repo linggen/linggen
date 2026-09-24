@@ -352,6 +352,11 @@ impl BridgeHub {
             .into_value()
     }
 
+    /// Whether an extension has attached at least once since the daemon started.
+    pub async fn has_connected(&self) -> bool {
+        self.inner.lock().await.generation > 0
+    }
+
     async fn status(&self) -> Value {
         let inner = self.inner.lock().await;
         json!({
