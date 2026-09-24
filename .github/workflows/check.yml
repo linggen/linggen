@@ -1,0 +1,59 @@
+name: check
+
+# Tests, typecheck and lint on every push and PR — the same commands as
+# scripts/check.sh. System deps mirror build-linux.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config cmake libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: |
+          mkdir -p ui/dist
+          cargo test
+      - name: clippy (reported, not enforced)
+        continue-on-error: true
+        run: |
+          cargo clippy --all-targets --message-format=short 2>&1 | tee clippy.txt | tail -5
+          echo "clippy: $(grep -c '^[^ ]*: warning' clippy.txt || true) warnings" >> "$GITHUB_STEP_SUMMARY"
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install
+        working-directory: ui
+        run: npm ci
+      - name: Typecheck
+        working-directory: ui
+        run: npx tsc --noEmit
+      - name: Lint
+        working-directory: ui
+        run: npm run lint
+      - name: Shared page helpers
+        run: node --test tests/shared/*.test.mjs
