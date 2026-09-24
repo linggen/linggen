@@ -37,6 +37,7 @@ import {
   handleRoomChat,
   handleDeviceTopic,
   handleSkillSaveChanged,
+  handleQuestsChanged,
 } from './misc';
 import { handlePetSpeak, handlePetVoice, handlePetExpress, handleYinyuePresent } from './yinyue';
 
@@ -74,6 +75,7 @@ export const eventHandlers: { [K in EventKind]: (item: UiEventByKind[K]) => void
   room_chat: handleRoomChat,
   device_topic: handleDeviceTopic,
   skill_save_changed: handleSkillSaveChanged,
+  quests_changed: handleQuestsChanged,
 
   // Pet (Yinyue today)
   pet_speak: handlePetSpeak,

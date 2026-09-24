@@ -8,6 +8,7 @@ mod mcp;
 mod mcp_agent;
 pub(crate) mod milestones;
 mod resident;
+mod quests_watch;
 mod routes;
 pub(crate) mod rtc;
 mod shared_pages;

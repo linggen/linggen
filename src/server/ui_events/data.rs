@@ -251,6 +251,13 @@ pub(super) struct SkillSaveChangedData {
     pub conflicts: Vec<String>,
 }
 
+/// `quests_changed`.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(TS), ts(export))]
+pub(super) struct QuestsChangedData {
+    pub app: String,
+}
+
 /// `device_topic`.
 #[derive(Serialize)]
 #[cfg_attr(test, derive(TS), ts(export))]

@@ -56,6 +56,9 @@ export const EVENT_KINDS = [
   // A skill's cloud save was pulled (global). The console has nothing to
   // redraw; an embed chat relays it to its skill page as `save_changed`.
   'skill_save_changed',
+  // An app's quest facts changed (global). An embed chat relays it to its
+  // skill page as `quests_changed`; the console shows no quests.
+  'quests_changed',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];

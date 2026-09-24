@@ -78,6 +78,13 @@ pub fn topics_dir() -> PathBuf {
     linggen_home().join("topics")
 }
 
+/// `~/.linggen/quests/` — each app's real-life quest facts, `<app>.json`.
+/// Written by apps (and the engine's setup milestones); read by any app that
+/// counts them. See `server::quests_watch`.
+pub fn quests_dir() -> PathBuf {
+    linggen_home().join("quests")
+}
+
 /// Resolve the workspace root: the explicit `--root` argument when given,
 /// otherwise the cwd canonicalized to the nearest enclosing git root (or
 /// cwd itself when not in a repo).

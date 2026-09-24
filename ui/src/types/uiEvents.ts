@@ -32,6 +32,7 @@ import type { ResyncData } from './generated/ResyncData';
 import type { RoomChatData } from './generated/RoomChatData';
 import type { SessionCreatedData } from './generated/SessionCreatedData';
 import type { SkillSaveChangedData } from './generated/SkillSaveChangedData';
+import type { QuestsChangedData } from './generated/QuestsChangedData';
 import type { SubagentResultData } from './generated/SubagentResultData';
 import type { SubagentSpawnedData } from './generated/SubagentSpawnedData';
 import type { TextSegmentData } from './generated/TextSegmentData';
@@ -128,6 +129,7 @@ export interface UiEventByKind {
   room_chat: Ev<'room_chat', RoomChatData>;
   device_topic: Ev<'device_topic', DeviceTopicData>;
   skill_save_changed: Ev<'skill_save_changed', SkillSaveChangedData>;
+  quests_changed: Ev<'quests_changed', QuestsChangedData>;
 }
 
 /** Any event off the wire, discriminated by `kind`. */

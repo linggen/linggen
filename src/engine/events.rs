@@ -352,6 +352,11 @@ pub enum ServerEvent {
         version: u64,
         conflicts: Vec<String>,
     },
+    /// An app's quest facts changed (`~/.linggen/quests/<app>.json` was
+    /// written). Global — a page that shows quests reads them again; the embed
+    /// chat relays it to its skill page as `quests_changed`. `app` is the file
+    /// stem, never read by the engine.
+    QuestsChanged { app: String },
     /// A device-to-device control message on a named topic (`dj`, `media`, …).
     /// The daemon is the hub: any peer publishes, every other surface of the
     /// same user receives. `from_device` lets a publisher ignore its own echo.

@@ -144,3 +144,7 @@ export function handleDeviceTopic(_item: UiEventOf<'device_topic'>): void {}
 /** A skill's cloud save was pulled — only its page redraws (the embed relays
  *  it there before this handler runs); the console holds nothing of it. */
 export function handleSkillSaveChanged(_item: UiEventOf<'skill_save_changed'>): void {}
+
+/** An app's quest facts changed — only a skill page showing quests redraws
+ *  (the embed relays it there before this handler runs). */
+export function handleQuestsChanged(_item: UiEventOf<'quests_changed'>): void {}

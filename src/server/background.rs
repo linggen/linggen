@@ -45,6 +45,8 @@ pub(super) fn spawn_background_tasks(
     auto_connect_rooms(state);
     // Setup milestones → ~/.linggen/quests/linggen.json. See server/milestones.rs.
     tokio::spawn(milestones::milestone_loop(state.clone()));
+    // Any app's quest file written → pages showing quests read them again.
+    super::quests_watch::spawn(state);
 }
 
 /// Flush token usage to disk every 30 seconds.

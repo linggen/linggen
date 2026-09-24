@@ -2,12 +2,12 @@
 //! notifications, launched apps, the working folder, rooms, skill saves and
 //! device topics.
 
-use super::{Ui, UI_KIND_DEVICE_TOPIC, UI_KIND_SKILL_SAVE_CHANGED};
-use crate::engine::events::{NotificationPayload, ServerEvent, UiEvent};
 use super::data::{
-    AppLaunchedData, DeviceTopicData, RoomChatData, SessionCreatedData, SkillSaveChangedData,
-    WorkingFolderData,
+    AppLaunchedData, DeviceTopicData, QuestsChangedData, RoomChatData, SessionCreatedData,
+    SkillSaveChangedData, WorkingFolderData,
 };
+use super::{Ui, UI_KIND_DEVICE_TOPIC, UI_KIND_QUESTS_CHANGED, UI_KIND_SKILL_SAVE_CHANGED};
+use crate::engine::events::{NotificationPayload, ServerEvent, UiEvent};
 
 pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
     let seq = ui.seq;
@@ -105,6 +105,11 @@ pub(super) fn map(event: ServerEvent, ui: Ui) -> Option<UiEvent> {
                     version,
                     conflicts,
                 }),
+        ),
+        // Global → every surface; a skill page showing quests reads them again.
+        ServerEvent::QuestsChanged { app } => Some(
+            ui.event(format!("quests-{seq}"), UI_KIND_QUESTS_CHANGED)
+                .data(QuestsChangedData { app }),
         ),
         // User-level: reaches every surface over the control channel.
         ServerEvent::DeviceTopic {

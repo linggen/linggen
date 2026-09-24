@@ -137,7 +137,8 @@ function relayActivity(item: UiEvent): void {
 }
 
 /** Global events a skill page acts on: its cloud save was pulled
- *  (`save_changed` — read the files again), and device topics (e.g.
+ *  (`save_changed` — read the files again), an app's quest facts changed
+ *  (`quests_changed` — read the quests again), and device topics (e.g.
  *  yinyue/unanswered: an ask nobody will answer). Returns true when handled. */
 function relayGlobal(item: UiEvent): boolean {
   if (item.kind === 'skill_save_changed') {
@@ -145,6 +146,10 @@ function relayGlobal(item: UiEvent): boolean {
     if (!skill || item.data?.skill === skill) {
       postToParent({ type: 'linggen-skill-event', event: 'save_changed', payload: item.data ?? {} });
     }
+    return true;
+  }
+  if (item.kind === 'quests_changed') {
+    postToParent({ type: 'linggen-skill-event', event: 'quests_changed', payload: item.data ?? {} });
     return true;
   }
   if (item.kind === 'device_topic') {
