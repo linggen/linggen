@@ -17,6 +17,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useServerStore, isSessionBusy } from '../stores/serverStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useOpenMissionEditor } from '../hooks/useOpenMissionEditor';
+import { fetchMissions, triggerMission, updateMission } from '../lib/missions-api';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -183,9 +184,7 @@ export const SessionList: React.FC<{
 
   // Fetch missions
   useEffect(() => {
-    fetch('/api/missions').then(r => r.json()).then(data => {
-      setMissions(Array.isArray(data) ? data : data.missions || []);
-    }).catch(() => {});
+    fetchMissions().then(setMissions);
   }, []);
 
   // Track new sessions for animation. Re-baseline silently on the first
@@ -292,16 +291,7 @@ export const SessionList: React.FC<{
     // API returns instantly. Matches the mission-settings page pattern.
     const minSpin = new Promise(res => setTimeout(res, 1000));
     try {
-      // Axum's Json<TriggerMissionRequest> extractor needs a real JSON body
-      // and Content-Type — a bodyless POST 415s silently.
-      const resp = await fetch(`/api/missions/${missionId}/trigger`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!resp.ok) {
-        console.error('Failed to trigger mission:', resp.status, await resp.text());
-      }
+      await triggerMission(missionId);
       // New session appears via SessionCreated event; refresh just in case.
       setTimeout(() => useSessionStore.getState().fetchAllSessions(), 1000);
     } catch (e) {
@@ -366,11 +356,7 @@ export const SessionList: React.FC<{
 
   const handleToggleMission = useCallback(async (missionId: string, enabled: boolean) => {
     try {
-      await fetch(`/api/missions/${missionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
+      await updateMission(missionId, { enabled });
       setMissions(prev => prev.map(m => m.id === missionId ? { ...m, enabled } : m));
     } catch (e) {
       console.error('Failed to toggle mission:', e);

@@ -10,6 +10,7 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LogIn } from 'lucide-react';
+import { account as accountApi } from '../lib/endpoints';
 
 interface AccountInfo {
   signed_in: boolean;
@@ -27,9 +28,8 @@ export const AccountAvatar: React.FC<{
   const ref = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => {
-    fetch('/api/account')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setAccount(data))
+    accountApi.get()
+      .then((data) => setAccount(data as any))
       .catch(() => setAccount(null));
   }, []);
 
@@ -54,15 +54,8 @@ export const AccountAvatar: React.FC<{
   const signIn = async () => {
     setSigningIn(true);
     try {
-      const resp = await fetch('/api/account/login', { method: 'POST' });
-      const data = await resp.json().catch(() => ({}));
-      if (!data.opened && data.url) window.open(data.url, '_blank');
-      // Poll until the callback lands (bounded ~2 min).
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const acc = await fetch('/api/account').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-        if (acc?.signed_in) { setAccount(acc); break; }
-      }
+      const acc = await accountApi.signIn();
+      if (acc) setAccount(acc as any);
     } finally {
       setSigningIn(false);
     }
@@ -116,7 +109,7 @@ export const AccountAvatar: React.FC<{
           )}
           <button
             onClick={async () => {
-              await fetch('/api/account/logout', { method: 'POST' });
+              await accountApi.logout().catch(() => {});
               setMenuOpen(false);
               refresh();
             }}

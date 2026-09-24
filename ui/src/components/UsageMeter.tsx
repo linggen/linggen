@@ -11,6 +11,7 @@
  * small dropdown with the progress bar and a link to linggen.dev billing.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { account } from '../lib/endpoints';
 
 interface TrialState {
   tokens: number;
@@ -43,9 +44,7 @@ function fmtTokens(n: number): string {
 }
 
 async function fetchMeter(): Promise<Meter | null> {
-  const acc = await fetch('/api/account?app=linggen')
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
+  const acc = await account.get('linggen').catch(() => null);
   if (!acc?.signed_in || !acc.entitlement) return null;
   // The developer account is metered nowhere: no meter to draw.
   if (acc.gate?.developer) return null;

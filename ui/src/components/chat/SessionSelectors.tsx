@@ -8,6 +8,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useUserStore } from '../../stores/userStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { suppressPermissionSync } from '../../lib/eventDispatcher';
+import { sessionApi } from '../../lib/endpoints';
 
 const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
@@ -60,15 +61,7 @@ export const SessionModelSelector: React.FC = () => {
         s.id === sessionId ? { ...s, model_id: value } : s
       );
       useSessionStore.setState({ allSessions: updated, sessions: updatedSessions });
-      fetch('/api/sessions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_root: selectedProjectRoot || '',
-          session_id: sessionId,
-          model_id: value ?? '',
-        }),
-      }).catch(() => {});
+      sessionApi.setModel(selectedProjectRoot || '', sessionId, value ?? '').catch(() => {});
     }
   };
 
@@ -131,11 +124,7 @@ export const SessionModeSelector: React.FC = () => {
     if (sessionId) {
       const sessionMeta = useSessionStore.getState().allSessions.find((s) => s.id === sessionId);
       const cwd = sessionMeta?.cwd || sessionMeta?.project || '~/';
-      fetch('/api/sessions/permission', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, path: cwd, mode: value }),
-      }).catch(() => {});
+      sessionApi.setPermission(sessionId, cwd, value).catch(() => {});
     }
   };
 

@@ -1,18 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import { FilePlus2, FileText, Save, Trash2, X } from 'lucide-react';
-import type { AgentFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
 import { confirmDialog } from '../lib/confirmDialog';
-
-const defaultAgentTemplate = (agentName: string) => `---
-name: ${agentName}
-description: ${agentName} agent.
-tools: [Read]
-model: inherit
----
-
-You are linggen '${agentName}'.
-`;
+import { useAgentFiles } from '../hooks/useAgentFiles';
 
 export const AgentSpecEditorModal: React.FC<{
   open: boolean;
@@ -20,149 +10,10 @@ export const AgentSpecEditorModal: React.FC<{
   onClose: () => void;
   onChanged?: () => void;
 }> = ({ open, projectRoot, onClose, onChanged }) => {
-  const [files, setFiles] = useState<AgentFileInfo[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string>('');
-  const [content, setContent] = useState<string>('');
-  const [savedContent, setSavedContent] = useState<string>('');
-  const [loadingList, setLoadingList] = useState(false);
-  const [loadingFile, setLoadingFile] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
-
-  const dirty = useMemo(() => content !== savedContent, [content, savedContent]);
-
-  const fetchList = useCallback(async () => {
-    if (!projectRoot) return;
-    setLoadingList(true);
-    try {
-      const resp = await fetch(`/api/agent-files?project_root=${encodeURIComponent(projectRoot)}`);
-      if (!resp.ok) return;
-      const data = (await resp.json()) as AgentFileInfo[];
-      setFiles(data);
-      if (data.length === 0) {
-        setSelectedPath('');
-        setContent('');
-        setSavedContent('');
-        return;
-      }
-      setSelectedPath((prev) =>
-        !prev || !data.some((item) => item.path === prev) ? data[0].path : prev
-      );
-    } finally {
-      setLoadingList(false);
-    }
-  }, [projectRoot]);
-
-  const loadFile = useCallback(
-    async (path: string) => {
-      if (!projectRoot || !path) return;
-      setLoadingFile(true);
-      try {
-        const resp = await fetch(
-          `/api/agent-file?project_root=${encodeURIComponent(projectRoot)}&path=${encodeURIComponent(path)}`
-        );
-        if (!resp.ok) return;
-        const data = await resp.json();
-        setContent(data.content || '');
-        setSavedContent(data.content || '');
-        setValidationError(data.valid ? null : data.error || 'Invalid markdown frontmatter.');
-      } finally {
-        setLoadingFile(false);
-      }
-    },
-    [projectRoot]
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    fetchList();
-  }, [open, fetchList]);
-
-  useEffect(() => {
-    if (!open || !selectedPath) return;
-    loadFile(selectedPath);
-  }, [open, selectedPath, loadFile]);
-
-  const selectFile = async (path: string) => {
-    if (dirty && !(await confirmDialog('Discard unsaved changes?'))) return;
-    setSelectedPath(path);
-  };
-
-  const saveFile = async () => {
-    if (!projectRoot || !selectedPath) return;
-    setSaving(true);
-    setValidationError(null);
-    try {
-      const resp = await fetch('/api/agent-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_root: projectRoot,
-          path: selectedPath,
-          content,
-        }),
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        setValidationError(text || 'Save failed.');
-        return;
-      }
-      setSavedContent(content);
-      setValidationError(null);
-      await fetchList();
-      onChanged?.();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const createFile = async () => {
-    if (!projectRoot) return;
-    const raw = prompt('New agent filename (example: reviewer.md):', 'new-agent.md');
-    if (!raw) return;
-    const filename = raw.trim().replace(/\\/g, '/');
-    if (!filename) return;
-    const name = filename.replace(/\.md$/i, '').split('/').pop() || 'new-agent';
-    const path = filename.startsWith('agents/') ? filename : `agents/${filename}`;
-    const template = defaultAgentTemplate(name.toLowerCase());
-    const resp = await fetch('/api/agent-file', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_root: projectRoot,
-        path,
-        content: template,
-      }),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      setValidationError(text || 'Create failed.');
-      return;
-    }
-    await fetchList();
-    setSelectedPath(path);
-    onChanged?.();
-  };
-
-  const deleteFile = async () => {
-    if (!projectRoot || !selectedPath) return;
-    if (!(await confirmDialog(`Delete ${selectedPath}?`))) return;
-    const resp = await fetch('/api/agent-file', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_root: projectRoot,
-        path: selectedPath,
-      }),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      setValidationError(text || 'Delete failed.');
-      return;
-    }
-    await fetchList();
-    onChanged?.();
-  };
+  const {
+    files, selectedPath, content, setContent, loadingList, loadingFile, saving, validationError, dirty,
+    selectFile, saveFile, createFile, deleteFile,
+  } = useAgentFiles(projectRoot, open, onChanged);
 
   const close = async () => {
     if (dirty && !(await confirmDialog('Discard unsaved changes?'))) return;

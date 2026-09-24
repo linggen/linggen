@@ -1,5 +1,6 @@
 import React from 'react';
 import { MarkdownContent } from './MarkdownContent';
+import { providerAuth } from '../../lib/endpoints';
 
 type LoginState = 'idle' | 'waiting' | 'done';
 
@@ -48,10 +49,9 @@ export const AuthRequiredBlock: React.FC<{
     if (!flow) return;
     setState('waiting');
     try {
-      const resp = await fetch(flow.loginUrl, { method: 'POST' });
       // The daemon opens the system browser itself; only pop a fallback tab
       // if it explicitly reports it couldn't.
-      const out = await resp.json().catch(() => ({}));
+      const out = await providerAuth.login(flow.loginUrl);
       if (out && out.opened === false && out.url) window.open(out.url, '_blank', 'noopener');
     } catch {
       setState('idle');
@@ -60,9 +60,7 @@ export const AuthRequiredBlock: React.FC<{
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
-        const resp = await fetch(flow.statusUrl);
-        if (!resp.ok) return;
-        const data = await resp.json();
+        const data = await providerAuth.status<any>(flow.statusUrl);
         if (flow.isDone(data)) {
           if (pollRef.current) clearInterval(pollRef.current);
           setState('done');

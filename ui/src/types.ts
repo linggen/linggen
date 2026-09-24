@@ -178,6 +178,14 @@ export interface ModelInfo {
   auth_ok?: boolean;
 }
 
+/** A row of GET /api/models: what page_state sends plus the fields only the
+ *  settings screens need (built-in flag, sign-in mode). */
+export interface RuntimeModelInfo extends Partial<ModelInfo> {
+  id: string;
+  is_builtin?: boolean;
+  auth_mode?: string | null;
+}
+
 export interface OllamaPsModel {
   name: string;
   model: string;

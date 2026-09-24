@@ -16,6 +16,7 @@ import type {
   QueuedChatItem,
   SkillInfo,
 } from '../../types';
+import { sessionApi, workspaceApi } from '../../lib/endpoints';
 
 export interface ChatInputProps {
   projectRoot?: string | null;
@@ -257,13 +258,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (!projectRoot) return;
     setFileEntriesLoading(true);
     try {
-      const url = `/api/files?project_root=${encodeURIComponent(projectRoot)}&path=${encodeURIComponent(browsePath)}`;
-      const resp = await fetch(url);
-      if (resp.ok) {
-        const entries: FileEntry[] = await resp.json();
-        entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
-        setFileEntries(entries);
-      }
+      const entries = await workspaceApi.files<FileEntry>(projectRoot, browsePath);
+      entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
+      setFileEntries(entries);
     } catch {
       setFileEntries([]);
     } finally {
@@ -277,9 +274,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     searchTimeoutRef.current = setTimeout(async () => {
       setFileEntriesLoading(true);
       try {
-        const url = `/api/files/search?project_root=${encodeURIComponent(projectRoot)}&query=${encodeURIComponent(query)}`;
-        const resp = await fetch(url);
-        if (resp.ok) setFileEntries(await resp.json());
+        setFileEntries(await workspaceApi.searchFiles<FileEntry>(projectRoot, query));
       } catch {
         setFileEntries([]);
       } finally {
@@ -420,15 +415,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   if (!selectedProjectRoot || !activeSessionId || !selectedAgent) return;
                   useInteractionStore.getState().setQueuedMessages([]);
                   try {
-                    await fetch('/api/queue/clear', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        project_root: selectedProjectRoot,
-                        session_id: activeSessionId,
-                        agent_id: selectedAgent,
-                      }),
-                    });
+                    await sessionApi.clearQueue(selectedProjectRoot, activeSessionId, selectedAgent);
                   } catch {
                     // Best-effort clear; UI already reflects the empty queue.
                   }

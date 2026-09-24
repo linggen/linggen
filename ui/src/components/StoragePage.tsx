@@ -13,47 +13,24 @@ import { CM6Editor } from './CM6Editor';
 import type { StorageEntry, StorageRoot } from '../types';
 import { cn } from '../lib/cn';
 import { confirmDialog } from '../lib/confirmDialog';
+import { storageApi } from '../lib/endpoints';
 
 // ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
 
-async function fetchRoots(): Promise<StorageRoot[]> {
-  const res = await fetch('/api/storage/roots');
-  if (!res.ok) return [];
-  return res.json();
-}
+const fetchRoots = (): Promise<StorageRoot[]> => storageApi.roots<StorageRoot>().catch(() => []);
 
-async function fetchTree(root: string, path: string): Promise<StorageEntry[]> {
-  const params = new URLSearchParams({ root });
-  if (path) params.set('path', path);
-  const res = await fetch(`/api/storage/tree?${params}`);
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.entries ?? [];
-}
+const fetchTree = (root: string, path: string): Promise<StorageEntry[]> =>
+  storageApi.tree<StorageEntry>(root, path).then((d) => d.entries ?? []).catch(() => []);
 
-async function fetchFile(root: string, path: string): Promise<{ content: string; size: number; modified: number } | null> {
-  const params = new URLSearchParams({ root, path });
-  const res = await fetch(`/api/storage/file?${params}`);
-  if (!res.ok) return null;
-  return res.json();
-}
+const fetchFile = (root: string, path: string) => storageApi.file(root, path).catch(() => null);
 
-async function saveFile(root: string, path: string, content: string): Promise<boolean> {
-  const res = await fetch('/api/storage/file', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, path, content }),
-  });
-  return res.ok;
-}
+const saveFile = (root: string, path: string, content: string): Promise<boolean> =>
+  storageApi.save(root, path, content).then(() => true, () => false);
 
-async function deleteFile(root: string, path: string): Promise<boolean> {
-  const params = new URLSearchParams({ root, path });
-  const res = await fetch(`/api/storage/file?${params}`, { method: 'DELETE' });
-  return res.ok;
-}
+const deleteFile = (root: string, path: string): Promise<boolean> =>
+  storageApi.remove(root, path).then(() => true, () => false);
 
 // ---------------------------------------------------------------------------
 // FileTree

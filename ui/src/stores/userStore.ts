@@ -8,6 +8,7 @@
  * - userPermission: "admin"|"edit"|"read"|"chat" — what the agent can do.
  */
 import { create } from 'zustand';
+import { userApi } from '../lib/endpoints';
 
 /** What this peer is to the machine it's connected to. */
 export type UserType = 'owner' | 'paired' | 'consumer';
@@ -66,9 +67,7 @@ export const useUserStore = create<UserState>((set) => ({
   setUserProfile: (name, avatar) => set({ userName: name, avatarUrl: avatar }),
   loadCoreName: async () => {
     try {
-      const resp = await fetch('/api/user/name');
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await userApi.name();
       set({ coreName: typeof data?.name === 'string' && data.name ? data.name : null });
     } catch { /* daemon unreachable — bubbles stay unlabeled */ }
   },

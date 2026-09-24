@@ -6,6 +6,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
+import { account as accountApi, appConfig, skillsApi, workspaceApi } from '../lib/endpoints';
 
 interface AppSkill {
   name: string;
@@ -30,12 +31,7 @@ type Section = { id: string; label: string; kind: 'general' | 'account' | 'model
 
 async function bash(command: string): Promise<string> {
   try {
-    const r = await fetch('/api/bash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_root: '/tmp', command }),
-    });
-    const d = await r.json().catch(() => ({}));
+    const d = await workspaceApi.bash('/tmp', command);
     return (d.stdout ?? d.output ?? '').toString();
   } catch {
     return '';
@@ -46,29 +42,15 @@ async function bash(command: string): Promise<string> {
 const AccountPanel: React.FC = () => {
   const [acct, setAcct] = useState<any>(null);
   const load = useCallback(() => {
-    fetch('/api/account')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setAcct)
-      .catch(() => setAcct(null));
+    accountApi.get().then(setAcct).catch(() => setAcct(null));
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const signIn = async () => {
-    // Matches the per-app flow: the daemon initiates the OS login; if it can't
-    // open the browser itself, it hands back a url for us to open. Then poll.
-    try {
-      const r = await fetch('/api/account/login', { method: 'POST' });
-      const out = await r.json().catch(() => ({}));
-      if (!out.opened && out.url) window.open(out.url, '_blank', 'noopener');
-    } catch { /* ignore */ }
-    const t = setInterval(() => {
-      fetch('/api/account').then((r) => (r.ok ? r.json() : null)).then((d) => {
-        if (d?.signed_in) { clearInterval(t); setAcct(d); }
-      }).catch(() => {});
-    }, 1500);
-    setTimeout(() => clearInterval(t), 120000);
+    const acc = await accountApi.signIn();
+    if (acc) setAcct(acc);
   };
-  const signOut = async () => { await fetch('/api/account/logout', { method: 'POST' }).catch(() => {}); load(); };
+  const signOut = async () => { await accountApi.logout().catch(() => {}); load(); };
 
   return (
     <div className="lg-set-panel">
@@ -151,18 +133,14 @@ const YinyuePanel: React.FC = () => {
   // Yinyue's model lives in config.pet.model (linggen config), separate from
   // the show/always-on flag files. Read/write via /api/config like GeneralTab.
   useEffect(() => {
-    fetch('/api/config').then((r) => (r.ok ? r.json() : null)).then(setConfig).catch(() => {});
+    appConfig.get().then(setConfig).catch(() => {});
   }, []);
 
   const setModel = async (model: string) => {
     if (!config) return;
     const updated = { ...config, pet: { ...config.pet, model } };
     setConfig(updated);
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated),
-    }).catch(() => {});
+    await appConfig.save(updated).catch(() => {});
   };
   // Only the user's configured models — never offer an id that isn't wired up.
   const modelOptions: string[] = (config?.models ?? []).map((m: any) => m.id);
@@ -220,10 +198,9 @@ export const LauncherSettings: React.FC<{ onClose: () => void }> = ({ onClose })
   const [active, setActive] = useState<string>('account');
 
   useEffect(() => {
-    fetch('/api/skills')
-      .then((r) => (r.ok ? r.json() : []))
+    skillsApi.list()
       .then((data) => {
-        const list: any[] = Array.isArray(data) ? data : data?.skills ?? [];
+        const list: any[] = Array.isArray(data) ? data : [];
         setApps(list.filter((s) => s.app && s.app.launcher === 'web' && HAS_SETTINGS.has(s.name)));
       })
       .catch(() => {});

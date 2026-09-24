@@ -2,6 +2,7 @@ import React, { useMemo, useEffect } from 'react';
 import { SessionList } from '../../components/SessionList';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useOpenSettings } from '../../hooks/useOpenSettings';
+import { sessions } from '../../lib/api';
 
 /** Bare /sessions route — for skill apps to iframe the session list alone.
  *
@@ -59,12 +60,7 @@ export const BareSessions: React.FC = () => {
       // Host page owns the new-session flow (it needs to navigate + replay
       // runtime grants). Engine creates the session; iframe just signals.
       try {
-        const r = await fetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: `${skillParam} session`, skill: skillParam }),
-        });
-        const data = await r.json();
+        const data = await sessions.create({ title: `${skillParam} session`, skill: skillParam });
         if (data?.id) postToHost('session_create', { sessionId: data.id });
       } catch (e) {
         console.warn('[bare-sessions] create failed', e);

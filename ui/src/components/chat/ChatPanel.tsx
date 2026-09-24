@@ -29,6 +29,7 @@ import { useChatActions } from '../../hooks/useChatActions';
 import { useStableArray } from '../../hooks/useStableArray';
 import { useChatStore } from '../../stores/chatStore';
 import { sessions as sessionsApi } from '../../lib/api';
+import { sessionApi } from '../../lib/endpoints';
 
 /**
  * Debug action buttons shown inside the expanded session header.
@@ -49,18 +50,8 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
     const root = projectRoot || useSessionStore.getState().selectedProjectRoot || '';
     const agentId = useServerStore.getState().selectedAgent;
     const sid = sessionId || useSessionStore.getState().activeSessionId;
-    let url: URL | undefined;
     try {
-      url = new URL('/api/chat/system-prompt', window.location.origin);
-      url.searchParams.append('project_root', root);
-      url.searchParams.append('agent_id', agentId);
-      if (sid) url.searchParams.append('session_id', sid);
-      const resp = await fetch(url.toString());
-      if (!resp.ok) {
-        const bodyHint = await resp.text().catch(() => '');
-        throw new Error(`HTTP ${resp.status}: ${bodyHint.slice(0, 200)}`);
-      }
-      const payload = await resp.json();
+      const payload = await sessionApi.systemPrompt(root, agentId, sid);
       const promptText = payload.system_prompt || '';
       const tools = Array.isArray(payload.tools) ? payload.tools : [];
       if (!promptText && tools.length === 0) throw new Error('empty payload');
@@ -85,7 +76,7 @@ const ChatDebugActions: React.FC<{ projectRoot?: string | null; sessionId?: stri
       }
       setSpStatus('copied');
     } catch (err) {
-      console.error('[copy-system-prompt] failed:', err, { url: url?.toString() });
+      console.error('[copy-system-prompt] failed:', err);
       setSpStatus('error');
     }
     setTimeout(() => setSpStatus('idle'), 1500);

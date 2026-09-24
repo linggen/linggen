@@ -14,6 +14,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useInteractionStore } from '../../stores/interactionStore';
 import { buildSubagentInfos } from '../../lib/messageUtils';
+import { appConfig } from '../../lib/endpoints';
 
 export interface ChatWidgetProps {
   /** Session to connect to. Null/undefined = no session (events from all sessions are accepted). */
@@ -85,18 +86,10 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   // --- Model switcher ---
   const switchModel = useCallback(async (modelId: string) => {
     try {
-      const resp = await fetch('/api/config');
-      if (resp.ok) {
-        const config = await resp.json();
-        const newDefaults = [modelId];
-        const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
-        const saveResp = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
-        if (saveResp.ok) {
-          useServerStore.setState({ defaultModels: newDefaults });
-          useUiStore.getState().setModelPickerOpen(false);
-          useUiStore.getState().setOverlay(`Switched to: \`${modelId}\``);
-        }
-      }
+      await appConfig.setDefaultModels([modelId]);
+      useServerStore.setState({ defaultModels: [modelId] });
+      useUiStore.getState().setModelPickerOpen(false);
+      useUiStore.getState().setOverlay(`Switched to: \`${modelId}\``);
     } catch (e) {
       useUiStore.getState().setOverlay(`Error switching model: ${e}`);
       useUiStore.getState().setModelPickerOpen(false);

@@ -15,6 +15,8 @@ import { RoomTab } from '../../components/RoomTab';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useServerStore } from '../../stores/serverStore';
 import type { SettingsLocationState } from '../../hooks/useOpenSettings';
+import { appConfig } from '../../lib/endpoints';
+import { apiErrorMessage } from '../../lib/api';
 
 const tabs: { key: ManagementTab; label: string }[] = [
   { key: 'general', label: 'General' },
@@ -57,12 +59,7 @@ export const SettingsHome: React.FC = () => {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const resp = await fetch('/api/config');
-      if (!resp.ok) {
-        setError('Failed to load config');
-        return;
-      }
-      const data: AppConfig = await resp.json();
+      const data = await appConfig.get();
       setConfig(data);
       setOriginalConfig(data);
       setError(null);
@@ -80,14 +77,10 @@ export const SettingsHome: React.FC = () => {
     setSuccess(false);
     try {
       if (configDirty) {
-        const resp = await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(config),
-        });
-        if (!resp.ok) {
-          const text = await resp.text();
-          setError(text || 'Save failed');
+        try {
+          await appConfig.save(config);
+        } catch (e) {
+          setError(apiErrorMessage(e) || 'Save failed');
           return;
         }
         setOriginalConfig(config);

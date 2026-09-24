@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Check, Circle, Plug, RefreshCw, ShieldAlert } from 'lucide-react';
+import { mcpApi } from '../lib/endpoints';
 
 /**
  * MCP servers this engine connects to as a *client*.
@@ -33,9 +34,7 @@ export const McpTab: React.FC = () => {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/mcp');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await mcpApi.list<McpServer>();
       setServers(data.servers || []);
       setLoadError(null);
     } catch (e) {

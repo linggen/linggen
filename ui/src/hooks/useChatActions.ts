@@ -12,6 +12,8 @@ import { useInteractionStore } from '../stores/interactionStore';
 import { getTransport } from '../lib/transport';
 import { contentBlockSummary } from '../components/chat/utils/content-block';
 import type { ContentBlock } from '../types';
+import { appConfig, sessionApi, workspaceApi } from '../lib/endpoints';
+import { ApiError, apiErrorMessage } from '../lib/api';
 
 /**
  * Resolve the effective project root: explicit override > selected project >
@@ -91,15 +93,10 @@ export function useChatActions(
         if (!valid) { ui.setOverlay(`Unknown model: \`${modelArg}\`. Use \`/model\` to see available models.`); }
         else {
           try {
-            const resp = await fetch('/api/config');
-            if (resp.ok) {
-              const config = await resp.json();
-              const newDefaults = [modelArg];
-              const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
-              const saveResp = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
-              if (saveResp.ok) { useServerStore.setState({ defaultModels: newDefaults }); ui.setOverlay(`Switched default model to: \`${modelArg}\``); }
-            }
-          } catch (e) { ui.setOverlay(`Error switching model: ${e}`); }
+            await appConfig.setDefaultModels([modelArg]);
+            useServerStore.setState({ defaultModels: [modelArg] });
+            ui.setOverlay(`Switched default model to: \`${modelArg}\``);
+          } catch (e) { ui.setOverlay(`Error switching model: ${apiErrorMessage(e)}`); }
         }
       }
       return;
@@ -120,28 +117,27 @@ export function useChatActions(
 
     if (trimmed === '/status') {
       try {
-        const resp = await fetch(`/api/status?project_root=${encodeURIComponent(root)}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          const modelLines = (data.models || []).map((m: any) => `- \`${m.id}${m.id === data.default_model ? ' ✓' : ''}\`  (${m.provider}: ${m.model})`);
-          const usageLines = (data.model_usage || []).map((entry: [string, number]) => `- \`${entry[0]}\` — ${entry[1]} runs`);
-          const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
-          const promptTok = data.session_prompt_tokens || 0;
-          const completionTok = data.session_completion_tokens || 0;
-          const lines = [
-            `**Version:** v${data.version || '?'}`, `**Session:** \`${sid || '(none)'}\``,
-            `**Workspace:** \`${root}\``, `**Agent:** ${agent}`,
-            `**Model:** \`${data.default_model || '(none)'}\``,
-          ];
-          if (promptTok > 0 || completionTok > 0) lines.push(`**Tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
-          lines.push('', '**Models:**', ...modelLines, '', '| Metric | Value |', '|--------|-------|',
-            `| Sessions | ${data.sessions} |`, `| Total runs | ${data.total_runs} |`,
-            `| Completed | ${data.completed_runs} |`, `| Failed | ${data.failed_runs} |`,
-            `| Cancelled | ${data.cancelled_runs} |`, `| Active days | ${data.active_days} |`);
-          if (usageLines.length > 0) lines.push('', '**Model usage:**', ...usageLines);
-          ui.setOverlay(lines.join('\n'));
-        } else { ui.setOverlay(`Status request failed: ${resp.status} ${resp.statusText}`); }
-      } catch (e) { ui.setOverlay(`Error fetching status: ${e}`); }
+        const data = await sessionApi.status(root);
+        const modelLines = (data.models || []).map((m: any) => `- \`${m.id}${m.id === data.default_model ? ' ✓' : ''}\`  (${m.provider}: ${m.model})`);
+        const usageLines = (data.model_usage || []).map((entry: [string, number]) => `- \`${entry[0]}\` — ${entry[1]} runs`);
+        const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : `${n}`;
+        const promptTok = data.session_prompt_tokens || 0;
+        const completionTok = data.session_completion_tokens || 0;
+        const lines = [
+          `**Version:** v${data.version || '?'}`, `**Session:** \`${sid || '(none)'}\``,
+          `**Workspace:** \`${root}\``, `**Agent:** ${agent}`,
+          `**Model:** \`${data.default_model || '(none)'}\``,
+        ];
+        if (promptTok > 0 || completionTok > 0) lines.push(`**Tokens:** ↑ ${fmt(promptTok)}  ↓ ${fmt(completionTok)}  (total: ${fmt(promptTok + completionTok)})`);
+        lines.push('', '**Models:**', ...modelLines, '', '| Metric | Value |', '|--------|-------|',
+          `| Sessions | ${data.sessions} |`, `| Total runs | ${data.total_runs} |`,
+          `| Completed | ${data.completed_runs} |`, `| Failed | ${data.failed_runs} |`,
+          `| Cancelled | ${data.cancelled_runs} |`, `| Active days | ${data.active_days} |`);
+        if (usageLines.length > 0) lines.push('', '**Model usage:**', ...usageLines);
+        ui.setOverlay(lines.join('\n'));
+      } catch (e) {
+        ui.setOverlay(e instanceof ApiError ? `Status request failed: ${e.status}` : `Error fetching status: ${e}`);
+      }
       return;
     }
 
@@ -157,28 +153,15 @@ export function useChatActions(
       });
       scrollToBottom();
       try {
-        const resp = await fetch('/api/bash', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_root: root, command: cmd, session_id: sid }),
-        });
+        const data = await workspaceApi.bash(root, cmd, sid);
         const resultTs = new Date();
-        if (!resp.ok) {
-          const errText = await resp.text().catch(() => `HTTP ${resp.status}`);
-          chat.addMessage({
-            role: 'agent', from: 'system', to: 'user',
-            text: `Error: ${errText}`, isError: true,
-            timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
-          });
-        } else {
-          const data = await resp.json();
-          const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
-          const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
-          chat.addMessage({
-            role: 'agent', from: 'system', to: 'user',
-            text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
-            timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
-          });
-        }
+        const output = [data.stdout, data.stderr].filter(Boolean).join('\n').trim();
+        const exitInfo = data.exit_code !== 0 ? `\n\n(exit code ${data.exit_code})` : '';
+        chat.addMessage({
+          role: 'agent', from: 'system', to: 'user',
+          text: output ? `\`\`\`\n${output}\n\`\`\`${exitInfo}` : `(no output)${exitInfo}`,
+          timestamp: resultTs.toLocaleTimeString(), timestampMs: resultTs.getTime(), isGenerating: false,
+        });
         scrollToBottom();
       } catch (e) {
         console.error('Bash error:', e);
@@ -237,10 +220,7 @@ export function useChatActions(
     }
 
     if (trimmed.startsWith('/user_story ')) {
-      await fetch('/api/task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: root, agent_id: agentToUse, task: trimmed.substring(12).trim() }),
-      });
+      await sessionApi.task(root, agentToUse, trimmed.substring(12).trim());
       return;
     }
 

@@ -6,6 +6,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { describeCron, folderLabel } from '../lib/mission-utils';
 import { fetchMissions, updateMission, deleteMission } from '../lib/missions-api';
 import { MissionEditor } from './mission/MissionEditor';
+import { agentFiles } from '../lib/endpoints';
 
 // Re-export for callers that import these from MissionPage.
 export { MissionEditor };
@@ -160,11 +161,8 @@ const AgentViewer: React.FC<{ onBack: () => void; projectRoot: string }> = ({ on
   useEffect(() => {
     const tryFetch = async () => {
       for (const path of ['agents/mission.md', '~/.linggen/agents/mission.md']) {
-        const url = new URL('/api/agent-file', window.location.origin);
-        url.searchParams.append('project_root', projectRoot);
-        url.searchParams.append('path', path);
-        const resp = await fetch(url.toString());
-        if (resp.ok) { const data = await resp.json(); if (data.content) return data.content; }
+        const data = await agentFiles.read(projectRoot, path).catch(() => null);
+        if (data?.content) return data.content;
       }
       return null;
     };

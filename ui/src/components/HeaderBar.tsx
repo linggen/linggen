@@ -5,6 +5,7 @@ import { useUserStore } from '../stores/userStore';
 import { useOpenSettings } from '../hooks/useOpenSettings';
 import { AccountAvatar } from './AccountAvatar';
 import logoUrl from '../assets/logo.svg';
+import { roomApi } from './room/roomApi';
 
 /** Remote/tunnel mode — the UI reached this daemon via the relay. */
 const isRemoteUi = typeof document !== 'undefined' && !!document.querySelector('meta[name="linggen-instance"]');
@@ -83,8 +84,7 @@ export const HeaderBar: React.FC<{
     let cancelled = false;
     let retryCount = 0;
     const fetchRoomName = () => {
-      fetch('/api/rooms/mine')
-        .then(r => r.ok ? r.json() : null)
+      roomApi.mine()
         .then(data => {
           if (cancelled) return;
           const name = data?.room?.name ?? null;
@@ -105,8 +105,7 @@ export const HeaderBar: React.FC<{
         });
     };
     const fetchProxyRoom = () => {
-      fetch('/api/proxy/status')
-        .then(r => r.ok ? r.json() : null)
+      roomApi.proxyStatus()
         .then(data => {
           if (cancelled) return;
           const conns = data?.connections || [];

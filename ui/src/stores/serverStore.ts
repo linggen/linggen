@@ -2,11 +2,13 @@
  * Agents, models, skills, runs, and live activity state.
  */
 import { create } from 'zustand';
-import type { AgentInfo, AgentRunInfo, AgentTreeItem, ModelInfo, OllamaPsResponse, SkillInfo } from '../types';
+import type { AgentInfo, AgentRunInfo, AgentTreeItem, ModelInfo, OllamaPsResponse, RuntimeModelInfo, SkillInfo } from '../types';
+import { apiGet } from '../lib/api';
 import { useSessionStore } from './sessionStore';
 import { TOKEN_RATE_WINDOW_MS } from '../lib/messageUtils';
 import { dedupFetch } from '../lib/dedupFetch';
 import { agentTracker } from '../lib/agentTracker';
+import { agentsApi, appConfig, skillsApi } from '../lib/endpoints';
 
 export type AgentStatusValue = 'idle' | 'model_loading' | 'thinking' | 'calling_tool' | 'working';
 
@@ -15,6 +17,10 @@ type StateSetter<T> = T | ((prev: T) => T);
 interface ServerState {
   agents: AgentInfo[];
   models: ModelInfo[];
+  /** GET /api/models — the settings screens' view (built-ins, auth mode).
+   *  One shared copy; refreshRuntimeModels() re-reads it. */
+  runtimeModels: RuntimeModelInfo[];
+  refreshRuntimeModels: () => Promise<void>;
   ollamaStatus: OllamaPsResponse | null;
   defaultModels: string[];
   skills: SkillInfo[];
@@ -95,6 +101,13 @@ export const useServerStore = create<ServerState>((set, get) => ({
   defaultModels: [],
   skills: [],
   agentRuns: [],
+  runtimeModels: [],
+  refreshRuntimeModels: async () => {
+    try {
+      const ms = await apiGet<RuntimeModelInfo[]>('/api/models');
+      set({ runtimeModels: Array.isArray(ms) ? ms : [] });
+    } catch { /* keep the last list */ }
+  },
   selectedAgent: typeof window !== 'undefined'
     ? window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY) || ''
     : '',
@@ -165,44 +178,33 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   toggleDefaultModel: async (modelId) => {
     try {
-      const resp = await fetch('/api/config');
-      if (!resp.ok) return;
-      const config = await resp.json();
-      const current: string[] = config.routing?.default_models ?? [];
-      const newDefaults = current.length === 1 && current[0] === modelId ? [] : [modelId];
-      const updated = { ...config, routing: { ...config.routing, default_models: newDefaults } };
-      const saveResp = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated),
+      // Toggle against the file's current value, not the pushed copy.
+      const saved = await appConfig.update((config) => {
+        const current: string[] = config.routing?.default_models ?? [];
+        const next = current.length === 1 && current[0] === modelId ? [] : [modelId];
+        return { ...config, routing: { ...config.routing, default_models: next } };
       });
-      if (saveResp.ok) set({ defaultModels: newDefaults });
+      set({ defaultModels: saved.routing?.default_models ?? [] });
     } catch { /* ignore */ }
   },
 
   setReasoningEffort: async (modelId, effort) => {
     try {
-      const resp = await fetch('/api/config');
-      if (!resp.ok) return;
-      const config = await resp.json();
-      const models = config.models ?? [];
-      const idx = models.findIndex((m: { id: string }) => m.id === modelId);
-      if (idx === -1) return;
-      models[idx] = { ...models[idx], reasoning_effort: effort || null };
-      const updated = { ...config, models };
-      const saveResp = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated),
+      let found = false;
+      await appConfig.update((config) => {
+        const models = [...(config.models ?? [])];
+        const idx = models.findIndex((m) => m.id === modelId);
+        if (idx === -1) return config;
+        found = true;
+        models[idx] = { ...models[idx], reasoning_effort: effort || null };
+        return { ...config, models };
       });
-      if (saveResp.ok) {
-        // Update local models state
-        set((state) => ({
-          models: state.models.map((m) =>
-            m.id === modelId ? { ...m, reasoning_effort: effort || null } : m
-          ),
-        }));
-      }
+      if (!found) return;
+      set((state) => ({
+        models: state.models.map((m) =>
+          m.id === modelId ? { ...m, reasoning_effort: effort || null } : m
+        ),
+      }));
     } catch { /* ignore */ }
   },
 
@@ -226,11 +228,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const minSpin = new Promise((r) => setTimeout(r, 1000));
     try {
       const { selectedProjectRoot } = useSessionStore.getState();
-      await fetch('/api/skills/reload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: selectedProjectRoot || undefined }),
-      });
+      await skillsApi.reload(selectedProjectRoot || undefined);
       await get().fetchSkills();
     } catch (e) {
       console.error('Failed to reload skills:', e);
@@ -244,11 +242,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set({ reloadingAgents: true });
     try {
       const { selectedProjectRoot } = useSessionStore.getState();
-      await fetch('/api/agents/reload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: selectedProjectRoot || undefined }),
-      });
+      await agentsApi.reload(selectedProjectRoot || undefined);
       await get().fetchAgents(selectedProjectRoot || undefined);
     } catch (e) {
       console.error('Failed to reload agents:', e);
@@ -264,11 +258,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     if (!runId) return;
     set((s) => ({ cancellingRunIds: { ...s.cancellingRunIds, [runId]: true } }));
     try {
-      await fetch('/api/agent-cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: runId }),
-      });
+      await agentsApi.cancelRun(runId);
       await get().fetchAgentRuns();
     } catch (e) {
       console.error(`Error cancelling run ${runId}:`, e);

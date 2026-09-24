@@ -29,6 +29,12 @@ export function updateMission(id: string, updates: Record<string, any>): Promise
   return apiPut<CronMission | null>(`/api/missions/${encodeURIComponent(id)}`, updates);
 }
 
+/** Run a mission now. Axum's Json extractor needs a real JSON body — a
+ *  bodyless POST 415s silently. */
+export function triggerMission(id: string): Promise<void> {
+  return apiPost<void>(`/api/missions/${encodeURIComponent(id)}/trigger`, {});
+}
+
 export function deleteMission(id: string): Promise<void> {
   return apiDelete<void>(`/api/missions/${encodeURIComponent(id)}`);
 }

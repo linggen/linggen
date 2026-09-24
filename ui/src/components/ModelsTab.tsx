@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, LogIn, LogOut, Plus, Star, Trash2 } from 'lucide-react';
 import type { AppConfig, ModelConfigUI, ModelHealthInfo, OllamaPsResponse } from '../types';
 import { UsageMeter } from './UsageMeter';
+import { useServerStore } from '../stores/serverStore';
+import { account as accountApi, modelsApi, providerAuth } from '../lib/endpoints';
+
+const CODEX_STATUS = '/api/auth/codex/status';
+type CodexStatus = { authenticated: boolean; account_id?: string };
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
@@ -105,7 +110,7 @@ export const ModelsTab: React.FC<{
   const [localKeys, setLocalKeys] = useState<Record<string, string>>({});
   const [revealKeys, setRevealKeys] = useState<Record<string, boolean>>({});
   const [credsDirty, setCredsDirty] = useState(false);
-  const [codexAuthStatus, setCodexAuthStatus] = useState<{ authenticated: boolean; account_id?: string } | null>(null);
+  const [codexAuthStatus, setCodexAuthStatus] = useState<CodexStatus | null>(null);
   const [codexAuthLoading, setCodexAuthLoading] = useState(false);
   // Claude Code OAuth status — sign-in/refresh is delegated to the `claude`
   // CLI (see claude_auth.rs); Linggen only reads the keychain, so there are
@@ -125,13 +130,8 @@ export const ModelsTab: React.FC<{
   // Runtime model list — includes built-ins the engine injects (Linggen
   // Cloud, ChatGPT) regardless of what's in the config file. Shown read-only
   // below so they can be starred as default.
-  const [runtimeModels, setRuntimeModels] = useState<{ id: string; model?: string; provided_by?: string | null; auth_mode?: string | null; is_builtin?: boolean; auth_ok?: boolean }[]>([]);
-  const refetchRuntimeModels = () => {
-    fetch('/api/models')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((ms) => setRuntimeModels(Array.isArray(ms) ? ms : []))
-      .catch(() => {});
-  };
+  const runtimeModels = useServerStore((s) => s.runtimeModels);
+  const refetchRuntimeModels = () => { useServerStore.getState().refreshRuntimeModels(); };
   useEffect(refetchRuntimeModels, []);
 
   // linggen.dev sign-in for the cloud built-in — same browser-login + poll
@@ -141,29 +141,10 @@ export const ModelsTab: React.FC<{
   const handleLinggenLogin = async () => {
     setLinggenLoginBusy(true);
     try {
-      const resp = await fetch('/api/account/login', { method: 'POST' });
-      const out = await resp.json().catch(() => ({}));
-      if (out && out.opened === false && out.url) window.open(out.url, '_blank', 'noopener');
-    } catch {
+      if (await accountApi.signIn()) refetchRuntimeModels();
+    } finally {
       setLinggenLoginBusy(false);
-      return;
     }
-    const started = Date.now();
-    const poll = setInterval(async () => {
-      if (Date.now() - started > 120_000) {
-        clearInterval(poll);
-        setLinggenLoginBusy(false);
-        return;
-      }
-      try {
-        const d = await (await fetch('/api/account')).json();
-        if (d && d.signed_in) {
-          clearInterval(poll);
-          setLinggenLoginBusy(false);
-          refetchRuntimeModels();
-        }
-      } catch { /* keep polling */ }
-    }, 1500);
   };
   const builtinModels = runtimeModels.filter((m) => m.id && m.is_builtin);
   // A model always renders as its built-in card, never as a raw editable
@@ -176,65 +157,52 @@ export const ModelsTab: React.FC<{
   const fetchOllamaStatus = useCallback(async () => {
     if (!hasOllamaModels) return;
     try {
-      const resp = await fetch('/api/utils/ollama-status');
-      if (resp.ok) setOllamaStatus(await resp.json());
-      else setOllamaStatus(null);
+      setOllamaStatus(await modelsApi.ollamaStatus());
     } catch { setOllamaStatus(null); }
   }, [hasOllamaModels]);
 
   const fetchHealth = useCallback(async () => {
     try {
-      const resp = await fetch('/api/models/health');
-      if (resp.ok) {
-        const data: ModelHealthInfo[] = await resp.json();
-        const map: Record<string, ModelHealthInfo> = {};
-        for (const h of data) map[h.id] = h;
-        setHealthMap(map);
-      }
+      const data = await modelsApi.health();
+      const map: Record<string, ModelHealthInfo> = {};
+      for (const h of data) map[h.id] = h;
+      setHealthMap(map);
     } catch { /* ignore */ }
   }, []);
 
   const fetchCredentials = useCallback(async () => {
     try {
-      const resp = await fetch('/api/credentials');
-      if (resp.ok) {
-        const data: CredentialsMap = await resp.json();
-        setCredentials(data);
-        // A stored key is never echoed into the field: the label says it
-        // is set, the placeholder says where; typing replaces it.
-        setLocalKeys({});
-      }
+      setCredentials(await modelsApi.credentials<CredentialsMap>());
+      // A stored key is never echoed into the field: the label says it
+      // is set, the placeholder says where; typing replaces it.
+      setLocalKeys({});
     } catch { /* ignore */ }
   }, []);
 
   const fetchCodexAuthStatus = useCallback(async () => {
     try {
-      const resp = await fetch('/api/auth/codex/status');
-      if (resp.ok) setCodexAuthStatus(await resp.json());
+      setCodexAuthStatus(await providerAuth.status<CodexStatus>(CODEX_STATUS));
     } catch { /* ignore */ }
   }, []);
 
   const fetchClaudeAuthStatus = useCallback(async () => {
     try {
-      const resp = await fetch('/api/auth/claude/status');
-      if (resp.ok) setClaudeAuthStatus(await resp.json());
+      setClaudeAuthStatus(await providerAuth.status('/api/auth/claude/status'));
     } catch { /* ignore */ }
   }, []);
 
   const handleCodexLogin = async () => {
     setCodexAuthLoading(true);
     try {
-      await fetch('/api/auth/codex/login', { method: 'POST' });
+      await providerAuth.login('/api/auth/codex/login');
       // Poll for auth status (browser flow takes time)
       const poll = setInterval(async () => {
-        const resp = await fetch('/api/auth/codex/status');
-        if (resp.ok) {
-          const data = await resp.json();
-          setCodexAuthStatus(data);
-          if (data.authenticated) {
-            clearInterval(poll);
-            setCodexAuthLoading(false);
-          }
+        const data = await providerAuth.status<CodexStatus>(CODEX_STATUS).catch(() => null);
+        if (!data) return;
+        setCodexAuthStatus(data);
+        if (data.authenticated) {
+          clearInterval(poll);
+          setCodexAuthLoading(false);
         }
       }, 2000);
       // Timeout after 5 min
@@ -245,7 +213,7 @@ export const ModelsTab: React.FC<{
   };
 
   const handleCodexLogout = async () => {
-    await fetch('/api/auth/codex/logout', { method: 'POST' });
+    await providerAuth.logout('/api/auth/codex/logout').catch(() => {});
     setCodexAuthStatus({ authenticated: false });
   };
 
@@ -316,11 +284,7 @@ export const ModelsTab: React.FC<{
       }
     }
     try {
-      await fetch('/api/credentials', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      await modelsApi.saveCredentials(body);
       setCredsDirty(false);
       onCredsDirtyChange?.(false);
       fetchCredentials();

@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Book, Check, ChevronRight, Download, ExternalLink, FilePlus2, Package, Pencil, RefreshCw, Save, Search, ShieldAlert, Sparkles, Trash2, Wrench, X, Zap } from 'lucide-react';
 import type { BuiltInSkillInfo, MarketplaceSkill, SkillInfoFull, SkillFileInfo } from '../types';
 import { CM6Editor } from './CM6Editor';
-import { confirmDialog } from '../lib/confirmDialog';
+import { confirmDialog, promptDialog } from '../lib/confirmDialog';
+import { apiErrorMessage } from '../lib/api';
+import { skillFiles as skillFilesApi, skillsApi } from '../lib/endpoints';
 
 /* ── Helpers ── */
 function formatRelativeDate(dateStr: string): string {
@@ -91,15 +93,9 @@ export const SkillsTab: React.FC<{
   const [trendingSkills, setTrendingSkills] = useState<MarketplaceSkill[]>([]);
   const fetchTrending = useCallback(async () => {
     try {
-      const resp = await fetch('/api/community-skills/search?q=agent');
-      if (resp.ok) {
-        const skills: MarketplaceSkill[] = await resp.json();
-        // Show top 10 by install count, preferring ones with descriptions
-        const sorted = skills
-          .sort((a, b) => (b.install_count || 0) - (a.install_count || 0))
-          .slice(0, 10);
-        setTrendingSkills(sorted);
-      }
+      const skills = await skillsApi.searchCommunity<MarketplaceSkill>('agent');
+      // Show top 10 by install count
+      setTrendingSkills(skills.sort((a, b) => (b.install_count || 0) - (a.install_count || 0)).slice(0, 10));
     } catch { /* ignore */ }
   }, []);
 
@@ -108,9 +104,7 @@ export const SkillsTab: React.FC<{
   const [biInstalling, setBiInstalling] = useState<Set<string>>(new Set());
   const fetchBuiltInSkills = useCallback(async (refresh = false) => {
     try {
-      const url = refresh ? '/api/builtin-skills?refresh=true' : '/api/builtin-skills';
-      const resp = await fetch(url);
-      if (resp.ok) setBuiltInSkills(await resp.json());
+      setBuiltInSkills(await skillsApi.builtIn(refresh));
     } catch { /* ignore */ }
   }, []);
 
@@ -118,18 +112,10 @@ export const SkillsTab: React.FC<{
     setBiInstalling((prev) => new Set(prev).add(name));
     setError(null);
     try {
-      const resp = await fetch('/api/builtin-skills/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      if (!resp.ok) {
-        setError(await resp.text());
-      } else {
-        await Promise.all([fetchSkills(), fetchSkillFiles(), fetchBuiltInSkills()]);
-      }
+      await skillsApi.installBuiltIn(name);
+      await Promise.all([fetchSkills(), fetchSkillFiles(), fetchBuiltInSkills()]);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     }
     setBiInstalling((prev) => {
       const next = new Set(prev);
@@ -140,16 +126,16 @@ export const SkillsTab: React.FC<{
 
   const fetchSkills = useCallback(async () => {
     try {
-      const resp = await fetch('/api/skills');
-      if (resp.ok) setAllSkills(await resp.json());
+      // /api/skills, not the pushed list: this tab previews content, which
+      // page_state strips.
+      setAllSkills(await skillsApi.list());
     } catch { /* ignore */ }
   }, []);
 
   const fetchSkillFiles = useCallback(async () => {
     if (!projectRoot) return;
     try {
-      const resp = await fetch(`/api/skill-files?project_root=${encodeURIComponent(projectRoot)}`);
-      if (resp.ok) setSkillFiles(await resp.json());
+      setSkillFiles(await skillFilesApi.list<SkillFileInfo>(projectRoot));
     } catch { /* ignore */ }
   }, [projectRoot]);
 
@@ -167,8 +153,7 @@ export const SkillsTab: React.FC<{
     }
     setMpLoading(true);
     try {
-      const resp = await fetch(`/api/community-skills/search?q=${encodeURIComponent(q)}`);
-      if (resp.ok) setMpResults(await resp.json());
+      setMpResults(await skillsApi.searchCommunity<MarketplaceSkill>(q));
     } catch { /* ignore */ }
     setMpLoading(false);
   };
@@ -185,26 +170,18 @@ export const SkillsTab: React.FC<{
     setMpInstalling((prev) => new Set(prev).add(skill.name));
     setError(null);
     try {
-      const resp = await fetch('/api/marketplace/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: skill.name,
-          repo_url: skill.url || undefined,
-          git_ref: skill.git_ref || undefined,
-          scope,
-          project_root: scope === 'project' ? projectRoot : undefined,
-          force: false,
-          source: skill.source_registry || undefined,
-        }),
+      await skillsApi.install({
+        name: skill.name,
+        repo_url: skill.url || undefined,
+        git_ref: skill.git_ref || undefined,
+        scope,
+        project_root: scope === 'project' ? projectRoot : undefined,
+        force: false,
+        source: skill.source_registry || undefined,
       });
-      if (!resp.ok) {
-        setError(await resp.text());
-      } else {
-        await Promise.all([fetchSkills(), fetchSkillFiles()]);
-      }
+      await Promise.all([fetchSkills(), fetchSkillFiles()]);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     }
     setMpInstalling((prev) => {
       const next = new Set(prev);
@@ -217,22 +194,10 @@ export const SkillsTab: React.FC<{
     setMpUninstalling((prev) => new Set(prev).add(name));
     setError(null);
     try {
-      const resp = await fetch('/api/marketplace/uninstall', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          scope,
-          project_root: scope === 'project' ? projectRoot : undefined,
-        }),
-      });
-      if (!resp.ok) {
-        setError(await resp.text());
-      } else {
-        await Promise.all([fetchSkills(), fetchSkillFiles()]);
-      }
+      await skillsApi.uninstall({ name, scope, project_root: scope === 'project' ? projectRoot : undefined });
+      await Promise.all([fetchSkills(), fetchSkillFiles()]);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     }
     setMpUninstalling((prev) => {
       const next = new Set(prev);
@@ -247,18 +212,10 @@ export const SkillsTab: React.FC<{
     setMpMoving((prev) => new Set(prev).add(skillName));
     setError(null);
     try {
-      const resp = await fetch('/api/marketplace/move-to-global', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: skillName, project_root: projectRoot }),
-      });
-      if (!resp.ok) {
-        setError(await resp.text());
-      } else {
-        await Promise.all([fetchSkills(), fetchSkillFiles()]);
-      }
+      await skillsApi.moveToGlobal(skillName, projectRoot);
+      await Promise.all([fetchSkills(), fetchSkillFiles()]);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     }
     setMpMoving((prev) => {
       const next = new Set(prev);
@@ -312,11 +269,7 @@ export const SkillsTab: React.FC<{
 
   const loadSkillFile = async (path: string) => {
     try {
-      const resp = await fetch(
-        `/api/skill-file?project_root=${encodeURIComponent(projectRoot)}&path=${encodeURIComponent(path)}`
-      );
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await skillFilesApi.read(projectRoot, path);
       setEditContent(data.content || '');
       setSavedEditContent(data.content || '');
       setEditingSkill(path);
@@ -329,46 +282,28 @@ export const SkillsTab: React.FC<{
     setSaving(true);
     setError(null);
     try {
-      const resp = await fetch('/api/skill-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: projectRoot, path: editingSkill, content: editContent }),
-      });
-      if (!resp.ok) {
-        setError(await resp.text());
-        return;
-      }
+      await skillFilesApi.save(projectRoot, editingSkill, editContent);
       setSavedEditContent(editContent);
       await Promise.all([fetchSkills(), fetchSkillFiles()]);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     } finally {
       setSaving(false);
     }
   };
 
   const createSkillFile = async () => {
-    const raw = prompt('New skill filename (example: my-skill.md):', 'new-skill.md');
-    if (!raw) return;
-    const filename = raw.trim();
+    // In-page prompt: window.prompt() returns null instantly in the Tauri shell.
+    const filename = (await promptDialog('New skill filename (example: my-skill.md):', 'new-skill.md'))?.trim();
     if (!filename) return;
     const name = filename.replace(/\.md$/i, '');
     const template = defaultSkillTemplate(name);
     try {
-      const resp = await fetch('/api/skill-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_root: projectRoot, path: filename, content: template }),
-      });
-      if (!resp.ok) {
-        setError(await resp.text());
-        return;
-      }
+      const data = await skillFilesApi.save(projectRoot, filename, template);
       await Promise.all([fetchSkills(), fetchSkillFiles()]);
-      const data = await resp.json();
-      if (data.path) loadSkillFile(data.path);
+      if (data?.path) loadSkillFile(data.path);
     } catch (e) {
-      setError(String(e));
+      setError(apiErrorMessage(e));
     }
   };
 

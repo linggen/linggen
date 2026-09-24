@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AppConfig } from '../types';
+import { useServerStore } from '../stores/serverStore';
 
 const inputCls = 'w-full bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500/50';
 const labelCls = 'text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
@@ -26,19 +27,12 @@ export const GeneralTab: React.FC<{
   // gpt-6 family, Linggen Cloud) plus the user's actually-configured
   // models, so we never offer an id that isn't wired up (an unconfigured
   // pick fails to resolve). "auto" is added directly in the <select>.
-  const [builtins, setBuiltins] = React.useState<{ id: string; authOk: boolean }[]>([]);
-  React.useEffect(() => {
-    fetch('/api/models')
-      .then((r) => r.json())
-      .then((ms) => {
-        if (Array.isArray(ms)) {
-          setBuiltins(
-            ms.filter((m) => m?.is_builtin && m.id).map((m) => ({ id: m.id, authOk: m.auth_ok !== false })),
-          );
-        }
-      })
-      .catch(() => {});
-  }, []);
+  const runtimeModels = useServerStore((s) => s.runtimeModels);
+  React.useEffect(() => { useServerStore.getState().refreshRuntimeModels(); }, []);
+  const builtins = React.useMemo(
+    () => runtimeModels.filter((m) => m.is_builtin && m.id).map((m) => ({ id: m.id, authOk: m.auth_ok !== false })),
+    [runtimeModels],
+  );
   // Built-ins that lack their sign-in stay listed but say so — a bare id
   // here reads as a working brain, and picking it silences her entirely.
   const petModelOptions = React.useMemo(() => {

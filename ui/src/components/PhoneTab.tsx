@@ -1,6 +1,8 @@
 import React from 'react';
 import { Check, Pencil, RefreshCw, Smartphone, Trash2, X } from 'lucide-react';
 import type { AppConfig } from '../types';
+import { useServerStore } from '../stores/serverStore';
+import { pairApi } from '../lib/endpoints';
 
 const sectionCls ='bg-white dark:bg-[#141414] rounded-xl border border-slate-200 dark:border-white/5 shadow-sm p-5';
 const codeCls = 'font-mono text-xs bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded px-2 py-1';
@@ -48,14 +50,15 @@ export const PhoneTab: React.FC<{
   const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState('');
-  const [modelIds, setModelIds] = React.useState<string[]>([]);
+  // Available models to offer as each phone's allow-list (page_state).
+  const models = useServerStore((s) => s.models);
+  const modelIds = React.useMemo(() => models.map((m) => m.id).filter(Boolean), [models]);
 
   const lanEnabled = config.server.host === LAN_HOST;
 
   const fetchInfo = React.useCallback(async () => {
     try {
-      const resp = await fetch('/api/pair/info');
-      if (resp.ok) setInfo(await resp.json());
+      setInfo(await pairApi.info<PairInfo>());
     } catch {
       /* daemon unreachable — the page-level error covers it */
     }
@@ -63,8 +66,7 @@ export const PhoneTab: React.FC<{
 
   const fetchQr = React.useCallback(async (fresh = false) => {
     try {
-      const resp = await fetch(fresh ? '/api/pair/qr?new=true' : '/api/pair/qr');
-      if (resp.ok) setQr(await resp.json());
+      setQr(await pairApi.qr<PairQr>(fresh));
     } catch {
       /* ignore */
     }
@@ -90,8 +92,7 @@ export const PhoneTab: React.FC<{
   React.useEffect(() => {
     if (!qr) return;
     const beat = () => {
-      fetch('/api/pair/window/keepalive', { method: 'POST' })
-        .then((r) => (r.ok ? r.json() : null))
+      pairApi.keepalive()
         // A phone used this code, so the daemon retired it and put up a new
         // one. Draw that instead of leaving a spent code on screen.
         .then((d) => {
@@ -104,13 +105,6 @@ export const PhoneTab: React.FC<{
     return () => clearInterval(t);
   }, [qr, fetchQr]);
 
-  // Available models to offer as each phone's allow-list.
-  React.useEffect(() => {
-    fetch('/api/models')
-      .then((r) => r.json())
-      .then((ms) => Array.isArray(ms) && setModelIds(ms.map((m) => m?.id).filter(Boolean)))
-      .catch(() => {});
-  }, []);
 
   // Toggle a model in a device's allow-list, then persist via PATCH.
   const toggleModel = async (device: PairDevice, modelId: string) => {
@@ -125,11 +119,9 @@ export const PhoneTab: React.FC<{
         : prev,
     );
     try {
-      await fetch(`/api/pair/devices/${device.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { ...device.settings, models: next } }),
-      });
+      await pairApi.updateDevice(device.id, { settings: { ...device.settings, models: next } });
+    } catch {
+      /* the refetch below shows the real state */
     } finally {
       fetchInfo();
     }
@@ -146,7 +138,9 @@ export const PhoneTab: React.FC<{
     }
     setConfirmingId(null);
     try {
-      await fetch(`/api/pair/devices/${id}`, { method: 'DELETE' });
+      await pairApi.removeDevice(id);
+    } catch {
+      /* the refetch below shows the real state */
     } finally {
       fetchInfo();
     }
@@ -162,11 +156,9 @@ export const PhoneTab: React.FC<{
     setEditingId(null);
     if (!name) return;
     try {
-      await fetch(`/api/pair/devices/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
+      await pairApi.updateDevice(id, { name });
+    } catch {
+      /* the refetch below shows the real state */
     } finally {
       fetchInfo();
     }

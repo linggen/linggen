@@ -6,6 +6,7 @@ import type { AskUserQuestion, SessionInfo } from '../types';
 import { sessions as sessionsApi } from '../lib/api';
 import { confirmDialog } from '../lib/confirmDialog';
 import { useInteractionStore } from './interactionStore';
+import { sessionApi } from '../lib/endpoints';
 
 const SELECTED_PROJECT_STORAGE_KEY = 'linggen:selected-project';
 const ACTIVE_SESSION_STORAGE_KEY = 'linggen:active-session';
@@ -181,13 +182,7 @@ async function refreshPendingAskFor(sessionId: string | null): Promise<void> {
   useInteractionStore.getState().setPendingAskUser(null);
   if (!sessionId) return;
   try {
-    const res = await fetch('/api/pending-ask-user');
-    const items = (await res.json()) as Array<{
-      question_id: string;
-      agent_id?: string;
-      questions?: unknown[];
-      session_id?: string | null;
-    }>;
+    const items = await sessionApi.pendingAskUser();
     const mine = items.find((it) => !it.session_id || it.session_id === sessionId);
     // The user may have switched again while the fetch ran.
     if (useSessionStore.getState().activeSessionId !== sessionId) return;

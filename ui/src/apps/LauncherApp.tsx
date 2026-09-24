@@ -11,6 +11,7 @@ import { Settings } from 'lucide-react';
 import logoUrl from '../assets/logo.svg';
 import { LauncherSettings } from './LauncherSettings';
 import { AccountAvatar } from '../components/AccountAvatar';
+import { skillsApi } from '../lib/endpoints';
 
 interface AppSkill {
   name: string;
@@ -61,10 +62,9 @@ export const LauncherApp: React.FC = () => {
   // Self-fetch the app list over HTTP so the launcher doesn't depend on the
   // WebRTC page_state timing (the dev console's source).
   useEffect(() => {
-    fetch('/api/skills')
-      .then((r) => (r.ok ? r.json() : []))
+    skillsApi.list()
       .then((data) => {
-        const list: any[] = Array.isArray(data) ? data : data?.skills ?? [];
+        const list: any[] = Array.isArray(data) ? data : [];
         // `list: false` is how a skill that is installed but not finished stays
         // out of the tab bar. It still runs when opened directly.
         const web = list.filter((s) => s.app && s.app.launcher === 'web' && s.app.list !== false);
